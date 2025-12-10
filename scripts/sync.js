@@ -127,8 +127,11 @@ function getGitCommitChangedFiles() {
 
 function uploadFile(filePath) {
     try {
-        log(`Uploading: ${filePath}`);
-        const output = execSync(`suitecloud file:upload --paths "${filePath}"`, {
+        // Convert path: src/FileCabinet/... -> FileCabinet/...
+        const uploadPath = filePath.replace(/^src\//, '');
+        log(`Uploading: ${uploadPath}`);
+
+        const output = execSync(`suitecloud file:upload --paths "${uploadPath}"`, {
             encoding: 'utf8',
             stdio: ['pipe', 'pipe', 'pipe']
         });
