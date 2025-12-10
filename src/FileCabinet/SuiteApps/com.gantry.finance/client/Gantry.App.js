@@ -13,111 +13,109 @@
 
     /**
      * Detects NetSuite's header bar color and syncs the Gantry sidebar
-     * Looks for the NetSuite navigation bar in the parent frame
+     * Works whether Gantry is in an iframe or embedded directly
      */
     function syncNetSuiteColor() {
         try {
-            // Check if we're in an iframe with access to parent
-            if (!window.parent || window.parent === window) {
-                console.log('[Gantry] Not in iframe, using default sidebar color');
-                return false;
+            // Try parent document first, fall back to current document
+            const docs = [];
+            try {
+                if (window.parent && window.parent.document) {
+                    docs.push({ doc: window.parent.document, win: window.parent, name: 'parent' });
+                }
+            } catch (e) {
+                // Cross-origin, can't access parent
             }
+            docs.push({ doc: document, win: window, name: 'current' });
 
-            const parentDoc = window.parent.document;
-
-            // NetSuite header selectors to try (in order of preference)
-            // These cover various NetSuite UI versions and themes
+            // NetSuite header selectors - includes Redwood theme classes
             const headerSelectors = [
+                '.div__header',                         // Redwood theme header (BEM style)
+                '.ns-child-component.div__header',      // Redwood with ns-child-component
+                '[class*="div__header"]',               // Any header class
                 '#ns-header',                           // Modern NetSuite header
                 '.ns-header',                           // Alternative class
                 '#ns_navigation',                       // Navigation bar
                 '.ns_navigation',                       // Navigation class
-                '#nscm',                                // NetSuite Center Menu
                 '.uir-page-header',                     // Classic UI header
-                'header',                               // Generic header fallback
-                '[data-role="header"]',                 // Data attribute header
+                '#nscm',                                // NetSuite Center Menu
                 '.ns-role-header',                      // Role-based header
-                '#spn_cMP_header',                      // Company header
-                '.bglt',                                // Light background nav
+                '[data-role="header"]',                 // Data attribute header
+                '.bgdk',                                // Dark background nav
                 '.bgmd',                                // Medium background nav
-                '.bgdk'                                 // Dark background nav
+                '.bglt'                                 // Light background nav
             ];
 
             let detectedColor = null;
             let sourceElement = null;
+            let sourceDoc = null;
 
-            // Try each selector until we find a colored element
-            for (const selector of headerSelectors) {
-                try {
-                    const element = parentDoc.querySelector(selector);
-                    if (element) {
-                        const computedStyle = window.parent.getComputedStyle(element);
-                        const bgColor = computedStyle.backgroundColor;
+            // Try each document
+            for (const { doc, win, name } of docs) {
+                if (detectedColor) break;
 
-                        // Skip transparent or white backgrounds
-                        if (bgColor && bgColor !== 'transparent' &&
-                            bgColor !== 'rgba(0, 0, 0, 0)' &&
-                            bgColor !== 'rgb(255, 255, 255)' &&
-                            bgColor !== '#ffffff') {
-                            detectedColor = bgColor;
-                            sourceElement = selector;
-                            break;
-                        }
-                    }
-                } catch (e) {
-                    // Selector failed, try next
-                    continue;
-                }
-            }
+                // Try each selector
+                for (const selector of headerSelectors) {
+                    try {
+                        const element = doc.querySelector(selector);
+                        if (element) {
+                            const computedStyle = win.getComputedStyle(element);
+                            const bgColor = computedStyle.backgroundColor;
 
-            // If no header found, try to find any prominent colored bar at the top
-            if (!detectedColor) {
-                try {
-                    // Look for elements in the top 100px of the page
-                    const topElements = parentDoc.elementsFromPoint(
-                        window.parent.innerWidth / 2,
-                        50
-                    );
-
-                    for (const element of topElements) {
-                        const computedStyle = window.parent.getComputedStyle(element);
-                        const bgColor = computedStyle.backgroundColor;
-
-                        // Look for a non-white, non-transparent colored background
-                        if (bgColor && bgColor !== 'transparent' &&
-                            bgColor !== 'rgba(0, 0, 0, 0)' &&
-                            !bgColor.includes('255, 255, 255')) {
-
-                            // Parse the color to check if it's dark enough to be a header
-                            const rgb = parseRgb(bgColor);
-                            if (rgb) {
-                                const luminance = (0.299 * rgb.r + 0.587 * rgb.g + 0.114 * rgb.b) / 255;
-                                // Accept colors that aren't too bright (luminance < 0.85)
-                                if (luminance < 0.85) {
-                                    detectedColor = bgColor;
-                                    sourceElement = 'elementsFromPoint';
-                                    break;
-                                }
+                            // Skip transparent or pure white backgrounds
+                            if (bgColor && bgColor !== 'transparent' &&
+                                bgColor !== 'rgba(0, 0, 0, 0)' &&
+                                bgColor !== 'rgb(255, 255, 255)') {
+                                detectedColor = bgColor;
+                                sourceElement = selector;
+                                sourceDoc = name;
+                                break;
                             }
                         }
+                    } catch (e) {
+                        continue;
                     }
-                } catch (e) {
-                    console.log('[Gantry] elementsFromPoint detection failed:', e.message);
+                }
+
+                // If no selector matched, try elementsFromPoint
+                if (!detectedColor) {
+                    try {
+                        const topElements = doc.elementsFromPoint(win.innerWidth / 2, 50);
+                        for (const element of topElements) {
+                            // Skip body/html
+                            if (element.tagName === 'BODY' || element.tagName === 'HTML') continue;
+
+                            const computedStyle = win.getComputedStyle(element);
+                            const bgColor = computedStyle.backgroundColor;
+
+                            if (bgColor && bgColor !== 'transparent' &&
+                                bgColor !== 'rgba(0, 0, 0, 0)' &&
+                                bgColor !== 'rgb(255, 255, 255)') {
+                                detectedColor = bgColor;
+                                sourceElement = `elementsFromPoint (${element.className || element.tagName})`;
+                                sourceDoc = name;
+                                break;
+                            }
+                        }
+                    } catch (e) {
+                        // elementsFromPoint failed
+                    }
                 }
             }
 
             if (detectedColor) {
-                applyDetectedColor(detectedColor);
-                console.log('[Gantry] Synced sidebar with NetSuite color:', detectedColor, 'from:', sourceElement);
-                return true;
-            } else {
-                console.log('[Gantry] No NetSuite header color detected, using defaults');
-                return false;
+                const applied = applyDetectedColor(detectedColor);
+                if (applied) {
+                    console.log('[Gantry] Synced sidebar with NetSuite color:', detectedColor, 'from:', sourceElement, `(${sourceDoc})`);
+                    return true;
+                }
             }
 
+            console.log('[Gantry] No suitable NetSuite header color detected, using defaults');
+            return false;
+
         } catch (e) {
-            // Cross-origin or other access error
-            console.log('[Gantry] Cannot access parent frame (cross-origin?):', e.message);
+            console.log('[Gantry] Color sync error:', e.message);
             return false;
         }
     }
@@ -160,38 +158,71 @@
     }
 
     /**
+     * Calculate relative luminance (0 = black, 1 = white)
+     */
+    function getLuminance(rgb) {
+        return (0.299 * rgb.r + 0.587 * rgb.g + 0.114 * rgb.b) / 255;
+    }
+
+    /**
      * Apply detected color to sidebar CSS variables
+     * Returns true if color was applied, false if skipped
      */
     function applyDetectedColor(color) {
         const rgb = parseRgb(color);
-        if (!rgb) return;
+        if (!rgb) return false;
 
+        const luminance = getLuminance(rgb);
+        const isLightTheme = luminance > 0.5;
         const root = document.documentElement;
 
-        // Set main sidebar background
+        // Apply the detected color as sidebar background
         root.style.setProperty('--sidebar-bg', `rgb(${rgb.r}, ${rgb.g}, ${rgb.b})`);
 
-        // Calculate hover color (slightly lighter)
-        const hoverR = Math.min(255, rgb.r + 30);
-        const hoverG = Math.min(255, rgb.g + 30);
-        const hoverB = Math.min(255, rgb.b + 30);
-        root.style.setProperty('--sidebar-bg-hover', `rgb(${hoverR}, ${hoverG}, ${hoverB})`);
+        // For light themes: darken for hover/borders, use dark text
+        // For dark themes: lighten for hover/borders, use light text
+        let hoverR, hoverG, hoverB, borderR, borderG, borderB;
 
-        // Calculate border color (even lighter, with some transparency for subtlety)
-        const borderR = Math.min(255, rgb.r + 40);
-        const borderG = Math.min(255, rgb.g + 40);
-        const borderB = Math.min(255, rgb.b + 40);
+        if (isLightTheme) {
+            // Light theme: darken for hover/border states
+            hoverR = Math.max(0, rgb.r - 15);
+            hoverG = Math.max(0, rgb.g - 15);
+            hoverB = Math.max(0, rgb.b - 15);
+            borderR = Math.max(0, rgb.r - 25);
+            borderG = Math.max(0, rgb.g - 25);
+            borderB = Math.max(0, rgb.b - 25);
+
+            // Add light-sidebar class for text color adjustments
+            document.querySelector('.gantry-sidebar')?.classList.add('light-theme');
+        } else {
+            // Dark theme: lighten for hover/border states
+            hoverR = Math.min(255, rgb.r + 30);
+            hoverG = Math.min(255, rgb.g + 30);
+            hoverB = Math.min(255, rgb.b + 30);
+            borderR = Math.min(255, rgb.r + 40);
+            borderG = Math.min(255, rgb.g + 40);
+            borderB = Math.min(255, rgb.b + 40);
+
+            // Remove light-sidebar class if present
+            document.querySelector('.gantry-sidebar')?.classList.remove('light-theme');
+        }
+
+        root.style.setProperty('--sidebar-bg-hover', `rgb(${hoverR}, ${hoverG}, ${hoverB})`);
         root.style.setProperty('--sidebar-border', `rgb(${borderR}, ${borderG}, ${borderB})`);
 
         // Store the synced color for reference
         window.GANTRY_SIDEBAR_COLOR = {
             detected: color,
+            luminance: luminance,
+            isLightTheme: isLightTheme,
             applied: {
                 bg: `rgb(${rgb.r}, ${rgb.g}, ${rgb.b})`,
                 hover: `rgb(${hoverR}, ${hoverG}, ${hoverB})`,
                 border: `rgb(${borderR}, ${borderG}, ${borderB})`
             }
         };
+
+        return true;
     }
 
     // Expose sync function globally for manual re-sync if needed
@@ -238,6 +269,28 @@
         document.body.classList.add('dark-mode');
         const icon = document.getElementById('darkModeIcon') || document.querySelector('#darkModeToggle i');
         if (icon) icon.className = 'fas fa-sun';
+    }
+
+    // Sidebar collapse toggle handler
+    const sidebarToggle = document.getElementById('sidebarToggle');
+    const sidebar = document.querySelector('.gantry-sidebar');
+    if (sidebarToggle && sidebar) {
+        sidebarToggle.addEventListener('click', function() {
+            sidebar.classList.toggle('collapsed');
+            const isCollapsed = sidebar.classList.contains('collapsed');
+            localStorage.setItem('gantry-sidebar-collapsed', isCollapsed ? 'true' : 'false');
+
+            // Update button title
+            this.title = isCollapsed ? 'Expand sidebar' : 'Collapse sidebar';
+        });
+    }
+
+    // Apply saved sidebar collapsed preference
+    if (localStorage.getItem('gantry-sidebar-collapsed') === 'true') {
+        if (sidebar) {
+            sidebar.classList.add('collapsed');
+            if (sidebarToggle) sidebarToggle.title = 'Expand sidebar';
+        }
     }
 
     // Log loaded state
