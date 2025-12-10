@@ -1216,15 +1216,33 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
         } else buckets["Current"] += amt;
 
         let predictedDate;
-        if (customDateRaw) predictedDate = parseNsDate(customDateRaw);
-        else if (statsData.map[entityId]) {
+        let predictionMethod = "Default";
+        let predictionDetail = statsData.globalAvg + "d global avg";
+
+        if (customDateRaw) {
+          predictedDate = parseNsDate(customDateRaw);
+          predictionMethod = "Custom";
+          predictionDetail = "Expected pay date";
+        } else if (statsData.map[entityId]) {
           const s = statsData.map[entityId];
           const buffer = s.stdDev ? Math.ceil(s.stdDev * 0.5) : 0;
           predictedDate = addDays(trandate, s.avgDays + buffer);
-        } else if (termsDays) predictedDate = addDays(trandate, termsDays);
-        else predictedDate = addDays(trandate, statsData.globalAvg);
+          predictionMethod = "Statistical";
+          predictionDetail = s.avgDays + "d avg + " + buffer + "d buffer";
+        } else if (termsDays) {
+          predictedDate = addDays(trandate, termsDays);
+          predictionMethod = "Terms";
+          predictionDetail = termsDays + "d from terms";
+        } else {
+          predictedDate = addDays(trandate, statsData.globalAvg);
+        }
 
-        if (duedate && predictedDate < duedate) predictedDate = duedate;
+        if (duedate && predictedDate < duedate) {
+          predictedDate = duedate;
+          if (predictionMethod !== "Custom") {
+            predictionDetail += " (due date floor)";
+          }
+        }
 
         if (predictedDate < timeline.asOfDate) {
           const diffDays = Math.ceil((timeline.asOfDate - predictedDate) / (1000 * 60 * 60 * 24));
@@ -1233,6 +1251,7 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
           if (diffDays > 60) pushDays = pushHeavy;
           else if (diffDays > 30) pushDays = pushMedium;
           predictedDate = addDays(timeline.asOfDate, pushDays);
+          predictionDetail += " (pushed +" + pushDays + "d)";
         }
 
         predictedDate = adjustToBusinessDay(predictedDate);
@@ -1262,6 +1281,8 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
             weekStart: wkKey,
             volatility: volLabel,
             daysOverDue: daysOverDue,
+            predictionMethod: predictionMethod,
+            predictionDetail: predictionDetail,
           });
         }
       });
@@ -1334,14 +1355,23 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
         } else buckets["Current"] += amt;
 
         let predictedDate;
-        if (customDateRaw) predictedDate = parseNsDate(customDateRaw);
-        else if (statsData.map[entityId]) {
+        let predictionMethod = "Default";
+        let predictionDetail = statsData.globalAvg + "d global avg";
+
+        if (customDateRaw) {
+          predictedDate = parseNsDate(customDateRaw);
+          predictionMethod = "Custom";
+          predictionDetail = "Expected pay date";
+        } else if (statsData.map[entityId]) {
           // Add stdDev buffer to match AR logic for symmetric predictions
           const s = statsData.map[entityId];
           const buffer = s.stdDev ? Math.ceil(s.stdDev * 0.5) : 0;
           predictedDate = addDays(trandate, s.avgDays + buffer);
+          predictionMethod = "Statistical";
+          predictionDetail = s.avgDays + "d avg + " + buffer + "d buffer";
+        } else {
+          predictedDate = addDays(trandate, statsData.globalAvg);
         }
-        else predictedDate = addDays(trandate, statsData.globalAvg);
 
         if (predictedDate < timeline.asOfDate) {
           const diffDays = Math.ceil((timeline.asOfDate - predictedDate) / (1000 * 60 * 60 * 24));
@@ -1350,6 +1380,7 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
           if (diffDays > 60) pushDays = pushHeavy;
           else if (diffDays > 30) pushDays = pushMedium;
           predictedDate = addDays(timeline.asOfDate, pushDays);
+          predictionDetail += " (pushed +" + pushDays + "d)";
         }
 
         predictedDate = adjustToBusinessDay(predictedDate);
@@ -1375,6 +1406,8 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
             vendorCat: String(vendorCat || ""),
             isPriority: false,
             daysOverDue: daysOverDue,
+            predictionMethod: predictionMethod,
+            predictionDetail: predictionDetail,
           });
         }
       });
