@@ -128,13 +128,17 @@ function getGitCommitChangedFiles() {
 function uploadFile(filePath) {
     try {
         log(`Uploading: ${filePath}`);
-        execSync(`suitecloud file:upload --paths "${filePath}"`, {
-            stdio: 'pipe',
-            encoding: 'utf8'
+        const output = execSync(`suitecloud file:upload --paths "${filePath}"`, {
+            encoding: 'utf8',
+            stdio: ['pipe', 'pipe', 'pipe']
         });
+        if (output) {
+            log(`  Response: ${output.trim()}`, 'info');
+        }
         return true;
     } catch (e) {
-        log(`Failed to upload ${filePath}: ${e.message}`, 'error');
+        const errorMsg = e.stderr || e.stdout || e.message;
+        log(`Failed to upload ${filePath}: ${errorMsg}`, 'error');
         return false;
     }
 }
