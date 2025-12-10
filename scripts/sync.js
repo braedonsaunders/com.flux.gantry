@@ -127,23 +127,27 @@ function getGitCommitChangedFiles() {
 
 function uploadFile(filePath) {
     try {
-        // Convert path: src/FileCabinet/... -> FileCabinet/...
-        const uploadPath = filePath.replace(/^src\//, '');
-        log(`Uploading: ${uploadPath}`);
+        // Transform local path to File Cabinet path
+        // Local: src/FileCabinet/SuiteApps/com.gantry.finance/lib/utils.js
+        // CLI needs: /SuiteApps/com.gantry.finance/lib/utils.js
+        const fileCabinetPath = '/' + filePath.replace(/^src\/FileCabinet\//, '');
 
-        const output = execSync(`suitecloud file:upload --paths "${uploadPath}"`, {
+        log(`Uploading: ${filePath}`);
+        log(`  File Cabinet path: ${fileCabinetPath}`);
+
+        const output = execSync(`suitecloud file:upload --paths "${fileCabinetPath}"`, {
             encoding: 'utf8',
             stdio: ['pipe', 'pipe', 'pipe']
         });
 
         // Check for failure indicators in the response (CLI returns 0 even on failure)
-        if (output && (output.includes('were not uploaded') || output.includes('problem when uploading'))) {
+        if (output && (output.includes('were not uploaded') || output.includes('problem when uploading') || output.includes('does not exist'))) {
             log(`  FAILED: ${output.trim()}`, 'error');
             return false;
         }
 
         if (output) {
-            log(`  OK: ${output.trim()}`, 'success');
+            log(`  Output: ${output.trim()}`, 'success');
         }
         return true;
     } catch (e) {
