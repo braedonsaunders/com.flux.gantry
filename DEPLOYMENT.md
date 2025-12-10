@@ -24,13 +24,27 @@ You'll need:
 
 ### 3. Deploy Changes
 
-Deploy all files to NetSuite with one command:
+**Option A: Smart Sync (Recommended for development)**
+
+Only uploads files that have changed - much faster for iterative development:
+
+```bash
+node scripts/sync.js          # Sync only changed files
+node scripts/sync.js --watch  # Watch mode: auto-sync on file save
+node scripts/sync.js --all    # Force sync all files
+```
+
+**Option B: Full Deploy**
+
+Deploy all files to NetSuite:
 
 ```bash
 suitecloud project:deploy
 ```
 
-Or deploy only specific files:
+**Option C: Single File**
+
+Upload a specific file:
 
 ```bash
 suitecloud file:upload --paths "src/FileCabinet/SuiteApps/com.gantry.finance/lib/Lib_Core.js"
@@ -84,6 +98,8 @@ com.gantry.finance/
 │   │   └── customscript_gantry_router.xml
 │   ├── deploy.xml
 │   └── manifest.xml
+├── scripts/
+│   └── sync.js               # Smart sync script (changed files only)
 ├── suitecloud.config.js
 └── .github/workflows/deploy-netsuite.yml
 ```

@@ -26,3 +26,6 @@ credentials.json
 # Build artifacts
 dist/
 build/
+
+# Sync state (local only)
+.sync-state.json
