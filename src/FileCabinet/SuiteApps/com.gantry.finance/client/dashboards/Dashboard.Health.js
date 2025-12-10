@@ -1051,23 +1051,12 @@
             var be = company.breakeven || {};
             var avgs = company.averages || {};
             
-            // Calculate health score based on key metrics (consistent with Ratios tab)
-            // This ensures global and ratios health scores match
-            var gmPct = rangeM.gmPct || 0;
-            var opPct = rangeM.revenue > 0 ? (rangeM.opInc || 0) / rangeM.revenue : 0;
-            var revenueGrowth = yoy.revenueChange && yoy.priorRevenue ? yoy.revenueChange / yoy.priorRevenue : 0;
+            // Use the server-calculated health score for consistency
+            // Server formula: 60% coverage ratio (avgRev/breakeven) + 40% GM ratio (actual/target)
+            // Fallback to 50 only if server returns nothing
+            var healthScore = company.healthScore != null ? company.healthScore : 50;
             
-            // Score components (0-100 each)
-            var gmScore = Math.min(100, Math.max(0, (gmPct / 0.35) * 100)); // 35% GM = 100
-            var opScore = Math.min(100, Math.max(0, (opPct / 0.15) * 100)); // 15% Op margin = 100
-            var growthScore = Math.min(100, Math.max(0, 50 + revenueGrowth * 200)); // 0% growth = 50, 25% = 100
-            
-            // Weighted average
-            var calculatedHealthScore = (gmScore * 0.35 + opScore * 0.45 + growthScore * 0.20);
-            
-            // Use server value if available and reasonable, otherwise use calculated
-            var healthScore = company.healthScore || calculatedHealthScore;
-            // Store for consistency
+            // Store for consistency across dashboard (Ratios tab uses this)
             this.calculatedHealthScore = healthScore;
             
             // Health Score with integrity-style gauge
@@ -1591,8 +1580,14 @@
             var priorM = data.company && data.company.metrics && data.company.metrics.priorYearRange ? data.company.metrics.priorYearRange : {};
             var yoy = data.company && data.company.yoy ? data.company.yoy : {};
             
-            var yoyRevChange = yoy.revenueChange || 0;
-            var yoyGMChange = priorM.gmPct ? (rangeM.gmPct - priorM.gmPct) : 0;
+            // Use the pre-calculated YoY percentage from the server, or calculate if missing
+            var yoyRevChangePct = yoy.revenueDeltaPct != null ? yoy.revenueDeltaPct : 
+                (priorM.revenue && priorM.revenue > 0 ? (rangeM.revenue - priorM.revenue) / priorM.revenue : null);
+            
+            // YoY GM change - only calculate if prior period had meaningful revenue
+            var yoyGMChange = (priorM.gmPct != null && priorM.revenue > 0) 
+                ? (rangeM.gmPct - priorM.gmPct) 
+                : null;
             
             // Build Margin KPIs using global renderer
             var kpisContainer = el('#ppMarginKPIs');
@@ -1600,8 +1595,8 @@
                 kpisContainer.innerHTML = this.buildKPIRow([
                     { label: 'Gross Margin', value: fmtMoney(rangeM.gm || 0), icon: 'percentage', color: 'green', subtext: fmtPct(rangeM.gmPct || 0) },
                     { label: 'Operating Margin', value: fmtMoney(rangeM.opInc || 0), icon: 'chart-line', color: 'blue', subtext: fmtPct(rangeM.revenue > 0 ? rangeM.opInc / rangeM.revenue : 0) },
-                    { label: 'YoY Revenue Δ', value: (yoyRevChange >= 0 ? '+' : '') + fmtPct(yoyRevChange), icon: 'arrow-trend-up', color: yoyRevChange >= 0 ? 'green' : 'red', subtext: 'vs Prior Year' },
-                    { label: 'YoY Margin Δ', value: (yoyGMChange >= 0 ? '+' : '') + fmtPct(yoyGMChange), icon: 'balance-scale', color: yoyGMChange >= 0 ? 'green' : 'red', subtext: 'vs Prior Year' }
+                    { label: 'YoY Revenue Δ', value: yoyRevChangePct != null ? ((yoyRevChangePct >= 0 ? '+' : '') + fmtPct(yoyRevChangePct)) : '—', icon: 'arrow-trend-up', color: yoyRevChangePct != null && yoyRevChangePct >= 0 ? 'green' : 'red', subtext: 'vs Prior Year' },
+                    { label: 'YoY Margin Δ', value: yoyGMChange != null ? ((yoyGMChange >= 0 ? '+' : '') + fmtPct(yoyGMChange)) : '—', icon: 'balance-scale', color: yoyGMChange != null && yoyGMChange >= 0 ? 'green' : 'red', subtext: 'vs Prior Year' }
                 ]);
             }
             
@@ -1627,8 +1622,6 @@
             var currentGM = rangeM.gm || 0;
             var priorRev = priorM.revenue || 0;
             var currentRev = rangeM.revenue || 0;
-            var priorCOGS = priorM.cogs || 0;
-            var currentCOGS = rangeM.cogs || 0;
             
             // Check if we have prior data to compare
             if (priorGM === 0 && priorRev === 0) {
@@ -1636,20 +1629,28 @@
                 return;
             }
             
-            // Simple decomposition: Revenue change - COGS change = GM change
-            var revEffect = currentRev - priorRev;
-            var cogsEffect = -(currentCOGS - priorCOGS); // Negative because COGS increase is bad
+            // Proper variance decomposition using rate/volume analysis
+            // Volume Effect: Change in revenue at prior GM%
+            // Rate Effect: Change in GM% at current revenue
+            var priorGMPct = priorRev > 0 ? priorGM / priorRev : 0;
+            var currentGMPct = currentRev > 0 ? currentGM / currentRev : 0;
+            
+            // Volume effect: ΔRevenue × prior GM%
+            var volumeEffect = (currentRev - priorRev) * priorGMPct;
+            // Rate effect: Current Revenue × ΔGM%
+            var rateEffect = currentRev * (currentGMPct - priorGMPct);
+            // Total change (volume + rate = total, mathematically exact)
             var totalChange = currentGM - priorGM;
             
             // Create a cleaner horizontal bar bridge
-            var categories = ['Prior GM', 'Revenue Δ', 'COGS Δ', 'Current GM'];
-            var barColors = ['#64748b', revEffect >= 0 ? '#10b981' : '#ef4444', cogsEffect >= 0 ? '#10b981' : '#ef4444', '#3b82f6'];
+            var categories = ['Prior GM', 'Volume Effect', 'Rate Effect', 'Current GM'];
+            var barColors = ['#64748b', volumeEffect >= 0 ? '#10b981' : '#ef4444', rateEffect >= 0 ? '#10b981' : '#ef4444', '#3b82f6'];
             
             // Use stacked bar approach for waterfall effect
             var trace1 = {
                 name: 'Base',
                 x: categories,
-                y: [0, priorGM, priorGM + revEffect, 0],
+                y: [0, priorGM, priorGM + volumeEffect, 0],
                 type: 'bar',
                 marker: { color: 'rgba(0,0,0,0)' },
                 hoverinfo: 'skip',
@@ -1659,10 +1660,10 @@
             var trace2 = {
                 name: 'Values',
                 x: categories,
-                y: [priorGM, revEffect, cogsEffect, currentGM],
+                y: [priorGM, volumeEffect, rateEffect, currentGM],
                 type: 'bar',
                 marker: { color: barColors },
-                text: [fmtMoney(priorGM), (revEffect >= 0 ? '+' : '') + fmtMoney(revEffect), (cogsEffect >= 0 ? '+' : '') + fmtMoney(cogsEffect), fmtMoney(currentGM)],
+                text: [fmtMoney(priorGM), (volumeEffect >= 0 ? '+' : '') + fmtMoney(volumeEffect), (rateEffect >= 0 ? '+' : '') + fmtMoney(rateEffect), fmtMoney(currentGM)],
                 textposition: 'inside',
                 textfont: { color: '#fff', size: 11 },
                 insidetextanchor: 'middle',
@@ -1673,7 +1674,7 @@
             // Add connecting lines between bars
             var shapes = [
                 { type: 'line', x0: 0.4, x1: 0.6, y0: priorGM, y1: priorGM, line: { color: '#94a3b8', width: 2, dash: 'dot' } },
-                { type: 'line', x0: 1.4, x1: 1.6, y0: priorGM + revEffect, y1: priorGM + revEffect, line: { color: '#94a3b8', width: 2, dash: 'dot' } },
+                { type: 'line', x0: 1.4, x1: 1.6, y0: priorGM + volumeEffect, y1: priorGM + volumeEffect, line: { color: '#94a3b8', width: 2, dash: 'dot' } },
                 { type: 'line', x0: 2.4, x1: 2.6, y0: currentGM, y1: currentGM, line: { color: '#94a3b8', width: 2, dash: 'dot' } }
             ];
             
@@ -1689,12 +1690,16 @@
                 shapes: shapes
             }, { responsive: true, displayModeBar: false });
             
-            // Add summary below chart
+            // Add summary below chart with decomposition explanation
             var summaryEl = document.createElement('div');
             summaryEl.className = 'text-center small mt-2';
             var changeClass = totalChange >= 0 ? 'text-success' : 'text-danger';
+            var volumeClass = volumeEffect >= 0 ? 'text-success' : 'text-danger';
+            var rateClass = rateEffect >= 0 ? 'text-success' : 'text-danger';
             summaryEl.innerHTML = '<span class="text-muted">YoY Change:</span> <strong class="' + changeClass + '">' + (totalChange >= 0 ? '+' : '') + fmtMoney(totalChange) + '</strong>' +
-                ' <span class="text-muted ml-2">(' + (priorGM > 0 ? ((totalChange / priorGM * 100).toFixed(1) + '%') : 'N/A') + ')</span>';
+                ' <span class="text-muted ml-2">(' + (priorGM !== 0 ? ((totalChange / Math.abs(priorGM) * 100).toFixed(1) + '%') : 'N/A') + ')</span>' +
+                '<br><small class="text-muted">Volume: <span class="' + volumeClass + '">' + (volumeEffect >= 0 ? '+' : '') + fmtMoney(volumeEffect) + '</span> | ' +
+                'Rate: <span class="' + rateClass + '">' + (rateEffect >= 0 ? '+' : '') + fmtMoney(rateEffect) + '</span></small>';
             
             // Remove old summary if exists
             var oldSummary = container.parentNode.querySelector('.margin-bridge-summary');
@@ -2356,7 +2361,7 @@
             });
             
             // Build KPIs
-            var hhiLabel = hhi < 1500 ? 'Diversified' : (hhi < 2500 ? 'Moderate' : 'Concentrated');
+            var hhiLabel = hhi < 1500 ? 'Unconcentrated' : (hhi < 2500 ? 'Moderate' : 'Concentrated');
             var kpisContainer = el('#ppSegmentKPIs');
             if (kpisContainer) {
                 kpisContainer.innerHTML = this.buildKPIRow([
@@ -2479,9 +2484,9 @@
                         '<table class="table table-sm mb-0">' +
                             '<tbody>' +
                                 '<tr><td>Revenue</td><td class="text-right font-weight-bold">' + fmtMoney(seg.revenue) + '</td><td class="text-right text-muted small">100%</td></tr>' +
-                                '<tr><td class="text-muted pl-3">Cost of Goods Sold</td><td class="text-right text-danger">' + fmtMoney(-(metrics.cogs || 0)) + '</td><td class="text-right text-muted small">' + fmtPct(cogsRatio) + '</td></tr>' +
+                                '<tr><td class="text-muted pl-3">Cost of Goods Sold</td><td class="text-right text-danger">(' + fmtMoney(metrics.cogs || 0) + ')</td><td class="text-right text-muted small">' + fmtPct(cogsRatio) + '</td></tr>' +
                                 '<tr class="border-top"><td><strong>Gross Margin</strong></td><td class="text-right font-weight-bold">' + fmtMoney(seg.gm) + '</td><td class="text-right font-weight-bold">' + fmtPct(seg.gmPct) + '</td></tr>' +
-                                '<tr><td class="text-muted pl-3">Operating Expenses</td><td class="text-right text-danger">' + fmtMoney(-(metrics.opex || 0)) + '</td><td class="text-right text-muted small">' + fmtPct(opexRatio) + '</td></tr>' +
+                                '<tr><td class="text-muted pl-3">Operating Expenses</td><td class="text-right text-danger">(' + fmtMoney(metrics.opex || 0) + ')</td><td class="text-right text-muted small">' + fmtPct(opexRatio) + '</td></tr>' +
                                 '<tr class="border-top ' + (seg.opInc >= 0 ? '' : 'text-danger') + '"><td><strong>Operating Income</strong></td><td class="text-right font-weight-bold">' + fmtMoney(seg.opInc) + '</td><td class="text-right font-weight-bold">' + fmtPct(seg.opPct) + '</td></tr>' +
                             '</tbody>' +
                         '</table>' +
@@ -3227,8 +3232,10 @@
                 if (data.projected.revenue !== undefined) {
                     html += '<div class="pp-scenario-item"><span>Projected Revenue</span><strong>' + fmtMoney(data.projected.revenue) + '</strong></div>';
                 }
-                if (data.projected.netIncome !== undefined) {
-                    html += '<div class="pp-scenario-item"><span>Projected Net Income</span><strong>' + fmtMoney(data.projected.netIncome) + '</strong></div>';
+                // Use operatingIncome (new field) or netIncome (legacy) for backward compatibility
+                var projOpInc = data.projected.operatingIncome !== undefined ? data.projected.operatingIncome : data.projected.netIncome;
+                if (projOpInc !== undefined) {
+                    html += '<div class="pp-scenario-item"><span>Projected Operating Income</span><strong>' + fmtMoney(projOpInc) + '</strong></div>';
                 }
                 if (data.projected.breakevenRevenue !== undefined) {
                     html += '<div class="pp-scenario-item"><span>Breakeven Revenue</span><strong>' + fmtMoney(data.projected.breakevenRevenue) + '</strong></div>';
@@ -3239,9 +3246,11 @@
             }
             
             if (data.impact) {
-                if (data.impact.netIncomeChange !== undefined) {
-                    var changeClass = data.impact.netIncomeChange >= 0 ? 'text-success' : 'text-danger';
-                    html += '<div class="pp-scenario-item"><span>Net Income Change</span><strong class="' + changeClass + '">' + (data.impact.netIncomeChange >= 0 ? '+' : '') + fmtMoney(data.impact.netIncomeChange) + '</strong></div>';
+                // Use operatingIncomeChange (new) or netIncomeChange (legacy) for backward compatibility
+                var opIncChange = data.impact.operatingIncomeChange !== undefined ? data.impact.operatingIncomeChange : data.impact.netIncomeChange;
+                if (opIncChange !== undefined) {
+                    var changeClass = opIncChange >= 0 ? 'text-success' : 'text-danger';
+                    html += '<div class="pp-scenario-item"><span>Operating Income Change</span><strong class="' + changeClass + '">' + (opIncChange >= 0 ? '+' : '') + fmtMoney(opIncChange) + '</strong></div>';
                 }
             }
             
@@ -4651,9 +4660,13 @@
             
             // Render Budget vs Actual Chart
             if (typeof Plotly !== 'undefined' && el('#ppBudgetChart')) {
-                var categories = ['Revenue', 'COGS', 'OpEx', 'Net Income'];
-                var budgetVals = [sum.revenue?.budget || 0, sum.cogs?.budget || 0, sum.opex?.budget || 0, sum.netIncome?.budget || 0];
-                var actualVals = [sum.revenue?.actual || 0, sum.cogs?.actual || 0, sum.opex?.actual || 0, sum.netIncome?.actual || 0];
+                // Note: "Operating Income" = Revenue - COGS - OpEx (not true Net Income which includes Interest/Tax)
+                var categories = ['Revenue', 'COGS', 'OpEx', 'Operating Income'];
+                // Use operatingIncome (new) or netIncome (legacy) for backward compatibility
+                var opIncBudget = sum.operatingIncome?.budget !== undefined ? sum.operatingIncome.budget : (sum.netIncome?.budget || 0);
+                var opIncActual = sum.operatingIncome?.actual !== undefined ? sum.operatingIncome.actual : (sum.netIncome?.actual || 0);
+                var budgetVals = [sum.revenue?.budget || 0, sum.cogs?.budget || 0, sum.opex?.budget || 0, opIncBudget];
+                var actualVals = [sum.revenue?.actual || 0, sum.cogs?.actual || 0, sum.opex?.actual || 0, opIncActual];
                 
                 Plotly.newPlot('ppBudgetChart', [
                     { x: categories, y: budgetVals, type: 'bar', name: 'Budget', marker: { color: '#94a3b8' } },
