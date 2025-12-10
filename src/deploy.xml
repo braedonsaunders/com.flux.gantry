@@ -2,10 +2,14 @@
     <configuration>
         <path>~/FileCabinet/SuiteApps/com.gantry.finance/*</path>
     </configuration>
+    <!--
+    Objects commented out to avoid conflicts with existing script configurations.
+    Uncomment if you need to deploy script changes (new deployments, permissions, etc.)
     <objects>
         <path>~/Objects/customscript_gantry_suitelet.xml</path>
         <path>~/Objects/customscript_gantry_router.xml</path>
     </objects>
+    -->
     <files>
         <path>~/FileCabinet/SuiteApps/com.gantry.finance/*</path>
     </files>
