@@ -690,7 +690,7 @@
                                         ${anomalies.suddenDrops.map(a => `
                                             <div class="list-group-item d-flex justify-content-between align-items-center py-2">
                                                 <span class="text-truncate" style="max-width: 150px;" title="${a.name}">${a.name}</span>
-                                                <span class="badge badge-danger">${a.drop > 0 ? '' : ''}${fmtPctVal(a.drop, 0)}</span>
+                                                <span class="badge badge-danger">${fmtPctVal(a.drop, 0)}</span>
                                             </div>
                                         `).join('')}
                                     </div>
@@ -1109,9 +1109,28 @@
             
             // Calculate cost change proportional to non-billable % change
             let projectedCost = currentCost;
-            if (currentNonBillablePct > 0) {
+            
+            // FIXED: Handle edge case where current period is at or near 100% billable
+            if (currentNonBillablePct <= 0.01) {
+                // Currently at or near 100% billable
+                if (projectedNonBillablePct > 0.01) {
+                    // Trending toward having non-billable work - estimate using available cost data
+                    const totalHours = currentRange.hours || 0;
+                    const nonBillableHours = currentRange.nonBillableHours || 0;
+                    // Use historical cost per non-billable hour, or estimate from company averages
+                    const avgCostPerHour = (nonBillableHours > 0 && currentCost > 0) 
+                        ? currentCost / nonBillableHours 
+                        : (currentRange.nonBillableCostPerHour || 50); // Fallback estimate
+                    const projectedNonBillHours = totalHours * (projectedNonBillablePct / 100);
+                    projectedCost = projectedNonBillHours * avgCostPerHour;
+                } else {
+                    // Staying at 100% billable - no non-billable cost
+                    projectedCost = 0;
+                }
+            } else if (currentNonBillablePct > 0) {
                 projectedCost = currentCost * (projectedNonBillablePct / currentNonBillablePct);
             }
+            
             // Sanity bounds
             projectedCost = Math.max(0, Math.min(currentCost * 2, projectedCost));
             const costTrend = projectedCost - currentCost;
@@ -1252,8 +1271,11 @@
             
             Object.values(titleGroups).forEach(g => {
                 const qualified = g.employees.filter(e => (e.range?.hours || 0) >= minHours);
-                g.avgPct = qualified.length > 0 
-                    ? qualified.reduce((sum, e) => sum + (e.range?.percentBilled || 0), 0) / qualified.length 
+                // FIXED: Use weighted average based on hours worked instead of simple mean
+                const totalQualifiedHours = qualified.reduce((sum, e) => sum + (e.range?.hours || 0), 0);
+                const totalQualifiedBillable = qualified.reduce((sum, e) => sum + (e.range?.billableHours || 0), 0);
+                g.avgPct = totalQualifiedHours > 0 
+                    ? (totalQualifiedBillable / totalQualifiedHours) * 100 
                     : 0;
             });
             
@@ -1262,7 +1284,8 @@
                 .filter(([_, g]) => g.avgPct < target && g.totalCost > 0)
                 .map(([title, g]) => {
                     const improvementPct = 5;
-                    const potentialSavings = g.totalCost * (improvementPct / 100) * 2;
+                    // FIXED: Removed unexplained * 2 multiplier - savings should equal the improvement percentage
+                    const potentialSavings = g.totalCost * (improvementPct / 100);
                     return {
                         description: `Improve "${title}" by ${improvementPct}%`,
                         detail: `${g.employees.length} employees currently at ${fmtPctVal(g.avgPct, 0)} avg`,
@@ -1301,7 +1324,8 @@
             const totalHours = employees.reduce((sum, e) => sum + (e.range?.hours || 0), 0);
             const totalBillableHours = employees.reduce((sum, e) => sum + (e.range?.billableHours || 0), 0);
             const costPerEmployee = totalNonBillCost / totalEmployees;
-            const avgBillable = employees.reduce((sum, e) => sum + (e.range?.percentBilled || 0), 0) / totalEmployees;
+            // FIXED: Use weighted average (total billable hours / total hours) instead of simple mean of percentages
+            const avgBillable = totalHours > 0 ? (totalBillableHours / totalHours) * 100 : 0;
             const avgHoursPerEmployee = totalHours / totalEmployees;
             
             // Calculate cost per non-billable hour
@@ -1325,9 +1349,14 @@
                 Math.floor((avgBillable - target) / 5) : 0;
             
             // Efficiency score (0-100)
+            // Formula: 50 points from billable %, 50 points from cost efficiency
+            // Cost efficiency: Full 50 points if cost per employee < $5000/period
+            // Deduct 1 point per $200 above $5000 threshold
+            const COST_EFFICIENCY_THRESHOLD = 5000;
+            const COST_PENALTY_DIVISOR = 200;
             const efficiencyScore = Math.min(100, Math.round(
                 (avgBillable / target) * 50 + 
-                (totalEmployees > 0 ? Math.min(50, (costPerEmployee < 5000 ? 50 : 50 - (costPerEmployee - 5000) / 200)) : 25)
+                (totalEmployees > 0 ? Math.min(50, (costPerEmployee < COST_EFFICIENCY_THRESHOLD ? 50 : 50 - (costPerEmployee - COST_EFFICIENCY_THRESHOLD) / COST_PENALTY_DIVISOR)) : 25)
             ));
             
             const recommendation = requiredBillable > 85 
@@ -1869,8 +1898,9 @@
         },
 
         filterEmployees(deptId) {
-            if (!deptId || deptId === "__ALL__") return this.latestEmployees;
-            return this.latestEmployees.filter(e => String(e.employee.departmentId) === String(deptId));
+            const employees = this.latestEmployees || [];
+            if (!deptId || deptId === "__ALL__") return employees;
+            return employees.filter(e => String(e.employee.departmentId) === String(deptId));
         },
 
         // === ENHANCED ITEMS TAB ===
@@ -2006,7 +2036,7 @@
                     const search = (el("#tbItemSearch").value || '').toLowerCase();
                     const groupBy = el("#tbItemGroupBy").value;
                     
-                    let filtered = this.latestItems;
+                    let filtered = this.latestItems || [];
                     if (search) {
                         filtered = filtered.filter(i => 
                             (i.item.name || '').toLowerCase().includes(search)
@@ -2135,8 +2165,11 @@
                 // Calculate employee-specific KPIs
                 const totalEmployees = employees.length;
                 const qualifiedEmployees = employees.filter(e => (e.range?.hours || 0) >= minHours);
-                const avgBillable = qualifiedEmployees.length > 0 
-                    ? qualifiedEmployees.reduce((sum, e) => sum + (e.range?.percentBilled || 0), 0) / qualifiedEmployees.length 
+                // FIXED: Use weighted average based on hours worked instead of simple mean of percentages
+                const qualifiedTotalHours = qualifiedEmployees.reduce((sum, e) => sum + (e.range?.hours || 0), 0);
+                const qualifiedBillableHours = qualifiedEmployees.reduce((sum, e) => sum + (e.range?.billableHours || 0), 0);
+                const avgBillable = qualifiedTotalHours > 0 
+                    ? (qualifiedBillableHours / qualifiedTotalHours) * 100 
                     : 0;
                 
                 // Count by performance category
@@ -2270,9 +2303,11 @@
 
                 // Populate department filter
                 const deptFilter = el("#tbEmployeeDeptFilterNew");
-                this.latestDepts.forEach(d => {
-                    deptFilter.innerHTML += `<option value="${d.department.netsuiteId}">${d.department.name}</option>`;
-                });
+                if (deptFilter) {
+                    (this.latestDepts || []).forEach(d => {
+                        deptFilter.innerHTML += `<option value="${d.department.netsuiteId}">${d.department.name}</option>`;
+                    });
+                }
                 
                 // Common function to refresh employee display
                 const refreshEmployeeDisplay = () => {
@@ -2656,9 +2691,9 @@
             // Calculate percentages and sort by non-billable cost
             const titles = Object.values(titleGroups).map(g => {
                 g.percentBilled = g.totals.hours > 0 ? (g.totals.billableHours / g.totals.hours) * 100 : 0;
-                g.avgPercentBilled = g.employees.length > 0 
-                    ? g.employees.reduce((sum, e) => sum + (e.range?.percentBilled || 0), 0) / g.employees.length 
-                    : 0;
+                // FIXED: avgPercentBilled should be the same weighted calculation as percentBilled
+                // The unweighted "average of individual rates" is misleading
+                g.avgPercentBilled = g.percentBilled; // Use same weighted calculation
                 return g;
             }).sort((a, b) => b.totals.nonBillableCost - a.totals.nonBillableCost);
 
@@ -2942,7 +2977,7 @@
         },
         
         async showEmployeeDetail(employeeId) {
-            const employee = this.latestEmployees.find(e => String(e.employee.netsuiteId) === String(employeeId));
+            const employee = (this.latestEmployees || []).find(e => String(e.employee.netsuiteId) === String(employeeId));
             if (!employee) return;
             
             const flyout = el("#tbEmployeeFlyout");
@@ -3042,7 +3077,8 @@
             
             // Group by service item
             const byItem = {};
-            entries.forEach(e => {
+            // FIXED: Add null safety for entries array
+            (entries || []).forEach(e => {
                 const itemName = e.itemName || 'Unknown';
                 if (!byItem[itemName]) byItem[itemName] = { hours: 0, billableHours: 0, count: 0 };
                 byItem[itemName].hours += e.hours || 0;
@@ -3055,7 +3091,8 @@
             
             // Group by customer
             const byCustomer = {};
-            entries.forEach(e => {
+            // FIXED: Add null safety for entries array
+            (entries || []).forEach(e => {
                 const custName = e.customerName || 'Internal';
                 if (!byCustomer[custName]) byCustomer[custName] = { hours: 0, count: 0 };
                 byCustomer[custName].hours += e.hours || 0;
@@ -3344,7 +3381,7 @@
         
         renderEmployeePeerComparison(employee, target) {
             const title = employee.employee.title || 'No Title';
-            const peers = this.latestEmployees.filter(e => 
+            const peers = (this.latestEmployees || []).filter(e => 
                 e.employee.title === title && e.employee.netsuiteId !== employee.employee.netsuiteId
             );
             
@@ -3391,7 +3428,7 @@
         },
         
         async showItemDetail(itemId) {
-            const item = this.latestItems.find(i => String(i.item.netsuiteId) === String(itemId));
+            const item = (this.latestItems || []).find(i => String(i.item.netsuiteId) === String(itemId));
             if (!item) return;
             
             const flyout = el("#tbItemFlyout");
@@ -3488,7 +3525,8 @@
             
             // Group by employee
             const byEmployee = {};
-            entries.forEach(e => {
+            // FIXED: Add null safety for entries array
+            (entries || []).forEach(e => {
                 const empName = e.employeeName || 'Unknown';
                 if (!byEmployee[empName]) byEmployee[empName] = { hours: 0, billableHours: 0, count: 0 };
                 byEmployee[empName].hours += e.hours || 0;
@@ -3935,7 +3973,7 @@
             }
 
             const periods = history.periods;
-            const depts = this.latestDepts;
+            const depts = this.latestDepts || [];
             const target = data.company?.thresholds?.targetBillablePercent || 70;
 
             // Current period from main data
@@ -4396,10 +4434,10 @@
             }
 
             const configToSave = {
-                targetBillablePercent: parseInt(el("#cfgTimeTargetBillable").value) || 70,
-                nonBillableCostSpikeThreshold: parseFloat(el("#cfgTimeNonBillSpike").value) || 1000,
-                minimumHoursForAnalysis: parseInt(el("#cfgTimeMinHours").value) || 10,
-                laborCostField: el("#cfgTimeLaborField").value || 'laborcost',
+                targetBillablePercent: parseInt(el("#cfgTimeTargetBillable")?.value) || 70,
+                nonBillableCostSpikeThreshold: parseFloat(el("#cfgTimeNonBillSpike")?.value) || 1000,
+                minimumHoursForAnalysis: parseInt(el("#cfgTimeMinHours")?.value) || 10,
+                laborCostField: el("#cfgTimeLaborField")?.value || 'laborcost',
                 hiddenDepartments: hiddenDepts,
                 noBillableDepartments: noBillDepts,
                 hiddenEmployees: hiddenEmps
