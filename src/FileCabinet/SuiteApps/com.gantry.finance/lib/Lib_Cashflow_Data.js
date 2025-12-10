@@ -1501,15 +1501,16 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
 
     // Single SuiteQL query for both AR (CustInvc) and AP (VendBill) payment history
     // Use explicit aliases to ensure consistent column names in results
+    // Use UPPER() for case-insensitive type matching
     const sql = `
       SELECT
-        t.type AS type,
+        UPPER(t.type) AS type,
         t.entity AS entity,
         t.trandate AS trandate,
         t.closedate AS closedate
       FROM Transaction t
       WHERE t.mainline = 'T'
-        AND t.type IN ('CustInvc', 'VendBill')
+        AND UPPER(t.type) IN ('CUSTINVC', 'VENDBILL')
         AND t.trandate >= TO_DATE('${startStr}', 'YYYY-MM-DD')
         AND t.closedate IS NOT NULL
     `;
@@ -1546,11 +1547,11 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
         if (tranDate && closeDate) {
           const days = (closeDate - tranDate) / (1000 * 60 * 60 * 24);
           if (days >= 0) {
-            // Route to AR or AP based on type
-            if (row.type === 'CustInvc') {
+            // Route to AR or AP based on type (already uppercase from SQL)
+            if (row.type === 'CUSTINVC') {
               if (!arEntityData[entityId]) arEntityData[entityId] = [];
               arEntityData[entityId].push(days);
-            } else if (row.type === 'VendBill') {
+            } else if (row.type === 'VENDBILL') {
               if (!apEntityData[entityId]) apEntityData[entityId] = [];
               apEntityData[entityId].push(days);
             }
