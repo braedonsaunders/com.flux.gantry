@@ -1756,11 +1756,14 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
     const horizonWeeks = storedConfig.horizonWeeks || 8;
     const timeline = calculateTimeline(horizonWeeks);
 
+    // Use SAME stats function as main getData (computeCombinedStats, not computeAdvancedStats)
+    const combinedStats = computeCombinedStats(paymentHistoryDays, defaultDaysToPay);
+
     const transactions = [];
 
     if (type === 'ar') {
       // Use SAME functions as main getData
-      const arStats = computeAdvancedStats("CustInvc", paymentHistoryDays, defaultDaysToPay);
+      const arStats = combinedStats.ar;
       const arData = buildARForecast(timeline, arStats, volatilityThresholds, overduePushDays);
 
       // Filter invoices to requested week
@@ -1792,20 +1795,24 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
       });
     } else {
       // AP: Use SAME functions as main getData INCLUDING scheduling logic
-      const apStats = computeAdvancedStats("VendBill", paymentHistoryDays, defaultDaysToPay);
+      const arStats = combinedStats.ar;
+      const apStats = combinedStats.ap;
+
+      // Must compute AR forecast because AR inflows affect safeApCapacity in buildFinalTimeline
+      const arData = buildARForecast(timeline, arStats, volatilityThresholds, overduePushDays);
       const apData = buildAPForecast(timeline, apStats, storedConfig.apFilters || {}, overduePushDays);
 
       // Get bank balance for scheduling
       const bank = computeBankBalance(storedConfig.bankAccountIds);
 
-      // Run buildFinalTimeline to apply weeklyCap, priority, deferrals - SAME as main getData
+      // Run buildFinalTimeline with SAME inputs as main getData (AR map affects safeApCapacity)
       const weeklyData = buildFinalTimeline(
         timeline,
         bank.balance,
-        {}, // Empty AR map - we only need AP scheduling
+        arData.weeklyMap, // AR inflows affect safeApCapacity calculation
         apData.summary.bills,
-        {}, // Empty dynamic inflows
-        {}, // Empty dynamic outflows
+        {}, // Dynamic inflows from categories (not available in flyout)
+        {}, // Dynamic outflows from categories (not available in flyout)
         storedConfig.apFilters
       );
 
