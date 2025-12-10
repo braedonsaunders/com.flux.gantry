@@ -22,6 +22,7 @@ npm-debug.log*
 .env.local
 .env.*.local
 credentials.json
+*.pem
 
 # Build artifacts
 dist/

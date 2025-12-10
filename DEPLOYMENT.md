@@ -54,52 +54,66 @@ suitecloud file:upload --paths "src/FileCabinet/SuiteApps/com.gantry.finance/lib
 
 Push to `main` → automatically deploys to NetSuite → refresh your browser to see changes.
 
+> **Note**: As of NetSuite 2024.2, Token-Based Authentication (TBA) is no longer supported for CI/CD.
+> OAuth 2.0 with certificate authentication is now required.
+
 ### Step 1: Enable Features in NetSuite
 
 1. Go to **Setup > Company > Enable Features > SuiteCloud**
 2. Check these boxes:
    - **Client SuiteScript**
    - **Server SuiteScript**
-   - **Token-Based Authentication**
    - **SuiteCloud Development Framework**
+   - **OAuth 2.0**
 
-### Step 2: Create an Integration Record
+### Step 2: Generate Key Pair
 
-1. Go to **Setup > Integration > Manage Integrations > New**
-2. Fill in:
-   - **Name**: `GitHub Deploy` (or any name)
-   - **State**: Enabled
-   - Check **Token-Based Authentication**
-   - Uncheck **TBA: Authorization Flow** (not needed)
-   - Uncheck **Authorization Code Grant** (not needed)
-3. Click **Save**
-4. **COPY these values immediately** (shown only once):
-   - **Consumer Key** → this is your `NS_AUTH_ID`
-   - Consumer Secret (not needed for this setup)
+On your local machine, generate a public/private key pair:
 
-### Step 3: Create Access Tokens
+```bash
+# Generate private key
+openssl genrsa -out private.pem 4096
 
-1. Go to **Setup > Users/Roles > Access Tokens > New**
-2. Select:
-   - **Application Name**: The integration you just created
-   - **User**: Your user (must have Administrator or similar role)
-   - **Role**: Administrator
-3. Click **Save**
-4. **COPY these values immediately** (shown only once):
-   - **Token ID** → this is your `NS_TOKEN_ID`
-   - **Token Secret** → this is your `NS_TOKEN_SECRET`
+# Generate public key from private key
+openssl rsa -in private.pem -pubout -out public.pem
+```
+
+Keep `private.pem` secure - you'll need it for GitHub secrets.
+
+### Step 3: Upload Public Key to NetSuite
+
+1. Go to **Setup > Integration > OAuth 2.0 Client Credentials (M2M) Setup**
+2. Click **Create New**
+3. Fill in:
+   - **Application**: SuiteCloud Development Integration
+   - **Entity**: Your user
+   - **Role**: Administrator (or role with SuiteScript permissions)
+4. Upload the `public.pem` file you generated
+5. Click **Save**
+6. **COPY the Certificate ID** that appears (you'll need this)
 
 ### Step 4: Add Secrets to GitHub
 
 1. Go to your GitHub repo → **Settings** → **Secrets and variables** → **Actions**
-2. Click **New repository secret** and add these 4 secrets:
+2. Add these 3 secrets:
 
 | Secret Name | Value |
 |-------------|-------|
 | `NS_ACCOUNT_ID` | Your NetSuite account ID (e.g., `1234567` or `1234567_SB1` for sandbox) |
-| `NS_AUTH_ID` | Consumer Key from Step 2 |
-| `NS_TOKEN_ID` | Token ID from Step 3 |
-| `NS_TOKEN_SECRET` | Token Secret from Step 3 |
+| `NS_CERTIFICATE_ID` | Certificate ID from Step 3 |
+| `NS_PRIVATE_KEY` | Base64-encoded private key (see below) |
+
+**To encode the private key:**
+
+```bash
+# macOS/Linux
+cat private.pem | base64 | tr -d '\n'
+
+# Or on macOS
+base64 -i private.pem | tr -d '\n'
+```
+
+Copy the entire output (one long string) and paste as the `NS_PRIVATE_KEY` secret.
 
 ### Step 5: Push and Deploy!
 
@@ -113,6 +127,12 @@ Go to **Actions** tab in GitHub to watch the deployment. Once complete, refresh 
 
 - **Production**: Setup > Company > Company Information → **Account ID**
 - **Sandbox**: Same as production but with `_SB1`, `_SB2`, etc. suffix
+
+### Troubleshooting OAuth 2.0
+
+- **Certificate ID not showing**: Make sure you selected "SuiteCloud Development Integration" as the Application
+- **Permission denied**: Ensure the Entity/Role combination has full SuiteScript and File Cabinet permissions
+- **Key format error**: Make sure you're base64 encoding the entire private.pem file including the BEGIN/END lines
 
 ## Project Structure
 
