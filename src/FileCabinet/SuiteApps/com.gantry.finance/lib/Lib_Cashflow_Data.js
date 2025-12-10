@@ -73,14 +73,12 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
     const timeline = calculateTimeline(config.horizonWeeks);
     timings.configSetup = Date.now() - t0;
 
-    // 2. Advanced Stats (Mean/StdDev) - pass configurable history window
+    // 2. Advanced Stats (Mean/StdDev) - SINGLE combined query for both AR and AP
     t0 = Date.now();
-    const arStats = computeAdvancedStats("CustInvc", paymentHistoryDays, defaultDaysToPay);
-    timings.arStats = Date.now() - t0;
-    
-    t0 = Date.now();
-    const apStats = computeAdvancedStats("VendBill", paymentHistoryDays, defaultDaysToPay);
-    timings.apStats = Date.now() - t0;
+    const combinedStats = computeCombinedStats(paymentHistoryDays, defaultDaysToPay);
+    const arStats = combinedStats.ar;
+    const apStats = combinedStats.ap;
+    timings.combinedStats = Date.now() - t0;
 
     // 3. Core Forecasts - pass configurable settings
     t0 = Date.now();
@@ -102,8 +100,15 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
     let dynamicInflows = {};
     let dynamicOutflows = {};
     const categoryTimings = {};
+    const categoryErrors = [];
 
+    // Pre-fetch GL History data for ALL gl_history_average categories in ONE query
+    let batchedGLData = null;
     if (config.categories && Array.isArray(config.categories)) {
+      const glBatchStart = Date.now();
+      batchedGLData = batchFetchGLHistoryData(config.categories, timeline);
+      timings.glHistoryBatch = Date.now() - glBatchStart;
+
       config.categories.forEach((catConfig) => {
         try {
           const catStart = Date.now();
@@ -115,7 +120,8 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
               ar: arData.weeklyMap,
               ap: apData.weeklyMap,
               cashStart: bank.balance,
-            }
+            },
+            batchedGLData
           );
           categoryTimings[catConfig.id] = Date.now() - catStart;
           categoryResults[catConfig.id] = result;
@@ -126,6 +132,11 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
           });
         } catch (e) {
           log.error(`Error processing category ${catConfig.id}`, e);
+          categoryErrors.push({
+            categoryId: catConfig.id,
+            categoryName: catConfig.name || catConfig.id,
+            error: e.message || String(e)
+          });
         }
       });
     }
@@ -184,6 +195,7 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
         range: { days: timeline.days },
         horizonWeeks: config.horizonWeeks,
         activeConfig: config,
+        categoryErrors: categoryErrors.length > 0 ? categoryErrors : null,
       },
       company: {
         cash: weeklyData.summary,
@@ -318,10 +330,95 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
 
   // ================= STRATEGIES =================
 
-  function processCategory(config, timeline, asOfDate, contextData) {
+  /**
+   * Batch fetch GL History data for ALL gl_history_average categories in ONE query
+   * This eliminates N separate queries when N categories use this strategy
+   * @param {Array} categories - All category configs
+   * @param {Object} timeline - Timeline object with start/end dates
+   * @returns {Object} Map of accountId -> array of {date, amount, accountName}
+   */
+  function batchFetchGLHistoryData(categories, timeline) {
+    // Collect all GL History categories and their accounts
+    const glCategories = categories.filter(c =>
+      (c.method || "gl_history_average") === "gl_history_average" &&
+      c.accounts && c.accounts.length > 0
+    );
+
+    if (glCategories.length === 0) {
+      return { accountData: {}, maxHistoryWeeks: 0 };
+    }
+
+    // Find the maximum history weeks needed across all categories
+    let maxHistoryWeeks = 12;
+    const allAccountIds = new Set();
+
+    glCategories.forEach(function(cat) {
+      const weeks = parseInt(cat.historyWeeks) || 12;
+      if (weeks > maxHistoryWeeks) maxHistoryWeeks = weeks;
+      cat.accounts.forEach(function(accId) {
+        allAccountIds.add(accId);
+      });
+    });
+
+    if (allAccountIds.size === 0) {
+      return { accountData: {}, maxHistoryWeeks: maxHistoryWeeks };
+    }
+
+    // Calculate date range for the batch query
+    const historyStart = addDays(timeline.start, -(maxHistoryWeeks * 7));
+    const startStr = Shared.formatDateYMD(historyStart);
+    const endStr = Shared.formatDateYMD(timeline.end);
+    const accountIdList = Array.from(allAccountIds).join(',');
+
+    // Single SuiteQL query for ALL GL History accounts
+    const sql = `
+      SELECT
+        tal.account,
+        BUILTIN.DF(tal.account) as account_name,
+        t.trandate,
+        tal.amount
+      FROM Transaction t
+      JOIN TransactionAccountingLine tal ON t.id = tal.transaction
+      WHERE tal.account IN (${accountIdList})
+        AND t.posting = 'T'
+        AND t.trandate >= TO_DATE('${startStr}', 'YYYY-MM-DD')
+        AND t.trandate <= TO_DATE('${endStr}', 'YYYY-MM-DD')
+      ORDER BY tal.account, t.trandate
+    `;
+
+    const accountData = {};
+
+    try {
+      const resultSet = query.runSuiteQL({ query: sql });
+      const results = resultSet.asMappedResults();
+
+      results.forEach(function(row) {
+        const accountId = String(row.account);
+        const accountName = row.account_name || accountId;
+        const amount = parseFloat(row.amount) || 0;
+        const trandate = row.trandate;
+
+        if (!accountData[accountId]) {
+          accountData[accountId] = [];
+        }
+        accountData[accountId].push({
+          date: trandate,
+          amount: amount,
+          accountName: accountName
+        });
+      });
+    } catch (e) {
+      log.error("GL History Batch SuiteQL Error", e);
+      // Return empty - individual categories will fall back to their own queries
+    }
+
+    return { accountData: accountData, maxHistoryWeeks: maxHistoryWeeks };
+  }
+
+  function processCategory(config, timeline, asOfDate, contextData, batchedGLData) {
     const method = config.method || "gl_history_average";
     switch (method) {
-      case "gl_history_average": return strategyGLHistory(config, timeline, asOfDate);
+      case "gl_history_average": return strategyGLHistory(config, timeline, asOfDate, batchedGLData);
       case "vendor_payment_history": return strategyVendorPaymentHistory(config, timeline, asOfDate);
       case "credit_card_cycle": return strategyCreditCardCycle(config, timeline, asOfDate);
       case "manual_recurring": return strategyManualRecurring(config, timeline, asOfDate);
@@ -332,50 +429,81 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
     }
   }
 
-  function strategyGLHistory(config, timeline, asOfDate) {
+  function strategyGLHistory(config, timeline, asOfDate, batchedGLData) {
     const historyWeeks = parseInt(config.historyWeeks) || 12;
     const adjustmentPct = parseFloat(config.adjustmentPercent) || 0;
     const historyStart = addDays(timeline.start, -(historyWeeks * 7));
-    
-    const filters = [
-      ["posting", "is", "T"], "AND",
-      ["trandate", "onorafter", toNsDateString(historyStart)], "AND",
-      ["trandate", "onorbefore", toNsDateString(timeline.end)],
-    ];
-    if (config.accounts && config.accounts.length > 0)
-      filters.push("AND", ["account", "anyof", config.accounts]);
-    else return { total: 0, weeklyAmounts: {} };
+
+    if (!config.accounts || config.accounts.length === 0) {
+      return { total: 0, weeklyAmounts: {} };
+    }
 
     const weeklyHistory = {};
     const accountBreakdown = {};
     let totalHistory = 0;
     let weeksCounted = 0;
 
-    const searchObj = search.create({
-      type: search.Type.TRANSACTION,
-      filters: filters,
-      columns: ["trandate", "amount", "account"],
-    });
+    // Use batched data if available, otherwise fall back to individual query
+    if (batchedGLData && batchedGLData.accountData && Object.keys(batchedGLData.accountData).length > 0) {
+      // Process from pre-fetched batch data
+      config.accounts.forEach(function(accountId) {
+        const accountIdStr = String(accountId);
+        const rows = batchedGLData.accountData[accountIdStr] || [];
 
-    const pagedData = searchObj.runPaged({ pageSize: 1000 });
-    pagedData.pageRanges.forEach((pageRange) => {
-      const page = pagedData.fetch({ index: pageRange.index });
-      page.data.forEach((res) => {
-        const rawAmt = parseFloat(res.getValue("amount")) || 0;
-        const amt = config.useNetAmt === true ? rawAmt : Math.abs(rawAmt);
-        const date = parseNsDate(res.getValue("trandate"));
-        const wkKey = Shared.formatDateYMD(getWeekStart(date));
-        const acct = res.getText("account");
+        rows.forEach(function(row) {
+          const date = parseNsDate(row.date);
+          // Filter to this category's history window
+          if (date < historyStart || date > timeline.end) return;
 
-        if (!weeklyHistory[wkKey]) weeklyHistory[wkKey] = 0;
-        weeklyHistory[wkKey] += amt;
+          const rawAmt = row.amount;
+          const amt = config.useNetAmt === true ? rawAmt : Math.abs(rawAmt);
+          const wkKey = Shared.formatDateYMD(getWeekStart(date));
+          const acct = row.accountName;
 
-        if (date < timeline.start) {
-          if (!accountBreakdown[acct]) accountBreakdown[acct] = 0;
-          accountBreakdown[acct] += amt;
-        }
+          if (!weeklyHistory[wkKey]) weeklyHistory[wkKey] = 0;
+          weeklyHistory[wkKey] += amt;
+
+          if (date < timeline.start) {
+            if (!accountBreakdown[acct]) accountBreakdown[acct] = 0;
+            accountBreakdown[acct] += amt;
+          }
+        });
       });
-    });
+    } else {
+      // Fallback: run individual query (for backward compatibility or if batch failed)
+      const filters = [
+        ["posting", "is", "T"], "AND",
+        ["trandate", "onorafter", toNsDateString(historyStart)], "AND",
+        ["trandate", "onorbefore", toNsDateString(timeline.end)], "AND",
+        ["account", "anyof", config.accounts]
+      ];
+
+      const searchObj = search.create({
+        type: search.Type.TRANSACTION,
+        filters: filters,
+        columns: ["trandate", "amount", "account"],
+      });
+
+      const pagedData = searchObj.runPaged({ pageSize: 1000 });
+      pagedData.pageRanges.forEach(function(pageRange) {
+        const page = pagedData.fetch({ index: pageRange.index });
+        page.data.forEach(function(res) {
+          const rawAmt = parseFloat(res.getValue("amount")) || 0;
+          const amt = config.useNetAmt === true ? rawAmt : Math.abs(rawAmt);
+          const date = parseNsDate(res.getValue("trandate"));
+          const wkKey = Shared.formatDateYMD(getWeekStart(date));
+          const acct = res.getText("account");
+
+          if (!weeklyHistory[wkKey]) weeklyHistory[wkKey] = 0;
+          weeklyHistory[wkKey] += amt;
+
+          if (date < timeline.start) {
+            if (!accountBreakdown[acct]) accountBreakdown[acct] = 0;
+            accountBreakdown[acct] += amt;
+          }
+        });
+      });
+    }
 
     Object.keys(weeklyHistory).forEach((k) => {
       if (k < Shared.formatDateYMD(timeline.start)) {
@@ -507,51 +635,79 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
     const lookbackMonths = parseInt(config.historyMonths) || 6;
     const lookbackDays = lookbackMonths * 30;
     const historyStart = addDays(asOfDate, -lookbackDays);
+    // Configurable threshold for significant payment detection (default: auto-detect from median)
+    const significantPaymentThreshold = parseFloat(config.significantPaymentThreshold) || 0;
 
-    // ========== PHASE 1: Gather Transaction Data ==========
+    // ========== PHASE 1: Gather Transaction Data + Current Balance in SINGLE SuiteQL ==========
     const dailyTotals = {};
     let grandTotalSpend = 0;
     let grandTotalPayments = 0;
+    let totalCurrentBalance = 0;
 
-    const searchObj = search.create({
-      type: search.Type.TRANSACTION,
-      filters: [
-        ["posting", "is", "T"],
-        "AND",
-        ["account", "anyof", accountIds],
-        "AND",
-        ["trandate", "onorafter", toNsDateString(historyStart)],
-        "AND",
-        ["trandate", "onorbefore", toNsDateString(asOfDate)],
-      ],
-      columns: ["trandate", "creditamount", "debitamount"],
-    });
+    const startStr = Shared.formatDateYMD(historyStart);
+    const endStr = Shared.formatDateYMD(asOfDate);
+    const accountIdList = accountIds.join(',');
 
-    const pagedData = searchObj.runPaged({ pageSize: 1000 });
-    pagedData.pageRanges.forEach((pageRange) => {
-      const page = pagedData.fetch({ index: pageRange.index });
-      page.data.forEach((res) => {
-        const credit = parseFloat(res.getValue("creditamount")) || 0;
-        const debit = parseFloat(res.getValue("debitamount")) || 0;
-        const dateStr = res.getValue("trandate");
-        const dateObj = parseNsDate(dateStr);
-        const dateKey = Shared.formatDateYMD(dateObj);
+    // Combined query: Transaction history UNION Account balance
+    const sql = `
+      SELECT
+        'txn' as row_type,
+        t.trandate,
+        tal.credit,
+        tal.debit,
+        NULL as balance
+      FROM Transaction t
+      JOIN TransactionAccountingLine tal ON t.id = tal.transaction
+      WHERE tal.account IN (${accountIdList})
+        AND t.posting = 'T'
+        AND t.trandate >= TO_DATE('${startStr}', 'YYYY-MM-DD')
+        AND t.trandate <= TO_DATE('${endStr}', 'YYYY-MM-DD')
+      UNION ALL
+      SELECT
+        'bal' as row_type,
+        NULL as trandate,
+        NULL as credit,
+        NULL as debit,
+        SUM(a.balance) as balance
+      FROM Account a
+      WHERE a.id IN (${accountIdList})
+        AND a.isinactive = 'F'
+    `;
 
-        if (!dailyTotals[dateKey]) {
-          dailyTotals[dateKey] = { date: dateObj, debits: 0, credits: 0 };
-        }
+    try {
+      const resultSet = query.runSuiteQL({ query: sql });
+      const results = resultSet.asMappedResults();
 
-        if (credit > 0) {
-          dailyTotals[dateKey].credits += credit;
-          grandTotalSpend += credit;
-        }
+      results.forEach(function(row) {
+        if (row.row_type === 'bal') {
+          // Account balance row
+          totalCurrentBalance = Math.abs(parseFloat(row.balance) || 0);
+        } else {
+          // Transaction row
+          const credit = parseFloat(row.credit) || 0;
+          const debit = parseFloat(row.debit) || 0;
+          const dateObj = parseNsDate(row.trandate);
+          const dateKey = Shared.formatDateYMD(dateObj);
 
-        if (debit > 0) {
-          dailyTotals[dateKey].debits += debit;
-          grandTotalPayments += debit;
+          if (!dailyTotals[dateKey]) {
+            dailyTotals[dateKey] = { date: dateObj, debits: 0, credits: 0 };
+          }
+
+          if (credit > 0) {
+            dailyTotals[dateKey].credits += credit;
+            grandTotalSpend += credit;
+          }
+
+          if (debit > 0) {
+            dailyTotals[dateKey].debits += debit;
+            grandTotalPayments += debit;
+          }
         }
       });
-    });
+    } catch (e) {
+      log.error("Credit Card SuiteQL Error", e);
+      return { total: 0, weeklyAmounts: {}, meta: { error: "Query error: " + e.message } };
+    }
 
     // ========== PHASE 2: Roll Up Payments by Month ==========
     const monthlyPayments = {};
@@ -653,33 +809,19 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
       }
     }
 
-    // ========== PHASE 6: Get Current Balance ==========
-    let totalCurrentBalance = 0;
-    search
-      .create({
-        type: search.Type.ACCOUNT,
-        filters: [
-          ["internalid", "anyof", accountIds],
-          "AND",
-          ["isinactive", "is", "F"],
-        ],
-        columns: [
-          search.createColumn({ name: "balance", summary: search.Summary.SUM }),
-        ],
-      })
-      .run()
-      .each((res) => {
-        totalCurrentBalance = Math.abs(
-          parseFloat(res.getValue({ name: "balance", summary: search.Summary.SUM })) || 0
-        );
-        return true;
-      });
+    // ========== PHASE 6: Current Balance (already fetched in PHASE 1 SuiteQL) ==========
+    // totalCurrentBalance is populated from the combined query above
 
     // ========== PHASE 7: Calculate Cycle Position & Projections ==========
     const dailyBurnRate = grandTotalSpend / lookbackDays;
 
+    // Use configured threshold, or auto-detect as 50% of median payment
+    const effectiveThreshold = significantPaymentThreshold > 0
+      ? significantPaymentThreshold
+      : (medianPayment > 0 ? medianPayment * 0.5 : 10000);
+
     const significantPayments = Object.entries(dailyTotals)
-      .filter(([_, data]) => data.debits > 50000)
+      .filter(([_, data]) => data.debits > effectiveThreshold)
       .map(([dateKey, data]) => ({ date: data.date, dateKey: dateKey, amount: data.debits }))
       .sort((a, b) => b.date - a.date);
 
@@ -1272,9 +1414,10 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
       filters.push("AND", ["vendor.category", "noneof", exclusions.excludeVendorCategories]);
     }
 
-    // Use configurable push days with defaults
+    // Use configurable push days with defaults (matching AR logic)
     const pushLight = overduePushDays.light || 7;
     const pushMedium = overduePushDays.medium || 14;
+    const pushHeavy = overduePushDays.heavy || 28;
 
     const searchObj = search.create({
       type: search.Type.VENDOR_BILL,
@@ -1311,13 +1454,20 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
 
         let predictedDate;
         if (customDateRaw) predictedDate = parseNsDate(customDateRaw);
-        else if (statsData.map[entityId]) predictedDate = addDays(trandate, statsData.map[entityId].avgDays);
+        else if (statsData.map[entityId]) {
+          // Add stdDev buffer to match AR logic for symmetric predictions
+          const s = statsData.map[entityId];
+          const buffer = s.stdDev ? Math.ceil(s.stdDev * 0.5) : 0;
+          predictedDate = addDays(trandate, s.avgDays + buffer);
+        }
         else predictedDate = addDays(trandate, statsData.globalAvg);
 
         if (predictedDate < timeline.asOfDate) {
           const diffDays = Math.ceil((timeline.asOfDate - predictedDate) / (1000 * 60 * 60 * 24));
-          // Use configurable push days
-          const pushDays = diffDays > 30 ? pushMedium : pushLight;
+          // Use configurable push days with three tiers (matching AR logic)
+          let pushDays = pushLight;
+          if (diffDays > 60) pushDays = pushHeavy;
+          else if (diffDays > 30) pushDays = pushMedium;
           predictedDate = addDays(timeline.asOfDate, pushDays);
         }
 
@@ -1407,6 +1557,96 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
 
     const globalAvg = globalCount > 0 ? Math.round(globalSum / globalCount) : defaultDays;
     return { map: map, globalAvg: globalAvg };
+  }
+
+  /**
+   * Compute AR and AP payment stats in a SINGLE SuiteQL query
+   * Replaces two separate computeAdvancedStats calls with one database round-trip
+   * @param {number} paymentHistoryDays - Days of history to analyze
+   * @param {number} defaultDaysToPay - Default days if no history exists
+   * @returns {Object} { ar: {map, globalAvg}, ap: {map, globalAvg} }
+   */
+  function computeCombinedStats(paymentHistoryDays, defaultDaysToPay) {
+    const historyDays = paymentHistoryDays || 365;
+    const defaultDays = defaultDaysToPay || 45;
+    const today = new Date();
+    const historyStart = addDays(today, -historyDays);
+    const startStr = Shared.formatDateYMD(historyStart);
+
+    // Single SuiteQL query for both AR (CustInvc) and AP (VendBill) payment history
+    const sql = `
+      SELECT
+        t.type,
+        t.entity,
+        t.trandate,
+        t.closedate
+      FROM Transaction t
+      WHERE t.mainline = 'T'
+        AND t.type IN ('CustInvc', 'VendBill')
+        AND t.trandate >= TO_DATE('${startStr}', 'YYYY-MM-DD')
+        AND t.closedate IS NOT NULL
+      ORDER BY t.type, t.entity
+    `;
+
+    // Data structures for AR and AP
+    const arEntityData = {};
+    const apEntityData = {};
+
+    try {
+      const resultSet = query.runSuiteQL({ query: sql });
+      const results = resultSet.asMappedResults();
+
+      results.forEach(function(row) {
+        const entityId = row.entity;
+        const tranDate = parseNsDate(row.trandate);
+        const closeDate = parseNsDate(row.closedate);
+
+        if (entityId && tranDate && closeDate) {
+          const days = (closeDate - tranDate) / (1000 * 60 * 60 * 24);
+          if (days >= 0) {
+            // Route to AR or AP based on type
+            if (row.type === 'CustInvc') {
+              if (!arEntityData[entityId]) arEntityData[entityId] = [];
+              arEntityData[entityId].push(days);
+            } else if (row.type === 'VendBill') {
+              if (!apEntityData[entityId]) apEntityData[entityId] = [];
+              apEntityData[entityId].push(days);
+            }
+          }
+        }
+      });
+    } catch (e) {
+      log.error("Combined Stats SuiteQL Error", e);
+      // Fallback to empty results - forecasts will use defaults
+    }
+
+    // Helper to compute stats from entity data
+    function computeStatsFromData(entityData) {
+      const map = {};
+      let globalSum = 0;
+      let globalCount = 0;
+
+      Object.keys(entityData).forEach(function(eId) {
+        const points = entityData[eId];
+        const n = points.length;
+        if (n === 0) return;
+        const sum = points.reduce(function(a, b) { return a + b; }, 0);
+        const mean = sum / n;
+        const variance = points.reduce(function(a, b) { return a + Math.pow(b - mean, 2); }, 0) / n;
+        const stdDev = Math.sqrt(variance);
+        map[eId] = { avgDays: Math.round(mean), stdDev: stdDev, count: n };
+        globalSum += sum;
+        globalCount += n;
+      });
+
+      const globalAvg = globalCount > 0 ? Math.round(globalSum / globalCount) : defaultDays;
+      return { map: map, globalAvg: globalAvg };
+    }
+
+    return {
+      ar: computeStatsFromData(arEntityData),
+      ap: computeStatsFromData(apEntityData)
+    };
   }
 
   function buildFinalTimeline(timeline, startCash, arMap, apBillsList, dynIn, dynOut, apConfig) {
@@ -1794,22 +2034,26 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
             predictionDetail = 'User-set expected payment date';
           } else if (statsData.map[entityId]) {
             const s = statsData.map[entityId];
-            predictedDate = addDays(trandate, s.avgDays);
+            // Add stdDev buffer to match buildAPForecast
+            const buffer = s.stdDev ? Math.ceil(s.stdDev * 0.5) : 0;
+            predictedDate = addDays(trandate, s.avgDays + buffer);
             predictionMethod = 'vendor_history';
-            predictionDetail = 'Vendor avg: ' + s.avgDays + ' days (based on ' + s.count + ' payments)';
+            predictionDetail = 'Vendor avg: ' + s.avgDays + 'd + ' + buffer + 'd buffer (σ=' + Math.round(s.stdDev || 0) + ', n=' + s.count + ')';
           } else {
             predictedDate = addDays(trandate, statsData.globalAvg);
             predictionMethod = 'global_avg';
             predictionDetail = 'Global avg: ' + statsData.globalAvg + ' days (no vendor history)';
           }
-          
+
           const originalPrediction = new Date(predictedDate);
-          
+
           // Push forward if predicted in the past - EXACT same logic as buildAPForecast
           if (predictedDate < timeline.asOfDate) {
             const diffDays = Math.ceil((timeline.asOfDate - predictedDate) / (1000 * 60 * 60 * 24));
-            // Use same logic as buildAPForecast: only light and medium, no heavy
-            const pushDays = diffDays > 30 ? pushMedium : pushLight;
+            // Use three-tier push to match buildAPForecast
+            let pushDays = pushLight;
+            if (diffDays > 60) pushDays = pushHeavy;
+            else if (diffDays > 30) pushDays = pushMedium;
             predictedDate = addDays(timeline.asOfDate, pushDays);
             predictionDetail += ' → pushed +' + pushDays + 'd (was ' + diffDays + 'd overdue)';
           }
@@ -2143,29 +2387,32 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
           "trandate", "duedate", "daysoverdue"
         ]
       });
-      
-      searchObj.run().each(function(res) {
-        const duedate = res.getValue("duedate") ? parseNsDate(res.getValue("duedate")) : null;
-        let daysOverDue = 0;
-        
-        if (duedate) {
-          daysOverDue = Math.ceil((today - duedate) / (1000 * 60 * 60 * 24));
-        }
-        
-        // Check if falls in requested bucket
-        if (daysOverDue >= minDaysOverdue && daysOverDue <= maxDaysOverdue) {
-          items.push({
-            internalId: res.getValue("internalid"),
-            tranId: res.getValue("tranid"),
-            entityId: res.getValue("entity"),
-            entityName: res.getText("entity"),
-            amount: parseFloat(res.getValue("amountremaining")) || 0,
-            tranDate: Shared.formatDateYMD(parseNsDate(res.getValue("trandate"))),
-            dueDate: duedate ? Shared.formatDateYMD(duedate) : null,
-            daysOverDue: daysOverDue
-          });
-        }
-        return true;
+
+      // Use runPaged to handle >4000 results
+      const pagedData = searchObj.runPaged({ pageSize: 1000 });
+      pagedData.pageRanges.forEach(function(pageRange) {
+        pagedData.fetch({ index: pageRange.index }).data.forEach(function(res) {
+          const duedate = res.getValue("duedate") ? parseNsDate(res.getValue("duedate")) : null;
+          let daysOverDue = 0;
+
+          if (duedate) {
+            daysOverDue = Math.ceil((today - duedate) / (1000 * 60 * 60 * 24));
+          }
+
+          // Check if falls in requested bucket
+          if (daysOverDue >= minDaysOverdue && daysOverDue <= maxDaysOverdue) {
+            items.push({
+              internalId: res.getValue("internalid"),
+              tranId: res.getValue("tranid"),
+              entityId: res.getValue("entity"),
+              entityName: res.getText("entity"),
+              amount: parseFloat(res.getValue("amountremaining")) || 0,
+              tranDate: Shared.formatDateYMD(parseNsDate(res.getValue("trandate"))),
+              dueDate: duedate ? Shared.formatDateYMD(duedate) : null,
+              daysOverDue: daysOverDue
+            });
+          }
+        });
       });
     } else {
       const searchObj = search.create({
@@ -2179,28 +2426,31 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
           "trandate", "duedate"
         ]
       });
-      
-      searchObj.run().each(function(res) {
-        const duedate = res.getValue("duedate") ? parseNsDate(res.getValue("duedate")) : null;
-        let daysOverDue = 0;
-        
-        if (duedate) {
-          daysOverDue = Math.ceil((today - duedate) / (1000 * 60 * 60 * 24));
-        }
-        
-        if (daysOverDue >= minDaysOverdue && daysOverDue <= maxDaysOverdue) {
-          items.push({
-            internalId: res.getValue("internalid"),
-            tranId: res.getValue("tranid"),
-            entityId: res.getValue("entity"),
-            entityName: res.getText("entity"),
-            amount: parseFloat(res.getValue("amountremaining")) || 0,
-            tranDate: Shared.formatDateYMD(parseNsDate(res.getValue("trandate"))),
-            dueDate: duedate ? Shared.formatDateYMD(duedate) : null,
-            daysOverDue: daysOverDue
-          });
-        }
-        return true;
+
+      // Use runPaged to handle >4000 results
+      const pagedData = searchObj.runPaged({ pageSize: 1000 });
+      pagedData.pageRanges.forEach(function(pageRange) {
+        pagedData.fetch({ index: pageRange.index }).data.forEach(function(res) {
+          const duedate = res.getValue("duedate") ? parseNsDate(res.getValue("duedate")) : null;
+          let daysOverDue = 0;
+
+          if (duedate) {
+            daysOverDue = Math.ceil((today - duedate) / (1000 * 60 * 60 * 24));
+          }
+
+          if (daysOverDue >= minDaysOverdue && daysOverDue <= maxDaysOverdue) {
+            items.push({
+              internalId: res.getValue("internalid"),
+              tranId: res.getValue("tranid"),
+              entityId: res.getValue("entity"),
+              entityName: res.getText("entity"),
+              amount: parseFloat(res.getValue("amountremaining")) || 0,
+              tranDate: Shared.formatDateYMD(parseNsDate(res.getValue("trandate"))),
+              dueDate: duedate ? Shared.formatDateYMD(duedate) : null,
+              daysOverDue: daysOverDue
+            });
+          }
+        });
       });
     }
     
