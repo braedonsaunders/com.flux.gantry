@@ -200,20 +200,18 @@ define([
                 .uir-page-title-secondline {
                     display: none !important;
                 }
-                
+
                 /* Iframe container - full width, positioned below NS header */
                 .gantry-frame-wrapper {
                     position: fixed;
                     left: 0;
                     right: 0;
                     bottom: 0;
-                    top: 103px;
+                    top: 103px; /* Fallback, will be overridden by JS */
                     width: 100vw;
-                    height: calc(100vh - 90px);
                     z-index: 100;
-                    background: #fff;
                 }
-                
+
                 .gantry-iframe {
                     width: 100%;
                     height: 100%;
@@ -222,12 +220,86 @@ define([
                 }
             </style>
             <div class="gantry-frame-wrapper">
-                <iframe 
-                    src="${suiteletUrl}" 
+                <iframe
+                    src="${suiteletUrl}"
                     class="gantry-iframe"
                     title="Gantry Financial Suite"
                 ></iframe>
             </div>
+            <script>
+                (function() {
+                    /**
+                     * Detect NetSuite header bottom position and adjust iframe accordingly
+                     */
+                    function adjustIframePosition() {
+                        var wrapper = document.querySelector('.gantry-frame-wrapper');
+                        if (!wrapper) return false;
+
+                        // NetSuite header selectors (order matters - most specific first)
+                        var headerSelectors = [
+                            '#div__header',           // Redwood theme header
+                            '#ns-header',             // Modern NetSuite header
+                            '#ns_navigation',         // Navigation bar
+                            '.uir-page-header',       // Classic UI header
+                            '#nscm'                   // NetSuite Center Menu
+                        ];
+
+                        var headerBottom = 0;
+
+                        // Try each selector to find the header
+                        for (var i = 0; i < headerSelectors.length; i++) {
+                            var header = document.querySelector(headerSelectors[i]);
+                            if (header) {
+                                var rect = header.getBoundingClientRect();
+                                // Use the highest bottom value found (in case of nested headers)
+                                if (rect.bottom > headerBottom) {
+                                    headerBottom = rect.bottom;
+                                }
+                            }
+                        }
+
+                        // Fallback: scan for navigation elements by checking elements at top of page
+                        if (headerBottom === 0) {
+                            var yPositions = [40, 60, 80, 100];
+                            for (var j = 0; j < yPositions.length; j++) {
+                                var elements = document.elementsFromPoint(window.innerWidth / 2, yPositions[j]);
+                                for (var k = 0; k < elements.length; k++) {
+                                    var el = elements[k];
+                                    if (el.tagName === 'BODY' || el.tagName === 'HTML') continue;
+                                    var rect = el.getBoundingClientRect();
+                                    if (rect.bottom > headerBottom && rect.bottom < 200) {
+                                        headerBottom = rect.bottom;
+                                    }
+                                }
+                            }
+                        }
+
+                        // Apply detected position (minimum 80px, maximum 120px for safety)
+                        if (headerBottom > 0) {
+                            headerBottom = Math.max(80, Math.min(120, headerBottom));
+                            wrapper.style.top = headerBottom + 'px';
+                            console.log('[Gantry] Iframe positioned at top:', headerBottom + 'px');
+                            return true;
+                        }
+
+                        return false;
+                    }
+
+                    // Run immediately
+                    var success = adjustIframePosition();
+
+                    // Retry with delays for async-loading themes (like Redwood)
+                    if (!success) {
+                        var retries = [100, 200, 400, 800];
+                        retries.forEach(function(delay) {
+                            setTimeout(adjustIframePosition, delay);
+                        });
+                    }
+
+                    // Also adjust on window resize
+                    window.addEventListener('resize', adjustIframePosition);
+                })();
+            </script>
         `;
 
         context.response.writePage(form);
