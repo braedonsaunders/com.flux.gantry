@@ -28,27 +28,13 @@
             }
             docs.push({ doc: document, win: window, name: 'current' });
 
-            // NetSuite header selectors - includes Redwood theme with ID selectors
-            const headerSelectors = [
-                // Redwood theme (uses ID selectors, not classes)
-                '#div__header .ns-header-background',   // Redwood actual background element
-                '#div__header .ns-menubar',             // Redwood menu bar
-                '#div__header .ns-menu-container',      // Redwood menu container
-                '#div__header',                         // Redwood header container (ID, not class)
-                '[id="div__header"]',                   // Alternative ID selector
-                // Classic NetSuite selectors
+            // NetSuite header container selectors
+            const headerContainers = [
+                '#div__header',                         // Redwood theme header
                 '#ns-header',                           // Modern NetSuite header
-                '.ns-header',                           // Alternative class
                 '#ns_navigation',                       // Navigation bar
-                '.ns_navigation',                       // Navigation class
                 '.uir-page-header',                     // Classic UI header
                 '#nscm',                                // NetSuite Center Menu
-                '.ns-role-header',                      // Role-based header
-                '[data-role="header"]',                 // Data attribute header
-                // Background utility classes
-                '.bgdk',                                // Dark background nav
-                '.bgmd',                                // Medium background nav
-                '.bglt'                                 // Light background nav
             ];
 
             let detectedColor = null;
@@ -59,57 +45,61 @@
             for (const { doc, win, name } of docs) {
                 if (detectedColor) break;
 
-                // Try each selector
-                for (const selector of headerSelectors) {
+                // Strategy: Find header container, then scan ALL descendants for actual colored element
+                for (const containerSelector of headerContainers) {
+                    if (detectedColor) break;
+
                     try {
-                        const elements = doc.querySelectorAll(selector);
-                        for (const element of elements) {
+                        const container = doc.querySelector(containerSelector);
+                        if (!container) continue;
+
+                        // Scan all descendants for the actual colored navigation bar
+                        const allElements = container.querySelectorAll('*');
+                        for (const element of allElements) {
                             // Skip skeleton/placeholder elements
                             if (element.id && element.id.includes('skeleton')) continue;
                             if (element.classList && element.classList.contains('bgoff')) continue;
-                            if (element.closest('[id*="skeleton"]')) continue;
 
                             const computedStyle = win.getComputedStyle(element);
                             const bgColor = computedStyle.backgroundColor;
 
-                            // Skip transparent, pure white, or near-white backgrounds
+                            // Skip transparent or light/grey backgrounds - we want the COLORED nav bar
                             if (bgColor && bgColor !== 'transparent' &&
                                 bgColor !== 'rgba(0, 0, 0, 0)' &&
-                                !isNearWhite(bgColor)) {
+                                !isLightOrGrey(bgColor)) {
                                 detectedColor = bgColor;
-                                sourceElement = selector;
+                                sourceElement = `${containerSelector} descendant`;
                                 sourceDoc = name;
                                 break;
                             }
                         }
-                        if (detectedColor) break;
                     } catch (e) {
                         continue;
                     }
                 }
 
-                // If no selector matched, try elementsFromPoint
+                // Fallback: try elementsFromPoint at nav bar height (~80px down)
                 if (!detectedColor) {
                     try {
-                        const topElements = doc.elementsFromPoint(win.innerWidth / 2, 50);
-                        for (const element of topElements) {
-                            // Skip body/html
-                            if (element.tagName === 'BODY' || element.tagName === 'HTML') continue;
-                            // Skip skeleton/placeholder elements
-                            if (element.id && element.id.includes('skeleton')) continue;
-                            if (element.classList && element.classList.contains('bgoff')) continue;
-                            if (element.closest('[id*="skeleton"]')) continue;
+                        // Try multiple Y positions to find the nav bar
+                        for (const yPos of [80, 60, 100, 40]) {
+                            if (detectedColor) break;
+                            const elements = doc.elementsFromPoint(win.innerWidth / 2, yPos);
+                            for (const element of elements) {
+                                if (element.tagName === 'BODY' || element.tagName === 'HTML') continue;
+                                if (element.id && element.id.includes('skeleton')) continue;
 
-                            const computedStyle = win.getComputedStyle(element);
-                            const bgColor = computedStyle.backgroundColor;
+                                const computedStyle = win.getComputedStyle(element);
+                                const bgColor = computedStyle.backgroundColor;
 
-                            if (bgColor && bgColor !== 'transparent' &&
-                                bgColor !== 'rgba(0, 0, 0, 0)' &&
-                                !isNearWhite(bgColor)) {
-                                detectedColor = bgColor;
-                                sourceElement = `elementsFromPoint (${element.className || element.tagName})`;
-                                sourceDoc = name;
-                                break;
+                                if (bgColor && bgColor !== 'transparent' &&
+                                    bgColor !== 'rgba(0, 0, 0, 0)' &&
+                                    !isLightOrGrey(bgColor)) {
+                                    detectedColor = bgColor;
+                                    sourceElement = `elementsFromPoint y=${yPos}`;
+                                    sourceDoc = name;
+                                    break;
+                                }
                             }
                         }
                     } catch (e) {
@@ -164,13 +154,25 @@
     }
 
     /**
-     * Check if a color is near-white (for filtering out placeholder backgrounds)
+     * Check if a color is light or grey (for filtering out container backgrounds)
+     * We want to skip light greys, whites, and unsaturated colors
      */
-    function isNearWhite(color) {
+    function isLightOrGrey(color) {
         const rgb = parseRgb(color);
         if (!rgb) return false;
-        // Consider colors with all channels > 250 as "near white"
-        return rgb.r > 250 && rgb.g > 250 && rgb.b > 250;
+
+        const luminance = (0.299 * rgb.r + 0.587 * rgb.g + 0.114 * rgb.b) / 255;
+        const max = Math.max(rgb.r, rgb.g, rgb.b);
+        const min = Math.min(rgb.r, rgb.g, rgb.b);
+        const saturation = max === 0 ? 0 : (max - min) / max;
+
+        // Skip if too light (luminance > 0.85) - catches light greys and whites
+        if (luminance > 0.85) return true;
+
+        // Skip if very unsaturated (grey) AND light
+        if (saturation < 0.15 && luminance > 0.5) return true;
+
+        return false;
     }
 
     /**
@@ -251,46 +253,42 @@
         const isLightTheme = luminance > 0.5;
         const root = document.documentElement;
 
-        // Adjust sidebar to be 10% darker (light themes) or 10% lighter (dark themes)
-        // This creates visual distinction from the NetSuite header
-        let sidebarRgb;
-        if (isLightTheme) {
-            sidebarRgb = adjustBrightness(rgb, -0.10); // 10% darker for light themes
-        } else {
-            sidebarRgb = adjustBrightness(rgb, 0.10);  // 10% lighter for dark themes
-        }
+        // Adjust sidebar to be 15% lighter than detected nav bar color
+        // This creates visual distinction while maintaining the color theme
+        const sidebarRgb = adjustBrightness(rgb, 0.15);
 
         // Apply the adjusted color as sidebar background
         root.style.setProperty('--sidebar-bg', `rgb(${sidebarRgb.r}, ${sidebarRgb.g}, ${sidebarRgb.b})`);
 
+        // Check luminance of the SIDEBAR color (after lightening) for text contrast
+        const sidebarLuminance = getLuminance(sidebarRgb);
+        const needsLightTheme = sidebarLuminance > 0.5;
+
         // Calculate hover and border colors from the adjusted sidebar color
         let hoverRgb, borderRgb;
 
-        if (isLightTheme) {
-            // Light theme: darken further for hover/border states
+        if (needsLightTheme) {
+            // Light sidebar: darken for hover/border, use dark text
             hoverRgb = adjustBrightness(sidebarRgb, -0.08);
             borderRgb = adjustBrightness(sidebarRgb, -0.12);
-
-            // Add light-sidebar class for text color adjustments
             document.querySelector('.gantry-sidebar')?.classList.add('light-theme');
         } else {
-            // Dark theme: lighten for hover/border states
+            // Dark sidebar: lighten for hover/border, use light text
             hoverRgb = adjustBrightness(sidebarRgb, 0.15);
             borderRgb = adjustBrightness(sidebarRgb, 0.20);
-
-            // Remove light-sidebar class if present
             document.querySelector('.gantry-sidebar')?.classList.remove('light-theme');
         }
 
         root.style.setProperty('--sidebar-bg-hover', `rgb(${hoverRgb.r}, ${hoverRgb.g}, ${hoverRgb.b})`);
         root.style.setProperty('--sidebar-border', `rgb(${borderRgb.r}, ${borderRgb.g}, ${borderRgb.b})`);
 
-        // Store the synced color for reference
+        // Store the synced color for reference/debugging
         window.GANTRY_SIDEBAR_COLOR = {
             detected: color,
             detectedRgb: rgb,
-            luminance: luminance,
-            isLightTheme: isLightTheme,
+            detectedLuminance: luminance,
+            sidebarLuminance: sidebarLuminance,
+            needsLightTheme: needsLightTheme,
             applied: {
                 bg: `rgb(${sidebarRgb.r}, ${sidebarRgb.g}, ${sidebarRgb.b})`,
                 hover: `rgb(${hoverRgb.r}, ${hoverRgb.g}, ${hoverRgb.b})`,
