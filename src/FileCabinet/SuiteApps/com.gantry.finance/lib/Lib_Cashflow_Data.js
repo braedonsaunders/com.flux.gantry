@@ -1413,6 +1413,33 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
       });
     });
 
+    // Include outstanding expense reports in AP totals (reimbursable expenses)
+    try {
+      const expRepSearch = search.create({
+        type: search.Type.EXPENSE_REPORT,
+        filters: [["mainline", "is", "T"], "AND", ["amountremaining", "greaterthan", 0]],
+        columns: ["amountremaining", "trandate", "duedate"],
+      });
+      expRepSearch.run().each(function (res) {
+        const amt = parseFloat(res.getValue("amountremaining")) || 0;
+        const duedate = res.getValue("duedate") ? parseNsDate(res.getValue("duedate")) : null;
+        totalOutstanding += amt;
+        if (duedate) {
+          const diffTime = timeline.asOfDate - duedate;
+          const daysPastDue = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+          if (daysPastDue <= 0) buckets["Current"] += amt;
+          else if (daysPastDue <= 30) buckets["1-30"] += amt;
+          else if (daysPastDue <= 60) buckets["31-60"] += amt;
+          else if (daysPastDue <= 90) buckets["61-90"] += amt;
+          else buckets["90+"] += amt;
+        } else buckets["Current"] += amt;
+        return true;
+      });
+    } catch (e) {
+      // Expense reports may not be enabled in all accounts
+      log.debug("buildAPForecast", "Expense report search skipped: " + e.message);
+    }
+
     // Calculate % current from buckets
     const currentAmountAP = buckets["Current"] || 0;
     const pctCurrentAP = totalOutstanding > 0 ? (currentAmountAP / totalOutstanding) * 100 : 0;
