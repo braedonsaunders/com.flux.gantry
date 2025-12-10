@@ -42,7 +42,7 @@ jobs:
             --privatekeypath /tmp/private.pem
 
       - name: Deploy to NetSuite
-        run: node scripts/sync.js --all
+        run: node scripts/sync.js --ci
 
       - name: Cleanup
         if: always()
