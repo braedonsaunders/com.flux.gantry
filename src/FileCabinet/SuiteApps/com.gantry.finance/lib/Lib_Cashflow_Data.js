@@ -1490,7 +1490,7 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
       const results = resultSet.asMappedResults();
 
       results.forEach(function(row) {
-        const entityId = row.entity;
+        const entityId = String(row.entity); // Convert to string for consistency with Search API
         const tranDate = parseNsDate(row.trandate);
         const closeDate = parseNsDate(row.closedate);
 
