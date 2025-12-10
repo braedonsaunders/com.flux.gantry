@@ -102,13 +102,7 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
     const categoryTimings = {};
     const categoryErrors = [];
 
-    // Pre-fetch GL History data for ALL gl_history_average categories in ONE query
-    let batchedGLData = null;
     if (config.categories && Array.isArray(config.categories)) {
-      const glBatchStart = Date.now();
-      batchedGLData = batchFetchGLHistoryData(config.categories, timeline);
-      timings.glHistoryBatch = Date.now() - glBatchStart;
-
       config.categories.forEach((catConfig) => {
         try {
           const catStart = Date.now();
@@ -120,8 +114,7 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
               ar: arData.weeklyMap,
               ap: apData.weeklyMap,
               cashStart: bank.balance,
-            },
-            batchedGLData
+            }
           );
           categoryTimings[catConfig.id] = Date.now() - catStart;
           categoryResults[catConfig.id] = result;
@@ -330,95 +323,10 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
 
   // ================= STRATEGIES =================
 
-  /**
-   * Batch fetch GL History data for ALL gl_history_average categories in ONE query
-   * This eliminates N separate queries when N categories use this strategy
-   * @param {Array} categories - All category configs
-   * @param {Object} timeline - Timeline object with start/end dates
-   * @returns {Object} Map of accountId -> array of {date, amount, accountName}
-   */
-  function batchFetchGLHistoryData(categories, timeline) {
-    // Collect all GL History categories and their accounts
-    const glCategories = categories.filter(c =>
-      (c.method || "gl_history_average") === "gl_history_average" &&
-      c.accounts && c.accounts.length > 0
-    );
-
-    if (glCategories.length === 0) {
-      return { accountData: {}, maxHistoryWeeks: 0 };
-    }
-
-    // Find the maximum history weeks needed across all categories
-    let maxHistoryWeeks = 12;
-    const allAccountIds = new Set();
-
-    glCategories.forEach(function(cat) {
-      const weeks = parseInt(cat.historyWeeks) || 12;
-      if (weeks > maxHistoryWeeks) maxHistoryWeeks = weeks;
-      cat.accounts.forEach(function(accId) {
-        allAccountIds.add(accId);
-      });
-    });
-
-    if (allAccountIds.size === 0) {
-      return { accountData: {}, maxHistoryWeeks: maxHistoryWeeks };
-    }
-
-    // Calculate date range for the batch query
-    const historyStart = addDays(timeline.start, -(maxHistoryWeeks * 7));
-    const startStr = Shared.formatDateYMD(historyStart);
-    const endStr = Shared.formatDateYMD(timeline.end);
-    const accountIdList = Array.from(allAccountIds).join(',');
-
-    // Single SuiteQL query for ALL GL History accounts
-    const sql = `
-      SELECT
-        tal.account,
-        BUILTIN.DF(tal.account) as account_name,
-        t.trandate,
-        tal.amount
-      FROM Transaction t
-      JOIN TransactionAccountingLine tal ON t.id = tal.transaction
-      WHERE tal.account IN (${accountIdList})
-        AND t.posting = 'T'
-        AND t.trandate >= TO_DATE('${startStr}', 'YYYY-MM-DD')
-        AND t.trandate <= TO_DATE('${endStr}', 'YYYY-MM-DD')
-      ORDER BY tal.account, t.trandate
-    `;
-
-    const accountData = {};
-
-    try {
-      const resultSet = query.runSuiteQL({ query: sql });
-      const results = resultSet.asMappedResults();
-
-      results.forEach(function(row) {
-        const accountId = String(row.account);
-        const accountName = row.account_name || accountId;
-        const amount = parseFloat(row.amount) || 0;
-        const trandate = row.trandate;
-
-        if (!accountData[accountId]) {
-          accountData[accountId] = [];
-        }
-        accountData[accountId].push({
-          date: trandate,
-          amount: amount,
-          accountName: accountName
-        });
-      });
-    } catch (e) {
-      log.error("GL History Batch SuiteQL Error", e);
-      // Return empty - individual categories will fall back to their own queries
-    }
-
-    return { accountData: accountData, maxHistoryWeeks: maxHistoryWeeks };
-  }
-
-  function processCategory(config, timeline, asOfDate, contextData, batchedGLData) {
+  function processCategory(config, timeline, asOfDate, contextData) {
     const method = config.method || "gl_history_average";
     switch (method) {
-      case "gl_history_average": return strategyGLHistory(config, timeline, asOfDate, batchedGLData);
+      case "gl_history_average": return strategyGLHistory(config, timeline, asOfDate);
       case "vendor_payment_history": return strategyVendorPaymentHistory(config, timeline, asOfDate);
       case "credit_card_cycle": return strategyCreditCardCycle(config, timeline, asOfDate);
       case "manual_recurring": return strategyManualRecurring(config, timeline, asOfDate);
@@ -429,81 +337,50 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
     }
   }
 
-  function strategyGLHistory(config, timeline, asOfDate, batchedGLData) {
+  function strategyGLHistory(config, timeline, asOfDate) {
     const historyWeeks = parseInt(config.historyWeeks) || 12;
     const adjustmentPct = parseFloat(config.adjustmentPercent) || 0;
     const historyStart = addDays(timeline.start, -(historyWeeks * 7));
 
-    if (!config.accounts || config.accounts.length === 0) {
-      return { total: 0, weeklyAmounts: {} };
-    }
+    const filters = [
+      ["posting", "is", "T"], "AND",
+      ["trandate", "onorafter", toNsDateString(historyStart)], "AND",
+      ["trandate", "onorbefore", toNsDateString(timeline.end)],
+    ];
+    if (config.accounts && config.accounts.length > 0)
+      filters.push("AND", ["account", "anyof", config.accounts]);
+    else return { total: 0, weeklyAmounts: {} };
 
     const weeklyHistory = {};
     const accountBreakdown = {};
     let totalHistory = 0;
     let weeksCounted = 0;
 
-    // Use batched data if available, otherwise fall back to individual query
-    if (batchedGLData && batchedGLData.accountData && Object.keys(batchedGLData.accountData).length > 0) {
-      // Process from pre-fetched batch data
-      config.accounts.forEach(function(accountId) {
-        const accountIdStr = String(accountId);
-        const rows = batchedGLData.accountData[accountIdStr] || [];
+    const searchObj = search.create({
+      type: search.Type.TRANSACTION,
+      filters: filters,
+      columns: ["trandate", "amount", "account"],
+    });
 
-        rows.forEach(function(row) {
-          const date = parseNsDate(row.date);
-          // Filter to this category's history window
-          if (date < historyStart || date > timeline.end) return;
+    const pagedData = searchObj.runPaged({ pageSize: 1000 });
+    pagedData.pageRanges.forEach((pageRange) => {
+      const page = pagedData.fetch({ index: pageRange.index });
+      page.data.forEach((res) => {
+        const rawAmt = parseFloat(res.getValue("amount")) || 0;
+        const amt = config.useNetAmt === true ? rawAmt : Math.abs(rawAmt);
+        const date = parseNsDate(res.getValue("trandate"));
+        const wkKey = Shared.formatDateYMD(getWeekStart(date));
+        const acct = res.getText("account");
 
-          const rawAmt = row.amount;
-          const amt = config.useNetAmt === true ? rawAmt : Math.abs(rawAmt);
-          const wkKey = Shared.formatDateYMD(getWeekStart(date));
-          const acct = row.accountName;
+        if (!weeklyHistory[wkKey]) weeklyHistory[wkKey] = 0;
+        weeklyHistory[wkKey] += amt;
 
-          if (!weeklyHistory[wkKey]) weeklyHistory[wkKey] = 0;
-          weeklyHistory[wkKey] += amt;
-
-          if (date < timeline.start) {
-            if (!accountBreakdown[acct]) accountBreakdown[acct] = 0;
-            accountBreakdown[acct] += amt;
-          }
-        });
+        if (date < timeline.start) {
+          if (!accountBreakdown[acct]) accountBreakdown[acct] = 0;
+          accountBreakdown[acct] += amt;
+        }
       });
-    } else {
-      // Fallback: run individual query (for backward compatibility or if batch failed)
-      const filters = [
-        ["posting", "is", "T"], "AND",
-        ["trandate", "onorafter", toNsDateString(historyStart)], "AND",
-        ["trandate", "onorbefore", toNsDateString(timeline.end)], "AND",
-        ["account", "anyof", config.accounts]
-      ];
-
-      const searchObj = search.create({
-        type: search.Type.TRANSACTION,
-        filters: filters,
-        columns: ["trandate", "amount", "account"],
-      });
-
-      const pagedData = searchObj.runPaged({ pageSize: 1000 });
-      pagedData.pageRanges.forEach(function(pageRange) {
-        const page = pagedData.fetch({ index: pageRange.index });
-        page.data.forEach(function(res) {
-          const rawAmt = parseFloat(res.getValue("amount")) || 0;
-          const amt = config.useNetAmt === true ? rawAmt : Math.abs(rawAmt);
-          const date = parseNsDate(res.getValue("trandate"));
-          const wkKey = Shared.formatDateYMD(getWeekStart(date));
-          const acct = res.getText("account");
-
-          if (!weeklyHistory[wkKey]) weeklyHistory[wkKey] = 0;
-          weeklyHistory[wkKey] += amt;
-
-          if (date < timeline.start) {
-            if (!accountBreakdown[acct]) accountBreakdown[acct] = 0;
-            accountBreakdown[acct] += amt;
-          }
-        });
-      });
-    }
+    });
 
     Object.keys(weeklyHistory).forEach((k) => {
       if (k < Shared.formatDateYMD(timeline.start)) {
@@ -638,76 +515,50 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
     // Configurable threshold for significant payment detection (default: auto-detect from median)
     const significantPaymentThreshold = parseFloat(config.significantPaymentThreshold) || 0;
 
-    // ========== PHASE 1: Gather Transaction Data + Current Balance in SINGLE SuiteQL ==========
+    // ========== PHASE 1: Gather Transaction Data ==========
     const dailyTotals = {};
     let grandTotalSpend = 0;
     let grandTotalPayments = 0;
-    let totalCurrentBalance = 0;
 
-    const startStr = Shared.formatDateYMD(historyStart);
-    const endStr = Shared.formatDateYMD(asOfDate);
-    const accountIdList = accountIds.join(',');
+    const searchObj = search.create({
+      type: search.Type.TRANSACTION,
+      filters: [
+        ["posting", "is", "T"],
+        "AND",
+        ["account", "anyof", accountIds],
+        "AND",
+        ["trandate", "onorafter", toNsDateString(historyStart)],
+        "AND",
+        ["trandate", "onorbefore", toNsDateString(asOfDate)],
+      ],
+      columns: ["trandate", "creditamount", "debitamount"],
+    });
 
-    // Combined query: Transaction history UNION Account balance
-    const sql = `
-      SELECT
-        'txn' as row_type,
-        t.trandate,
-        tal.credit,
-        tal.debit,
-        NULL as balance
-      FROM Transaction t
-      JOIN TransactionAccountingLine tal ON t.id = tal.transaction
-      WHERE tal.account IN (${accountIdList})
-        AND t.posting = 'T'
-        AND t.trandate >= TO_DATE('${startStr}', 'YYYY-MM-DD')
-        AND t.trandate <= TO_DATE('${endStr}', 'YYYY-MM-DD')
-      UNION ALL
-      SELECT
-        'bal' as row_type,
-        NULL as trandate,
-        NULL as credit,
-        NULL as debit,
-        SUM(a.balance) as balance
-      FROM Account a
-      WHERE a.id IN (${accountIdList})
-        AND a.isinactive = 'F'
-    `;
+    const pagedData = searchObj.runPaged({ pageSize: 1000 });
+    pagedData.pageRanges.forEach((pageRange) => {
+      const page = pagedData.fetch({ index: pageRange.index });
+      page.data.forEach((res) => {
+        const credit = parseFloat(res.getValue("creditamount")) || 0;
+        const debit = parseFloat(res.getValue("debitamount")) || 0;
+        const dateStr = res.getValue("trandate");
+        const dateObj = parseNsDate(dateStr);
+        const dateKey = Shared.formatDateYMD(dateObj);
 
-    try {
-      const resultSet = query.runSuiteQL({ query: sql });
-      const results = resultSet.asMappedResults();
+        if (!dailyTotals[dateKey]) {
+          dailyTotals[dateKey] = { date: dateObj, debits: 0, credits: 0 };
+        }
 
-      results.forEach(function(row) {
-        if (row.row_type === 'bal') {
-          // Account balance row
-          totalCurrentBalance = Math.abs(parseFloat(row.balance) || 0);
-        } else {
-          // Transaction row
-          const credit = parseFloat(row.credit) || 0;
-          const debit = parseFloat(row.debit) || 0;
-          const dateObj = parseNsDate(row.trandate);
-          const dateKey = Shared.formatDateYMD(dateObj);
+        if (credit > 0) {
+          dailyTotals[dateKey].credits += credit;
+          grandTotalSpend += credit;
+        }
 
-          if (!dailyTotals[dateKey]) {
-            dailyTotals[dateKey] = { date: dateObj, debits: 0, credits: 0 };
-          }
-
-          if (credit > 0) {
-            dailyTotals[dateKey].credits += credit;
-            grandTotalSpend += credit;
-          }
-
-          if (debit > 0) {
-            dailyTotals[dateKey].debits += debit;
-            grandTotalPayments += debit;
-          }
+        if (debit > 0) {
+          dailyTotals[dateKey].debits += debit;
+          grandTotalPayments += debit;
         }
       });
-    } catch (e) {
-      log.error("Credit Card SuiteQL Error", e);
-      return { total: 0, weeklyAmounts: {}, meta: { error: "Query error: " + e.message } };
-    }
+    });
 
     // ========== PHASE 2: Roll Up Payments by Month ==========
     const monthlyPayments = {};
@@ -809,8 +660,27 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
       }
     }
 
-    // ========== PHASE 6: Current Balance (already fetched in PHASE 1 SuiteQL) ==========
-    // totalCurrentBalance is populated from the combined query above
+    // ========== PHASE 6: Get Current Balance ==========
+    let totalCurrentBalance = 0;
+    search
+      .create({
+        type: search.Type.ACCOUNT,
+        filters: [
+          ["internalid", "anyof", accountIds],
+          "AND",
+          ["isinactive", "is", "F"],
+        ],
+        columns: [
+          search.createColumn({ name: "balance", summary: search.Summary.SUM }),
+        ],
+      })
+      .run()
+      .each((res) => {
+        totalCurrentBalance = Math.abs(
+          parseFloat(res.getValue({ name: "balance", summary: search.Summary.SUM })) || 0
+        );
+        return true;
+      });
 
     // ========== PHASE 7: Calculate Cycle Position & Projections ==========
     const dailyBurnRate = grandTotalSpend / lookbackDays;
