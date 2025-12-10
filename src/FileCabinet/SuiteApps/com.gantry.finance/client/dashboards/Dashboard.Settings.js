@@ -1632,12 +1632,19 @@
                 
                 if (navLink) {
                     const name = this.data.dashboardNames?.[dash.id] || dash.defaultName;
-                    // Update the text node after the icon
+                    // Update the text inside span (preserve span for collapsed state CSS)
                     const icon = navLink.querySelector('i');
-                    if (icon) {
+                    const existingSpan = navLink.querySelector('span');
+                    if (existingSpan) {
+                        existingSpan.textContent = name;
+                    } else if (icon) {
+                        // Rebuild with span wrapper for collapsed state compatibility
                         navLink.innerHTML = '';
                         navLink.appendChild(icon);
-                        navLink.appendChild(document.createTextNode(' ' + name));
+                        const span = document.createElement('span');
+                        span.textContent = name;
+                        navLink.appendChild(document.createTextNode(' '));
+                        navLink.appendChild(span);
                     }
                 }
             });
