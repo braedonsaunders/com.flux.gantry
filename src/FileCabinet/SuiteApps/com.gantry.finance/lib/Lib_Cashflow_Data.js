@@ -1440,6 +1440,23 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
       log.debug("buildAPForecast", "Expense report search skipped: " + e.message);
     }
 
+    // Subtract unapplied vendor credits from AP totals
+    try {
+      const vendorCreditSearch = search.create({
+        type: search.Type.VENDOR_CREDIT,
+        filters: [["mainline", "is", "T"], "AND", ["amountremaining", "greaterthan", 0]],
+        columns: ["amountremaining"],
+      });
+      vendorCreditSearch.run().each(function (res) {
+        const amt = parseFloat(res.getValue("amountremaining")) || 0;
+        totalOutstanding -= amt;
+        buckets["Current"] -= amt; // Credits typically reduce current bucket
+        return true;
+      });
+    } catch (e) {
+      log.debug("buildAPForecast", "Vendor credit search skipped: " + e.message);
+    }
+
     // Calculate % current from buckets
     const currentAmountAP = buckets["Current"] || 0;
     const pctCurrentAP = totalOutstanding > 0 ? (currentAmountAP / totalOutstanding) * 100 : 0;
