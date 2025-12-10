@@ -880,12 +880,15 @@
         goBackFlyout() {
             const prev = this.flyout.previousContext;
             if (!prev) return;
-            
+
             this.flyout.previousContext = null;
-            
+
             if (prev.type === 'week') {
                 this.resetFlyoutState();
                 this.showWeekFlyout(prev.weekStart);
+            } else if (prev.type === 'bucket') {
+                this.resetFlyoutState();
+                this.showBucketFlyout(prev.bucket, prev.bucketType);
             }
         },
         
@@ -1257,12 +1260,18 @@
         
         async showEntityFlyout(entityId, entityName, entityType) {
             const self = this;
-            
+
             // Store previous flyout state for back button
             if (this.flyout.type === 'week') {
                 this.flyout.previousContext = {
                     type: 'week',
                     weekStart: this.flyout.context.weekStart
+                };
+            } else if (this.flyout.type === 'bucket') {
+                this.flyout.previousContext = {
+                    type: 'bucket',
+                    bucket: this.flyout.context.bucket,
+                    bucketType: this.flyout.context.type
                 };
             }
             
@@ -1322,27 +1331,95 @@
             const trend = data.monthlyTrend || [];
             const openItems = data.openItems || [];
             const recentPayments = data.recentPayments || [];
-            
-            // Build summary table for entity
-            let summaryHtml = '<table class="table table-sm table-borderless mb-0" style="font-size: 13px;"><tbody>';
-            
+
+            // Build summary using standard KPI card style
+            let summaryHtml = '';
+
             if (entityType === 'customer') {
-                summaryHtml += `
-                    <tr><td class="text-muted py-1">Avg Days to Pay</td><td class="text-right font-weight-bold py-1 text-info">${summary.avgDaysToPay || 0} days</td></tr>
-                    <tr><td class="text-muted py-1">Total Paid (12mo)</td><td class="text-right font-weight-bold py-1 text-success">${fmtMoney(summary.totalPaid || 0)}</td></tr>
-                    <tr><td class="text-muted py-1">Open Balance</td><td class="text-right font-weight-bold py-1 text-warning">${fmtMoney(summary.totalOpen || 0)}</td></tr>
-                    <tr><td class="text-muted py-1">Reliability Score</td><td class="text-right font-weight-bold py-1 ${summary.reliabilityScore >= 70 ? 'text-success' : summary.reliabilityScore >= 50 ? 'text-warning' : 'text-danger'}">${summary.reliabilityScore || 0}/100</td></tr>
+                const reliabilityColor = summary.reliabilityScore >= 70 ? '#10b981' : summary.reliabilityScore >= 50 ? '#f59e0b' : '#ef4444';
+                summaryHtml = `
+                    <div class="cf-flyout-kpis" style="display:flex; flex-wrap:wrap; gap:12px; margin-bottom:16px;">
+                        <div class="cf-flyout-stat-card" style="flex:1; min-width:120px;">
+                            <div class="stat-icon" style="background:#3b82f615;">
+                                <i class="fas fa-clock" style="color:#3b82f6;"></i>
+                            </div>
+                            <div class="stat-content">
+                                <div class="stat-label">Avg Days to Pay</div>
+                                <div class="stat-value" style="color:#3b82f6;">${summary.avgDaysToPay || 0}d</div>
+                            </div>
+                        </div>
+                        <div class="cf-flyout-stat-card" style="flex:1; min-width:120px;">
+                            <div class="stat-icon" style="background:#10b98115;">
+                                <i class="fas fa-check-circle" style="color:#10b981;"></i>
+                            </div>
+                            <div class="stat-content">
+                                <div class="stat-label">Total Paid (12mo)</div>
+                                <div class="stat-value" style="color:#10b981;">${fmtMoney(summary.totalPaid || 0)}</div>
+                            </div>
+                        </div>
+                        <div class="cf-flyout-stat-card" style="flex:1; min-width:120px;">
+                            <div class="stat-icon" style="background:#f59e0b15;">
+                                <i class="fas fa-file-invoice-dollar" style="color:#f59e0b;"></i>
+                            </div>
+                            <div class="stat-content">
+                                <div class="stat-label">Open Balance</div>
+                                <div class="stat-value" style="color:#f59e0b;">${fmtMoney(summary.totalOpen || 0)}</div>
+                            </div>
+                        </div>
+                        <div class="cf-flyout-stat-card" style="flex:1; min-width:120px;">
+                            <div class="stat-icon" style="background:${reliabilityColor}15;">
+                                <i class="fas fa-star" style="color:${reliabilityColor};"></i>
+                            </div>
+                            <div class="stat-content">
+                                <div class="stat-label">Reliability</div>
+                                <div class="stat-value" style="color:${reliabilityColor};">${summary.reliabilityScore || 0}/100</div>
+                            </div>
+                        </div>
+                    </div>
                 `;
             } else {
-                summaryHtml += `
-                    <tr><td class="text-muted py-1">Total Paid (12mo)</td><td class="text-right font-weight-bold py-1 text-danger">${fmtMoney(summary.totalPaid || 0)}</td></tr>
-                    <tr><td class="text-muted py-1">Payments</td><td class="text-right font-weight-bold py-1 text-info">${summary.paymentCount || 0}</td></tr>
-                    <tr><td class="text-muted py-1">Open Bills</td><td class="text-right font-weight-bold py-1 text-warning">${fmtMoney(summary.totalOpen || 0)}</td></tr>
-                    <tr><td class="text-muted py-1">Avg Payment</td><td class="text-right font-weight-bold py-1">${fmtMoney(summary.avgPayment || 0)}</td></tr>
+                summaryHtml = `
+                    <div class="cf-flyout-kpis" style="display:flex; flex-wrap:wrap; gap:12px; margin-bottom:16px;">
+                        <div class="cf-flyout-stat-card" style="flex:1; min-width:120px;">
+                            <div class="stat-icon" style="background:#ef444415;">
+                                <i class="fas fa-credit-card" style="color:#ef4444;"></i>
+                            </div>
+                            <div class="stat-content">
+                                <div class="stat-label">Total Paid (12mo)</div>
+                                <div class="stat-value" style="color:#ef4444;">${fmtMoney(summary.totalPaid || 0)}</div>
+                            </div>
+                        </div>
+                        <div class="cf-flyout-stat-card" style="flex:1; min-width:120px;">
+                            <div class="stat-icon" style="background:#3b82f615;">
+                                <i class="fas fa-receipt" style="color:#3b82f6;"></i>
+                            </div>
+                            <div class="stat-content">
+                                <div class="stat-label">Payments</div>
+                                <div class="stat-value" style="color:#3b82f6;">${fmtNum(summary.paymentCount || 0, 0)}</div>
+                            </div>
+                        </div>
+                        <div class="cf-flyout-stat-card" style="flex:1; min-width:120px;">
+                            <div class="stat-icon" style="background:#f59e0b15;">
+                                <i class="fas fa-file-invoice" style="color:#f59e0b;"></i>
+                            </div>
+                            <div class="stat-content">
+                                <div class="stat-label">Open Bills</div>
+                                <div class="stat-value" style="color:#f59e0b;">${fmtMoney(summary.totalOpen || 0)}</div>
+                            </div>
+                        </div>
+                        <div class="cf-flyout-stat-card" style="flex:1; min-width:120px;">
+                            <div class="stat-icon" style="background:#64748b15;">
+                                <i class="fas fa-calculator" style="color:#64748b;"></i>
+                            </div>
+                            <div class="stat-content">
+                                <div class="stat-label">Avg Payment</div>
+                                <div class="stat-value">${fmtMoney(summary.avgPayment || 0)}</div>
+                            </div>
+                        </div>
+                    </div>
                 `;
             }
-            
-            summaryHtml += '</tbody></table>';
+
             el('#cfFlyoutSummary').innerHTML = summaryHtml;
             
             // Body content
