@@ -60,6 +60,11 @@
     
     /* === LAYOUT === */
     --sidebar-width: 240px;
+
+    /* === SIDEBAR COLORS (synced with NetSuite or fallback) === */
+    --sidebar-bg: #1e293b;
+    --sidebar-bg-hover: #334155;
+    --sidebar-border: #334155;
     
     /* === TYPOGRAPHY SCALE === */
     --font-xs: 0.65rem;      /* 10.4px - tiny labels */
@@ -132,7 +137,7 @@ body {
 
 .gantry-sidebar {
     width: var(--sidebar-width);
-    background: #1e293b;
+    background: var(--sidebar-bg);
     color: #fff;
     flex-shrink: 0;
     display: flex;
@@ -143,7 +148,7 @@ body {
     padding: 16px 20px;
     font-size: 1.1rem;
     font-weight: 700;
-    border-bottom: 1px solid #334155;
+    border-bottom: 1px solid var(--sidebar-border);
     display: flex;
     align-items: center;
 }
@@ -177,7 +182,7 @@ body {
 
 .gantry-nav-link:hover {
     color: #fff;
-    background: #334155;
+    background: var(--sidebar-bg-hover);
     text-decoration: none;
 }
 
@@ -196,13 +201,13 @@ body {
 .gantry-nav-separator {
     margin-top: 8px;
     padding-top: 8px;
-    border-top: 1px solid #334155;
+    border-top: 1px solid var(--sidebar-border);
 }
 
 .gantry-sidebar-footer {
     margin-top: auto;
     padding: 12px 20px;
-    border-top: 1px solid #334155;
+    border-top: 1px solid var(--sidebar-border);
     display: flex;
     align-items: center;
     justify-content: space-between;
