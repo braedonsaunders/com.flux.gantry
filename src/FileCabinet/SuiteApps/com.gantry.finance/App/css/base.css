@@ -173,7 +173,7 @@ body {
     display: flex;
     align-items: center;
     padding: 10px 20px;
-    color: #94a3b8;
+    color: rgba(255, 255, 255, 0.85);
     text-decoration: none;
     transition: all 0.2s;
     cursor: pointer;
@@ -320,23 +320,23 @@ body {
 
 /* --- LIGHT THEME SIDEBAR (for light NetSuite themes) --- */
 .gantry-sidebar.light-theme {
-    color: #1e293b;
+    color: #1a1a1a;
 }
 
 .gantry-sidebar.light-theme .gantry-sidebar-header {
-    color: #1e293b;
+    color: #1a1a1a;
 }
 
 .gantry-sidebar.light-theme .gantry-sidebar-header i {
-    color: #d97706;
+    color: #b45309;
 }
 
 .gantry-sidebar.light-theme .gantry-nav-link {
-    color: #475569;
+    color: rgba(26, 26, 26, 0.8);
 }
 
 .gantry-sidebar.light-theme .gantry-nav-link:hover {
-    color: #1e293b;
+    color: #1a1a1a;
 }
 
 .gantry-sidebar.light-theme .gantry-nav-link.active {
@@ -344,15 +344,15 @@ body {
 }
 
 .gantry-sidebar.light-theme .gantry-sidebar-footer {
-    color: #64748b;
+    color: rgba(26, 26, 26, 0.6);
 }
 
 .gantry-sidebar.light-theme .gantry-sidebar-toggle {
-    color: #64748b;
+    color: rgba(26, 26, 26, 0.6);
 }
 
 .gantry-sidebar.light-theme .gantry-sidebar-toggle:hover {
-    color: #1e293b;
+    color: #1a1a1a;
 }
 
 .gantry-main {
