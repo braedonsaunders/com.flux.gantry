@@ -426,3 +426,13 @@ td .sparkline {
     background: rgba(0, 123, 255, 0.05);
 }
 
+/* Fix visibility switch styling in light mode */
+.dashboard-order-item .custom-switch .custom-control-label::before {
+    background-color: #cbd5e1;
+    border-color: #94a3b8;
+}
+.dashboard-order-item .custom-switch .custom-control-input:checked ~ .custom-control-label::before {
+    background-color: #3b82f6;
+    border-color: #3b82f6;
+}
+
