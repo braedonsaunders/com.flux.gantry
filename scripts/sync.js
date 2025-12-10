@@ -5,7 +5,8 @@
  * Only uploads files that have changed since the last sync
  *
  * Usage:
- *   node scripts/sync.js           # Sync changed files since last sync
+ *   node scripts/sync.js           # Sync changed files since last sync (local dev)
+ *   node scripts/sync.js --ci      # Sync only files changed in latest commit (for CI/CD)
  *   node scripts/sync.js --all     # Force sync all files
  *   node scripts/sync.js --watch   # Watch for changes and auto-sync
  */
@@ -104,6 +105,26 @@ function getGitChangedFiles() {
     }
 }
 
+function getGitCommitChangedFiles() {
+    try {
+        // Get files changed in the latest commit (for CI mode)
+        const output = execSync('git diff --name-only HEAD~1 HEAD 2>/dev/null', {
+            encoding: 'utf8'
+        }).trim();
+
+        if (!output) return [];
+
+        return output.split('\n')
+            .filter(f => f.startsWith(FILE_CABINET_PATH))
+            .filter(f => SYNCABLE_EXTENSIONS.includes(path.extname(f).toLowerCase()))
+            .filter(f => fs.existsSync(f)); // Only include files that exist (not deleted)
+    } catch (e) {
+        // Fallback: if git diff fails (e.g., first commit), return all files
+        log('Could not detect changed files, syncing all files', 'warn');
+        return getAllFiles(FILE_CABINET_PATH);
+    }
+}
+
 function uploadFile(filePath) {
     try {
         log(`Uploading: ${filePath}`);
@@ -188,6 +209,7 @@ function watchMode() {
 function main() {
     const args = process.argv.slice(2);
     const forceAll = args.includes('--all');
+    const ciMode = args.includes('--ci');
     const watchModeEnabled = args.includes('--watch');
 
     if (watchModeEnabled) {
@@ -201,8 +223,16 @@ function main() {
     if (forceAll) {
         log('Force syncing all files...');
         filesToSync = getAllFiles(FILE_CABINET_PATH);
+    } else if (ciMode) {
+        // CI mode: only sync files changed in the latest commit
+        log('CI mode: detecting files changed in latest commit...');
+        filesToSync = getGitCommitChangedFiles();
+        if (filesToSync.length === 0) {
+            log('No SuiteApp files changed in this commit', 'success');
+            return;
+        }
     } else {
-        // Combine git changes and hash-based detection
+        // Local dev: combine git changes and hash-based detection
         const gitChanges = getGitChangedFiles();
         const { changedFiles, newHashes } = getChangedFiles(state);
 
@@ -213,7 +243,7 @@ function main() {
 
     const { success, failed } = uploadFiles(filesToSync);
 
-    if (success > 0 || forceAll) {
+    if ((success > 0 || forceAll) && !ciMode) {
         state.lastSync = new Date().toISOString();
         // Update hashes for synced files
         for (const file of filesToSync) {
