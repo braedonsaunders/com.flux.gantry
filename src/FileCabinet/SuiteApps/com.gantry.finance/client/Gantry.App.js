@@ -348,14 +348,27 @@
     // Sidebar collapse toggle handler
     const sidebarToggle = document.getElementById('sidebarToggle');
     const sidebar = document.querySelector('.gantry-sidebar');
+    const sidebarHeader = document.querySelector('.gantry-sidebar-header');
+
     if (sidebarToggle && sidebar) {
-        sidebarToggle.addEventListener('click', function() {
+        sidebarToggle.addEventListener('click', function(e) {
+            e.stopPropagation(); // Prevent header click from firing
             sidebar.classList.toggle('collapsed');
             const isCollapsed = sidebar.classList.contains('collapsed');
             localStorage.setItem('gantry-sidebar-collapsed', isCollapsed ? 'true' : 'false');
-
-            // Update button title
             this.title = isCollapsed ? 'Expand sidebar' : 'Collapse sidebar';
+        });
+    }
+
+    // Click header/logo to expand when collapsed
+    if (sidebarHeader && sidebar) {
+        sidebarHeader.addEventListener('click', function(e) {
+            // Only expand if currently collapsed and not clicking the toggle button
+            if (sidebar.classList.contains('collapsed') && !e.target.closest('.gantry-sidebar-toggle')) {
+                sidebar.classList.remove('collapsed');
+                localStorage.setItem('gantry-sidebar-collapsed', 'false');
+                if (sidebarToggle) sidebarToggle.title = 'Collapse sidebar';
+            }
         });
     }
 

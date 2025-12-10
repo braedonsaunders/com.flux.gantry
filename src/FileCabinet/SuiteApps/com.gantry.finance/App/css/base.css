@@ -269,10 +269,12 @@ body {
 }
 
 .gantry-sidebar.collapsed .gantry-sidebar-toggle {
-    margin-left: 0;
-    transform: rotate(180deg);
-    position: absolute;
-    right: 8px;
+    display: none;
+}
+
+/* Make header clickable to expand when collapsed */
+.gantry-sidebar.collapsed .gantry-sidebar-header {
+    cursor: pointer;
 }
 
 .gantry-sidebar.collapsed .gantry-nav-link {
