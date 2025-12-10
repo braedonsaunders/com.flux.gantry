@@ -1328,25 +1328,26 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
     const hasExclusions = exclusions && exclusions.excludeVendorCategories && exclusions.excludeVendorCategories.length;
     if (hasExclusions && totalOutstanding > 0) {
       try {
-        const excludedCats = exclusions.excludeVendorCategories.map(c => parseInt(c)).filter(c => !isNaN(c)).join(',');
-        if (excludedCats) {
-          const excludedResult = query.runSuiteQL({
-            query: `SELECT SUM(ABS(t.foreignamountunpaid)) as excluded_amount
-                    FROM transaction t
-                    JOIN vendor v ON t.entity = v.id
-                    WHERE t.type = 'VendBill'
-                    AND t.posting = 'T'
-                    AND t.foreignamountunpaid > 0
-                    AND v.category IN (${excludedCats})`
-          }).asMappedResults();
-          if (excludedResult.length > 0 && excludedResult[0].excluded_amount != null) {
-            const excludedAmt = parseFloat(excludedResult[0].excluded_amount) || 0;
-            log.debug("buildAPForecast", "Excluding " + excludedAmt + " from vendor categories: " + excludedCats);
-            totalOutstanding -= excludedAmt;
-          }
+        let excludedTotal = 0;
+        const excludedSearch = search.create({
+          type: search.Type.VENDOR_BILL,
+          filters: [
+            ["mainline", "is", "T"], "AND",
+            ["amountremaining", "greaterthan", 0], "AND",
+            ["vendor.category", "anyof", exclusions.excludeVendorCategories]
+          ],
+          columns: [search.createColumn({ name: "amountremaining", summary: search.Summary.SUM })]
+        });
+        excludedSearch.run().each(function(result) {
+          excludedTotal = parseFloat(result.getValue({ name: "amountremaining", summary: search.Summary.SUM })) || 0;
+          return true;
+        });
+        if (excludedTotal > 0) {
+          log.debug("buildAPForecast", "Excluding " + excludedTotal + " from vendor categories: " + exclusions.excludeVendorCategories.join(','));
+          totalOutstanding -= excludedTotal;
         }
       } catch (e) {
-        log.error("buildAPForecast", "Excluded vendor category query failed: " + e.message);
+        log.error("buildAPForecast", "Excluded vendor category search failed: " + e.message);
       }
     }
 
