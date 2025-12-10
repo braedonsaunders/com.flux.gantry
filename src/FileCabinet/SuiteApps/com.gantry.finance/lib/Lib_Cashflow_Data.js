@@ -1311,8 +1311,43 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
     let totalOutstanding = 0;
     const bills = [];
     const buckets = { Current: 0, "1-30": 0, "31-60": 0, "61-90": 0, "90+": 0 };
+
+    // Get authoritative AP balance directly from GL (matches balance sheet exactly)
+    try {
+      const apBalanceResult = query.runSuiteQL({
+        query: `SELECT SUM(account.balance) as ap_balance FROM account WHERE account.accttype = 'AcctPay' AND account.isinactive = 'F'`
+      }).asMappedResults();
+      if (apBalanceResult.length > 0 && apBalanceResult[0].ap_balance != null) {
+        totalOutstanding = Math.abs(parseFloat(apBalanceResult[0].ap_balance)) || 0;
+      }
+    } catch (e) {
+      log.debug("buildAPForecast", "SuiteQL AP balance query failed, falling back to transaction search: " + e.message);
+    }
+
+    // Subtract excluded vendor categories from AP total
+    const hasExclusions = exclusions && exclusions.excludeVendorCategories && exclusions.excludeVendorCategories.length;
+    if (hasExclusions && totalOutstanding > 0) {
+      try {
+        const excludedCats = exclusions.excludeVendorCategories.map(c => parseInt(c)).filter(c => !isNaN(c)).join(',');
+        if (excludedCats) {
+          const excludedResult = query.runSuiteQL({
+            query: `SELECT SUM(t.foreignamountremaining) as excluded_amount
+                    FROM transaction t
+                    JOIN vendor v ON t.entity = v.id
+                    WHERE t.type = 'VendBill' AND t.mainline = 'T' AND t.foreignamountremaining > 0
+                    AND v.category IN (${excludedCats})`
+          }).asMappedResults();
+          if (excludedResult.length > 0 && excludedResult[0].excluded_amount != null) {
+            totalOutstanding -= Math.abs(parseFloat(excludedResult[0].excluded_amount)) || 0;
+          }
+        }
+      } catch (e) {
+        log.debug("buildAPForecast", "Excluded vendor category query failed: " + e.message);
+      }
+    }
+
     const filters = [["mainline", "is", "T"], "AND", ["amountremaining", "greaterthan", 0]];
-    if (exclusions && exclusions.excludeVendorCategories && exclusions.excludeVendorCategories.length) {
+    if (hasExclusions) {
       filters.push("AND", ["vendor.category", "noneof", exclusions.excludeVendorCategories]);
     }
 
@@ -1338,8 +1373,6 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
         const entityId = res.getValue("entity");
         const customDateRaw = res.getValue("custbodyexpected_pay_date");
         const vendorCat = res.getValue({ name: "category", join: "vendor" });
-
-        totalOutstanding += amt;
 
         // Calculate days past due for display
         let daysOverDue = 0;
@@ -1413,34 +1446,7 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
       });
     });
 
-    // Include outstanding expense reports in AP totals (reimbursable expenses)
-    try {
-      const expRepSearch = search.create({
-        type: search.Type.EXPENSE_REPORT,
-        filters: [["mainline", "is", "T"], "AND", ["amountremaining", "greaterthan", 0]],
-        columns: ["amountremaining", "trandate", "duedate"],
-      });
-      expRepSearch.run().each(function (res) {
-        const amt = parseFloat(res.getValue("amountremaining")) || 0;
-        const duedate = res.getValue("duedate") ? parseNsDate(res.getValue("duedate")) : null;
-        totalOutstanding += amt;
-        if (duedate) {
-          const diffTime = timeline.asOfDate - duedate;
-          const daysPastDue = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-          if (daysPastDue <= 0) buckets["Current"] += amt;
-          else if (daysPastDue <= 30) buckets["1-30"] += amt;
-          else if (daysPastDue <= 60) buckets["31-60"] += amt;
-          else if (daysPastDue <= 90) buckets["61-90"] += amt;
-          else buckets["90+"] += amt;
-        } else buckets["Current"] += amt;
-        return true;
-      });
-    } catch (e) {
-      // Expense reports may not be enabled in all accounts
-      log.debug("buildAPForecast", "Expense report search skipped: " + e.message);
-    }
-
-    // Calculate % current from buckets
+    // Calculate % current from buckets (based on vendor bills for aging purposes)
     const currentAmountAP = buckets["Current"] || 0;
     const pctCurrentAP = totalOutstanding > 0 ? (currentAmountAP / totalOutstanding) * 100 : 0;
 
