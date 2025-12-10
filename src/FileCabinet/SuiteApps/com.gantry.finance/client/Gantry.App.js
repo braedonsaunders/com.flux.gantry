@@ -28,11 +28,15 @@
             }
             docs.push({ doc: document, win: window, name: 'current' });
 
-            // NetSuite header selectors - includes Redwood theme classes
+            // NetSuite header selectors - includes Redwood theme with ID selectors
             const headerSelectors = [
-                '.div__header',                         // Redwood theme header (BEM style)
-                '.ns-child-component.div__header',      // Redwood with ns-child-component
-                '[class*="div__header"]',               // Any header class
+                // Redwood theme (uses ID selectors, not classes)
+                '#div__header .ns-header-background',   // Redwood actual background element
+                '#div__header .ns-menubar',             // Redwood menu bar
+                '#div__header .ns-menu-container',      // Redwood menu container
+                '#div__header',                         // Redwood header container (ID, not class)
+                '[id="div__header"]',                   // Alternative ID selector
+                // Classic NetSuite selectors
                 '#ns-header',                           // Modern NetSuite header
                 '.ns-header',                           // Alternative class
                 '#ns_navigation',                       // Navigation bar
@@ -41,6 +45,7 @@
                 '#nscm',                                // NetSuite Center Menu
                 '.ns-role-header',                      // Role-based header
                 '[data-role="header"]',                 // Data attribute header
+                // Background utility classes
                 '.bgdk',                                // Dark background nav
                 '.bgmd',                                // Medium background nav
                 '.bglt'                                 // Light background nav
@@ -57,21 +62,27 @@
                 // Try each selector
                 for (const selector of headerSelectors) {
                     try {
-                        const element = doc.querySelector(selector);
-                        if (element) {
+                        const elements = doc.querySelectorAll(selector);
+                        for (const element of elements) {
+                            // Skip skeleton/placeholder elements
+                            if (element.id && element.id.includes('skeleton')) continue;
+                            if (element.classList && element.classList.contains('bgoff')) continue;
+                            if (element.closest('[id*="skeleton"]')) continue;
+
                             const computedStyle = win.getComputedStyle(element);
                             const bgColor = computedStyle.backgroundColor;
 
-                            // Skip transparent or pure white backgrounds
+                            // Skip transparent, pure white, or near-white backgrounds
                             if (bgColor && bgColor !== 'transparent' &&
                                 bgColor !== 'rgba(0, 0, 0, 0)' &&
-                                bgColor !== 'rgb(255, 255, 255)') {
+                                !isNearWhite(bgColor)) {
                                 detectedColor = bgColor;
                                 sourceElement = selector;
                                 sourceDoc = name;
                                 break;
                             }
                         }
+                        if (detectedColor) break;
                     } catch (e) {
                         continue;
                     }
@@ -84,13 +95,17 @@
                         for (const element of topElements) {
                             // Skip body/html
                             if (element.tagName === 'BODY' || element.tagName === 'HTML') continue;
+                            // Skip skeleton/placeholder elements
+                            if (element.id && element.id.includes('skeleton')) continue;
+                            if (element.classList && element.classList.contains('bgoff')) continue;
+                            if (element.closest('[id*="skeleton"]')) continue;
 
                             const computedStyle = win.getComputedStyle(element);
                             const bgColor = computedStyle.backgroundColor;
 
                             if (bgColor && bgColor !== 'transparent' &&
                                 bgColor !== 'rgba(0, 0, 0, 0)' &&
-                                bgColor !== 'rgb(255, 255, 255)') {
+                                !isNearWhite(bgColor)) {
                                 detectedColor = bgColor;
                                 sourceElement = `elementsFromPoint (${element.className || element.tagName})`;
                                 sourceDoc = name;
@@ -111,13 +126,51 @@
                 }
             }
 
-            console.log('[Gantry] No suitable NetSuite header color detected, using defaults');
             return false;
 
         } catch (e) {
             console.log('[Gantry] Color sync error:', e.message);
             return false;
         }
+    }
+
+    /**
+     * Retry color detection with exponential backoff for async-loaded themes (Redwood)
+     */
+    function syncNetSuiteColorWithRetry(maxRetries = 5, initialDelay = 100) {
+        let attempts = 0;
+
+        function attempt() {
+            attempts++;
+            const success = syncNetSuiteColor();
+
+            if (success) {
+                console.log('[Gantry] Color sync succeeded on attempt', attempts);
+                return;
+            }
+
+            if (attempts < maxRetries) {
+                const delay = initialDelay * Math.pow(2, attempts - 1); // 100, 200, 400, 800, 1600ms
+                console.log('[Gantry] Color detection attempt', attempts, 'failed, retrying in', delay + 'ms');
+                setTimeout(attempt, delay);
+            } else {
+                console.log('[Gantry] No NetSuite header color detected after', maxRetries, 'attempts, using defaults');
+                // Apply default dark sidebar
+                applyDetectedColor('rgb(30, 41, 59)');
+            }
+        }
+
+        attempt();
+    }
+
+    /**
+     * Check if a color is near-white (for filtering out placeholder backgrounds)
+     */
+    function isNearWhite(color) {
+        const rgb = parseRgb(color);
+        if (!rgb) return false;
+        // Consider colors with all channels > 250 as "near white"
+        return rgb.r > 250 && rgb.g > 250 && rgb.b > 250;
     }
 
     /**
@@ -165,6 +218,28 @@
     }
 
     /**
+     * Adjust color brightness by a percentage (-1 to 1, negative = darker, positive = lighter)
+     */
+    function adjustBrightness(rgb, amount) {
+        if (amount < 0) {
+            // Darken: multiply each channel
+            const factor = 1 + amount;
+            return {
+                r: Math.round(Math.max(0, rgb.r * factor)),
+                g: Math.round(Math.max(0, rgb.g * factor)),
+                b: Math.round(Math.max(0, rgb.b * factor))
+            };
+        } else {
+            // Lighten: move toward 255
+            return {
+                r: Math.round(Math.min(255, rgb.r + (255 - rgb.r) * amount)),
+                g: Math.round(Math.min(255, rgb.g + (255 - rgb.g) * amount)),
+                b: Math.round(Math.min(255, rgb.b + (255 - rgb.b) * amount))
+            };
+        }
+    }
+
+    /**
      * Apply detected color to sidebar CSS variables
      * Returns true if color was applied, false if skipped
      */
@@ -176,49 +251,50 @@
         const isLightTheme = luminance > 0.5;
         const root = document.documentElement;
 
-        // Apply the detected color as sidebar background
-        root.style.setProperty('--sidebar-bg', `rgb(${rgb.r}, ${rgb.g}, ${rgb.b})`);
+        // Adjust sidebar to be 10% darker (light themes) or 10% lighter (dark themes)
+        // This creates visual distinction from the NetSuite header
+        let sidebarRgb;
+        if (isLightTheme) {
+            sidebarRgb = adjustBrightness(rgb, -0.10); // 10% darker for light themes
+        } else {
+            sidebarRgb = adjustBrightness(rgb, 0.10);  // 10% lighter for dark themes
+        }
 
-        // For light themes: darken for hover/borders, use dark text
-        // For dark themes: lighten for hover/borders, use light text
-        let hoverR, hoverG, hoverB, borderR, borderG, borderB;
+        // Apply the adjusted color as sidebar background
+        root.style.setProperty('--sidebar-bg', `rgb(${sidebarRgb.r}, ${sidebarRgb.g}, ${sidebarRgb.b})`);
+
+        // Calculate hover and border colors from the adjusted sidebar color
+        let hoverRgb, borderRgb;
 
         if (isLightTheme) {
-            // Light theme: darken for hover/border states
-            hoverR = Math.max(0, rgb.r - 15);
-            hoverG = Math.max(0, rgb.g - 15);
-            hoverB = Math.max(0, rgb.b - 15);
-            borderR = Math.max(0, rgb.r - 25);
-            borderG = Math.max(0, rgb.g - 25);
-            borderB = Math.max(0, rgb.b - 25);
+            // Light theme: darken further for hover/border states
+            hoverRgb = adjustBrightness(sidebarRgb, -0.08);
+            borderRgb = adjustBrightness(sidebarRgb, -0.12);
 
             // Add light-sidebar class for text color adjustments
             document.querySelector('.gantry-sidebar')?.classList.add('light-theme');
         } else {
             // Dark theme: lighten for hover/border states
-            hoverR = Math.min(255, rgb.r + 30);
-            hoverG = Math.min(255, rgb.g + 30);
-            hoverB = Math.min(255, rgb.b + 30);
-            borderR = Math.min(255, rgb.r + 40);
-            borderG = Math.min(255, rgb.g + 40);
-            borderB = Math.min(255, rgb.b + 40);
+            hoverRgb = adjustBrightness(sidebarRgb, 0.15);
+            borderRgb = adjustBrightness(sidebarRgb, 0.20);
 
             // Remove light-sidebar class if present
             document.querySelector('.gantry-sidebar')?.classList.remove('light-theme');
         }
 
-        root.style.setProperty('--sidebar-bg-hover', `rgb(${hoverR}, ${hoverG}, ${hoverB})`);
-        root.style.setProperty('--sidebar-border', `rgb(${borderR}, ${borderG}, ${borderB})`);
+        root.style.setProperty('--sidebar-bg-hover', `rgb(${hoverRgb.r}, ${hoverRgb.g}, ${hoverRgb.b})`);
+        root.style.setProperty('--sidebar-border', `rgb(${borderRgb.r}, ${borderRgb.g}, ${borderRgb.b})`);
 
         // Store the synced color for reference
         window.GANTRY_SIDEBAR_COLOR = {
             detected: color,
+            detectedRgb: rgb,
             luminance: luminance,
             isLightTheme: isLightTheme,
             applied: {
-                bg: `rgb(${rgb.r}, ${rgb.g}, ${rgb.b})`,
-                hover: `rgb(${hoverR}, ${hoverG}, ${hoverB})`,
-                border: `rgb(${borderR}, ${borderG}, ${borderB})`
+                bg: `rgb(${sidebarRgb.r}, ${sidebarRgb.g}, ${sidebarRgb.b})`,
+                hover: `rgb(${hoverRgb.r}, ${hoverRgb.g}, ${hoverRgb.b})`,
+                border: `rgb(${borderRgb.r}, ${borderRgb.g}, ${borderRgb.b})`
             }
         };
 
@@ -300,8 +376,8 @@
     // START APPLICATION
     // ==========================================
     async function startApp() {
-        // Sync sidebar color with NetSuite header (runs early for fast visual match)
-        syncNetSuiteColor();
+        // Sync sidebar color with NetSuite header (with retry for async Redwood theme)
+        syncNetSuiteColorWithRetry();
 
         // Default to advisor as the first route
         let defaultRoute = 'advisor';
