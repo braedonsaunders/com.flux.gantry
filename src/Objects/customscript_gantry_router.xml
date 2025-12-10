@@ -1,0 +1,39 @@
+<restlet scriptid="customscript_gantry_router">
+    <name>Gantry API Router</name>
+    <scriptfile>[/SuiteApps/com.gantry.finance/suitelet/Gantry_Router.js]</scriptfile>
+    <description>RESTlet API router for Gantry Financial Dashboard</description>
+    <isinactive>F</isinactive>
+    <notifyadmins>F</notifyadmins>
+    <notifyemails></notifyemails>
+    <notifyowner>T</notifyowner>
+    <scriptdeployments>
+        <scriptdeployment scriptid="customdeploy_gantry_router">
+            <status>RELEASED</status>
+            <title>Gantry API Router</title>
+            <isdeployed>T</isdeployed>
+            <loglevel>ERROR</loglevel>
+            <allemployees>T</allemployees>
+            <allpartners>F</allpartners>
+            <allroles>F</allroles>
+            <audslctrole></audslctrole>
+            <runasrole>ADMINISTRATOR</runasrole>
+        </scriptdeployment>
+    </scriptdeployments>
+    <libraries>
+        <library>
+            <scriptfile>[/SuiteApps/com.gantry.finance/lib/Lib_Core.js]</scriptfile>
+        </library>
+        <library>
+            <scriptfile>[/SuiteApps/com.gantry.finance/lib/Lib_Config.js]</scriptfile>
+        </library>
+        <library>
+            <scriptfile>[/SuiteApps/com.gantry.finance/lib/Lib_Shared.js]</scriptfile>
+        </library>
+        <library>
+            <scriptfile>[/SuiteApps/com.gantry.finance/lib/Lib_Dashboard_Registry.js]</scriptfile>
+        </library>
+        <library>
+            <scriptfile>[/SuiteApps/com.gantry.finance/lib/Lib_Model_Registry.js]</scriptfile>
+        </library>
+    </libraries>
+</restlet>
