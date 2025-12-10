@@ -1502,6 +1502,7 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
     // Single SuiteQL query for both AR (CustInvc) and AP (VendBill) payment history
     // Use explicit aliases to ensure consistent column names in results
     // Use UPPER() for case-insensitive type matching
+    // Note: Transaction table is header-level, no mainline filter needed (that's for TransactionLine)
     const sql = `
       SELECT
         UPPER(t.type) AS type,
@@ -1509,8 +1510,7 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
         t.trandate AS trandate,
         t.closedate AS closedate
       FROM Transaction t
-      WHERE t.mainline = 'T'
-        AND UPPER(t.type) IN ('CUSTINVC', 'VENDBILL')
+      WHERE UPPER(t.type) IN ('CUSTINVC', 'VENDBILL')
         AND t.trandate >= TO_DATE('${startStr}', 'YYYY-MM-DD')
         AND t.closedate IS NOT NULL
     `;
