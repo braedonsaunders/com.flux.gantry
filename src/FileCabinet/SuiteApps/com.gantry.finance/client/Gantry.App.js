@@ -302,6 +302,9 @@
     // Expose sync function globally for manual re-sync if needed
     window.GantrySyncNetSuiteColor = syncNetSuiteColor;
 
+    // Run color detection IMMEDIATELY (before DOM setup) for fastest visual match
+    syncNetSuiteColorWithRetry();
+
     // ==========================================
     // INITIALIZATION
     // ==========================================
@@ -387,9 +390,6 @@
     // START APPLICATION
     // ==========================================
     async function startApp() {
-        // Sync sidebar color with NetSuite header (with retry for async Redwood theme)
-        syncNetSuiteColorWithRetry();
-
         // Default to advisor as the first route
         let defaultRoute = 'advisor';
 
