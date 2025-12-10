@@ -1500,34 +1500,50 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
     const startStr = Shared.formatDateYMD(historyStart);
 
     // Single SuiteQL query for both AR (CustInvc) and AP (VendBill) payment history
+    // Use explicit aliases to ensure consistent column names in results
     const sql = `
       SELECT
-        t.type,
-        t.entity,
-        t.trandate,
-        t.closedate
+        t.type AS type,
+        t.entity AS entity,
+        t.trandate AS trandate,
+        t.closedate AS closedate
       FROM Transaction t
       WHERE t.mainline = 'T'
         AND t.type IN ('CustInvc', 'VendBill')
         AND t.trandate >= TO_DATE('${startStr}', 'YYYY-MM-DD')
         AND t.closedate IS NOT NULL
-      ORDER BY t.type, t.entity
     `;
 
     // Data structures for AR and AP
     const arEntityData = {};
     const apEntityData = {};
 
+    // Helper to parse SuiteQL dates (can be Date objects or strings)
+    function parseSuiteQLDate(val) {
+      if (!val) return null;
+      if (val instanceof Date) return val;
+      // Try NetSuite format first, then fallback to standard Date parsing
+      try {
+        return parseNsDate(val);
+      } catch (e) {
+        const d = new Date(val);
+        return isNaN(d.getTime()) ? null : d;
+      }
+    }
+
     try {
       const resultSet = query.runSuiteQL({ query: sql });
       const results = resultSet.asMappedResults();
 
       results.forEach(function(row) {
-        const entityId = String(row.entity); // Convert to string for consistency with Search API
-        const tranDate = parseNsDate(row.trandate);
-        const closeDate = parseNsDate(row.closedate);
+        // Skip rows with null/undefined entity
+        if (row.entity == null) return;
 
-        if (entityId && tranDate && closeDate) {
+        const entityId = String(row.entity);
+        const tranDate = parseSuiteQLDate(row.trandate);
+        const closeDate = parseSuiteQLDate(row.closedate);
+
+        if (tranDate && closeDate) {
           const days = (closeDate - tranDate) / (1000 * 60 * 60 * 24);
           if (days >= 0) {
             // Route to AR or AP based on type
