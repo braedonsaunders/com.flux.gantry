@@ -1193,16 +1193,18 @@
                 const entityType = this.flyout.activeTab === 'ar' ? 'customer' : 'vendor';
                 const daysClass = t.daysOverDue > 0 ? 'overdue' : t.daysOverDue < -7 ? 'current' : 'due-soon';
                 const daysLabel = t.daysOverDue > 0 ? `+${t.daysOverDue}` : t.daysOverDue;
-                const predMethod = t.predictionMethod || 'unknown';
+                const predMethod = (t.predictionMethod || 'unknown').toLowerCase();
                 const predDetail = t.predictionDetail || '';
-                
-                // Prediction method pill
+
+                // Prediction method pill - handle both old and new backend values
                 let methodLabel = 'Unknown';
                 let methodClass = 'method-unknown';
                 if (predMethod === 'custom') { methodLabel = 'Custom'; methodClass = 'method-custom'; }
+                else if (predMethod === 'statistical') { methodLabel = 'History'; methodClass = 'method-history'; }
                 else if (predMethod === 'customer_history') { methodLabel = 'History'; methodClass = 'method-history'; }
                 else if (predMethod === 'vendor_history') { methodLabel = 'History'; methodClass = 'method-history'; }
                 else if (predMethod === 'terms') { methodLabel = 'Terms'; methodClass = 'method-terms'; }
+                else if (predMethod === 'default') { methodLabel = 'Average'; methodClass = 'method-avg'; }
                 else if (predMethod === 'global_avg') { methodLabel = 'Average'; methodClass = 'method-avg'; }
                 
                 html += `
