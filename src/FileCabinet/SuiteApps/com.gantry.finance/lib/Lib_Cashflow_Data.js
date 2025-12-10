@@ -2217,7 +2217,10 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
               amount: parseFloat(res.getValue("amountremaining")) || 0,
               tranDate: Shared.formatDateYMD(parseNsDate(res.getValue("trandate"))),
               dueDate: duedate ? Shared.formatDateYMD(duedate) : null,
-              daysOverDue: daysOverDue
+              predictedDate: duedate ? Shared.formatDateYMD(duedate) : "-",
+              daysOverDue: daysOverDue,
+              predictionMethod: "DueDate",
+              predictionDetail: "Based on invoice due date"
             });
           }
         });
@@ -2255,13 +2258,16 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
               amount: parseFloat(res.getValue("amountremaining")) || 0,
               tranDate: Shared.formatDateYMD(parseNsDate(res.getValue("trandate"))),
               dueDate: duedate ? Shared.formatDateYMD(duedate) : null,
-              daysOverDue: daysOverDue
+              predictedDate: duedate ? Shared.formatDateYMD(duedate) : "-",
+              daysOverDue: daysOverDue,
+              predictionMethod: "DueDate",
+              predictionDetail: "Based on bill due date"
             });
           }
         });
       });
     }
-    
+
     // Sort by amount descending
     items.sort((a, b) => b.amount - a.amount);
     
