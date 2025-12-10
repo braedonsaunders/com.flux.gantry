@@ -1756,11 +1756,14 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
     const horizonWeeks = storedConfig.horizonWeeks || 8;
     const timeline = calculateTimeline(horizonWeeks);
 
+    // Use SAME stats function as main getData (computeCombinedStats, not computeAdvancedStats)
+    const combinedStats = computeCombinedStats(paymentHistoryDays, defaultDaysToPay);
+
     const transactions = [];
 
     if (type === 'ar') {
       // Use SAME functions as main getData
-      const arStats = computeAdvancedStats("CustInvc", paymentHistoryDays, defaultDaysToPay);
+      const arStats = combinedStats.ar;
       const arData = buildARForecast(timeline, arStats, volatilityThresholds, overduePushDays);
 
       // Filter invoices to requested week
@@ -1792,7 +1795,7 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
       });
     } else {
       // AP: Use SAME functions as main getData INCLUDING scheduling logic
-      const apStats = computeAdvancedStats("VendBill", paymentHistoryDays, defaultDaysToPay);
+      const apStats = combinedStats.ap;
       const apData = buildAPForecast(timeline, apStats, storedConfig.apFilters || {}, overduePushDays);
 
       // Get bank balance for scheduling
