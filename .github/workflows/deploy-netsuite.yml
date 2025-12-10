@@ -1,0 +1,47 @@
+name: Deploy to NetSuite
+
+on:
+  push:
+    branches:
+      - main
+      - deploy
+  workflow_dispatch:  # Allow manual trigger
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install SuiteCloud CLI
+        run: npm install -g @oracle/suitecloud-cli
+
+      - name: Setup NetSuite authentication
+        run: |
+          mkdir -p ~/.suitecloud-sdk
+          echo '${{ secrets.NETSUITE_AUTH }}' > ~/.suitecloud-sdk/credentials
+
+      - name: Validate project
+        run: suitecloud project:validate
+        working-directory: ${{ github.workspace }}
+
+      - name: Deploy to NetSuite
+        run: suitecloud project:deploy --accountid ${{ secrets.NETSUITE_ACCOUNT_ID }}
+        working-directory: ${{ github.workspace }}
+        env:
+          NETSUITE_ACCOUNT_ID: ${{ secrets.NETSUITE_ACCOUNT_ID }}
+
+      - name: Deployment summary
+        if: success()
+        run: |
+          echo "## Deployment Successful! :rocket:" >> $GITHUB_STEP_SUMMARY
+          echo "Deployed to NetSuite account: ${{ secrets.NETSUITE_ACCOUNT_ID }}" >> $GITHUB_STEP_SUMMARY
+          echo "Branch: ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "Commit: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
