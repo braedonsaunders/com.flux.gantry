@@ -132,8 +132,15 @@ function uploadFile(filePath) {
             encoding: 'utf8',
             stdio: ['pipe', 'pipe', 'pipe']
         });
+
+        // Check for failure indicators in the response (CLI returns 0 even on failure)
+        if (output && (output.includes('were not uploaded') || output.includes('problem when uploading'))) {
+            log(`  FAILED: ${output.trim()}`, 'error');
+            return false;
+        }
+
         if (output) {
-            log(`  Response: ${output.trim()}`, 'info');
+            log(`  OK: ${output.trim()}`, 'success');
         }
         return true;
     } catch (e) {
