@@ -4,7 +4,16 @@ on:
   push:
     branches:
       - main
-  workflow_dispatch:  # Allow manual trigger from GitHub UI
+  workflow_dispatch:
+    inputs:
+      sync_mode:
+        description: 'Sync mode'
+        required: true
+        default: 'ci'
+        type: choice
+        options:
+          - ci
+          - all
 
 env:
   # Enable machine-to-machine authentication mode
@@ -44,7 +53,11 @@ jobs:
             --privatekeypath /tmp/private.pem
 
       - name: Deploy to NetSuite
-        run: node scripts/sync.js --ci
+        run: |
+          # Use 'all' for manual triggers with that option, otherwise 'ci'
+          MODE="${{ github.event.inputs.sync_mode || 'ci' }}"
+          echo "Sync mode: $MODE"
+          node scripts/sync.js --$MODE
 
       - name: Cleanup
         if: always()
@@ -57,4 +70,5 @@ jobs:
           echo "- **Account:** ${{ secrets.NS_ACCOUNT_ID }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Branch:** ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Commit:** \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Mode:** ${{ github.event.inputs.sync_mode || 'ci' }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Time:** $(date -u)" >> $GITHUB_STEP_SUMMARY
