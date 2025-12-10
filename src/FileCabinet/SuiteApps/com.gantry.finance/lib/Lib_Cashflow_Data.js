@@ -73,14 +73,12 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
     const timeline = calculateTimeline(config.horizonWeeks);
     timings.configSetup = Date.now() - t0;
 
-    // 2. Advanced Stats (Mean/StdDev) - pass configurable history window
+    // 2. Advanced Stats (Mean/StdDev) - SINGLE combined query for both AR and AP
     t0 = Date.now();
-    const arStats = computeAdvancedStats("CustInvc", paymentHistoryDays, defaultDaysToPay);
-    timings.arStats = Date.now() - t0;
-    
-    t0 = Date.now();
-    const apStats = computeAdvancedStats("VendBill", paymentHistoryDays, defaultDaysToPay);
-    timings.apStats = Date.now() - t0;
+    const combinedStats = computeCombinedStats(paymentHistoryDays, defaultDaysToPay);
+    const arStats = combinedStats.ar;
+    const apStats = combinedStats.ap;
+    timings.combinedStats = Date.now() - t0;
 
     // 3. Core Forecasts - pass configurable settings
     t0 = Date.now();
@@ -1429,6 +1427,96 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
 
     const globalAvg = globalCount > 0 ? Math.round(globalSum / globalCount) : defaultDays;
     return { map: map, globalAvg: globalAvg };
+  }
+
+  /**
+   * Compute AR and AP payment stats in a SINGLE SuiteQL query
+   * Replaces two separate computeAdvancedStats calls with one database round-trip
+   * @param {number} paymentHistoryDays - Days of history to analyze
+   * @param {number} defaultDaysToPay - Default days if no history exists
+   * @returns {Object} { ar: {map, globalAvg}, ap: {map, globalAvg} }
+   */
+  function computeCombinedStats(paymentHistoryDays, defaultDaysToPay) {
+    const historyDays = paymentHistoryDays || 365;
+    const defaultDays = defaultDaysToPay || 45;
+    const today = new Date();
+    const historyStart = addDays(today, -historyDays);
+    const startStr = Shared.formatDateYMD(historyStart);
+
+    // Single SuiteQL query for both AR (CustInvc) and AP (VendBill) payment history
+    const sql = `
+      SELECT
+        t.type,
+        t.entity,
+        t.trandate,
+        t.closedate
+      FROM Transaction t
+      WHERE t.mainline = 'T'
+        AND t.type IN ('CustInvc', 'VendBill')
+        AND t.trandate >= TO_DATE('${startStr}', 'YYYY-MM-DD')
+        AND t.closedate IS NOT NULL
+      ORDER BY t.type, t.entity
+    `;
+
+    // Data structures for AR and AP
+    const arEntityData = {};
+    const apEntityData = {};
+
+    try {
+      const resultSet = query.runSuiteQL({ query: sql });
+      const results = resultSet.asMappedResults();
+
+      results.forEach(function(row) {
+        const entityId = row.entity;
+        const tranDate = parseNsDate(row.trandate);
+        const closeDate = parseNsDate(row.closedate);
+
+        if (entityId && tranDate && closeDate) {
+          const days = (closeDate - tranDate) / (1000 * 60 * 60 * 24);
+          if (days >= 0) {
+            // Route to AR or AP based on type
+            if (row.type === 'CustInvc') {
+              if (!arEntityData[entityId]) arEntityData[entityId] = [];
+              arEntityData[entityId].push(days);
+            } else if (row.type === 'VendBill') {
+              if (!apEntityData[entityId]) apEntityData[entityId] = [];
+              apEntityData[entityId].push(days);
+            }
+          }
+        }
+      });
+    } catch (e) {
+      log.error("Combined Stats SuiteQL Error", e);
+      // Fallback to empty results - forecasts will use defaults
+    }
+
+    // Helper to compute stats from entity data
+    function computeStatsFromData(entityData) {
+      const map = {};
+      let globalSum = 0;
+      let globalCount = 0;
+
+      Object.keys(entityData).forEach(function(eId) {
+        const points = entityData[eId];
+        const n = points.length;
+        if (n === 0) return;
+        const sum = points.reduce(function(a, b) { return a + b; }, 0);
+        const mean = sum / n;
+        const variance = points.reduce(function(a, b) { return a + Math.pow(b - mean, 2); }, 0) / n;
+        const stdDev = Math.sqrt(variance);
+        map[eId] = { avgDays: Math.round(mean), stdDev: stdDev, count: n };
+        globalSum += sum;
+        globalCount += n;
+      });
+
+      const globalAvg = globalCount > 0 ? Math.round(globalSum / globalCount) : defaultDays;
+      return { map: map, globalAvg: globalAvg };
+    }
+
+    return {
+      ar: computeStatsFromData(arEntityData),
+      ap: computeStatsFromData(apEntityData)
+    };
   }
 
   function buildFinalTimeline(timeline, startCash, arMap, apBillsList, dynIn, dynOut, apConfig) {
