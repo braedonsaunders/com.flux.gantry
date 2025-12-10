@@ -1206,6 +1206,7 @@
                 else if (predMethod === 'terms') { methodLabel = 'Terms'; methodClass = 'method-terms'; }
                 else if (predMethod === 'default') { methodLabel = 'Average'; methodClass = 'method-avg'; }
                 else if (predMethod === 'global_avg') { methodLabel = 'Average'; methodClass = 'method-avg'; }
+                else if (predMethod === 'duedate') { methodLabel = 'Due Date'; methodClass = 'method-terms'; }
                 
                 html += `
                     <tr>
