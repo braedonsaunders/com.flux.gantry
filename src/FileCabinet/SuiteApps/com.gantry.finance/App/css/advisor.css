@@ -3062,36 +3062,24 @@ body.dark-mode .sparkline-label {
     border-right-color: #334155;
 }
 
-.advisor-focus-mode {
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 100vw;
-    height: 100vh;
-    z-index: 9999;
-    background: white;
-    padding: 20px;
-    display: flex;
-    flex-direction: column;
-}
-
-.advisor-focus-mode .advisor-table-wrapper {
-    flex: 1;
-    max-height: none; /* Let it fill screen */
-}
 /* Focus Mode (Zen View) */
 .advisor-focus-mode {
     position: fixed !important;
     top: 0;
     left: 0;
+    right: 0;
+    bottom: 0;
     width: 100vw;
     height: 100vh;
     z-index: 9999; /* Ensure it sits on top of everything including nav bars */
-    background-color: white;
+    background-color: #ffffff !important;
+    background: #ffffff !important;
     padding: 20px;
     display: flex;
     flex-direction: column;
     box-sizing: border-box;
+    isolation: isolate; /* Create stacking context */
+    opacity: 1 !important;
 }
 
 /* Make the table wrapper take up all available space */
@@ -3109,7 +3097,8 @@ body.dark-mode .sparkline-label {
     padding-bottom: 10px;
 }
 
-/* Dark Mode Support (if applicable) */
+/* Dark Mode Support for Focus Mode */
 .dark-mode .advisor-focus-mode {
-    background-color: #0f172a; /* Dark background color */
+    background-color: #0f172a !important;
+    background: #0f172a !important;
 }
