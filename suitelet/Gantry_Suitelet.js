@@ -1,0 +1,284 @@
+/**
+ * @NApiVersion 2.1
+ * @NScriptType Suitelet
+ * @NModuleScope Public
+ * @module Gantry_Suitelet
+ * @description Main Suitelet for Gantry Financial Suite
+ *              Uses iframe to preserve NetSuite menu while serving app
+ * 
+ * DEPLOYMENT REQUIREMENTS:
+ * - This Suitelet: ID = customscript_gantry_suitelet, Deploy ID = customdeploy_gantry_suitelet
+ * - Router Restlet: ID = customscript_gantry_router, Deploy ID = customdeploy_gantry_router
+ */
+define([
+    'N/file',
+    'N/ui/serverWidget',
+    'N/url',
+    'N/runtime',
+    'N/log'
+], function(file, serverWidget, url, runtime, log) {
+    'use strict';
+
+    /**
+     * Configuration - uses string IDs for portability across NetSuite instances
+     */
+    const CONFIG = {
+        // Base path in File Cabinet
+        basePath: 'SuiteApps/com.gantry.finance',
+        
+        // Router Restlet - MUST use these exact IDs when deploying
+        routerScriptId: 'customscript_gantry_router',
+        routerDeploymentId: 'customdeploy_gantry_router'
+    };
+
+    /**
+     * File manifest for dev mode - maps script keys to file paths
+     */
+    const FILE_MANIFEST = {
+        // CSS - Individual modules (loaded in order)
+        'css_base': 'App/css/base.css',
+        'css_components': 'App/css/components.css',
+        'css_widgets': 'App/css/widgets.css',
+        'css_dark_mode': 'App/css/dark-mode.css',
+        'css_advisor': 'App/css/advisor.css',
+        'css_financial_vitals': 'App/css/financial-vitals.css',
+        'css_financial_statements': 'App/css/financial-statements.css',
+        'css_pivot_tables': 'App/css/pivot-tables.css',
+        'css_integrity': 'App/css/integrity.css',
+        'css_vendor_performance': 'App/css/vendor-performance.css',
+        'css_customer_value': 'App/css/customer-value.css',
+        'css_spend_velocity': 'App/css/spend-velocity.css',
+        'css_burden': 'App/css/burden.css',
+        'css_health': 'App/css/health.css',
+        'css_cashflow': 'App/css/cashflow.css',
+        
+        // Core
+        'core/Gantry.Core.js': 'client/core/Gantry.Core.js',
+        
+        // Dashboard controllers
+        'dashboards/Dashboard.Cashflow.js': 'client/dashboards/Dashboard.Cashflow.js',
+        'dashboards/Dashboard.Health.js': 'client/dashboards/Dashboard.Health.js',
+        'dashboards/Dashboard.Time.js': 'client/dashboards/Dashboard.Time.js',
+        'dashboards/Dashboard.Burden.js': 'client/dashboards/Dashboard.Burden.js',
+        'dashboards/Dashboard.Integrity.js': 'client/dashboards/Dashboard.Integrity.js',
+        'dashboards/Dashboard.VendorPerformance.js': 'client/dashboards/Dashboard.VendorPerformance.js',
+        'dashboards/Dashboard.CustomerValue.js': 'client/dashboards/Dashboard.CustomerValue.js',
+        'dashboards/Dashboard.SpendVelocity.js': 'client/dashboards/Dashboard.SpendVelocity.js',
+        'dashboards/Dashboard.Settings.js': 'client/dashboards/Dashboard.Settings.js',
+        'dashboards/Dashboard.Advisor.js': 'client/dashboards/Dashboard.Advisor.js',
+        
+        // Advisor client scripts
+        'advisor/Gantry.AdvisorRenderer.js': 'client/advisor/Gantry.AdvisorRenderer.js',
+        
+        // App entry
+        'Gantry.App.js': 'client/Gantry.App.js',
+        
+        // Bundle (for production mode)
+        'bundle': 'App/gantry_bundle.js'
+    };
+
+    /**
+     * Handle Suitelet requests
+     */
+    function onRequest(context) {
+        if (context.request.method !== 'GET') {
+            context.response.write('Method not allowed');
+            return;
+        }
+
+        try {
+            const isInnerFrame = context.request.parameters.gantry_mode === 'app';
+
+            if (isInnerFrame) {
+                serveAppContent(context);
+            } else {
+                serveWrapper(context);
+            }
+        } catch (e) {
+            log.error('Suitelet Error', { message: e.message, stack: e.stack });
+            context.response.write('Error loading application: ' + e.message);
+        }
+    }
+
+    /**
+     * MODE 1: APP CONTENT (Raw HTML inside Iframe)
+     */
+    function serveAppContent(context) {
+        // 1. Resolve Router Restlet URL
+        const routerUrl = resolveRouterUrl();
+        log.debug('Router URL', routerUrl);
+
+        // 2. Resolve file URLs for all scripts
+        const fileUrls = resolveFileUrls();
+
+        // 3. Load HTML Template
+        const htmlPath = CONFIG.basePath + '/App/gantry_index.html';
+        const htmlFile = file.load({ id: htmlPath });
+        let htmlContent = htmlFile.getContents();
+
+        // 4. Replace CSS placeholders with actual URLs (individual modules)
+        htmlContent = htmlContent.replace('{{CSS_BASE_URL}}', fileUrls['css_base'] || '');
+        htmlContent = htmlContent.replace('{{CSS_COMPONENTS_URL}}', fileUrls['css_components'] || '');
+        htmlContent = htmlContent.replace('{{CSS_WIDGETS_URL}}', fileUrls['css_widgets'] || '');
+        htmlContent = htmlContent.replace('{{CSS_DARK_MODE_URL}}', fileUrls['css_dark_mode'] || '');
+        htmlContent = htmlContent.replace('{{CSS_ADVISOR_URL}}', fileUrls['css_advisor'] || '');
+        htmlContent = htmlContent.replace('{{CSS_FINANCIAL_VITALS_URL}}', fileUrls['css_financial_vitals'] || '');
+        htmlContent = htmlContent.replace('{{CSS_FINANCIAL_STATEMENTS_URL}}', fileUrls['css_financial_statements'] || '');
+        htmlContent = htmlContent.replace('{{CSS_PIVOT_TABLES_URL}}', fileUrls['css_pivot_tables'] || '');
+        htmlContent = htmlContent.replace('{{CSS_INTEGRITY_URL}}', fileUrls['css_integrity'] || '');
+        htmlContent = htmlContent.replace('{{CSS_VENDOR_PERFORMANCE_URL}}', fileUrls['css_vendor_performance'] || '');
+        htmlContent = htmlContent.replace('{{CSS_CUSTOMER_VALUE_URL}}', fileUrls['css_customer_value'] || '');
+        htmlContent = htmlContent.replace('{{CSS_SPEND_VELOCITY_URL}}', fileUrls['css_spend_velocity'] || '');
+        htmlContent = htmlContent.replace('{{CSS_BURDEN_URL}}', fileUrls['css_burden'] || '');
+        htmlContent = htmlContent.replace('{{CSS_HEALTH_URL}}', fileUrls['css_health'] || '');
+        htmlContent = htmlContent.replace('{{CSS_CASHFLOW_URL}}', fileUrls['css_cashflow'] || '');
+      
+        // 5. Build configuration injection
+        const currentUser = runtime.getCurrentUser();
+        const accountId = runtime.accountId;
+        
+        const configScript = `
+    <script>
+        // Gantry Configuration - Injected by Suitelet
+        window.GANTRY_API_URL = "${routerUrl}";
+        window.NS_ACCOUNT_ID = "${accountId}";
+        
+        window.GANTRY_CONFIG = {
+            apiUrl: "${routerUrl}",
+            accountId: "${accountId}",
+            user: {
+                id: "${currentUser.id}",
+                name: "${currentUser.name}",
+                role: ${currentUser.role},
+                subsidiary: ${currentUser.subsidiary || 'null'}
+            },
+            version: "2.1.0",
+            buildDate: "${new Date().toISOString().split('T')[0]}",
+            features: {
+                advisor: true,
+                vendorPerformance: true,
+                customerValue: true
+            }
+        };
+        
+        // File URLs for dev mode
+        window.GANTRY_FILE_URLS = ${JSON.stringify(fileUrls)};
+    </script>`;
+
+        // 6. Inject configuration before </head>
+        htmlContent = htmlContent.replace('</head>', configScript + '\n</head>');
+
+        // 7. Serve Raw HTML
+        context.response.write(htmlContent);
+    }
+
+    /**
+     * MODE 2: NETSUITE WRAPPER (Preserves Menu, No Grey Bar)
+     */
+    function serveWrapper(context) {
+        const form = serverWidget.createForm({ title: 'Gantry' });
+        
+        // Get the URL of *this* Suitelet with app mode flag
+        const currentScript = runtime.getCurrentScript();
+        const suiteletUrl = url.resolveScript({
+            scriptId: currentScript.id,
+            deploymentId: currentScript.deploymentId
+        }) + '&gantry_mode=app';
+
+        // Add an Inline HTML field to host the Iframe
+        const field = form.addField({
+            id: 'custpage_gantry_frame',
+            type: serverWidget.FieldType.INLINEHTML,
+            label: ' '
+        });
+
+        // Styling for full-width iframe below NS header (no grey bar)
+        field.defaultValue = `
+            <style>
+                /* Hide the form elements that create the grey bar */
+                #main_form > table:first-child,
+                .uir-page-title-secondline {
+                    display: none !important;
+                }
+                
+                /* Iframe container - full width, positioned below NS header */
+                .gantry-frame-wrapper {
+                    position: fixed;
+                    left: 0;
+                    right: 0;
+                    bottom: 0;
+                    top: 103px;
+                    width: 100vw;
+                    height: calc(100vh - 90px);
+                    z-index: 100;
+                    background: #fff;
+                }
+                
+                .gantry-iframe {
+                    width: 100%;
+                    height: 100%;
+                    border: none;
+                    display: block;
+                }
+            </style>
+            <div class="gantry-frame-wrapper">
+                <iframe 
+                    src="${suiteletUrl}" 
+                    class="gantry-iframe"
+                    title="Gantry Financial Suite"
+                ></iframe>
+            </div>
+        `;
+
+        context.response.writePage(form);
+    }
+
+    /**
+     * Resolve File Cabinet URLs for all script files
+     */
+    function resolveFileUrls() {
+        const fileUrls = {};
+        
+        Object.keys(FILE_MANIFEST).forEach(function(key) {
+            const relativePath = FILE_MANIFEST[key];
+            const fullPath = CONFIG.basePath + '/' + relativePath;
+            
+            try {
+                const fileObj = file.load({ id: fullPath });
+                fileUrls[key] = fileObj.url;
+            } catch (e) {
+                log.error('Failed to resolve file URL', { key: key, path: fullPath, error: e.message });
+                fileUrls[key] = null;
+            }
+        });
+        
+        return fileUrls;
+    }
+
+    /**
+     * Resolve the Router Restlet URL using string IDs
+     */
+    function resolveRouterUrl() {
+        try {
+            return url.resolveScript({
+                scriptId: CONFIG.routerScriptId,
+                deploymentId: CONFIG.routerDeploymentId
+            });
+        } catch (e) {
+            log.error('Router URL Resolution Failed', {
+                error: e.message,
+                expectedScriptId: CONFIG.routerScriptId,
+                expectedDeploymentId: CONFIG.routerDeploymentId
+            });
+            throw new Error(
+                'Could not resolve Router URL. ' +
+                'Ensure the Router Restlet has Script ID "' + CONFIG.routerScriptId + '" ' +
+                'and Deployment ID "' + CONFIG.routerDeploymentId + '"'
+            );
+        }
+    }
+
+    return {
+        onRequest: onRequest
+    };
+});

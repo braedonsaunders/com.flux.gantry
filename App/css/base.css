@@ -1,0 +1,229 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   BASE - Base variables, reset, and layout
+   Part of Gantry Financial Suite CSS
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* --- COMPREHENSIVE COLOR SYSTEM --- */
+:root {
+    /* === SEMANTIC SURFACE COLORS === */
+    --surface-body: #f3f4f6;
+    --surface-primary: #ffffff;
+    --surface-secondary: #f8fafc;
+    --surface-tertiary: #f1f5f9;
+    --surface-muted: #e5e7eb;
+    --surface-hover: #f3f4f6;
+    --surface-active: #e5e7eb;
+    
+    /* === SEMANTIC TEXT COLORS === */
+    --text-primary: #111827;
+    --text-secondary: #374151;
+    --text-muted: #6b7280;
+    --text-light: #9ca3af;
+    --text-inverse: #ffffff;
+    
+    /* === SEMANTIC BORDER COLORS === */
+    --border-default: #e5e7eb;
+    --border-light: #f3f4f6;
+    --border-strong: #d1d5db;
+    
+    /* === STATUS COLORS (same in light/dark) === */
+    --status-blue: #3b82f6;
+    --status-blue-dark: #2563eb;
+    --status-blue-soft: #dbeafe;
+    --status-green: #10b981;
+    --status-green-dark: #059669;
+    --status-green-soft: #dcfce7;
+    --status-red: #ef4444;
+    --status-red-dark: #dc2626;
+    --status-red-soft: #fee2e2;
+    --status-amber: #f59e0b;
+    --status-amber-dark: #d97706;
+    --status-amber-soft: #fef3c7;
+    --status-purple: #8b5cf6;
+    --status-purple-soft: #f3e8ff;
+    --status-pink: #ec4899;
+    --status-indigo: #6366f1;
+    --status-cyan: #06b6d4;
+    
+    /* === LEGACY VARIABLE ALIASES (for backwards compat) === */
+    --primary: #2563eb;
+    --primary-soft: #eff6ff;
+    --success: #10b981;
+    --success-soft: #ecfdf5;
+    --danger: #ef4444;
+    --danger-soft: #fef2f2;
+    --warning: #f59e0b;
+    --text-dark: #111827;
+    --border-color: #e5e7eb;
+    --bg-body: #f3f4f6;
+    --bg-white: #ffffff;
+    
+    /* === LAYOUT === */
+    --sidebar-width: 240px;
+    
+    /* === TYPOGRAPHY SCALE === */
+    --font-xs: 0.65rem;      /* 10.4px - tiny labels */
+    --font-sm: 0.72rem;      /* 11.5px - table cells, small text */
+    --font-base: 0.78rem;    /* 12.5px - body text */
+    --font-md: 0.85rem;      /* 13.6px - slightly larger */
+    --font-lg: 1rem;         /* 16px - headings */
+    
+    /* === SPACING SCALE === */
+    --spacing-xs: 3px;
+    --spacing-sm: 5px;
+    --spacing-md: 8px;
+    --spacing-lg: 12px;
+}
+
+/* --- DARK MODE COLOR OVERRIDES --- */
+body.dark-mode {
+    /* === SURFACES === */
+    --surface-body: #0f172a;
+    --surface-primary: #1e293b;
+    --surface-secondary: #1e293b;
+    --surface-tertiary: #334155;
+    --surface-muted: #475569;
+    --surface-hover: #334155;
+    --surface-active: #475569;
+    
+    /* === TEXT === */
+    --text-primary: #f1f5f9;
+    --text-secondary: #e2e8f0;
+    --text-muted: #94a3b8;
+    --text-light: #64748b;
+    --text-inverse: #0f172a;
+    
+    /* === BORDERS === */
+    --border-default: #334155;
+    --border-light: #1e293b;
+    --border-strong: #475569;
+    
+    /* === STATUS SOFT COLORS (inverted for dark) === */
+    --status-blue-soft: #1e3a5f;
+    --status-green-soft: #064e3b;
+    --status-red-soft: #450a0a;
+    --status-amber-soft: #451a03;
+    --status-purple-soft: #2e1065;
+    
+    /* === LEGACY ALIASES === */
+    --primary-soft: #1e3a5f;
+    --success-soft: #064e3b;
+    --danger-soft: #450a0a;
+    --text-dark: #f1f5f9;
+    --border-color: #334155;
+    --bg-body: #0f172a;
+    --bg-white: #1e293b;
+}
+
+body {
+    margin: 0;
+    padding: 0;
+    background-color: var(--bg-body);
+    font-family: "Inter", -apple-system, BlinkMacSystemFont, sans-serif;
+    color: var(--text-dark);
+    font-size: var(--font-base);
+}
+
+/* --- GANTRY LAYOUT --- */
+.gantry-wrapper {
+    display: flex;
+    min-height: 100vh;
+}
+
+.gantry-sidebar {
+    width: var(--sidebar-width);
+    background: #1e293b;
+    color: #fff;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+.gantry-sidebar-header {
+    padding: 16px 20px;
+    font-size: 1.1rem;
+    font-weight: 700;
+    border-bottom: 1px solid #334155;
+    display: flex;
+    align-items: center;
+}
+
+.gantry-sidebar-header i {
+    color: var(--warning);
+    margin-right: 10px;
+}
+
+.gantry-nav {
+    list-style: none;
+    padding: 0;
+    margin: 16px 0;
+}
+
+.gantry-nav-item {
+    margin-bottom: 2px;
+}
+
+.gantry-nav-link {
+    display: flex;
+    align-items: center;
+    padding: 10px 20px;
+    color: #94a3b8;
+    text-decoration: none;
+    transition: all 0.2s;
+    cursor: pointer;
+    font-size: var(--font-md);
+    font-weight: 500;
+}
+
+.gantry-nav-link:hover {
+    color: #fff;
+    background: #334155;
+    text-decoration: none;
+}
+
+.gantry-nav-link.active {
+    color: #fff;
+    background: var(--primary);
+    border-left: 4px solid #60a5fa;
+}
+
+.gantry-nav-link i {
+    width: 22px;
+    text-align: center;
+    margin-right: 10px;
+}
+
+.gantry-nav-separator {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid #334155;
+}
+
+.gantry-sidebar-footer {
+    margin-top: auto;
+    padding: 12px 20px;
+    border-top: 1px solid #334155;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    color: #64748b;
+    font-size: 0.7rem;
+}
+
+.gantry-sidebar-footer button {
+    font-size: 0.9rem;
+    opacity: 0.7;
+    transition: opacity 0.2s;
+}
+
+.gantry-sidebar-footer button:hover {
+    opacity: 1;
+}
+
+.gantry-main {
+    flex: 1;
+    padding: 16px;
+    overflow-x: hidden;
+    height: 100vh;
+    overflow-y: auto;
+}

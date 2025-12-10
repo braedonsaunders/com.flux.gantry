@@ -1,0 +1,2191 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   DARK-MODE - Global dark mode overrides
+   Part of Gantry Financial Suite CSS
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ===========================================
+   DARK MODE VARIABLES
+   (Primary definitions now in base.css)
+   =========================================== */
+body.dark-mode {
+    --bg-body: #0f172a;
+    --bg-white: #1e293b;
+    --text-dark: #f1f5f9;
+    --text-muted: #94a3b8;
+    --border-color: #334155;
+    --primary-soft: #1e3a5f;
+    --success-soft: #064e3b;
+    --danger-soft: #450a0a;
+}
+
+body.dark-mode {
+    background-color: var(--bg-body);
+    color: var(--text-dark);
+}
+
+/* ===========================================
+   COMPREHENSIVE CATCH-ALL OVERRIDES
+   These target common hardcoded colors across
+   all CSS files without individual rules.
+   =========================================== */
+
+/* --- BACKGROUND CATCH-ALLS --- */
+/* Pure white backgrounds */
+body.dark-mode [style*="background: #fff"],
+body.dark-mode [style*="background:#fff"],
+body.dark-mode [style*="background: #ffffff"],
+body.dark-mode [style*="background:#ffffff"],
+body.dark-mode [style*="background-color: #fff"],
+body.dark-mode [style*="background-color:#fff"],
+body.dark-mode [style*="background-color: #ffffff"],
+body.dark-mode [style*="background-color:#ffffff"] {
+    background: #1e293b !important;
+    background-color: #1e293b !important;
+}
+
+/* Light gray backgrounds - f8/f9 family */
+body.dark-mode [style*="background: #f8"],
+body.dark-mode [style*="background:#f8"],
+body.dark-mode [style*="background-color: #f8"],
+body.dark-mode [style*="background-color:#f8"],
+body.dark-mode [style*="background: #f9"],
+body.dark-mode [style*="background:#f9"],
+body.dark-mode [style*="background-color: #f9"],
+body.dark-mode [style*="background-color:#f9"] {
+    background: #1e293b !important;
+    background-color: #1e293b !important;
+}
+
+/* Light gray backgrounds - f1/f3 family */
+body.dark-mode [style*="background: #f1f5f9"],
+body.dark-mode [style*="background:#f1f5f9"],
+body.dark-mode [style*="background-color: #f1f5f9"],
+body.dark-mode [style*="background-color:#f1f5f9"],
+body.dark-mode [style*="background: #f3f4f6"],
+body.dark-mode [style*="background:#f3f4f6"],
+body.dark-mode [style*="background-color: #f3f4f6"],
+body.dark-mode [style*="background-color:#f3f4f6"] {
+    background: #0f172a !important;
+    background-color: #0f172a !important;
+}
+
+/* Border gray backgrounds - e2/e5 family */
+body.dark-mode [style*="background: #e2e8f0"],
+body.dark-mode [style*="background:#e2e8f0"],
+body.dark-mode [style*="background-color: #e2e8f0"],
+body.dark-mode [style*="background-color:#e2e8f0"],
+body.dark-mode [style*="background: #e5e7eb"],
+body.dark-mode [style*="background:#e5e7eb"],
+body.dark-mode [style*="background-color: #e5e7eb"],
+body.dark-mode [style*="background-color:#e5e7eb"] {
+    background: #334155 !important;
+    background-color: #334155 !important;
+}
+
+/* --- TEXT COLOR CATCH-ALLS --- */
+/* Dark text that should become light */
+body.dark-mode [style*="color: #111"],
+body.dark-mode [style*="color:#111"],
+body.dark-mode [style*="color: #1f2937"],
+body.dark-mode [style*="color:#1f2937"],
+body.dark-mode [style*="color: #374151"],
+body.dark-mode [style*="color:#374151"] {
+    color: #f1f5f9 !important;
+}
+
+/* Muted text */
+body.dark-mode [style*="color: #6b7280"],
+body.dark-mode [style*="color:#6b7280"],
+body.dark-mode [style*="color: #64748b"],
+body.dark-mode [style*="color:#64748b"],
+body.dark-mode [style*="color: #9ca3af"],
+body.dark-mode [style*="color:#9ca3af"] {
+    color: #94a3b8 !important;
+}
+
+/* --- BORDER CATCH-ALLS --- */
+body.dark-mode [style*="border-color: #e"],
+body.dark-mode [style*="border-color:#e"],
+body.dark-mode [style*="border: 1px solid #e"],
+body.dark-mode [style*="border:1px solid #e"],
+body.dark-mode [style*="border-top: 1px solid #e"],
+body.dark-mode [style*="border-bottom: 1px solid #e"] {
+    border-color: #334155 !important;
+}
+
+/* --- SOFT STATUS BACKGROUNDS --- */
+/* Blue soft */
+body.dark-mode [style*="background: #dbeafe"],
+body.dark-mode [style*="background:#dbeafe"],
+body.dark-mode [style*="background-color: #dbeafe"],
+body.dark-mode [style*="background-color:#dbeafe"],
+body.dark-mode [style*="background: #eff6ff"],
+body.dark-mode [style*="background:#eff6ff"] {
+    background: #1e3a5f !important;
+    background-color: #1e3a5f !important;
+}
+
+/* Green soft */
+body.dark-mode [style*="background: #dcfce7"],
+body.dark-mode [style*="background:#dcfce7"],
+body.dark-mode [style*="background-color: #dcfce7"],
+body.dark-mode [style*="background-color:#dcfce7"],
+body.dark-mode [style*="background: #ecfdf5"],
+body.dark-mode [style*="background:#ecfdf5"] {
+    background: #064e3b !important;
+    background-color: #064e3b !important;
+}
+
+/* Red soft */
+body.dark-mode [style*="background: #fee2e2"],
+body.dark-mode [style*="background:#fee2e2"],
+body.dark-mode [style*="background-color: #fee2e2"],
+body.dark-mode [style*="background-color:#fee2e2"],
+body.dark-mode [style*="background: #fef2f2"],
+body.dark-mode [style*="background:#fef2f2"] {
+    background: #450a0a !important;
+    background-color: #450a0a !important;
+}
+
+/* Amber soft */
+body.dark-mode [style*="background: #fef3c7"],
+body.dark-mode [style*="background:#fef3c7"],
+body.dark-mode [style*="background-color: #fef3c7"],
+body.dark-mode [style*="background-color:#fef3c7"],
+body.dark-mode [style*="background: #fffbeb"],
+body.dark-mode [style*="background:#fffbeb"] {
+    background: #451a03 !important;
+    background-color: #451a03 !important;
+}
+
+/* Purple soft */
+body.dark-mode [style*="background: #f3e8ff"],
+body.dark-mode [style*="background:#f3e8ff"],
+body.dark-mode [style*="background-color: #f3e8ff"],
+body.dark-mode [style*="background-color:#f3e8ff"],
+body.dark-mode [style*="background: #f5f3ff"],
+body.dark-mode [style*="background:#f5f3ff"] {
+    background: #2e1065 !important;
+    background-color: #2e1065 !important;
+}
+
+/* ===========================================
+   CSS CLASS CATCH-ALLS
+   Target common utility classes and patterns
+   =========================================== */
+
+/* Bootstrap/utility background classes */
+body.dark-mode .bg-white {
+    background-color: #1e293b !important;
+}
+
+body.dark-mode .bg-light {
+    background-color: #0f172a !important;
+}
+
+body.dark-mode .bg-gray-50,
+body.dark-mode .bg-slate-50,
+body.dark-mode .bg-gray-100,
+body.dark-mode .bg-slate-100 {
+    background-color: #1e293b !important;
+}
+
+/* Text utility classes */
+body.dark-mode .text-dark {
+    color: #f1f5f9 !important;
+}
+
+body.dark-mode .text-gray-500,
+body.dark-mode .text-gray-600,
+body.dark-mode .text-slate-500,
+body.dark-mode .text-slate-600 {
+    color: #94a3b8 !important;
+}
+
+body.dark-mode .text-gray-700,
+body.dark-mode .text-gray-800,
+body.dark-mode .text-gray-900 {
+    color: #e2e8f0 !important;
+}
+
+/* Border utility classes */
+body.dark-mode .border,
+body.dark-mode .border-top,
+body.dark-mode .border-bottom,
+body.dark-mode .border-left,
+body.dark-mode .border-right {
+    border-color: #334155 !important;
+}
+
+body.dark-mode .border-gray-200,
+body.dark-mode .border-gray-300,
+body.dark-mode .border-slate-200,
+body.dark-mode .border-slate-300 {
+    border-color: #334155 !important;
+}
+
+/* Common container patterns */
+body.dark-mode [class*="-container"],
+body.dark-mode [class*="-wrapper"],
+body.dark-mode [class*="-panel"],
+body.dark-mode [class*="-box"] {
+    border-color: #334155;
+}
+
+/* Table patterns */
+body.dark-mode table,
+body.dark-mode .table {
+    color: #e2e8f0;
+}
+
+body.dark-mode thead,
+body.dark-mode .thead-light,
+body.dark-mode th {
+    background-color: #273549 !important;
+    border-color: #334155 !important;
+    color: #e2e8f0 !important;
+}
+
+body.dark-mode tbody tr {
+    border-color: #334155;
+}
+
+body.dark-mode tbody tr:hover {
+    background-color: #273549 !important;
+}
+
+body.dark-mode td {
+    border-color: #334155 !important;
+}
+
+/* Form controls */
+body.dark-mode input,
+body.dark-mode select,
+body.dark-mode textarea,
+body.dark-mode .form-control {
+    background-color: #1e293b !important;
+    border-color: #334155 !important;
+    color: #f1f5f9 !important;
+}
+
+body.dark-mode input::placeholder,
+body.dark-mode textarea::placeholder {
+    color: #64748b !important;
+}
+
+body.dark-mode .input-group-text {
+    background-color: #334155 !important;
+    border-color: #334155 !important;
+    color: #94a3b8 !important;
+}
+
+/* Dropdown menus */
+body.dark-mode .dropdown-menu {
+    background-color: #1e293b !important;
+    border-color: #334155 !important;
+}
+
+body.dark-mode .dropdown-item {
+    color: #e2e8f0 !important;
+}
+
+body.dark-mode .dropdown-item:hover,
+body.dark-mode .dropdown-item:focus {
+    background-color: #334155 !important;
+    color: #f1f5f9 !important;
+}
+
+/* Modal styling */
+body.dark-mode .modal-content {
+    background-color: #1e293b !important;
+    border-color: #334155 !important;
+}
+
+body.dark-mode .modal-header,
+body.dark-mode .modal-footer {
+    border-color: #334155 !important;
+}
+
+body.dark-mode .close {
+    color: #94a3b8 !important;
+}
+
+/* Alert styling */
+body.dark-mode .alert {
+    border-color: #334155;
+}
+
+body.dark-mode .alert-info {
+    background-color: #1e3a5f !important;
+    border-color: #1e40af !important;
+    color: #93c5fd !important;
+}
+
+body.dark-mode .alert-warning {
+    background-color: #451a03 !important;
+    border-color: #92400e !important;
+    color: #fcd34d !important;
+}
+
+body.dark-mode .alert-danger {
+    background-color: #450a0a !important;
+    border-color: #991b1b !important;
+    color: #fca5a5 !important;
+}
+
+body.dark-mode .alert-success {
+    background-color: #064e3b !important;
+    border-color: #065f46 !important;
+    color: #6ee7b7 !important;
+}
+
+/* Badge styling */
+body.dark-mode .badge-secondary,
+body.dark-mode .badge-light {
+    background-color: #475569 !important;
+    color: #e2e8f0 !important;
+}
+
+/* Progress bar */
+body.dark-mode .progress {
+    background-color: #334155 !important;
+}
+
+/* Horizontal rules */
+body.dark-mode hr {
+    border-color: #334155 !important;
+}
+
+/* Tab styling */
+body.dark-mode .nav-tabs {
+    border-color: #334155 !important;
+}
+
+body.dark-mode .nav-tabs .nav-link {
+    color: #94a3b8 !important;
+}
+
+body.dark-mode .nav-tabs .nav-link:hover {
+    border-color: #475569 !important;
+    color: #e2e8f0 !important;
+}
+
+body.dark-mode .nav-tabs .nav-link.active {
+    background-color: #1e293b !important;
+    border-color: #334155 #334155 #1e293b !important;
+    color: #f1f5f9 !important;
+}
+
+body.dark-mode .tab-content,
+body.dark-mode .tab-pane {
+    background-color: #1e293b;
+}
+
+/* List groups */
+body.dark-mode .list-group-item {
+    background-color: #1e293b !important;
+    border-color: #334155 !important;
+    color: #e2e8f0 !important;
+}
+
+body.dark-mode .list-group-item:hover {
+    background-color: #273549 !important;
+}
+
+/* Custom controls */
+body.dark-mode .custom-control-label::before {
+    background-color: #334155 !important;
+    border-color: #475569 !important;
+}
+
+/* Headings */
+body.dark-mode h1, body.dark-mode h2, body.dark-mode h3,
+body.dark-mode h4, body.dark-mode h5, body.dark-mode h6 {
+    color: #f1f5f9 !important;
+}
+
+/* Link styling - preserve colors but adjust where needed */
+body.dark-mode a:not([class*="btn"]):not([class*="nav"]):not([class*="text-"]) {
+    color: #60a5fa;
+}
+
+body.dark-mode a:not([class*="btn"]):not([class*="nav"]):not([class*="text-"]):hover {
+    color: #93c5fd;
+}
+
+body.dark-mode .gantry-main {
+    background-color: var(--bg-body);
+}
+
+body.dark-mode .card {
+    background-color: var(--bg-white);
+    border-color: var(--border-color);
+    color: #f1f5f9;
+}
+
+body.dark-mode .card-header {
+    background-color: #273549 !important;
+    border-color: var(--border-color);
+    color: var(--text-dark);
+}
+
+body.dark-mode .card-body {
+    background-color: var(--bg-white);
+    color: #f1f5f9;
+}
+
+/* Catch-all for span elements in cards and common containers */
+body.dark-mode .card-body span:not([class*="text-"]):not([class*="badge"]):not([class*="btn"]),
+body.dark-mode .cf-kpi-card span:not([class*="text-"]):not([class*="badge"]),
+body.dark-mode .kpi-content span:not([class*="text-"]) {
+    color: inherit;
+}
+
+body.dark-mode .table {
+    color: var(--text-dark);
+}
+
+body.dark-mode .table thead th {
+    background-color: #273549;
+    border-color: var(--border-color);
+    color: var(--text-dark);
+}
+
+body.dark-mode .table td,
+body.dark-mode .table th {
+    border-color: var(--border-color);
+}
+
+body.dark-mode .table-hover tbody tr:hover {
+    background-color: #273549;
+}
+
+body.dark-mode .form-control {
+    background-color: #0f172a;
+    border-color: var(--border-color);
+    color: var(--text-dark);
+}
+
+body.dark-mode .form-control:focus {
+    background-color: #0f172a;
+    border-color: var(--primary);
+    color: var(--text-dark);
+}
+
+body.dark-mode .input-group-text {
+    background-color: #273549;
+    border-color: var(--border-color);
+    color: var(--text-muted);
+}
+
+body.dark-mode .btn-outline-secondary {
+    color: var(--text-muted);
+    border-color: var(--border-color);
+}
+
+body.dark-mode .btn-outline-secondary:hover {
+    background-color: #273549;
+    color: var(--text-dark);
+}
+
+body.dark-mode .dropdown-menu {
+    background-color: var(--bg-white);
+    border-color: var(--border-color);
+}
+
+body.dark-mode .dropdown-item {
+    color: var(--text-dark);
+}
+
+body.dark-mode .dropdown-item:hover {
+    background-color: #273549;
+}
+
+body.dark-mode .modal-content {
+    background-color: var(--bg-white);
+    border-color: var(--border-color);
+}
+
+body.dark-mode .modal-header {
+    border-color: var(--border-color);
+}
+
+body.dark-mode .modal-footer {
+    border-color: var(--border-color);
+}
+
+body.dark-mode .close {
+    color: var(--text-dark);
+}
+
+body.dark-mode .text-dark {
+    color: var(--text-dark) !important;
+}
+
+body.dark-mode .text-muted {
+    color: var(--text-muted) !important;
+}
+
+body.dark-mode .bg-light {
+    background-color: #273549 !important;
+}
+
+body.dark-mode .bg-white {
+    background-color: var(--bg-white) !important;
+}
+
+body.dark-mode .border {
+    border-color: var(--border-color) !important;
+}
+
+body.dark-mode .border-bottom {
+    border-color: var(--border-color) !important;
+}
+
+body.dark-mode .list-group-item {
+    background-color: var(--bg-white);
+    border-color: var(--border-color);
+    color: var(--text-dark);
+}
+
+body.dark-mode .nav-tabs {
+    border-color: var(--border-color);
+}
+
+body.dark-mode .nav-tabs .nav-link {
+    color: var(--text-muted);
+}
+
+body.dark-mode .nav-tabs .nav-link.active {
+    background-color: var(--bg-white);
+    border-color: var(--border-color);
+    color: var(--text-dark);
+}
+
+body.dark-mode .cf-kpi-card {
+    background-color: var(--bg-white);
+    border-color: var(--border-color);
+    color: #f1f5f9 !important;
+}
+
+/* Ensure all text inside KPI cards is light */
+body.dark-mode .cf-kpi-card * {
+    color: inherit;
+}
+
+body.dark-mode .cf-kpi-card .kpi-value,
+body.dark-mode .cf-kpi-card .kpi-label,
+body.dark-mode .cf-kpi-card .kpi-sub,
+body.dark-mode .cf-kpi-card .kpi-content {
+    color: #f1f5f9 !important;
+}
+
+/* Category KPI cards */
+body.dark-mode .cat-kpi-card {
+    background-color: #1e293b !important;
+    border-color: #334155 !important;
+    color: #f1f5f9 !important;
+}
+
+body.dark-mode .cat-kpi-value,
+body.dark-mode .cat-kpi-label {
+    color: #f1f5f9 !important;
+}
+
+/* Other dashboard card patterns */
+body.dark-mode .exec-stat-card,
+body.dark-mode .live-total-card,
+body.dark-mode .metric-card,
+body.dark-mode .sv-detector-card,
+body.dark-mode .pp-sparkline-card,
+body.dark-mode .transaction-card,
+body.dark-mode .vendor-risk-card,
+body.dark-mode .sidebar-card,
+body.dark-mode [class*="-card"]:not(.card) {
+    background-color: #1e293b !important;
+    border-color: #334155 !important;
+    color: #f1f5f9 !important;
+}
+
+/* Overview card headers */
+body.dark-mode .ov-card-header,
+body.dark-mode .ov-card-title,
+body.dark-mode .ov-card-body,
+body.dark-mode .srb-card-header,
+body.dark-mode .srb-card-title {
+    color: #f1f5f9 !important;
+}
+
+body.dark-mode .icon-box {
+    background-color: rgba(255, 255, 255, 0.1);
+}
+
+body.dark-mode h1, body.dark-mode h2, body.dark-mode h3,
+body.dark-mode h4, body.dark-mode h5, body.dark-mode h6 {
+    color: var(--text-dark);
+}
+
+body.dark-mode .custom-control-label::before {
+    background-color: #0f172a;
+    border-color: var(--border-color);
+}
+
+body.dark-mode .custom-switch .custom-control-input:checked ~ .custom-control-label::before {
+    background-color: var(--primary);
+}
+
+body.dark-mode .badge-secondary {
+    background-color: #475569;
+}
+
+body.dark-mode .alert {
+    border-color: var(--border-color);
+}
+
+body.dark-mode .alert-info {
+    background-color: #1e3a5f;
+    color: #93c5fd;
+}
+
+body.dark-mode .alert-warning {
+    background-color: #451a03;
+    color: #fcd34d;
+}
+
+body.dark-mode .alert-danger {
+    background-color: #450a0a;
+    color: #fca5a5;
+}
+
+body.dark-mode .progress {
+    background-color: #334155;
+}
+
+body.dark-mode hr {
+    border-color: var(--border-color);
+}
+
+/* Fix tab content backgrounds */
+body.dark-mode .tab-content {
+    background-color: transparent;
+}
+
+body.dark-mode .tab-pane {
+    background-color: transparent;
+}
+
+/* Fix KPI and dashboard specific elements */
+body.dark-mode .kpi-value,
+body.dark-mode .kpi-label,
+body.dark-mode .kpi-sub,
+body.dark-mode .kpi-content,
+body.dark-mode .kpi-content span,
+body.dark-mode [class*="kpi-"] {
+    color: #f1f5f9 !important;
+}
+
+/* Preserve muted text in KPI sub */
+body.dark-mode .kpi-sub .text-muted {
+    color: #94a3b8 !important;
+}
+
+/* Preserve status colors in KPIs */
+body.dark-mode .kpi-value.text-green,
+body.dark-mode .kpi-value.text-success,
+body.dark-mode .kpi-sub .text-green,
+body.dark-mode .kpi-sub .text-success {
+    color: #10b981 !important;
+}
+
+body.dark-mode .kpi-value.text-red,
+body.dark-mode .kpi-value.text-danger,
+body.dark-mode .kpi-sub .text-red,
+body.dark-mode .kpi-sub .text-danger {
+    color: #ef4444 !important;
+}
+
+body.dark-mode .kpi-value.text-blue,
+body.dark-mode .kpi-value.text-primary,
+body.dark-mode .kpi-sub .text-blue,
+body.dark-mode .kpi-sub .text-primary {
+    color: #3b82f6 !important;
+}
+
+body.dark-mode .kpi-value.text-amber,
+body.dark-mode .kpi-value.text-warning,
+body.dark-mode .kpi-sub .text-amber,
+body.dark-mode .kpi-sub .text-warning {
+    color: #f59e0b !important;
+}
+
+body.dark-mode .cf-label {
+    color: #94a3b8 !important;
+}
+
+/* Generic value/label pattern catch-alls */
+body.dark-mode [class$="-value"],
+body.dark-mode [class$="-label"],
+body.dark-mode [class*="-value "],
+body.dark-mode [class*="-label "] {
+    color: #f1f5f9 !important;
+}
+
+/* Specific dashboard value patterns */
+body.dark-mode .at-fs-value,
+body.dark-mode .exec-stat-value,
+body.dark-mode .vitals-value,
+body.dark-mode .live-total-value,
+body.dark-mode .gm-result-value,
+body.dark-mode .gm-lever-value-row,
+body.dark-mode .srb-total-value,
+body.dark-mode .srb-component-value,
+body.dark-mode .sa-value,
+body.dark-mode .ov-summary-stat-value {
+    color: #f1f5f9 !important;
+}
+
+/* Vitals panel */
+body.dark-mode .vitals-label,
+body.dark-mode .vitals-grid,
+body.dark-mode [class*="vitals-"] {
+    color: #f1f5f9 !important;
+}
+
+/* Stat patterns */
+body.dark-mode [class*="-stat"],
+body.dark-mode [class*="stat-"],
+body.dark-mode .at-flyout-stat,
+body.dark-mode .vrc-stat,
+body.dark-mode .vrc-stat-val,
+body.dark-mode .vrc-stat-lbl,
+body.dark-mode .exec-stat-value,
+body.dark-mode .exec-stat-label,
+body.dark-mode .exec-stat-content,
+body.dark-mode .srb-explorer-stat,
+body.dark-mode .srb-explorer-stat-label,
+body.dark-mode .sa-stat {
+    color: #f1f5f9 !important;
+}
+
+/* Font weight utilities - ensure they don't have dark text */
+body.dark-mode .font-weight-bold:not([class*="text-"]),
+body.dark-mode .font-weight-medium:not([class*="text-"]),
+body.dark-mode .font-weight-500:not([class*="text-"]),
+body.dark-mode .font-weight-600:not([class*="text-"]),
+body.dark-mode .font-weight-700:not([class*="text-"]) {
+    color: #f1f5f9 !important;
+}
+
+/* Small text utility */
+body.dark-mode .small:not([class*="text-"]),
+body.dark-mode small:not([class*="text-"]) {
+    color: #e2e8f0 !important;
+}
+
+/* Fix card-header with bg-light */
+body.dark-mode .card-header.bg-light {
+    background-color: #273549 !important;
+    color: var(--text-dark);
+}
+
+body.dark-mode .card-header.bg-light h6,
+body.dark-mode .card-header.bg-light .font-weight-bold {
+    color: var(--text-dark) !important;
+}
+
+/* Fix thead-light */
+body.dark-mode .thead-light th {
+    background-color: #273549 !important;
+    color: var(--text-dark) !important;
+    border-color: var(--border-color) !important;
+}
+
+/* Fix buttons */
+body.dark-mode .btn-light {
+    background-color: #334155;
+    border-color: #475569;
+    color: var(--text-dark);
+}
+
+body.dark-mode .btn-light:hover {
+    background-color: #475569;
+    border-color: #64748b;
+    color: var(--text-dark);
+}
+
+body.dark-mode .btn-outline-light {
+    color: var(--text-dark);
+    border-color: var(--border-color);
+}
+
+/* Fix select elements */
+body.dark-mode select.form-control {
+    background-color: #0f172a;
+    color: var(--text-dark);
+}
+
+body.dark-mode select.form-control option {
+    background-color: #1e293b;
+    color: var(--text-dark);
+}
+
+/* Fix custom selects */
+body.dark-mode .custom-select {
+    background-color: #0f172a;
+    border-color: var(--border-color);
+    color: var(--text-dark);
+}
+
+/* Fix input group addons */
+body.dark-mode .input-group-prepend .btn,
+body.dark-mode .input-group-append .btn {
+    border-color: var(--border-color);
+}
+
+/* Fix striped tables */
+body.dark-mode .table-striped tbody tr:nth-of-type(odd) {
+    background-color: rgba(255, 255, 255, 0.03);
+}
+
+/* Fix labels */
+body.dark-mode label {
+    color: var(--text-dark);
+}
+
+/* Fix small and muted text */
+body.dark-mode small {
+    color: var(--text-muted);
+}
+
+/* Fix font-weight-bold in headers */
+body.dark-mode .font-weight-bold {
+    color: inherit;
+}
+
+/* Fix specifically white backgrounds within cards */
+body.dark-mode .card .bg-white {
+    background-color: var(--bg-white) !important;
+}
+
+/* Fix icon box soft colors */
+body.dark-mode .bg-primary-soft,
+body.dark-mode .bg-success-soft,
+body.dark-mode .bg-danger-soft,
+body.dark-mode .bg-warning-soft,
+body.dark-mode .bg-info-soft,
+body.dark-mode .bg-purple-soft,
+body.dark-mode .bg-green-soft,
+body.dark-mode .bg-red-soft,
+body.dark-mode .bg-blue-soft {
+    background-color: rgba(255, 255, 255, 0.1) !important;
+}
+
+/* Fix collapse/accordion backgrounds */
+body.dark-mode .collapse,
+body.dark-mode .collapsing {
+    background-color: transparent;
+}
+
+/* Fix table footer */
+body.dark-mode tfoot {
+    background-color: #273549;
+}
+
+body.dark-mode tfoot td,
+body.dark-mode tfoot th {
+    color: var(--text-dark);
+    border-color: var(--border-color);
+}
+
+/* Fix jumbotron/hero sections */
+body.dark-mode .jumbotron {
+    background-color: #1e293b;
+}
+
+/* Fix breadcrumbs */
+body.dark-mode .breadcrumb {
+    background-color: #1e293b;
+}
+
+body.dark-mode .breadcrumb-item a {
+    color: var(--primary);
+}
+
+body.dark-mode .breadcrumb-item.active {
+    color: var(--text-muted);
+}
+
+/* Fix page header/title areas */
+body.dark-mode .cf-page-title,
+body.dark-mode .page-title {
+    color: var(--text-dark);
+}
+
+/* Fix config/settings specific items */
+body.dark-mode .dashboard-name {
+    color: var(--text-dark);
+    background-color: transparent !important;
+}
+
+/* Fix bordered cards */
+body.dark-mode .card.border-success,
+body.dark-mode .card.border-warning,
+body.dark-mode .card.border-danger,
+body.dark-mode .card.border-primary,
+body.dark-mode .card.border-info {
+    background-color: var(--bg-white);
+}
+
+body.dark-mode .card.border-success .card-body,
+body.dark-mode .card.border-warning .card-body,
+body.dark-mode .card.border-danger .card-body,
+body.dark-mode .card.border-primary .card-body,
+body.dark-mode .card.border-info .card-body {
+    background-color: var(--bg-white);
+    color: var(--text-dark);
+}
+
+/* Fix border-left colored cards */
+body.dark-mode .border-left-success,
+body.dark-mode .border-left-warning,
+body.dark-mode .border-left-danger {
+    background-color: var(--bg-white);
+}
+
+/* Fix text on hover states */
+body.dark-mode .table-hover tbody tr:hover td {
+    color: var(--text-dark);
+}
+
+/* Dark mode Plotly chart backgrounds */
+body.dark-mode .js-plotly-plot .plotly .main-svg {
+    background: transparent !important;
+}
+
+/* Settings page dark mode adjustments */
+body.dark-mode .dashboard-order-item {
+    background-color: var(--bg-white);
+    border-color: var(--border-color);
+}
+
+body.dark-mode .dashboard-order-item:hover {
+    background-color: #273549;
+}
+
+body.dark-mode .dashboard-order-item.dragging {
+    background-color: #334155;
+}
+
+/* ===========================================
+   CUSTOMER VALUE DASHBOARD
+   =========================================== */
+body.dark-mode .customer-value-dashboard {
+    background: #0f172a;
+}
+
+/* Tables */
+body.dark-mode .cv-health-table {
+    color: #e2e8f0;
+}
+
+body.dark-mode .cv-health-table thead th {
+    background: #273549 !important;
+    border-color: #334155 !important;
+    color: #e2e8f0 !important;
+}
+
+body.dark-mode .cv-health-table tbody tr {
+    background: #1e293b !important;
+}
+
+body.dark-mode .cv-health-table tbody tr:hover {
+    background: #273549 !important;
+}
+
+body.dark-mode .cv-health-table td {
+    border-color: #334155 !important;
+    color: #e2e8f0 !important;
+}
+
+/* Segment bars and values */
+body.dark-mode .cv-segment-bar {
+    border-color: #334155 !important;
+}
+
+body.dark-mode .cv-segment-label,
+body.dark-mode .cv-segment-value {
+    color: #e2e8f0 !important;
+}
+
+body.dark-mode .cv-segment-bar .progress {
+    background: #334155 !important;
+}
+
+/* Metric compacts */
+body.dark-mode .cv-metric-compact {
+    color: #e2e8f0 !important;
+}
+
+body.dark-mode .cv-metric-compact .font-weight-bold {
+    color: #f1f5f9 !important;
+}
+
+/* Insight items */
+body.dark-mode .cv-insight-item {
+    border-color: #334155 !important;
+    color: #e2e8f0 !important;
+}
+
+/* Group headers */
+body.dark-mode .cv-group-header {
+    background: #273549 !important;
+    color: #e2e8f0 !important;
+}
+
+body.dark-mode .cv-group-header:hover {
+    background: #334155 !important;
+}
+
+/* Tier cards */
+body.dark-mode .cv-tier-card {
+    color: #fff !important;
+}
+
+/* Pagination */
+body.dark-mode .cv-pagination {
+    background: #1e293b !important;
+    border-color: #334155 !important;
+}
+
+/* Scrollbar */
+body.dark-mode .cv-table-scroll::-webkit-scrollbar-track {
+    background: #1e293b;
+}
+
+body.dark-mode .cv-table-scroll::-webkit-scrollbar-thumb {
+    background: #475569;
+}
+
+/* Grade badges - invert soft colors */
+body.dark-mode .cv-grade-a { background: #064e3b !important; color: #6ee7b7 !important; }
+body.dark-mode .cv-grade-b { background: #1e3a5f !important; color: #93c5fd !important; }
+body.dark-mode .cv-grade-c { background: #451a03 !important; color: #fcd34d !important; }
+body.dark-mode .cv-grade-d { background: #450a0a !important; color: #fca5a5 !important; }
+body.dark-mode .cv-grade-f { background: #475569 !important; color: #e2e8f0 !important; }
+
+/* Segment badges - invert soft colors */
+body.dark-mode .cv-segment-champions { background: #064e3b !important; color: #6ee7b7 !important; }
+body.dark-mode .cv-segment-loyal { background: #164e63 !important; color: #67e8f9 !important; }
+body.dark-mode .cv-segment-potential { background: #2e1065 !important; color: #c4b5fd !important; }
+body.dark-mode .cv-segment-new { background: #064e3b !important; color: #5eead4 !important; }
+body.dark-mode .cv-segment-hibernating { background: #451a03 !important; color: #fdba74 !important; }
+body.dark-mode .cv-segment-at-risk { background: #450a0a !important; color: #fca5a5 !important; }
+body.dark-mode .cv-segment-lost { background: #334155 !important; color: #94a3b8 !important; }
+
+/* Insight types - invert soft colors */
+body.dark-mode .cv-insight-success { background: #064e3b !important; color: #6ee7b7 !important; }
+body.dark-mode .cv-insight-warning { background: #451a03 !important; color: #fcd34d !important; }
+body.dark-mode .cv-insight-alert { background: #450a0a !important; color: #fca5a5 !important; }
+body.dark-mode .cv-insight-info { background: #164e63 !important; color: #67e8f9 !important; }
+
+/* Recommendation types */
+body.dark-mode .cv-rec-nurture { background: #064e3b !important; color: #6ee7b7 !important; }
+body.dark-mode .cv-rec-upsell { background: #1e3a5f !important; color: #93c5fd !important; }
+body.dark-mode .cv-rec-winback { background: #451a03 !important; color: #fcd34d !important; }
+body.dark-mode .cv-rec-onboard { background: #164e63 !important; color: #67e8f9 !important; }
+body.dark-mode .cv-rec-review { background: #2e1065 !important; color: #c4b5fd !important; }
+body.dark-mode .cv-rec-maintain { background: #334155 !important; color: #e2e8f0 !important; }
+
+/* RFM grid cells */
+body.dark-mode .cv-rfm-cell {
+    background: #1e293b !important;
+    border-color: #334155 !important;
+    color: #e2e8f0 !important;
+}
+
+body.dark-mode .cv-rfm-cell:hover {
+    background: #273549 !important;
+}
+
+/* Flyout headers */
+body.dark-mode .cv-flyout-header {
+    background: #1e293b !important;
+    border-color: #334155 !important;
+    color: #f1f5f9 !important;
+}
+
+body.dark-mode .cv-flyout-section-header {
+    background: #273549 !important;
+    border-color: #334155 !important;
+    color: #e2e8f0 !important;
+}
+
+/* Generic cv-* catch-all for text */
+body.dark-mode [class^="cv-"]:not([class*="badge"]):not([class*="progress"]):not([class*="tier-"]):not([class*="grade-"]):not([class*="segment-"]):not([class*="insight-"]):not([class*="rec-"]):not([class*="risk-badge"]) {
+    color: #e2e8f0;
+}
+
+/* ===========================================
+   VENDOR PERFORMANCE DASHBOARD
+   =========================================== */
+body.dark-mode .vp-toolbar {
+    background: #1e293b !important;
+    border-color: #334155 !important;
+}
+
+body.dark-mode .vp-drilldown-panel {
+    background: #1e293b !important;
+    border-color: #334155 !important;
+}
+
+body.dark-mode .vp-drilldown-header {
+    background: #273549 !important;
+    border-color: #334155 !important;
+    color: #f1f5f9 !important;
+}
+
+body.dark-mode .vp-drilldown-body {
+    background: #1e293b !important;
+    color: #e2e8f0 !important;
+}
+
+body.dark-mode .vp-clickable-row:hover {
+    background: #273549 !important;
+}
+
+body.dark-mode [class^="vp-"] {
+    color: #e2e8f0;
+}
+
+/* ===========================================
+   SPEND VELOCITY DASHBOARD
+   =========================================== */
+body.dark-mode .sv-detector-card {
+    background: #1e293b !important;
+    border-color: #334155 !important;
+}
+
+body.dark-mode .sv-detector-header {
+    color: #f1f5f9 !important;
+}
+
+body.dark-mode .sv-detector-body {
+    color: #e2e8f0 !important;
+}
+
+body.dark-mode .sv-detector-stat-value {
+    color: #f1f5f9 !important;
+}
+
+body.dark-mode .sv-detector-stat-label {
+    color: #94a3b8 !important;
+}
+
+body.dark-mode .sv-cliff-container {
+    background: #1e293b !important;
+    border-color: #334155 !important;
+}
+
+body.dark-mode .sv-cliff-header {
+    background: #273549 !important;
+    color: #f1f5f9 !important;
+}
+
+body.dark-mode .sv-cliff-alert {
+    background: #450a0a !important;
+    border-color: #991b1b !important;
+}
+
+body.dark-mode .sv-cliff-alert-title {
+    color: #fca5a5 !important;
+}
+
+body.dark-mode [class^="sv-"] {
+    color: #e2e8f0;
+}
+
+/* ===========================================
+   INTEGRITY/AUDIT TRAIL DASHBOARD
+   =========================================== */
+body.dark-mode .at-flyout-panel {
+    background: #1e293b !important;
+    border-color: #334155 !important;
+}
+
+body.dark-mode .at-flyout-header {
+    background: #273549 !important;
+    border-color: #334155 !important;
+    color: #f1f5f9 !important;
+}
+
+body.dark-mode .at-flyout-body {
+    background: #1e293b !important;
+    color: #e2e8f0 !important;
+}
+
+body.dark-mode .at-flyout-title {
+    color: #f1f5f9 !important;
+}
+
+body.dark-mode .at-flyout-subtitle {
+    color: #94a3b8 !important;
+}
+
+body.dark-mode .at-flyout-stat {
+    background: #273549 !important;
+    color: #e2e8f0 !important;
+}
+
+body.dark-mode .at-fs-value {
+    color: #f1f5f9 !important;
+}
+
+body.dark-mode .at-fs-label {
+    color: #94a3b8 !important;
+}
+
+body.dark-mode .at-filters-section {
+    background: #1e293b !important;
+    border-color: #334155 !important;
+}
+
+body.dark-mode .at-compact-row {
+    border-color: #334155 !important;
+}
+
+body.dark-mode .at-compact-row:hover {
+    background: #273549 !important;
+}
+
+body.dark-mode .at-detail-row {
+    background: #0f172a !important;
+    border-color: #334155 !important;
+}
+
+body.dark-mode [class^="at-"] {
+    color: #e2e8f0;
+}
+
+/* ===========================================
+   BURDEN DASHBOARD
+   =========================================== */
+body.dark-mode .burden-dashboard,
+body.dark-mode [class*="burden-"] {
+    color: #e2e8f0;
+}
+
+body.dark-mode .bm-category-row {
+    background: #1e293b !important;
+    border-color: #334155 !important;
+}
+
+body.dark-mode .bm-category-row:hover {
+    background: #273549 !important;
+}
+
+body.dark-mode .bm-th-overall {
+    background: #273549 !important;
+    color: #f1f5f9 !important;
+}
+
+body.dark-mode .rate-legend {
+    color: #e2e8f0 !important;
+}
+
+body.dark-mode .category-table-skeleton .skeleton-row {
+    border-color: #334155 !important;
+}
+
+/* ===========================================
+   HEALTH DASHBOARD
+   =========================================== */
+body.dark-mode .health-dashboard,
+body.dark-mode [class*="health-"] {
+    color: #e2e8f0;
+}
+
+body.dark-mode .acct-section-header td {
+    background: #273549 !important;
+    color: #f1f5f9 !important;
+}
+
+body.dark-mode .income-stmt-table tbody tr:hover {
+    background: #273549 !important;
+}
+
+/* ===========================================
+   SOFT BACKGROUND COLOR OVERRIDES
+   (For all dashboards using Bootstrap-style soft colors)
+   =========================================== */
+body.dark-mode .bg-primary-soft { background: #1e3a5f !important; }
+body.dark-mode .bg-success-soft { background: #064e3b !important; }
+body.dark-mode .bg-danger-soft { background: #450a0a !important; }
+body.dark-mode .bg-warning-soft { background: #451a03 !important; }
+body.dark-mode .bg-info-soft { background: #164e63 !important; }
+body.dark-mode .bg-secondary-soft { background: #334155 !important; }
+body.dark-mode .bg-purple-soft { background: #2e1065 !important; }
+body.dark-mode .bg-pink-soft { background: #500724 !important; }
+body.dark-mode .bg-orange-soft { background: #431407 !important; }
+body.dark-mode .bg-teal-soft { background: #134e4a !important; }
+body.dark-mode .bg-amber-soft { background: #451a03 !important; }
+body.dark-mode .bg-muted-soft { background: #334155 !important; }
+body.dark-mode .bg-gray-soft { background: #334155 !important; }
+body.dark-mode .bg-blue-soft { background: #1e3a5f !important; }
+body.dark-mode .bg-green-soft { background: #064e3b !important; }
+body.dark-mode .bg-red-soft { background: #450a0a !important; }
+
+/* ===========================================
+   UNIFIED SKELETON LOADING SYSTEM
+   =========================================== 
+   Single subtle animation for ALL skeleton types.
+   Works with both Gantry.Core classes and Burden classes.
+   Pure opacity pulse - no horizontal movement.
+   Uses !important to override burden.css which loads after.
+   =========================================== */
+
+/* Master keyframe - gentle opacity pulse only */
+@keyframes skeleton-fade {
+    0%, 100% { opacity: 0.4; }
+    50% { opacity: 1; }
+}
+
+/* Override burden.css skeleton-shimmer to be subtle */
+@keyframes skeleton-shimmer {
+    0%, 100% { opacity: 0.4; }
+    50% { opacity: 1; }
+}
+
+/* ===========================================
+   GANTRY.CORE SKELETON CLASSES
+   =========================================== */
+
+/* Base pulse - used for small/medium elements */
+.skeleton-pulse {
+    background: #e2e8f0 !important;
+    border-radius: 4px;
+    animation: skeleton-fade 1.8s ease-in-out infinite !important;
+}
+
+/* Block - used for large content areas */
+.skeleton-block {
+    background: #e2e8f0 !important;
+    border-radius: 8px;
+    animation: skeleton-fade 1.8s ease-in-out infinite !important;
+}
+
+/* Chart skeleton container */
+.skeleton-chart {
+    background: #f1f5f9 !important;
+    border-radius: 8px;
+    overflow: hidden;
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    padding: 16px;
+}
+
+.skeleton-chart-bars {
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    gap: 12px;
+    height: 100%;
+    width: 100%;
+}
+
+.skeleton-bar {
+    width: 24px;
+    background: #cbd5e1;
+    border-radius: 4px 4px 0 0;
+    animation: skeleton-fade 1.8s ease-in-out infinite !important;
+}
+
+/* Stagger bar animations for subtle wave effect */
+.skeleton-bar:nth-child(1) { animation-delay: 0s; }
+.skeleton-bar:nth-child(2) { animation-delay: 0.15s; }
+.skeleton-bar:nth-child(3) { animation-delay: 0.3s; }
+.skeleton-bar:nth-child(4) { animation-delay: 0.45s; }
+.skeleton-bar:nth-child(5) { animation-delay: 0.6s; }
+.skeleton-bar:nth-child(6) { animation-delay: 0.75s; }
+.skeleton-bar:nth-child(7) { animation-delay: 0.9s; }
+
+/* Section container */
+.skeleton-section {
+    padding: 16px;
+    background: #f8fafc;
+    border-radius: 8px;
+}
+
+/* Tab content container */
+.skeleton-tab-content {
+    background: #fafafa;
+    border-radius: 0 0 8px 8px;
+}
+
+/* ===========================================
+   BURDEN DASHBOARD SKELETON OVERRIDES
+   =========================================== */
+
+/* Override the ::after pseudo-element approach */
+.skeleton-loading {
+    position: relative;
+    overflow: hidden;
+    background: #e2e8f0 !important;
+    animation: skeleton-fade 1.8s ease-in-out infinite !important;
+}
+
+/* Disable the sliding ::after element completely */
+.skeleton-loading::after {
+    display: none !important;
+    animation: none !important;
+}
+
+/* Skeleton cells in tables */
+.skeleton-cell {
+    background: #e2e8f0 !important;
+    border-radius: 4px;
+    animation: skeleton-fade 1.8s ease-in-out infinite !important;
+}
+
+/* Chart skeleton in burden */
+.chart-skeleton {
+    background: #f1f5f9 !important;
+    border-radius: 8px;
+    animation: skeleton-fade 1.8s ease-in-out infinite !important;
+}
+
+/* KPI skeleton */
+.kpi-skeleton {
+    background: #f8fafc;
+    border-radius: 8px;
+    padding: 16px;
+    text-align: center;
+}
+
+.kpi-skeleton .value,
+.kpi-skeleton .label {
+    background: #e2e8f0 !important;
+    border-radius: 4px;
+    animation: skeleton-fade 1.8s ease-in-out infinite !important;
+}
+
+/* ===========================================
+   DARK MODE - ALL SKELETON TYPES
+   =========================================== */
+body.dark-mode .skeleton-pulse,
+body.dark-mode .skeleton-block,
+body.dark-mode .skeleton-loading,
+body.dark-mode .skeleton-cell {
+    background: #334155 !important;
+}
+
+body.dark-mode .skeleton-chart,
+body.dark-mode .chart-skeleton {
+    background: #1e293b !important;
+}
+
+body.dark-mode .skeleton-bar {
+    background: #475569 !important;
+}
+
+body.dark-mode .skeleton-section,
+body.dark-mode .kpi-skeleton {
+    background: #1e293b !important;
+}
+
+body.dark-mode .kpi-skeleton .value,
+body.dark-mode .kpi-skeleton .label {
+    background: #334155 !important;
+}
+
+body.dark-mode .skeleton-tab-content {
+    background: #0f172a !important;
+}
+
+/* Skeleton rows in dark mode */
+body.dark-mode .skeleton-row {
+    border-bottom-color: #334155 !important;
+}
+
+/* ===========================================
+   ERROR BOUNDARY
+   =========================================== */
+.error-boundary-card {
+    max-width: 600px;
+    margin: 40px auto;
+}
+
+.error-boundary-card .error-icon {
+    width: 80px;
+    height: 80px;
+    border-radius: 50%;
+    background: #fef2f2;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0 auto;
+}
+
+body.dark-mode .error-boundary-card .error-icon {
+    background: #450a0a;
+}
+
+body.dark-mode .error-boundary-card .alert-light {
+    background: #1e293b;
+    border-color: #334155;
+}
+
+/* ===========================================
+   ADDITIONAL DARK MODE FIXES
+   =========================================== */
+
+/* Financial Health: Summary table section headers (Revenue, Cost of Sales, Operating Expenses) */
+body.dark-mode .acct-section-header td,
+body.dark-mode .acct-section-header th {
+    background-color: #273549 !important;
+    color: var(--text-dark) !important;
+    border-color: var(--border-color) !important;
+}
+
+body.dark-mode tr.acct-section-header {
+    background-color: #273549 !important;
+}
+
+/* Financial Health: Department P&L detail tables */
+body.dark-mode .dept-pl-wrapper {
+    background-color: #1e293b;
+}
+
+body.dark-mode .dept-pl-table {
+    background-color: #1e293b;
+    color: var(--text-dark);
+}
+
+body.dark-mode .dept-pl-table td {
+    color: var(--text-dark);
+    border-color: var(--border-color);
+}
+
+body.dark-mode .dept-pl-section-header td {
+    background-color: #273549 !important;
+    color: var(--text-dark) !important;
+    font-weight: bold;
+}
+
+body.dark-mode .dept-pl-subtotal td {
+    background-color: rgba(59, 130, 246, 0.1);
+    color: var(--text-dark);
+    font-weight: 600;
+}
+
+body.dark-mode .dept-pl-net-bottom td {
+    background-color: rgba(16, 185, 129, 0.1);
+    color: var(--text-dark);
+    font-weight: bold;
+}
+
+body.dark-mode .dept-pl-row {
+    background-color: #1e293b;
+}
+
+body.dark-mode .dept-pl-row td {
+    background-color: #1e293b;
+}
+
+body.dark-mode .dept-main-row td {
+    color: var(--text-dark);
+}
+
+/* Financial Health: Account table group headers and rows */
+body.dark-mode .acct-group-header-row,
+body.dark-mode .acct-group-header-row td {
+    background-color: #1e3a5f !important;
+    color: #93c5fd !important;
+    font-weight: bold;
+}
+
+body.dark-mode .acct-main-row td,
+body.dark-mode .account-row-compact td {
+    color: var(--text-dark);
+    background-color: var(--bg-white);
+}
+
+body.dark-mode .acct-main-row:hover td,
+body.dark-mode .account-row-compact:hover td {
+    background-color: #273549 !important;
+}
+
+body.dark-mode #healthAccountTable tbody tr td {
+    color: var(--text-dark);
+}
+
+body.dark-mode #healthAccountTable .small {
+    color: var(--text-muted);
+}
+
+/* Financial Health: Department table rows with thead-light class */
+body.dark-mode tr.thead-light,
+body.dark-mode tr.thead-light th,
+body.dark-mode tr.thead-light td {
+    background-color: #273549 !important;
+    color: var(--text-dark) !important;
+    border-color: var(--border-color) !important;
+}
+
+/* Financial Health: Health pill badges */
+body.dark-mode .health-pill {
+    background-color: #334155;
+    color: var(--text-dark);
+}
+
+/* Financial Health: Issues and Recommendations cards */
+body.dark-mode .card.border-danger .card-header,
+body.dark-mode .card.border-success .card-header {
+    background-color: transparent !important;
+}
+
+body.dark-mode .bg-light-danger {
+    background-color: #450a0a !important;
+    color: #fca5a5 !important;
+}
+
+body.dark-mode .bg-light-success {
+    background-color: #052e16 !important;
+    color: #86efac !important;
+}
+
+/* Cashflow: Executive Summary bg-light containers */
+body.dark-mode .bg-light.rounded.border,
+body.dark-mode .p-3.bg-light.rounded.border {
+    background-color: #1e293b !important;
+    border-color: var(--border-color) !important;
+}
+
+/* Cashflow: Section headers in Executive Summary */
+body.dark-mode .cf-section-header {
+    color: var(--text-dark);
+}
+
+/* Cashflow: Weekly table bg-light header */
+body.dark-mode thead.bg-light,
+body.dark-mode thead.bg-light tr,
+body.dark-mode thead.bg-light th {
+    background-color: #273549 !important;
+    color: var(--text-dark) !important;
+    border-color: var(--border-color) !important;
+}
+
+/* Cashflow: Cash bridge container */
+body.dark-mode .cf-bridge-container {
+    color: var(--text-dark);
+}
+
+/* Cashflow: Week row styling */
+body.dark-mode .cf-week-row:hover {
+    background-color: #273549;
+}
+
+body.dark-mode .cf-row-selected,
+body.dark-mode .cf-row-selected:hover {
+    background-color: #1e3a5f !important;
+}
+
+/* Cashflow: Panel headers */
+body.dark-mode .cf-panel-header {
+    background-color: #1e293b;
+    border-color: var(--border-color);
+    color: var(--text-dark);
+}
+
+/* Cashflow: Mini tables and tiny lists */
+body.dark-mode .cf-mini-table,
+body.dark-mode .cf-tiny-list {
+    color: var(--text-dark);
+}
+
+body.dark-mode .cf-mini-table td,
+body.dark-mode .cf-tiny-list td,
+body.dark-mode .cf-tiny-list th {
+    border-color: var(--border-color);
+    color: var(--text-dark);
+}
+
+/* Cashflow: AR/AP card headers */
+body.dark-mode .card-header.bg-white {
+    background-color: var(--bg-white) !important;
+    border-color: var(--border-color);
+}
+
+/* Cashflow: Bucket rows */
+body.dark-mode .cf-bucket-row {
+    color: var(--text-dark);
+}
+
+/* Burden: Table styling */
+body.dark-mode #burdenSummaryBody tr,
+body.dark-mode #burdenDetailsBody tr {
+    color: var(--text-dark);
+}
+
+/* Time: Department cards */
+body.dark-mode .tb-dept-card {
+    background-color: var(--bg-white);
+    border-color: var(--border-color);
+}
+
+/* Time: Heatmap tiles */
+body.dark-mode .employee-heatmap-tile {
+    background-color: var(--bg-white);
+    color: var(--text-dark);
+}
+
+/* Metric cards */
+body.dark-mode .metric-card {
+    background-color: var(--bg-white);
+}
+
+body.dark-mode .metric-card .metric-label,
+body.dark-mode .metric-card .metric-sub,
+body.dark-mode .metric-card .metric-value {
+    color: var(--text-dark);
+}
+
+body.dark-mode .metric-label-inline {
+    color: var(--text-muted);
+}
+
+/* Fix Plotly charts text in dark mode */
+body.dark-mode .js-plotly-plot .plotly text {
+    fill: var(--text-dark) !important;
+}
+
+body.dark-mode .js-plotly-plot .plotly .gtitle,
+body.dark-mode .js-plotly-plot .plotly .xtick text,
+body.dark-mode .js-plotly-plot .plotly .ytick text {
+    fill: var(--text-muted) !important;
+}
+
+body.dark-mode .js-plotly-plot .plotly .xgrid,
+body.dark-mode .js-plotly-plot .plotly .ygrid {
+    stroke: var(--border-color) !important;
+}
+
+/* Plotly gauge specific fixes */
+body.dark-mode .js-plotly-plot .plotly .gauge-arc-group text {
+    fill: var(--text-dark) !important;
+}
+
+/* Fix font-weight-bold in dark mode to inherit color */
+body.dark-mode .text-dark {
+    color: var(--text-dark) !important;
+}
+
+/* Fix table-active in dark mode */
+body.dark-mode .table-active,
+body.dark-mode .table-active td {
+    background-color: #273549 !important;
+    color: var(--text-dark);
+}
+
+/* Fix KPI sub text */
+body.dark-mode .kpi-sub {
+    color: var(--text-muted);
+}
+
+/* Fix span colors within tables */
+body.dark-mode table span:not([class*="text-"]):not(.badge) {
+    color: inherit;
+}
+
+/* ===========================================
+   HEALTH ACCOUNT TABLE - DARK MODE FIXES
+   =========================================== */
+
+/* Health Account Table: thead-light header - VERY SPECIFIC */
+body.dark-mode #healthAccountTable thead.thead-light,
+body.dark-mode #healthAccountTable thead.thead-light tr,
+body.dark-mode #healthAccountTable thead.thead-light th {
+    background-color: #273549 !important;
+    color: #e2e8f0 !important;
+    border-color: #334155 !important;
+}
+
+/* Health Account Table: table-hover row states */
+body.dark-mode #healthAccountTable.table-hover tbody tr:hover,
+body.dark-mode #healthAccountTable.table-hover tbody tr:hover td {
+    background-color: #273549 !important;
+    color: #e2e8f0 !important;
+}
+
+/* Health Account Table: all body rows text */
+body.dark-mode #healthAccountTable tbody tr td {
+    color: #e2e8f0 !important;
+    background-color: #1e293b;
+}
+
+/* Health Account Table: strong text in cells */
+body.dark-mode #healthAccountTable strong {
+    color: #f1f5f9 !important;
+}
+
+/* ===========================================
+   DEPARTMENT P&L DETAIL TABLES - DARK MODE
+   =========================================== */
+
+/* Department P&L: wrapper and table base */
+body.dark-mode .dept-pl-row,
+body.dark-mode .dept-pl-row > td {
+    background-color: #1e293b !important;
+}
+
+body.dark-mode .dept-pl-wrapper {
+    background-color: #1e293b !important;
+    border-color: #334155 !important;
+}
+
+body.dark-mode .dept-pl-table {
+    background-color: #1e293b !important;
+    color: #e2e8f0 !important;
+}
+
+body.dark-mode .dept-pl-table tbody tr td {
+    background-color: #1e293b !important;
+    color: #e2e8f0 !important;
+    border-color: #334155 !important;
+}
+
+/* Department P&L: section header row (P&L Detail, Range, Current Mo, etc) */
+body.dark-mode .dept-pl-section-header,
+body.dark-mode .dept-pl-section-header td,
+body.dark-mode tr.dept-pl-section-header td {
+    background-color: #273549 !important;
+    color: #e2e8f0 !important;
+    font-weight: bold !important;
+    border-color: #334155 !important;
+}
+
+/* Department P&L: subtotal row (Gross Profit) */
+body.dark-mode .dept-pl-subtotal,
+body.dark-mode .dept-pl-subtotal td,
+body.dark-mode tr.dept-pl-subtotal td {
+    background-color: rgba(59, 130, 246, 0.15) !important;
+    color: #93c5fd !important;
+    font-weight: 600 !important;
+}
+
+/* Department P&L: net bottom row (Net Op Income) */
+body.dark-mode .dept-pl-net-bottom,
+body.dark-mode .dept-pl-net-bottom td,
+body.dark-mode tr.dept-pl-net-bottom td {
+    background-color: rgba(16, 185, 129, 0.15) !important;
+    color: #6ee7b7 !important;
+    font-weight: bold !important;
+}
+
+/* ===========================================
+   GENERIC TABLE DARK MODE OVERRIDES
+   =========================================== */
+
+/* Bootstrap thead-light override - global */
+body.dark-mode .thead-light,
+body.dark-mode .thead-light th,
+body.dark-mode thead.thead-light th {
+    background-color: #273549 !important;
+    color: #e2e8f0 !important;
+    border-color: #334155 !important;
+}
+
+/* Bootstrap table-hover override - global */
+body.dark-mode .table-hover tbody tr:hover {
+    background-color: #273549 !important;
+}
+
+body.dark-mode .table-hover tbody tr:hover td {
+    background-color: #273549 !important;
+    color: #e2e8f0 !important;
+}
+
+/* Bootstrap table-bordered */
+body.dark-mode .table-bordered,
+body.dark-mode .table-bordered td,
+body.dark-mode .table-bordered th {
+    border-color: #334155 !important;
+}
+
+/* ===========================================
+   ADDITIONAL DARK MODE FIXES - Nov 28
+   =========================================== */
+
+/* Config sidebar dark mode fixes */
+body.dark-mode .cf-config-sidebar,
+body.dark-mode .col-md-3.border-right.cf-config-sidebar {
+    background-color: #1e293b !important;
+}
+
+body.dark-mode .cf-config-list .list-group-item {
+    background-color: #1e293b;
+    color: #e2e8f0;
+    border-color: #334155;
+}
+
+body.dark-mode .cf-config-list .list-group-item:hover {
+    background-color: #334155;
+    color: #f1f5f9;
+}
+
+body.dark-mode .cf-config-list .list-group-item.active-config-item {
+    background-color: #1e3a5f !important;
+    color: #60a5fa !important;
+    border-left-color: #3b82f6;
+}
+
+body.dark-mode .cf-config-main {
+    background-color: #1e293b !important;
+}
+
+/* Config empty state */
+body.dark-mode #cfConfigEmpty h6,
+body.dark-mode .cf-config-empty h6 {
+    color: #94a3b8 !important;
+}
+
+/* Cash flow bridge container dark mode */
+body.dark-mode .cf-bridge-container {
+    background-color: #1e293b !important;
+    border-color: #334155 !important;
+}
+
+body.dark-mode .bridge-val {
+    color: #e2e8f0 !important;
+}
+
+body.dark-mode .bridge-lbl {
+    color: #94a3b8 !important;
+}
+
+body.dark-mode .bridge-connector {
+    color: #64748b !important;
+}
+
+/* Chart container dark mode - force dark background */
+body.dark-mode .chart-container-sm,
+body.dark-mode .chart-container-md,
+body.dark-mode #cfCashChart,
+body.dark-mode #healthTrendChart,
+body.dark-mode #healthAccountNetPie,
+body.dark-mode #simChart {
+    background-color: #1e293b !important;
+    border-radius: 8px;
+}
+
+/* ===========================================
+   DASHBOARD TRANSITIONS
+   =========================================== */
+
+/* View container transition wrapper */
+#gantry-view-container {
+    animation: dashboardFadeIn 0.3s ease-out;
+}
+
+/* Fade in animation */
+@keyframes dashboardFadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(8px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* Dashboard content wrapper - used for internal transitions */
+.cf-dashboard {
+    animation: dashboardSlideIn 0.35s ease-out;
+}
+
+@keyframes dashboardSlideIn {
+    from {
+        opacity: 0;
+        transform: translateX(-12px);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+/* Card stagger animation for KPI cards */
+.cf-kpi-row > .col {
+    animation: kpiCardFadeIn 0.4s ease-out backwards;
+}
+
+.cf-kpi-row > .col:nth-child(1) { animation-delay: 0.05s; }
+.cf-kpi-row > .col:nth-child(2) { animation-delay: 0.1s; }
+.cf-kpi-row > .col:nth-child(3) { animation-delay: 0.15s; }
+.cf-kpi-row > .col:nth-child(4) { animation-delay: 0.2s; }
+.cf-kpi-row > .col:nth-child(5) { animation-delay: 0.25s; }
+
+@keyframes kpiCardFadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* Main card fade in */
+.cf-main-card {
+    animation: mainCardFadeIn 0.4s ease-out 0.15s backwards;
+}
+
+@keyframes mainCardFadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(12px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* Tab content transition */
+.tab-pane {
+    transition: opacity 0.2s ease-out;
+}
+
+.tab-pane.fade {
+    opacity: 0;
+}
+
+.tab-pane.fade.show {
+    opacity: 1;
+}
+
+/* Advisor dashboard specific animation */
+.advisor-dashboard {
+    animation: advisorFadeIn 0.4s ease-out;
+}
+
+@keyframes advisorFadeIn {
+    from {
+        opacity: 0;
+        transform: scale(0.98);
+    }
+    to {
+        opacity: 1;
+        transform: scale(1);
+    }
+}
+
+/* Suggestion cards stagger */
+.welcome-suggestions-grid .suggestion-card {
+    animation: suggestionCardPop 0.3s ease-out backwards;
+}
+
+.welcome-suggestions-grid .suggestion-card:nth-child(1) { animation-delay: 0.1s; }
+.welcome-suggestions-grid .suggestion-card:nth-child(2) { animation-delay: 0.15s; }
+.welcome-suggestions-grid .suggestion-card:nth-child(3) { animation-delay: 0.2s; }
+.welcome-suggestions-grid .suggestion-card:nth-child(4) { animation-delay: 0.25s; }
+.welcome-suggestions-grid .suggestion-card:nth-child(5) { animation-delay: 0.3s; }
+.welcome-suggestions-grid .suggestion-card:nth-child(6) { animation-delay: 0.35s; }
+
+@keyframes suggestionCardPop {
+    from {
+        opacity: 0;
+        transform: scale(0.9);
+    }
+    to {
+        opacity: 1;
+        transform: scale(1);
+    }
+}
+
+/* Message animation */
+.advisor-message-full {
+    animation: messageFadeIn 0.25s ease-out;
+}
+
+@keyframes messageFadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(8px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* Reduce motion for users who prefer it */
+@media (prefers-reduced-motion: reduce) {
+    #gantry-view-container,
+    .cf-dashboard,
+    .cf-kpi-row > .col,
+    .cf-main-card,
+    .advisor-dashboard,
+    .welcome-suggestions-grid .suggestion-card,
+    .advisor-message-full,
+    .skeleton-pulse,
+    .skeleton-chart {
+        animation: none !important;
+        transition: none !important;
+    }
+}
+
+/* Sidebar footer dark mode */
+.gantry-sidebar-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 20px;
+    border-top: 1px solid #334155;
+    margin-top: auto;
+}
+
+.gantry-sidebar-footer .btn-link {
+    color: #94a3b8 !important;
+}
+
+.gantry-sidebar-footer .btn-link:hover {
+    color: #f1f5f9 !important;
+}
+
+body.dark-mode .gantry-sidebar-footer .btn-link i {
+    color: #f59e0b;
+}
+
+/* Nav separator styling */
+.gantry-nav-separator {
+    margin-top: 16px;
+    padding-top: 16px;
+    border-top: 1px solid #334155;
+}
+
+/* Chart containers */
+.chart-container-sm {
+    height: 180px;
+    min-height: 180px;
+}
+
+.chart-container-md {
+    height: 250px;
+    min-height: 250px;
+}
+
+/* Button loading state */
+.btn .btn-loading {
+    display: none;
+}
+
+.btn.loading .btn-text {
+    display: none;
+}
+
+.btn.loading .btn-loading {
+    display: inline-block;
+}

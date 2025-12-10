@@ -1,0 +1,295 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   VENDOR-PERFORMANCE - Vendor Performance Dashboard
+   Part of Gantry Financial Suite CSS
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Vendor Performance Dashboard Styles
+ * World-Class Procurement Intelligence UI
+ * 
+ * Features:
+ * - Modern card-based layout
+ * - Leverage Matrix quadrant visualization
+ * - Renewal Radar timeline
+ * - Responsive design with dark mode support
+ * - Smooth animations and transitions
+ */
+
+/* ==========================================
+   DASHBOARD CONTAINER & LAYOUT
+   ========================================== */
+
+
+/* ==========================================
+   VENDOR PERFORMANCE DASHBOARD
+   Minimal overrides - uses cf-dashboard base styles
+   ========================================== */
+
+.vendor-performance-dashboard {
+    /* Inherits from cf-dashboard - transparent background */
+}
+
+/* Ensure standard light mode colors in vendor performance */
+.vendor-performance-dashboard .card {
+    background: var(--bg-white);
+    border-color: var(--border-color);
+}
+
+.vendor-performance-dashboard .card-header {
+    background: var(--bg-white);
+    border-color: var(--border-color);
+}
+
+.vendor-performance-dashboard .table th {
+    background: #f9fafb;
+    color: var(--text-muted);
+}
+
+.vendor-performance-dashboard .table td {
+    color: var(--text-dark);
+}
+
+.vendor-performance-dashboard h6 {
+    color: var(--text-dark);
+}
+
+.vendor-performance-dashboard .alert-info {
+    background-color: #eff6ff;
+    border-color: #bfdbfe;
+    color: #1e40af;
+}
+
+.vendor-performance-dashboard .alert-success {
+    background-color: #ecfdf5;
+    border-color: #a7f3d0;
+    color: #065f46;
+}
+
+/* Amber soft background for vendor performance */
+.vendor-performance-dashboard .bg-amber-soft {
+    background-color: #fef3c7;
+    color: #92400e;
+}
+
+.vendor-performance-dashboard .text-amber {
+    color: #d97706;
+}
+/* ==========================================
+   PROCUREMENT 4.0 ENHANCEMENTS
+   ========================================== */
+
+/* Scorecard table styling */
+.vendor-performance-dashboard .table .badge {
+    min-width: 32px;
+    font-weight: 600;
+}
+
+/* Progress bar in summary */
+.vendor-performance-dashboard .progress {
+    background-color: #e5e7eb;
+    border-radius: 4px;
+}
+
+/* Card border colors for risk levels */
+.vendor-performance-dashboard .card.border-danger {
+    border-left: 3px solid #ef4444 !important;
+}
+
+.vendor-performance-dashboard .card.border-warning {
+    border-left: 3px solid #f59e0b !important;
+}
+
+.vendor-performance-dashboard .card.border-success {
+    border-left: 3px solid #10b981 !important;
+}
+
+.vendor-performance-dashboard .card.border-primary {
+    border-left: 3px solid #3b82f6 !important;
+}
+
+/* List group for insights */
+.vendor-performance-dashboard .list-group-item {
+    border: none;
+    border-bottom: 1px solid var(--border-color);
+    padding: 12px 0;
+}
+
+.vendor-performance-dashboard .list-group-item:last-child {
+    border-bottom: none;
+}
+
+.vendor-performance-dashboard .bg-danger-soft {
+    background-color: rgba(239, 68, 68, 0.1);
+}
+
+.vendor-performance-dashboard .bg-warning-soft {
+    background-color: rgba(245, 158, 11, 0.1);
+}
+
+/* Plotly chart container */
+.vendor-performance-dashboard #vpFullBubbleChart,
+.vendor-performance-dashboard #vpMiniMatrix {
+    background: var(--bg-white);
+}
+
+/* Score gauge in KPI card */
+.vendor-performance-dashboard .cf-kpi-card svg {
+    overflow: visible;
+}
+
+/* Tab content padding consistency */
+.vendor-performance-dashboard .tab-inner {
+    min-height: 400px;
+}
+
+/* Responsive adjustments */
+@media (max-width: 992px) {
+    .vendor-performance-dashboard .cf-kpi-row > .col {
+        flex: 0 0 50%;
+        max-width: 50%;
+        margin-bottom: 8px;
+    }
+}
+
+@media (max-width: 576px) {
+    .vendor-performance-dashboard .cf-kpi-row > .col {
+        flex: 0 0 100%;
+        max-width: 100%;
+    }
+}
+
+/* ==========================================
+   DRILLDOWN/FLYOUT PANEL
+   ========================================== */
+
+.vp-drilldown-panel {
+    position: fixed;
+    top: 0;
+    right: 0;
+    width: 60%;
+    max-width: 800px;
+    height: 100vh;
+    background: white;
+    box-shadow: -4px 0 24px rgba(0, 0, 0, 0.15);
+    z-index: 1050;
+    display: flex;
+    flex-direction: column;
+    animation: vpSlideInRight 0.3s ease;
+}
+
+@keyframes vpSlideInRight {
+    from { transform: translateX(100%); opacity: 0; }
+    to { transform: translateX(0); opacity: 1; }
+}
+
+.vp-drilldown-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 16px 20px;
+    background: #f8fafc;
+    border-bottom: 1px solid #e2e8f0;
+    color: #1e293b;
+    font-weight: 600;
+    flex-shrink: 0;
+}
+
+.vp-drilldown-header .btn-close {
+    background: none;
+    border: none;
+    font-size: 1.25rem;
+    color: #64748b;
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: 4px;
+}
+
+.vp-drilldown-header .btn-close:hover {
+    background: #e2e8f0;
+    color: #1e293b;
+}
+
+.vp-drilldown-body {
+    flex: 1;
+    padding: 20px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+}
+
+.vp-drilldown-body .table-responsive {
+    flex: 1;
+    overflow-y: auto;
+}
+
+/* Sparkline container */
+.vp-sparkline-container {
+    width: 100%;
+    height: 50px;
+    overflow: hidden;
+}
+
+.vp-sparkline-container svg {
+    width: 100% !important;
+    min-width: 100% !important;
+    max-width: 100% !important;
+    height: 50px !important;
+    display: block;
+}
+
+/* Toolbar styling */
+.vp-toolbar {
+    background: #f8fafc;
+    padding: 8px 12px;
+    border-radius: 6px;
+    border: 1px solid #e2e8f0;
+}
+
+.vp-toolbar .form-control {
+    border-color: #e2e8f0;
+}
+
+/* Clickable table rows */
+.vp-clickable-table tbody tr.vp-clickable-row {
+    cursor: pointer;
+    transition: background-color 0.15s ease;
+}
+
+.vp-clickable-table tbody tr.vp-clickable-row:hover {
+    background-color: rgba(99, 102, 241, 0.08);
+}
+
+/* Sortable columns in drilldown */
+.vp-sortable {
+    cursor: pointer;
+}
+
+.vp-sortable:hover {
+    background-color: #f1f5f9;
+}
+
+/* Border left variants for KPI cards */
+.vendor-performance-dashboard .cf-kpi-card.border-left-danger {
+    border-left: 3px solid #ef4444 !important;
+}
+
+.vendor-performance-dashboard .cf-kpi-card.border-left-warning {
+    border-left: 3px solid #f59e0b !important;
+}
+
+.vendor-performance-dashboard .cf-kpi-card.border-left-success {
+    border-left: 3px solid #10b981 !important;
+}
+
+/* Responsive drilldown */
+@media (max-width: 992px) {
+    .vp-drilldown-panel {
+        width: 90%;
+    }
+}
+
+@media (max-width: 576px) {
+    .vp-drilldown-panel {
+        width: 100%;
+    }
+}
