@@ -20,7 +20,7 @@ jobs:
           node-version: '18'
 
       - name: Install SuiteCloud CLI
-        run: npm install -g @oracle/suitecloud-cli
+        run: npm install -g @oracle/suitecloud-cli --acceptsuitecloudsdklicense
 
       - name: Setup NetSuite authentication
         run: |
