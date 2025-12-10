@@ -1247,10 +1247,21 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
             else if (statsData.map[entityId].stdDev > volatileThreshold) volLabel = "Volatile";
           }
           invoices.push({
-            id: res.getValue("tranid") || "ID:" + res.id,
-            internalId: res.id, entity: entityName, amount: amt,
-            date: Shared.formatDateYMD(predictedDate), duedate: duedate ? Shared.formatDateYMD(duedate) : "-",
-            weekStart: wkKey, volatility: volLabel, daysOverDue: daysOverDue,
+            internalId: res.id,
+            tranId: res.getValue("tranid") || "ID:" + res.id,
+            id: res.getValue("tranid") || "ID:" + res.id, // backward compat
+            entityId: entityId,
+            entityName: entityName,
+            entity: entityName, // backward compat
+            amount: amt,
+            tranDate: Shared.formatDateYMD(trandate),
+            dueDate: duedate ? Shared.formatDateYMD(duedate) : "-",
+            duedate: duedate ? Shared.formatDateYMD(duedate) : "-", // backward compat
+            predictedDate: Shared.formatDateYMD(predictedDate),
+            date: Shared.formatDateYMD(predictedDate), // backward compat
+            weekStart: wkKey,
+            volatility: volLabel,
+            daysOverDue: daysOverDue,
           });
         }
       });
@@ -1347,11 +1358,23 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
           const wkKey = Shared.formatDateYMD(getWeekStart(predictedDate));
           weeklyMap[wkKey] = (weeklyMap[wkKey] || 0) + amt;
           bills.push({
-            id: res.getValue("tranid") || "ID:" + res.id,
-            internalId: res.id, entity: entityName, amount: amt,
-            date: Shared.formatDateYMD(predictedDate), weekStart: wkKey,
-            vendorCat: String(vendorCat || ""), dueDateObj: duedate || predictedDate, isPriority: false,
-            duedate: duedate ? Shared.formatDateYMD(duedate) : "-", daysOverDue: daysOverDue,
+            internalId: res.id,
+            tranId: res.getValue("tranid") || "ID:" + res.id,
+            id: res.getValue("tranid") || "ID:" + res.id, // backward compat
+            entityId: entityId,
+            entityName: entityName,
+            entity: entityName, // backward compat
+            amount: amt,
+            tranDate: Shared.formatDateYMD(trandate),
+            dueDate: duedate ? Shared.formatDateYMD(duedate) : "-",
+            duedate: duedate ? Shared.formatDateYMD(duedate) : "-", // backward compat
+            dueDateObj: duedate || predictedDate,
+            predictedDate: Shared.formatDateYMD(predictedDate),
+            date: Shared.formatDateYMD(predictedDate), // backward compat
+            weekStart: wkKey,
+            vendorCat: String(vendorCat || ""),
+            isPriority: false,
+            daysOverDue: daysOverDue,
           });
         }
       });
@@ -1566,7 +1589,10 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
       billBacklog.forEach((bill) => {
         if (apPaidThisWeek + bill.amount <= effectiveCap) {
           apPaidThisWeek += bill.amount;
-          bill.weekStart = k;
+          // Store original predicted week before setting scheduled week
+          bill.originalWeekStart = bill.originalWeekStart || bill.weekStart;
+          bill.scheduledWeek = k;
+          bill.weekStart = k; // Keep for backward compatibility
           scheduledBills.push(bill);
         } else {
           nextBacklog.push(bill);
@@ -1704,263 +1730,118 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
   // ═══════════════════════════════════════════════════════════════════════════
 
   /**
-   * Get AR/AP transactions for a specific week
-   * Uses IDENTICAL prediction logic to buildARForecast/buildAPForecast
+   * Get transactions for a specific week - uses SAME calculation path as main getData
+   * This ensures flyout data matches the weekly table exactly
    */
   function getWeekTransactions(context) {
     const weekStart = context.weekStart;
     const type = context.type || 'ar'; // 'ar' or 'ap'
-    
+
     if (!weekStart) {
       return { status: 'error', error: 'weekStart is required' };
     }
-    
-    // Get config - same as main getData
+
+    // Get config - SAME as main getData
     const storedConfig = ConfigLib.getStoredConfiguration('cashflow');
     const predictionSettings = storedConfig.predictionSettings || {};
     const volatilityThresholds = predictionSettings.volatilityThresholds || { stable: 5, volatile: 15 };
     const overduePushDays = predictionSettings.overduePushDays || { light: 7, medium: 14, heavy: 28 };
     const paymentHistoryDays = predictionSettings.paymentHistoryDays || 365;
     const defaultDaysToPay = predictionSettings.defaultDaysToPay || 45;
-    
-    const pushLight = overduePushDays.light || 7;
-    const pushMedium = overduePushDays.medium || 14;
-    const pushHeavy = overduePushDays.heavy || 28;
+
     const stableThreshold = volatilityThresholds.stable || 5;
     const volatileThreshold = volatilityThresholds.volatile || 15;
-    
-    // Calculate timeline - same as main getData
+
+    // Calculate timeline - SAME as main getData
     const horizonWeeks = storedConfig.horizonWeeks || 8;
     const timeline = calculateTimeline(horizonWeeks);
-    
-    // Parse week bounds
-    const weekStartDate = parseNsDate(weekStart);
-    const weekEndDate = addDays(weekStartDate, 6);
-    
+
     const transactions = [];
-    
+
     if (type === 'ar') {
-      // Get stats - same as main getData
-      const statsData = computeAdvancedStats("CustInvc", paymentHistoryDays, defaultDaysToPay);
-      
-      // Search for open invoices - same as buildARForecast
-      const searchObj = search.create({
-        type: search.Type.INVOICE,
-        filters: [
-          ["mainline", "is", "T"], "AND",
-          ["amountremaining", "greaterthan", 0], "AND",
-          ["status", "noneof", "CustInvc:V"]
-        ],
-        columns: [
-          "internalid", "tranid", "entity", "amountremaining", 
-          "trandate", "duedate", "custbodyexpected_pay_date", "terms"
-        ]
-      });
-      
-      const pagedData = searchObj.runPaged({ pageSize: 1000 });
-      pagedData.pageRanges.forEach(function(pageRange) {
-        const page = pagedData.fetch({ index: pageRange.index });
-        page.data.forEach(function(res) {
-          const amt = parseFloat(res.getValue("amountremaining")) || 0;
-          if (amt <= 0) return;
-          
-          const entityId = res.getValue("entity");
-          const entityName = res.getText("entity");
-          const trandate = parseNsDate(res.getValue("trandate"));
-          const duedate = res.getValue("duedate") ? parseNsDate(res.getValue("duedate")) : null;
-          const customDateRaw = res.getValue("custbodyexpected_pay_date");
-          const termsDays = res.getValue("terms") ? parseInt(res.getText("terms").replace(/\D/g, "")) : null;
-          
-          // Calculate days past due - same logic
-          let daysOverDue = 0;
-          if (duedate) {
-            const diffTime = timeline.asOfDate - duedate;
-            daysOverDue = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+      // Use SAME functions as main getData
+      const arStats = computeAdvancedStats("CustInvc", paymentHistoryDays, defaultDaysToPay);
+      const arData = buildARForecast(timeline, arStats, volatilityThresholds, overduePushDays);
+
+      // Filter invoices to requested week
+      arData.summary.invoices.forEach(function(inv) {
+        if (inv.weekStart === weekStart) {
+          // Add volatility label
+          let volLabel = "Avg";
+          if (arStats.map[inv.entityId]) {
+            if (arStats.map[inv.entityId].stdDev < stableThreshold) volLabel = "Stable";
+            else if (arStats.map[inv.entityId].stdDev > volatileThreshold) volLabel = "Volatile";
           }
-          
-          // Calculate predicted date - EXACT same logic as buildARForecast
-          let predictedDate;
-          let predictionMethod = '';
-          let predictionDetail = '';
-          
-          if (customDateRaw) {
-            predictedDate = parseNsDate(customDateRaw);
-            predictionMethod = 'custom';
-            predictionDetail = 'User-set expected payment date';
-          } else if (statsData.map[entityId]) {
-            const s = statsData.map[entityId];
-            const buffer = s.stdDev ? Math.ceil(s.stdDev * 0.5) : 0;
-            predictedDate = addDays(trandate, s.avgDays + buffer);
-            predictionMethod = 'customer_history';
-            predictionDetail = 'Cust avg: ' + s.avgDays + 'd + ' + buffer + 'd buffer (σ=' + Math.round(s.stdDev || 0) + ', n=' + s.count + ')';
-          } else if (termsDays) {
-            predictedDate = addDays(trandate, termsDays);
-            predictionMethod = 'terms';
-            predictionDetail = 'Payment terms: Net ' + termsDays + ' days';
-          } else {
-            predictedDate = addDays(trandate, statsData.globalAvg);
-            predictionMethod = 'global_avg';
-            predictionDetail = 'Global avg: ' + statsData.globalAvg + ' days (no customer history)';
-          }
-          
-          // Adjust if predicted before due date
-          if (duedate && predictedDate < duedate) {
-            predictedDate = duedate;
-            predictionDetail += ' → adjusted to due date';
-          }
-          
-          // Push forward if predicted in the past - EXACT same logic
-          if (predictedDate < timeline.asOfDate) {
-            const diffDays = Math.ceil((timeline.asOfDate - predictedDate) / (1000 * 60 * 60 * 24));
-            let pushDays = pushLight;
-            if (diffDays > 60) pushDays = pushHeavy;
-            else if (diffDays > 30) pushDays = pushMedium;
-            predictedDate = addDays(timeline.asOfDate, pushDays);
-            predictionDetail += ' → pushed +' + pushDays + 'd (was ' + diffDays + 'd overdue)';
-          }
-          
-          // Adjust to business day
-          predictedDate = adjustToBusinessDay(predictedDate);
-          
-          // Check if falls in requested week
-          const wkKey = Shared.formatDateYMD(getWeekStart(predictedDate));
-          if (wkKey === weekStart) {
-            // Volatility label - same logic
-            let volLabel = "Avg";
-            if (statsData.map[entityId]) {
-              if (statsData.map[entityId].stdDev < stableThreshold) volLabel = "Stable";
-              else if (statsData.map[entityId].stdDev > volatileThreshold) volLabel = "Volatile";
-            }
-            
-            transactions.push({
-              internalId: res.getValue("internalid"),
-              tranId: res.getValue("tranid") || "ID:" + res.getValue("internalid"),
-              entityId: entityId,
-              entityName: entityName,
-              amount: amt,
-              tranDate: Shared.formatDateYMD(trandate),
-              dueDate: duedate ? Shared.formatDateYMD(duedate) : "-",
-              predictedDate: Shared.formatDateYMD(predictedDate),
-              daysOverDue: daysOverDue,
-              confidence: volLabel === 'Stable' ? 'high' : volLabel === 'Volatile' ? 'low' : 'medium',
-              volatility: volLabel,
-              predictionMethod: predictionMethod,
-              predictionDetail: predictionDetail
-            });
-          }
-        });
+
+          transactions.push({
+            internalId: inv.internalId,
+            tranId: inv.tranId,
+            entityId: inv.entityId,
+            entityName: inv.entityName,
+            amount: inv.amount,
+            tranDate: inv.tranDate,
+            dueDate: inv.dueDate || "-",
+            predictedDate: inv.predictedDate,
+            daysOverDue: inv.daysOverDue || 0,
+            confidence: volLabel === 'Stable' ? 'high' : volLabel === 'Volatile' ? 'low' : 'medium',
+            volatility: volLabel,
+            predictionMethod: inv.predictionMethod || 'unknown',
+            predictionDetail: inv.predictionDetail || ''
+          });
+        }
       });
     } else {
-      // AP - Get stats same as main getData
-      const statsData = computeAdvancedStats("VendBill", paymentHistoryDays, defaultDaysToPay);
-      const apFilters = storedConfig.apFilters || {};
-      
-      // Build filters - EXACT same as buildAPForecast
-      const filters = [["mainline", "is", "T"], "AND", ["amountremaining", "greaterthan", 0]];
-      if (apFilters.excludeVendorCategories && apFilters.excludeVendorCategories.length) {
-        filters.push("AND", ["vendor.category", "noneof", apFilters.excludeVendorCategories]);
-      }
-      
-      // Search for open bills - same columns as buildAPForecast
-      const searchObj = search.create({
-        type: search.Type.VENDOR_BILL,
-        filters: filters,
-        columns: [
-          "internalid", "tranid", "entity", "amountremaining",
-          "trandate", "duedate", "custbodyexpected_pay_date", "terms",
-          search.createColumn({ name: "category", join: "vendor" })
-        ]
-      });
-      
-      const pagedData = searchObj.runPaged({ pageSize: 1000 });
-      pagedData.pageRanges.forEach(function(pageRange) {
-        const page = pagedData.fetch({ index: pageRange.index });
-        page.data.forEach(function(res) {
-          const amt = parseFloat(res.getValue("amountremaining")) || 0;
-          if (amt <= 0) return;
-          
-          const entityId = res.getValue("entity");
-          const entityName = res.getText("entity");
-          const trandate = parseNsDate(res.getValue("trandate"));
-          const duedate = res.getValue("duedate") ? parseNsDate(res.getValue("duedate")) : null;
-          const customDateRaw = res.getValue("custbodyexpected_pay_date");
-          const vendorCat = res.getValue({ name: "category", join: "vendor" });
-          
-          // Calculate days past due
-          let daysOverDue = 0;
-          if (duedate) {
-            const diffTime = timeline.asOfDate - duedate;
-            daysOverDue = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-          }
-          
-          // Calculate predicted date - EXACT same logic as buildAPForecast
-          let predictedDate;
-          let predictionMethod = '';
-          let predictionDetail = '';
-          
-          if (customDateRaw) {
-            predictedDate = parseNsDate(customDateRaw);
-            predictionMethod = 'custom';
-            predictionDetail = 'User-set expected payment date';
-          } else if (statsData.map[entityId]) {
-            const s = statsData.map[entityId];
-            // Add stdDev buffer to match buildAPForecast
-            const buffer = s.stdDev ? Math.ceil(s.stdDev * 0.5) : 0;
-            predictedDate = addDays(trandate, s.avgDays + buffer);
-            predictionMethod = 'vendor_history';
-            predictionDetail = 'Vendor avg: ' + s.avgDays + 'd + ' + buffer + 'd buffer (σ=' + Math.round(s.stdDev || 0) + ', n=' + s.count + ')';
-          } else {
-            predictedDate = addDays(trandate, statsData.globalAvg);
-            predictionMethod = 'global_avg';
-            predictionDetail = 'Global avg: ' + statsData.globalAvg + ' days (no vendor history)';
-          }
+      // AP: Use SAME functions as main getData INCLUDING scheduling logic
+      const apStats = computeAdvancedStats("VendBill", paymentHistoryDays, defaultDaysToPay);
+      const apData = buildAPForecast(timeline, apStats, storedConfig.apFilters || {}, overduePushDays);
 
-          const originalPrediction = new Date(predictedDate);
+      // Get bank balance for scheduling
+      const bank = computeBankBalance(storedConfig.bankAccountIds);
 
-          // Push forward if predicted in the past - EXACT same logic as buildAPForecast
-          if (predictedDate < timeline.asOfDate) {
-            const diffDays = Math.ceil((timeline.asOfDate - predictedDate) / (1000 * 60 * 60 * 24));
-            // Use three-tier push to match buildAPForecast
-            let pushDays = pushLight;
-            if (diffDays > 60) pushDays = pushHeavy;
-            else if (diffDays > 30) pushDays = pushMedium;
-            predictedDate = addDays(timeline.asOfDate, pushDays);
-            predictionDetail += ' → pushed +' + pushDays + 'd (was ' + diffDays + 'd overdue)';
-          }
-          
-          // Adjust to business day
-          predictedDate = adjustToBusinessDay(predictedDate);
-          
-          // Check if falls in requested week
-          const wkKey = Shared.formatDateYMD(getWeekStart(predictedDate));
-          if (wkKey === weekStart) {
-            transactions.push({
-              internalId: res.getValue("internalid"),
-              tranId: res.getValue("tranid") || "ID:" + res.getValue("internalid"),
-              entityId: entityId,
-              entityName: entityName,
-              amount: amt,
-              tranDate: Shared.formatDateYMD(trandate),
-              dueDate: duedate ? Shared.formatDateYMD(duedate) : "-",
-              predictedDate: Shared.formatDateYMD(predictedDate),
-              daysOverDue: daysOverDue,
-              confidence: 'medium',
-              vendorCategory: vendorCat,
-              predictionMethod: predictionMethod,
-              predictionDetail: predictionDetail
-            });
-          }
-        });
+      // Run buildFinalTimeline to apply weeklyCap, priority, deferrals - SAME as main getData
+      const weeklyData = buildFinalTimeline(
+        timeline,
+        bank.balance,
+        {}, // Empty AR map - we only need AP scheduling
+        apData.summary.bills,
+        {}, // Empty dynamic inflows
+        {}, // Empty dynamic outflows
+        storedConfig.apFilters
+      );
+
+      // Filter SCHEDULED bills to requested week (these have caps/deferrals applied)
+      weeklyData.scheduledBills.forEach(function(bill) {
+        if (bill.scheduledWeek === weekStart) {
+          transactions.push({
+            internalId: bill.internalId,
+            tranId: bill.tranId,
+            entityId: bill.entityId,
+            entityName: bill.entityName,
+            amount: bill.amount,
+            tranDate: bill.tranDate,
+            dueDate: bill.dueDate || "-",
+            predictedDate: bill.predictedDate,
+            scheduledDate: bill.scheduledWeek, // The ACTUAL scheduled week after caps/deferrals
+            originalWeek: bill.weekStart, // Original predicted week before scheduling
+            wasDeferred: bill.weekStart !== bill.scheduledWeek,
+            daysOverDue: bill.daysOverDue || 0,
+            confidence: 'medium',
+            vendorCategory: bill.vendorCat,
+            isPriority: bill.isPriority || false,
+            predictionMethod: bill.predictionMethod || 'unknown',
+            predictionDetail: bill.predictionDetail || ''
+          });
+        }
       });
     }
-    
+
     // Sort by amount descending
     transactions.sort((a, b) => b.amount - a.amount);
-    
+
     // Calculate summary stats
     const totalAmount = transactions.reduce((sum, t) => sum + t.amount, 0);
     const avgAmount = transactions.length > 0 ? totalAmount / transactions.length : 0;
-    
+
     return {
       status: 'success',
       weekStart: weekStart,
