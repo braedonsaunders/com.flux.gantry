@@ -22,16 +22,25 @@ jobs:
       - name: Install SuiteCloud CLI
         run: npm install -g @oracle/suitecloud-cli --acceptsuitecloudsdklicense
 
+      - name: Setup private key
+        run: |
+          echo "${{ secrets.NS_PRIVATE_KEY }}" | base64 -d > /tmp/private.pem
+          chmod 600 /tmp/private.pem
+
       - name: Setup NetSuite authentication
         run: |
-          suitecloud account:savetoken \
+          suitecloud account:setup:ci \
             --account ${{ secrets.NS_ACCOUNT_ID }} \
-            --authid ${{ secrets.NS_AUTH_ID }} \
-            --tokenid ${{ secrets.NS_TOKEN_ID }} \
-            --tokensecret ${{ secrets.NS_TOKEN_SECRET }}
+            --authid "github-deploy" \
+            --certificateid ${{ secrets.NS_CERTIFICATE_ID }} \
+            --privatekeypath /tmp/private.pem
 
       - name: Deploy to NetSuite
-        run: suitecloud project:deploy --accountid ${{ secrets.NS_ACCOUNT_ID }}
+        run: suitecloud project:deploy
+
+      - name: Cleanup
+        if: always()
+        run: rm -f /tmp/private.pem
 
       - name: Deployment summary
         if: success()
