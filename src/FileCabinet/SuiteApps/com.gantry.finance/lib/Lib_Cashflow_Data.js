@@ -1324,8 +1324,30 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
       log.debug("buildAPForecast", "SuiteQL AP balance query failed, falling back to transaction search: " + e.message);
     }
 
+    // Subtract excluded vendor categories from AP total
+    const hasExclusions = exclusions && exclusions.excludeVendorCategories && exclusions.excludeVendorCategories.length;
+    if (hasExclusions && totalOutstanding > 0) {
+      try {
+        const excludedCats = exclusions.excludeVendorCategories.map(c => parseInt(c)).filter(c => !isNaN(c)).join(',');
+        if (excludedCats) {
+          const excludedResult = query.runSuiteQL({
+            query: `SELECT SUM(t.foreignamountremaining) as excluded_amount
+                    FROM transaction t
+                    JOIN vendor v ON t.entity = v.id
+                    WHERE t.type = 'VendBill' AND t.mainline = 'T' AND t.foreignamountremaining > 0
+                    AND v.category IN (${excludedCats})`
+          }).asMappedResults();
+          if (excludedResult.length > 0 && excludedResult[0].excluded_amount != null) {
+            totalOutstanding -= Math.abs(parseFloat(excludedResult[0].excluded_amount)) || 0;
+          }
+        }
+      } catch (e) {
+        log.debug("buildAPForecast", "Excluded vendor category query failed: " + e.message);
+      }
+    }
+
     const filters = [["mainline", "is", "T"], "AND", ["amountremaining", "greaterthan", 0]];
-    if (exclusions && exclusions.excludeVendorCategories && exclusions.excludeVendorCategories.length) {
+    if (hasExclusions) {
       filters.push("AND", ["vendor.category", "noneof", exclusions.excludeVendorCategories]);
     }
 
