@@ -240,6 +240,28 @@
         if (icon) icon.className = 'fas fa-sun';
     }
 
+    // Sidebar collapse toggle handler
+    const sidebarToggle = document.getElementById('sidebarToggle');
+    const sidebar = document.querySelector('.gantry-sidebar');
+    if (sidebarToggle && sidebar) {
+        sidebarToggle.addEventListener('click', function() {
+            sidebar.classList.toggle('collapsed');
+            const isCollapsed = sidebar.classList.contains('collapsed');
+            localStorage.setItem('gantry-sidebar-collapsed', isCollapsed ? 'true' : 'false');
+
+            // Update button title
+            this.title = isCollapsed ? 'Expand sidebar' : 'Collapse sidebar';
+        });
+    }
+
+    // Apply saved sidebar collapsed preference
+    if (localStorage.getItem('gantry-sidebar-collapsed') === 'true') {
+        if (sidebar) {
+            sidebar.classList.add('collapsed');
+            if (sidebarToggle) sidebarToggle.title = 'Expand sidebar';
+        }
+    }
+
     // Log loaded state
     console.log('[Gantry.App] Routes registered:', Object.keys(Router.routes));
     

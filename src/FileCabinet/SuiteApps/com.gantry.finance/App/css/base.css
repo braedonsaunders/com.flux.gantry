@@ -60,6 +60,7 @@
     
     /* === LAYOUT === */
     --sidebar-width: 240px;
+    --sidebar-width-collapsed: 60px;
 
     /* === SIDEBAR COLORS (synced with NetSuite or fallback) === */
     --sidebar-bg: #1e293b;
@@ -223,6 +224,76 @@ body {
 
 .gantry-sidebar-footer button:hover {
     opacity: 1;
+}
+
+/* --- SIDEBAR COLLAPSE TOGGLE --- */
+.gantry-sidebar-toggle {
+    background: none;
+    border: none;
+    color: #64748b;
+    cursor: pointer;
+    padding: 4px;
+    margin-left: auto;
+    opacity: 0.7;
+    transition: opacity 0.2s, transform 0.2s;
+    font-size: 0.85rem;
+}
+
+.gantry-sidebar-toggle:hover {
+    opacity: 1;
+    color: #fff;
+}
+
+/* --- SIDEBAR COLLAPSED STATE --- */
+.gantry-sidebar.collapsed {
+    width: var(--sidebar-width-collapsed);
+}
+
+.gantry-sidebar.collapsed .gantry-sidebar-header {
+    padding: 16px 0;
+    justify-content: center;
+}
+
+.gantry-sidebar.collapsed .gantry-sidebar-header span {
+    display: none;
+}
+
+.gantry-sidebar.collapsed .gantry-sidebar-toggle {
+    margin-left: 0;
+    transform: rotate(180deg);
+}
+
+.gantry-sidebar.collapsed .gantry-nav-link {
+    padding: 10px 0;
+    justify-content: center;
+}
+
+.gantry-sidebar.collapsed .gantry-nav-link i {
+    margin-right: 0;
+}
+
+.gantry-sidebar.collapsed .gantry-nav-link span {
+    display: none;
+}
+
+.gantry-sidebar.collapsed .gantry-nav-link.active {
+    border-left: none;
+    border-radius: 0;
+}
+
+.gantry-sidebar.collapsed .gantry-sidebar-footer {
+    padding: 12px 0;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.gantry-sidebar.collapsed .gantry-sidebar-footer span {
+    display: none;
+}
+
+/* Smooth transition for sidebar width */
+.gantry-sidebar {
+    transition: width 0.2s ease;
 }
 
 .gantry-main {
