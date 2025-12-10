@@ -93,27 +93,14 @@ define(["N/query", "N/log", "./Lib_Shared", "./Lib_Config"], function (query, lo
         const seenLabels = new Set();
         
         for (let i = 1; i <= 5; i++) {
-            // Calculate target month/year explicitly
-            let targetMonth = rangeEnd.getMonth() - (i * periodMonths);
-            let targetYear = rangeEnd.getFullYear();
+            // FIXED: Use Date object setMonth() for robust month arithmetic
+            // This automatically handles year rollovers correctly
             
-            // Handle year rollover
-            while (targetMonth < 0) {
-                targetMonth += 12;
-                targetYear--;
-            }
+            // End date: go back i*periodMonths from rangeEnd, get last day of that month
+            const pEnd = new Date(rangeEnd.getFullYear(), rangeEnd.getMonth() - (i * periodMonths) + 1, 0);
             
-            // Create end date as last day of that month
-            const pEnd = new Date(targetYear, targetMonth + 1, 0);
-            
-            // Calculate period start based on period length
-            let startMonth = targetMonth - periodMonths + 1;
-            let startYear = targetYear;
-            while (startMonth < 0) {
-                startMonth += 12;
-                startYear--;
-            }
-            const pStart = new Date(startYear, startMonth, 1);
+            // Start date: first day of the month that is (periodMonths - 1) months before pEnd
+            const pStart = new Date(pEnd.getFullYear(), pEnd.getMonth() - periodMonths + 1, 1);
             
             const pStartStr = Shared.formatDateYMD(pStart);
             const pEndStr = Shared.formatDateYMD(pEnd);
@@ -183,8 +170,17 @@ define(["N/query", "N/log", "./Lib_Shared", "./Lib_Config"], function (query, lo
      * Fetch time stats - supports configurable labor cost field and subsidiary filtering
      */
     function fetchTimeStats(start, end, config, subsidiaryId) {
-        const laborCostField = config.laborCostField || 'laborcost';
-        const subsidiaryFilter = subsidiaryId ? ` AND e.subsidiary = ${subsidiaryId}` : '';
+        // FIXED: Sanitize laborCostField to prevent SQL injection - only allow alphanumeric and underscore
+        const rawLaborCostField = config.laborCostField || 'laborcost';
+        const laborCostField = rawLaborCostField.replace(/[^a-zA-Z0-9_]/g, '');
+        if (!laborCostField) {
+            log.error('Invalid laborCostField', 'laborCostField was empty after sanitization');
+            return [];
+        }
+        
+        // FIXED: Validate subsidiaryId is numeric to prevent SQL injection
+        const sanitizedSubsidiaryId = subsidiaryId ? String(subsidiaryId).replace(/[^0-9]/g, '') : null;
+        const subsidiaryFilter = sanitizedSubsidiaryId ? ` AND e.subsidiary = ${sanitizedSubsidiaryId}` : '';
         
         const sql = `
             SELECT
@@ -403,9 +399,19 @@ define(["N/query", "N/log", "./Lib_Shared", "./Lib_Config"], function (query, lo
             return { status: 'error', message: 'employeeId is required' };
         }
         
+        // FIXED: Sanitize all inputs to prevent SQL injection
+        const sanitizedEmployeeId = String(employeeId).replace(/[^0-9]/g, '');
+        const sanitizedSubsidiaryId = subsidiaryId ? String(subsidiaryId).replace(/[^0-9]/g, '') : null;
+        const sanitizedStartDate = String(startDate || '').replace(/[^0-9\-]/g, '');
+        const sanitizedEndDate = String(endDate || '').replace(/[^0-9\-]/g, '');
+        
+        if (!sanitizedEmployeeId) {
+            return { status: 'error', message: 'Invalid employeeId' };
+        }
+        
         let subsidiaryFilter = '';
-        if (subsidiaryId) {
-            subsidiaryFilter = `AND e.subsidiary = ${subsidiaryId}`;
+        if (sanitizedSubsidiaryId) {
+            subsidiaryFilter = `AND e.subsidiary = ${sanitizedSubsidiaryId}`;
         }
         
         const sql = `
@@ -421,9 +427,9 @@ define(["N/query", "N/log", "./Lib_Shared", "./Lib_Config"], function (query, lo
                 t.memo
             FROM timebill t
             LEFT JOIN employee e ON t.employee = e.id
-            WHERE t.employee = ${employeeId}
-              AND t.trandate >= TO_DATE('${startDate}', 'YYYY-MM-DD')
-              AND t.trandate <= TO_DATE('${endDate}', 'YYYY-MM-DD')
+            WHERE t.employee = ${sanitizedEmployeeId}
+              AND t.trandate >= TO_DATE('${sanitizedStartDate}', 'YYYY-MM-DD')
+              AND t.trandate <= TO_DATE('${sanitizedEndDate}', 'YYYY-MM-DD')
               ${subsidiaryFilter}
             ORDER BY t.trandate DESC
         `;
@@ -463,9 +469,19 @@ define(["N/query", "N/log", "./Lib_Shared", "./Lib_Config"], function (query, lo
             return { status: 'error', message: 'itemId is required' };
         }
         
+        // FIXED: Sanitize all inputs to prevent SQL injection
+        const sanitizedItemId = String(itemId).replace(/[^0-9]/g, '');
+        const sanitizedSubsidiaryId = subsidiaryId ? String(subsidiaryId).replace(/[^0-9]/g, '') : null;
+        const sanitizedStartDate = String(startDate || '').replace(/[^0-9\-]/g, '');
+        const sanitizedEndDate = String(endDate || '').replace(/[^0-9\-]/g, '');
+        
+        if (!sanitizedItemId) {
+            return { status: 'error', message: 'Invalid itemId' };
+        }
+        
         let subsidiaryFilter = '';
-        if (subsidiaryId) {
-            subsidiaryFilter = `AND e.subsidiary = ${subsidiaryId}`;
+        if (sanitizedSubsidiaryId) {
+            subsidiaryFilter = `AND e.subsidiary = ${sanitizedSubsidiaryId}`;
         }
         
         const sql = `
@@ -481,9 +497,9 @@ define(["N/query", "N/log", "./Lib_Shared", "./Lib_Config"], function (query, lo
                 t.memo
             FROM timebill t
             LEFT JOIN employee e ON t.employee = e.id
-            WHERE t.item = ${itemId}
-              AND t.trandate >= TO_DATE('${startDate}', 'YYYY-MM-DD')
-              AND t.trandate <= TO_DATE('${endDate}', 'YYYY-MM-DD')
+            WHERE t.item = ${sanitizedItemId}
+              AND t.trandate >= TO_DATE('${sanitizedStartDate}', 'YYYY-MM-DD')
+              AND t.trandate <= TO_DATE('${sanitizedEndDate}', 'YYYY-MM-DD')
               ${subsidiaryFilter}
             ORDER BY t.trandate DESC
         `;
