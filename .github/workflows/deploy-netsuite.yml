@@ -42,7 +42,9 @@ jobs:
             --privatekeypath /tmp/private.pem
 
       - name: Deploy to NetSuite
-        run: suitecloud project:deploy
+        run: |
+          # Upload all files to the existing SuiteApp folder
+          suitecloud file:upload --paths "src/FileCabinet/SuiteApps/com.gantry.finance/**"
 
       - name: Cleanup
         if: always()

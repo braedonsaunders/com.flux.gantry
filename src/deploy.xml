@@ -1,12 +1,5 @@
 <deploy>
-    <configuration>
-        <path>~/FileCabinet/SuiteApps/com.gantry.finance/*</path>
-    </configuration>
-    <objects>
-        <path>~/Objects/customscript_gantry_suitelet.xml</path>
-        <path>~/Objects/customscript_gantry_router.xml</path>
-    </objects>
     <files>
-        <path>~/FileCabinet/SuiteApps/com.gantry.finance/*</path>
+        <path>~/FileCabinet/SuiteApps/com.gantry.finance/**</path>
     </files>
 </deploy>
