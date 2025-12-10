@@ -249,13 +249,20 @@
 
         render() {
             // Safety Check: If user navigated away (CF_RangeLabel missing), stop rendering
-            if (!el("#CF_RangeLabel")) return; 
+            if (!el("#CF_RangeLabel")) return;
             if (!this.rawData || !this.rawData.meta) return;
-            
+
             const co = this.rawData.company;
             const meta = this.rawData.meta;
             const runway = this.rawData.runway || {};
             const sparkData = this.rawData.sparklineData || {};
+
+            // Alert user to any category configuration errors
+            if (meta.categoryErrors && meta.categoryErrors.length > 0) {
+                const errorNames = meta.categoryErrors.map(e => e.categoryName).join(', ');
+                showToast(`Warning: ${meta.categoryErrors.length} category error(s) in: ${errorNames}. Check config.`, 'warning');
+                console.warn('Category errors:', meta.categoryErrors);
+            }
 
             // Header Stats
             el("#CF_RangeLabel").textContent = `As of ${meta.asOfDate} • ${meta.range.days} Day Outlook`;
@@ -317,10 +324,12 @@
             const coverage = co.cash.totalOutflows > 0 ? co.cash.totalInflows / co.cash.totalOutflows : 0;
             el("#cfVitalBurn").textContent = fmtMoney(co.cash.totalOutflows / (meta.activeConfig.horizonWeeks || 8));
             
+            // AR Coverage = (Cash + Outstanding AR) / Outstanding AP
+            // Shows how many times current liquid assets cover payables
             const liquidAssets = co.cash.startingCash + co.ar.outstandingTotal;
             const liquidLiab = co.ap.outstandingTotal;
-            const liquid = liquidLiab > 0 ? liquidAssets / liquidLiab : 0;
-            el("#cfVitalLiquid").textContent = liquid > 0 ? liquid.toFixed(2) : "N/A";
+            const arCoverage = liquidLiab > 0 ? liquidAssets / liquidLiab : 0;
+            el("#cfVitalLiquid").textContent = arCoverage > 0 ? arCoverage.toFixed(2) + 'x' : "N/A";
             
             el("#cfVitalDso").textContent = (co.ar.avgDaysToPay || "0") + " Days";
             el("#cfVitalDpo").textContent = (co.ap.avgDaysToPay || "0") + " Days";

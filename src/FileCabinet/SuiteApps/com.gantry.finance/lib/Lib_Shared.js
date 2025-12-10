@@ -29,7 +29,7 @@ define(["N/query", "N/format", "N/log"], function (query, format, log) {
     }
 
     function safeDiv(n, d) {
-        return d > 0 ? n / d : 0.0;
+        return d !== 0 ? n / d : 0.0;
     }
 
     return { runSuiteQL, formatDateYMD, round2, safeDiv };

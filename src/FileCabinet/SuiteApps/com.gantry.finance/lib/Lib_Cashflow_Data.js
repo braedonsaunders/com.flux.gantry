@@ -102,6 +102,7 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
     let dynamicInflows = {};
     let dynamicOutflows = {};
     const categoryTimings = {};
+    const categoryErrors = [];
 
     if (config.categories && Array.isArray(config.categories)) {
       config.categories.forEach((catConfig) => {
@@ -126,6 +127,11 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
           });
         } catch (e) {
           log.error(`Error processing category ${catConfig.id}`, e);
+          categoryErrors.push({
+            categoryId: catConfig.id,
+            categoryName: catConfig.name || catConfig.id,
+            error: e.message || String(e)
+          });
         }
       });
     }
@@ -184,6 +190,7 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
         range: { days: timeline.days },
         horizonWeeks: config.horizonWeeks,
         activeConfig: config,
+        categoryErrors: categoryErrors.length > 0 ? categoryErrors : null,
       },
       company: {
         cash: weeklyData.summary,
@@ -507,6 +514,8 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
     const lookbackMonths = parseInt(config.historyMonths) || 6;
     const lookbackDays = lookbackMonths * 30;
     const historyStart = addDays(asOfDate, -lookbackDays);
+    // Configurable threshold for significant payment detection (default: auto-detect from median)
+    const significantPaymentThreshold = parseFloat(config.significantPaymentThreshold) || 0;
 
     // ========== PHASE 1: Gather Transaction Data ==========
     const dailyTotals = {};
@@ -678,8 +687,13 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
     // ========== PHASE 7: Calculate Cycle Position & Projections ==========
     const dailyBurnRate = grandTotalSpend / lookbackDays;
 
+    // Use configured threshold, or auto-detect as 50% of median payment
+    const effectiveThreshold = significantPaymentThreshold > 0
+      ? significantPaymentThreshold
+      : (medianPayment > 0 ? medianPayment * 0.5 : 10000);
+
     const significantPayments = Object.entries(dailyTotals)
-      .filter(([_, data]) => data.debits > 50000)
+      .filter(([_, data]) => data.debits > effectiveThreshold)
       .map(([dateKey, data]) => ({ date: data.date, dateKey: dateKey, amount: data.debits }))
       .sort((a, b) => b.date - a.date);
 
@@ -1272,9 +1286,10 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
       filters.push("AND", ["vendor.category", "noneof", exclusions.excludeVendorCategories]);
     }
 
-    // Use configurable push days with defaults
+    // Use configurable push days with defaults (matching AR logic)
     const pushLight = overduePushDays.light || 7;
     const pushMedium = overduePushDays.medium || 14;
+    const pushHeavy = overduePushDays.heavy || 28;
 
     const searchObj = search.create({
       type: search.Type.VENDOR_BILL,
@@ -1311,13 +1326,20 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
 
         let predictedDate;
         if (customDateRaw) predictedDate = parseNsDate(customDateRaw);
-        else if (statsData.map[entityId]) predictedDate = addDays(trandate, statsData.map[entityId].avgDays);
+        else if (statsData.map[entityId]) {
+          // Add stdDev buffer to match AR logic for symmetric predictions
+          const s = statsData.map[entityId];
+          const buffer = s.stdDev ? Math.ceil(s.stdDev * 0.5) : 0;
+          predictedDate = addDays(trandate, s.avgDays + buffer);
+        }
         else predictedDate = addDays(trandate, statsData.globalAvg);
 
         if (predictedDate < timeline.asOfDate) {
           const diffDays = Math.ceil((timeline.asOfDate - predictedDate) / (1000 * 60 * 60 * 24));
-          // Use configurable push days
-          const pushDays = diffDays > 30 ? pushMedium : pushLight;
+          // Use configurable push days with three tiers (matching AR logic)
+          let pushDays = pushLight;
+          if (diffDays > 60) pushDays = pushHeavy;
+          else if (diffDays > 30) pushDays = pushMedium;
           predictedDate = addDays(timeline.asOfDate, pushDays);
         }
 
@@ -1794,22 +1816,26 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
             predictionDetail = 'User-set expected payment date';
           } else if (statsData.map[entityId]) {
             const s = statsData.map[entityId];
-            predictedDate = addDays(trandate, s.avgDays);
+            // Add stdDev buffer to match buildAPForecast
+            const buffer = s.stdDev ? Math.ceil(s.stdDev * 0.5) : 0;
+            predictedDate = addDays(trandate, s.avgDays + buffer);
             predictionMethod = 'vendor_history';
-            predictionDetail = 'Vendor avg: ' + s.avgDays + ' days (based on ' + s.count + ' payments)';
+            predictionDetail = 'Vendor avg: ' + s.avgDays + 'd + ' + buffer + 'd buffer (σ=' + Math.round(s.stdDev || 0) + ', n=' + s.count + ')';
           } else {
             predictedDate = addDays(trandate, statsData.globalAvg);
             predictionMethod = 'global_avg';
             predictionDetail = 'Global avg: ' + statsData.globalAvg + ' days (no vendor history)';
           }
-          
+
           const originalPrediction = new Date(predictedDate);
-          
+
           // Push forward if predicted in the past - EXACT same logic as buildAPForecast
           if (predictedDate < timeline.asOfDate) {
             const diffDays = Math.ceil((timeline.asOfDate - predictedDate) / (1000 * 60 * 60 * 24));
-            // Use same logic as buildAPForecast: only light and medium, no heavy
-            const pushDays = diffDays > 30 ? pushMedium : pushLight;
+            // Use three-tier push to match buildAPForecast
+            let pushDays = pushLight;
+            if (diffDays > 60) pushDays = pushHeavy;
+            else if (diffDays > 30) pushDays = pushMedium;
             predictedDate = addDays(timeline.asOfDate, pushDays);
             predictionDetail += ' → pushed +' + pushDays + 'd (was ' + diffDays + 'd overdue)';
           }
@@ -2143,29 +2169,32 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
           "trandate", "duedate", "daysoverdue"
         ]
       });
-      
-      searchObj.run().each(function(res) {
-        const duedate = res.getValue("duedate") ? parseNsDate(res.getValue("duedate")) : null;
-        let daysOverDue = 0;
-        
-        if (duedate) {
-          daysOverDue = Math.ceil((today - duedate) / (1000 * 60 * 60 * 24));
-        }
-        
-        // Check if falls in requested bucket
-        if (daysOverDue >= minDaysOverdue && daysOverDue <= maxDaysOverdue) {
-          items.push({
-            internalId: res.getValue("internalid"),
-            tranId: res.getValue("tranid"),
-            entityId: res.getValue("entity"),
-            entityName: res.getText("entity"),
-            amount: parseFloat(res.getValue("amountremaining")) || 0,
-            tranDate: Shared.formatDateYMD(parseNsDate(res.getValue("trandate"))),
-            dueDate: duedate ? Shared.formatDateYMD(duedate) : null,
-            daysOverDue: daysOverDue
-          });
-        }
-        return true;
+
+      // Use runPaged to handle >4000 results
+      const pagedData = searchObj.runPaged({ pageSize: 1000 });
+      pagedData.pageRanges.forEach(function(pageRange) {
+        pagedData.fetch({ index: pageRange.index }).data.forEach(function(res) {
+          const duedate = res.getValue("duedate") ? parseNsDate(res.getValue("duedate")) : null;
+          let daysOverDue = 0;
+
+          if (duedate) {
+            daysOverDue = Math.ceil((today - duedate) / (1000 * 60 * 60 * 24));
+          }
+
+          // Check if falls in requested bucket
+          if (daysOverDue >= minDaysOverdue && daysOverDue <= maxDaysOverdue) {
+            items.push({
+              internalId: res.getValue("internalid"),
+              tranId: res.getValue("tranid"),
+              entityId: res.getValue("entity"),
+              entityName: res.getText("entity"),
+              amount: parseFloat(res.getValue("amountremaining")) || 0,
+              tranDate: Shared.formatDateYMD(parseNsDate(res.getValue("trandate"))),
+              dueDate: duedate ? Shared.formatDateYMD(duedate) : null,
+              daysOverDue: daysOverDue
+            });
+          }
+        });
       });
     } else {
       const searchObj = search.create({
@@ -2179,28 +2208,31 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
           "trandate", "duedate"
         ]
       });
-      
-      searchObj.run().each(function(res) {
-        const duedate = res.getValue("duedate") ? parseNsDate(res.getValue("duedate")) : null;
-        let daysOverDue = 0;
-        
-        if (duedate) {
-          daysOverDue = Math.ceil((today - duedate) / (1000 * 60 * 60 * 24));
-        }
-        
-        if (daysOverDue >= minDaysOverdue && daysOverDue <= maxDaysOverdue) {
-          items.push({
-            internalId: res.getValue("internalid"),
-            tranId: res.getValue("tranid"),
-            entityId: res.getValue("entity"),
-            entityName: res.getText("entity"),
-            amount: parseFloat(res.getValue("amountremaining")) || 0,
-            tranDate: Shared.formatDateYMD(parseNsDate(res.getValue("trandate"))),
-            dueDate: duedate ? Shared.formatDateYMD(duedate) : null,
-            daysOverDue: daysOverDue
-          });
-        }
-        return true;
+
+      // Use runPaged to handle >4000 results
+      const pagedData = searchObj.runPaged({ pageSize: 1000 });
+      pagedData.pageRanges.forEach(function(pageRange) {
+        pagedData.fetch({ index: pageRange.index }).data.forEach(function(res) {
+          const duedate = res.getValue("duedate") ? parseNsDate(res.getValue("duedate")) : null;
+          let daysOverDue = 0;
+
+          if (duedate) {
+            daysOverDue = Math.ceil((today - duedate) / (1000 * 60 * 60 * 24));
+          }
+
+          if (daysOverDue >= minDaysOverdue && daysOverDue <= maxDaysOverdue) {
+            items.push({
+              internalId: res.getValue("internalid"),
+              tranId: res.getValue("tranid"),
+              entityId: res.getValue("entity"),
+              entityName: res.getText("entity"),
+              amount: parseFloat(res.getValue("amountremaining")) || 0,
+              tranDate: Shared.formatDateYMD(parseNsDate(res.getValue("trandate"))),
+              dueDate: duedate ? Shared.formatDateYMD(duedate) : null,
+              daysOverDue: daysOverDue
+            });
+          }
+        });
       });
     }
     
