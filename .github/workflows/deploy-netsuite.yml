@@ -4,8 +4,7 @@ on:
   push:
     branches:
       - main
-      - deploy
-  workflow_dispatch:  # Allow manual trigger
+  workflow_dispatch:  # Allow manual trigger from GitHub UI
 
 jobs:
   deploy:
@@ -25,23 +24,20 @@ jobs:
 
       - name: Setup NetSuite authentication
         run: |
-          mkdir -p ~/.suitecloud-sdk
-          echo '${{ secrets.NETSUITE_AUTH }}' > ~/.suitecloud-sdk/credentials
-
-      - name: Validate project
-        run: suitecloud project:validate
-        working-directory: ${{ github.workspace }}
+          suitecloud account:savetoken \
+            --account ${{ secrets.NS_ACCOUNT_ID }} \
+            --authid ${{ secrets.NS_AUTH_ID }} \
+            --tokenid ${{ secrets.NS_TOKEN_ID }} \
+            --tokensecret ${{ secrets.NS_TOKEN_SECRET }}
 
       - name: Deploy to NetSuite
-        run: suitecloud project:deploy --accountid ${{ secrets.NETSUITE_ACCOUNT_ID }}
-        working-directory: ${{ github.workspace }}
-        env:
-          NETSUITE_ACCOUNT_ID: ${{ secrets.NETSUITE_ACCOUNT_ID }}
+        run: suitecloud project:deploy --accountid ${{ secrets.NS_ACCOUNT_ID }}
 
       - name: Deployment summary
         if: success()
         run: |
-          echo "## Deployment Successful! :rocket:" >> $GITHUB_STEP_SUMMARY
-          echo "Deployed to NetSuite account: ${{ secrets.NETSUITE_ACCOUNT_ID }}" >> $GITHUB_STEP_SUMMARY
-          echo "Branch: ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
-          echo "Commit: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "## Deployment Successful!" >> $GITHUB_STEP_SUMMARY
+          echo "- **Account:** ${{ secrets.NS_ACCOUNT_ID }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Branch:** ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit:** \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Time:** $(date -u)" >> $GITHUB_STEP_SUMMARY
