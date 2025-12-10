@@ -1459,13 +1459,31 @@
                 this.flyout.arData = type === 'ar' ? res.items : [];
                 this.flyout.apData = type === 'ap' ? res.items : [];
                 this.flyout.activeTab = type;
-                
-                // Show summary
+
+                // Show summary using standard KPI card style
+                const amountColor = type === 'ar' ? '#10b981' : '#ef4444';
+                const amountIcon = type === 'ar' ? 'fa-arrow-down' : 'fa-arrow-up';
                 el('#cfFlyoutSummary').innerHTML = `
-                    <table class="table table-sm table-borderless mb-0" style="font-size: 13px;"><tbody>
-                        <tr><td class="text-muted py-1">Items</td><td class="text-right font-weight-bold py-1">${res.summary.count}</td></tr>
-                        <tr><td class="text-muted py-1">Total Amount</td><td class="text-right font-weight-bold py-1 ${type === 'ar' ? 'text-success' : 'text-danger'}">${fmtMoney(res.summary.totalAmount)}</td></tr>
-                    </tbody></table>
+                    <div class="cf-flyout-kpis" style="display:flex; gap:12px; margin-bottom:16px;">
+                        <div class="cf-flyout-stat-card" style="flex:1;">
+                            <div class="stat-icon" style="background:#3b82f615;">
+                                <i class="fas fa-file-invoice" style="color:#3b82f6;"></i>
+                            </div>
+                            <div class="stat-content">
+                                <div class="stat-label">Items</div>
+                                <div class="stat-value">${fmtNum(res.summary.count, 0)}</div>
+                            </div>
+                        </div>
+                        <div class="cf-flyout-stat-card" style="flex:1;">
+                            <div class="stat-icon" style="background:${amountColor}15;">
+                                <i class="fas ${amountIcon}" style="color:${amountColor};"></i>
+                            </div>
+                            <div class="stat-content">
+                                <div class="stat-label">Total Amount</div>
+                                <div class="stat-value" style="color:${amountColor};">${fmtMoney(res.summary.totalAmount)}</div>
+                            </div>
+                        </div>
+                    </div>
                 `;
                 
                 this.renderBucketTable(res.items, type);
