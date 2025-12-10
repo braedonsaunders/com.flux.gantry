@@ -1331,12 +1331,12 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
         const excludedCats = exclusions.excludeVendorCategories.map(c => parseInt(c)).filter(c => !isNaN(c)).join(',');
         if (excludedCats) {
           const excludedResult = query.runSuiteQL({
-            query: `SELECT SUM(ABS(t.amountremaining)) as excluded_amount
+            query: `SELECT SUM(ABS(t.foreignamountunpaid)) as excluded_amount
                     FROM transaction t
                     JOIN vendor v ON t.entity = v.id
-                    WHERE t.type IN ('VendBill', 'Bill')
+                    WHERE t.type = 'VendBill'
                     AND t.posting = 'T'
-                    AND ABS(t.amountremaining) > 0
+                    AND t.foreignamountunpaid > 0
                     AND v.category IN (${excludedCats})`
           }).asMappedResults();
           if (excludedResult.length > 0 && excludedResult[0].excluded_amount != null) {
