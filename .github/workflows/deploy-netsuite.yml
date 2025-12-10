@@ -43,8 +43,9 @@ jobs:
 
       - name: Deploy to NetSuite
         run: |
-          # Upload all files to the existing SuiteApp folder
-          suitecloud file:upload --paths "src/FileCabinet/SuiteApps/com.gantry.finance/**"
+          # Find all files and upload them
+          FILES=$(find src/FileCabinet/SuiteApps/com.gantry.finance -type f | tr '\n' ' ')
+          suitecloud file:upload --paths $FILES
 
       - name: Cleanup
         if: always()
