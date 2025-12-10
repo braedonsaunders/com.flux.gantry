@@ -23,6 +23,28 @@ define(["N/search", "N/query", "N/log", "./Lib_Shared", "./Lib_Config"], functio
         return new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
     }
 
+    // Round metrics object for API response (preserves full precision during calculations)
+    function roundMetrics(metrics) {
+        if (!metrics) return metrics;
+        return {
+            revenue: Shared.round2(metrics.revenue),
+            cogs: Shared.round2(metrics.cogs),
+            opex: Shared.round2(metrics.opex),
+            gm: Shared.round2(metrics.gm),
+            opInc: Shared.round2(metrics.opInc),
+            gmPct: Shared.round2(metrics.gmPct)
+        };
+    }
+
+    // Round all period metrics in a metrics object
+    function roundAllPeriodMetrics(metricsObj) {
+        const rounded = {};
+        Object.keys(metricsObj).forEach(key => {
+            rounded[key] = roundMetrics(metricsObj[key]);
+        });
+        return rounded;
+    }
+
     // ═══════════════════════════════════════════════════════════════════════════
     // MAIN DATA FUNCTION
     // ═══════════════════════════════════════════════════════════════════════════
@@ -66,7 +88,9 @@ define(["N/search", "N/query", "N/log", "./Lib_Shared", "./Lib_Config"], functio
             const fyDays = Math.ceil((fyEnd - fyStart) / msPerDay);
             const fyDaysElapsed = Math.ceil((rangeEnd - fyStart) / msPerDay);
             const daysInRange = Math.max(1, Math.ceil((rangeEnd - rangeStart) / msPerDay));
-            const monthsInRange = (rangeEnd.getFullYear() - rangeStart.getFullYear()) * 12 + (rangeEnd.getMonth() - rangeStart.getMonth()) + 1;
+            // Ensure monthsInRange is at least 1 to prevent division by zero
+            const rawMonthsInRange = (rangeEnd.getFullYear() - rangeStart.getFullYear()) * 12 + (rangeEnd.getMonth() - rangeStart.getMonth()) + 1;
+            const monthsInRange = Math.max(1, rawMonthsInRange);
             const percentFY = Math.min(100, Math.max(0, (fyDaysElapsed / fyDays) * 100));
 
             // Period Definitions
@@ -120,8 +144,10 @@ define(["N/search", "N/query", "N/log", "./Lib_Shared", "./Lib_Config"], functio
                 config
             );
 
-            const compBreakeven = compTargetGM > 0 ? (avgMonthlyOpex / compTargetGM) : null;
-            const compRunRate = compRange.revenue * (fyDays / daysInRange);
+            const compBreakeven = (compTargetGM > 0 && isFinite(avgMonthlyOpex)) 
+                ? (avgMonthlyOpex / compTargetGM) 
+                : null;
+            const compRunRate = daysInRange > 0 ? compRange.revenue * (fyDays / daysInRange) : 0;
             
             const compPriorRev = companyMetrics.priorYearRange.revenue;
             const compYoyRevPct = compPriorRev !== 0 ? (compRange.revenue - compPriorRev) / compPriorRev : null;
@@ -142,8 +168,8 @@ define(["N/search", "N/query", "N/log", "./Lib_Shared", "./Lib_Config"], functio
                 const dAvgRev = rMet.revenue / monthsInRange;
                 const dAvgOpex = rMet.opex / monthsInRange;
                 const dTargetGM = chooseTargetGMPct(metrics.previousMonth.gmPct, metrics.currentMonth.gmPct, rMet.gmPct, config);
-                const dBreakeven = dTargetGM > 0 ? (dAvgOpex / dTargetGM) : null;
-                const dRunRate = rMet.revenue * (fyDays / daysInRange);
+                const dBreakeven = (dTargetGM > 0 && isFinite(dAvgOpex)) ? (dAvgOpex / dTargetGM) : null;
+                const dRunRate = daysInRange > 0 ? rMet.revenue * (fyDays / daysInRange) : 0;
                 
                 const dPriorRev = metrics.priorYearRange.revenue;
                 const dYoy = dPriorRev !== 0 ? (rMet.revenue - dPriorRev) / dPriorRev : null;
@@ -156,7 +182,7 @@ define(["N/search", "N/query", "N/log", "./Lib_Shared", "./Lib_Config"], functio
 
                 return {
                     department: { netsuiteId: dept.id, name: dept.name },
-                    metrics: metrics,
+                    metrics: roundAllPeriodMetrics(metrics),
                     averages: { rangeAvgMonthlyRevenue: Shared.round2(dAvgRev), rangeAvgMonthlyOpEx: Shared.round2(dAvgOpex) },
                     breakeven: { targetGMPct: Shared.round2(dTargetGM), breakevenMonthlyRevenue: dBreakeven ? Shared.round2(dBreakeven) : null },
                     forecast: { runRateRevenueFy: Shared.round2(dRunRate) },
@@ -205,7 +231,7 @@ define(["N/search", "N/query", "N/log", "./Lib_Shared", "./Lib_Config"], functio
                     }
                 },
                 company: {
-                    metrics: companyMetrics,
+                    metrics: roundAllPeriodMetrics(companyMetrics),
                     averages: { rangeAvgMonthlyRevenue: Shared.round2(avgMonthlyRev), rangeAvgMonthlyOpEx: Shared.round2(avgMonthlyOpex) },
                     breakeven: { targetGMPct: Shared.round2(compTargetGM), breakevenMonthlyRevenue: compBreakeven ? Shared.round2(compBreakeven) : null },
                     forecast: { runRateRevenueFy: Shared.round2(compRunRate) },
@@ -355,7 +381,8 @@ define(["N/search", "N/query", "N/log", "./Lib_Shared", "./Lib_Config"], functio
                     status: 'success',
                     data: detectAccountLevelAnomalies(
                         params.months || 12,
-                        params.subsidiaryId
+                        params.subsidiaryId,
+                        params.anomalyThreshold || 2.0  // Allow custom threshold, default to 2.0
                     )
                 };
             
@@ -656,10 +683,11 @@ define(["N/search", "N/query", "N/log", "./Lib_Shared", "./Lib_Config"], functio
             const projExpense = expTrend.intercept + expTrend.slope * (n + i - 1);
             const projNetIncome = projRevenue - projExpense;
             
-            // Confidence bands (widen over time)
+            // Confidence bands (widen over time using statistically correct sqrt formula)
             const confidence = Math.max(0.5, 1 - (i * 0.08));
             const revStdDev = calculateStdDev(revenues);
-            const bandWidth = revStdDev * (1 + i * 0.2);
+            // Use sqrt(i+1) for proper time-series confidence bands (90% CI = 1.645)
+            const bandWidth = revStdDev * 1.645 * Math.sqrt(i + 1);
             
             // Get month label
             const forecastDate = parseLocalDate(endDate);
@@ -678,7 +706,9 @@ define(["N/search", "N/query", "N/log", "./Lib_Shared", "./Lib_Config"], functio
                     low: Math.max(0, Shared.round2(projExpense - bandWidth * 0.5)),
                     high: Shared.round2(projExpense + bandWidth * 0.5)
                 },
-                netIncome: {
+                // Note: This is Operating Income (Revenue - Expenses), not true Net Income
+                // True Net Income would require Interest Expense and Tax calculations
+                operatingIncome: {
                     projected: Shared.round2(projNetIncome),
                     low: Shared.round2(projRevenue - bandWidth - projExpense),
                     high: Shared.round2(projRevenue + bandWidth - projExpense)
@@ -758,40 +788,44 @@ define(["N/search", "N/query", "N/log", "./Lib_Shared", "./Lib_Config"], functio
                 const gmRatio = currentRevenue > 0 ? currentGM / currentRevenue : 0;
                 const newGM = newRevenue * gmRatio;
                 const newCogs = newRevenue - newGM;
-                const newNetIncome = newGM - currentOpex;
+                const newOpInc = newGM - currentOpex;
                 
                 result.projected = {
                     revenue: Shared.round2(newRevenue),
                     cogs: Shared.round2(newCogs),
                     grossMargin: Shared.round2(newGM),
                     opex: currentOpex,
-                    netIncome: Shared.round2(newNetIncome)
+                    operatingIncome: Shared.round2(newOpInc),
+                    netIncome: Shared.round2(newOpInc) // Legacy alias
                 };
                 result.impact = {
                     revenueChange: Shared.round2(newRevenue - currentRevenue),
-                    netIncomeChange: Shared.round2(newNetIncome - currentNetIncome)
+                    operatingIncomeChange: Shared.round2(newOpInc - currentNetIncome),
+                    netIncomeChange: Shared.round2(newOpInc - currentNetIncome) // Legacy alias
                 };
-                result.insight = `A ${changePercent}% revenue change results in ${newNetIncome > currentNetIncome ? 'an increase' : 'a decrease'} of ${Math.abs(Shared.round2(newNetIncome - currentNetIncome))} in net income.`;
+                result.insight = `A ${changePercent}% revenue change results in ${newOpInc > currentNetIncome ? 'an increase' : 'a decrease'} of ${Math.abs(Shared.round2(newOpInc - currentNetIncome))} in operating income.`;
                 break;
             }
             
             case 'opex_change': {
                 const changePercent = parseFloat(inputs.changePercent) || 0;
                 const newOpex = currentOpex * (1 + changePercent / 100);
-                const newNetIncome = currentGM - newOpex;
+                const newOpInc = currentGM - newOpex;
                 
                 result.projected = {
                     revenue: currentRevenue,
                     cogs: currentCogs,
                     grossMargin: currentGM,
                     opex: Shared.round2(newOpex),
-                    netIncome: Shared.round2(newNetIncome)
+                    operatingIncome: Shared.round2(newOpInc),
+                    netIncome: Shared.round2(newOpInc) // Legacy alias
                 };
                 result.impact = {
                     opexChange: Shared.round2(newOpex - currentOpex),
-                    netIncomeChange: Shared.round2(newNetIncome - currentNetIncome)
+                    operatingIncomeChange: Shared.round2(newOpInc - currentNetIncome),
+                    netIncomeChange: Shared.round2(newOpInc - currentNetIncome) // Legacy alias
                 };
-                result.insight = `A ${changePercent}% OpEx change directly impacts net income by ${Shared.round2(currentNetIncome - newNetIncome)}.`;
+                result.insight = `A ${changePercent}% OpEx change directly impacts operating income by ${Shared.round2(currentNetIncome - newOpInc)}.`;
                 break;
             }
             
@@ -1020,6 +1054,13 @@ define(["N/search", "N/query", "N/log", "./Lib_Shared", "./Lib_Config"], functio
             const accountIds = [...new Set(actualData.map(r => r.account))];
             const accountMap = getAccountMetadata(accountIds);
             
+            // Calculate months in range for budget pro-rating
+            const startDt = parseLocalDate(startDate);
+            const endDt = parseLocalDate(endDate);
+            const monthsInRange = (endDt.getFullYear() - startDt.getFullYear()) * 12 + 
+                                  (endDt.getMonth() - startDt.getMonth()) + 1;
+            const proRateFactor = Math.min(1, monthsInRange / 12); // Cap at 1 for full year
+            
             // Aggregate actuals by account
             const actualsByAccount = {};
             actualData.forEach(row => {
@@ -1066,7 +1107,9 @@ define(["N/search", "N/query", "N/log", "./Lib_Shared", "./Lib_Config"], functio
             
             budgetData.forEach(b => {
                 const accId = b.account_id;
-                const budgetAmt = parseFloat(b.budget_amount) || 0;
+                // Pro-rate annual budget to match selected period
+                const annualBudget = parseFloat(b.budget_amount) || 0;
+                const budgetAmt = annualBudget * proRateFactor;
                 const actualRaw = actualsByAccount[accId] ? actualsByAccount[accId].amount : 0;
                 const type = b.accttype;
                 
@@ -1110,13 +1153,16 @@ define(["N/search", "N/query", "N/log", "./Lib_Shared", "./Lib_Config"], functio
                 summary[key].variancePercent = summary[key].budget !== 0 ? summary[key].variance / summary[key].budget : 0;
             });
             
-            // Net income
-            summary.netIncome = {
+            // Operating Income (Revenue - COGS - OpEx)
+            // Note: This is NOT true Net Income (which would include Interest/Tax)
+            summary.operatingIncome = {
                 budget: summary.revenue.budget - summary.cogs.budget - summary.opex.budget,
                 actual: summary.revenue.actual - summary.cogs.actual - summary.opex.actual
             };
-            summary.netIncome.variance = summary.netIncome.actual - summary.netIncome.budget;
-            summary.netIncome.variancePercent = summary.netIncome.budget !== 0 ? summary.netIncome.variance / summary.netIncome.budget : 0;
+            summary.operatingIncome.variance = summary.operatingIncome.actual - summary.operatingIncome.budget;
+            summary.operatingIncome.variancePercent = summary.operatingIncome.budget !== 0 ? summary.operatingIncome.variance / summary.operatingIncome.budget : 0;
+            // Legacy alias for backward compatibility
+            summary.netIncome = summary.operatingIncome;
             
             // Alerts for accounts significantly over budget
             const alerts = byAccount
@@ -1172,12 +1218,14 @@ define(["N/search", "N/query", "N/log", "./Lib_Shared", "./Lib_Config"], functio
             });
         });
         
-        summary.netIncome = {
+        summary.operatingIncome = {
             budget: 0,
             actual: summary.revenue.actual - summary.cogs.actual - summary.opex.actual,
             variance: summary.revenue.actual - summary.cogs.actual - summary.opex.actual,
             variancePercent: 1
         };
+        // Legacy alias for backward compatibility
+        summary.netIncome = summary.operatingIncome;
         
         return {
             available: false,
@@ -1275,12 +1323,13 @@ define(["N/search", "N/query", "N/log", "./Lib_Shared", "./Lib_Config"], functio
     // ACCOUNT MONTHLY TREND (Flyout sparkline)
     // ═══════════════════════════════════════════════════════════════════════════
     
-    function getAccountMonthlyTrend(accountId, months, subsidiaryId) {
+    function getAccountMonthlyTrend(accountId, months, subsidiaryId, endDate) {
         const results = [];
-        const today = new Date();
+        // Use provided endDate or default to today
+        const baseDate = endDate ? parseLocalDate(endDate) : new Date();
         
         for (let i = months - 1; i >= 0; i--) {
-            const monthEnd = new Date(today.getFullYear(), today.getMonth() - i, 0);
+            const monthEnd = new Date(baseDate.getFullYear(), baseDate.getMonth() - i, 0);
             const monthStart = new Date(monthEnd.getFullYear(), monthEnd.getMonth(), 1);
             
             const sql = `
@@ -1338,9 +1387,9 @@ define(["N/search", "N/query", "N/log", "./Lib_Shared", "./Lib_Config"], functio
         // Build bridge steps
         const bridge = [];
         
-        // Start with prior net income
+        // Start with prior operating income
         bridge.push({
-            label: 'Prior Period Net Income',
+            label: 'Prior Period Operating Income',
             value: priorMetrics.opInc,
             cumulative: priorMetrics.opInc,
             type: 'total'
@@ -1373,9 +1422,9 @@ define(["N/search", "N/query", "N/log", "./Lib_Shared", "./Lib_Config"], functio
             detail: `${priorMetrics.opex} → ${currentMetrics.opex}`
         });
         
-        // End with current net income
+        // End with current operating income
         bridge.push({
-            label: 'Current Period Net Income',
+            label: 'Current Period Operating Income',
             value: currentMetrics.opInc,
             cumulative: currentMetrics.opInc,
             type: 'total'
@@ -1391,6 +1440,11 @@ define(["N/search", "N/query", "N/log", "./Lib_Shared", "./Lib_Config"], functio
                 currentRevenue: currentMetrics.revenue,
                 priorGM: priorMetrics.gm,
                 currentGM: currentMetrics.gm,
+                priorOperatingIncome: priorMetrics.opInc,
+                currentOperatingIncome: currentMetrics.opInc,
+                operatingIncomeChange: currentMetrics.opInc - priorMetrics.opInc,
+                operatingIncomeChangePct: priorMetrics.opInc !== 0 ? (currentMetrics.opInc - priorMetrics.opInc) / Math.abs(priorMetrics.opInc) : 0,
+                // Legacy aliases for backward compatibility
                 priorNetIncome: priorMetrics.opInc,
                 currentNetIncome: currentMetrics.opInc,
                 netIncomeChange: currentMetrics.opInc - priorMetrics.opInc,
@@ -1408,9 +1462,11 @@ define(["N/search", "N/query", "N/log", "./Lib_Shared", "./Lib_Config"], functio
     // ACCOUNT-LEVEL ANOMALY DETECTION (Z-Score)
     // ═══════════════════════════════════════════════════════════════════════════
     
-    function detectAccountLevelAnomalies(months, subsidiaryId) {
+    function detectAccountLevelAnomalies(months, subsidiaryId, anomalyThreshold) {
         const anomalies = [];
         const today = new Date();
+        // Use configurable threshold, default to 2.0 standard deviations
+        const threshold = anomalyThreshold || 2.0;
         
         // Get all expense accounts with activity
         const accountSql = `
@@ -1462,7 +1518,8 @@ define(["N/search", "N/query", "N/log", "./Lib_Shared", "./Lib_Config"], functio
                 if (stdDev > 0) {
                     const zScore = (current - mean) / stdDev;
                     
-                    if (Math.abs(zScore) >= 2) {
+                    // Use configurable threshold instead of hardcoded 2
+                    if (Math.abs(zScore) >= threshold) {
                         anomalies.push({
                             accountId: acc.account,
                             accountName: acc.account_name,
@@ -1514,6 +1571,18 @@ define(["N/search", "N/query", "N/log", "./Lib_Shared", "./Lib_Config"], functio
             }
         });
         
+        // Guard against empty segments array
+        if (segments.length === 0) {
+            return { 
+                error: 'No segment data found for the specified IDs',
+                segments: [],
+                rankings: { byRevenue: [], byGMPercent: [], byNetIncome: [] },
+                best: null,
+                worst: null,
+                comparison: null
+            };
+        }
+        
         // Calculate rankings
         const ranked = {
             byRevenue: [...segments].sort((a, b) => b.revenue - a.revenue),
@@ -1521,7 +1590,7 @@ define(["N/search", "N/query", "N/log", "./Lib_Shared", "./Lib_Config"], functio
             byNetIncome: [...segments].sort((a, b) => b.operatingIncome - a.operatingIncome)
         };
         
-        // Best and worst
+        // Best and worst (safe now since we've checked length > 0)
         const best = ranked.byNetIncome[0];
         const worst = ranked.byNetIncome[ranked.byNetIncome.length - 1];
         
@@ -1807,6 +1876,7 @@ define(["N/search", "N/query", "N/log", "./Lib_Shared", "./Lib_Config"], functio
                 Account a ON tal.account = a.id
             WHERE 
                 t.posting = 'T' 
+                AND tal.posting = 'T'
                 AND t.trandate >= TO_DATE('${start}', 'YYYY-MM-DD') 
                 AND t.trandate <= TO_DATE('${end}', 'YYYY-MM-DD')
                 AND a.accttype IN ('Income', 'OthIncome', 'COGS', 'Expense', 'OthExpense')
@@ -1877,7 +1947,16 @@ define(["N/search", "N/query", "N/log", "./Lib_Shared", "./Lib_Config"], functio
         const opInc = gm - opex;
         const gmPct = rev !== 0 ? gm / rev : 0;
 
-        return { revenue: Shared.round2(rev), cogs: Shared.round2(cogs), opex: Shared.round2(opex), gm: Shared.round2(gm), opInc: Shared.round2(opInc), gmPct: Shared.round2(gmPct) };
+        // Keep full precision for intermediate calculations
+        // Rounding should only happen at the API response/display layer
+        return { 
+            revenue: rev, 
+            cogs: cogs, 
+            opex: opex, 
+            gm: gm, 
+            opInc: opInc, 
+            gmPct: gmPct 
+        };
     }
 
     function buildAccountBreakdown(rows, accountMap, deptId) {
@@ -1925,6 +2004,44 @@ define(["N/search", "N/query", "N/log", "./Lib_Shared", "./Lib_Config"], functio
             }
         }
         return defaultGM;
+    }
+
+    /**
+     * Calculate breakeven revenue with detailed status
+     * @param {number} avgMonthlyOpex - Average monthly operating expenses
+     * @param {number} targetGMPct - Target gross margin percentage (as decimal)
+     * @returns {Object} { value: number|null, status: string, reason: string|null }
+     */
+    function calculateBreakeven(avgMonthlyOpex, targetGMPct) {
+        // Handle negative or zero margin
+        if (targetGMPct <= 0) {
+            return {
+                value: null,
+                status: 'not_calculable',
+                reason: 'negative_margin',
+                message: 'Breakeven not calculable with current margin structure'
+            };
+        }
+        
+        // Handle zero or invalid opex
+        if (!isFinite(avgMonthlyOpex) || avgMonthlyOpex < 0) {
+            return {
+                value: null,
+                status: 'not_calculable',
+                reason: 'invalid_opex',
+                message: 'Operating expenses data is invalid or missing'
+            };
+        }
+        
+        // Calculate breakeven
+        const breakeven = avgMonthlyOpex / targetGMPct;
+        
+        return {
+            value: Shared.round2(breakeven),
+            status: 'calculated',
+            reason: null,
+            message: null
+        };
     }
 
     function computeHealthScore(avgRev, breakeven, actGM, targetGM) {
