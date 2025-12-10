@@ -42,10 +42,7 @@ jobs:
             --privatekeypath /tmp/private.pem
 
       - name: Deploy to NetSuite
-        run: |
-          # Find all files and upload them
-          FILES=$(find src/FileCabinet/SuiteApps/com.gantry.finance -type f | tr '\n' ' ')
-          suitecloud file:upload --paths $FILES
+        run: node scripts/sync.js --all
 
       - name: Cleanup
         if: always()
