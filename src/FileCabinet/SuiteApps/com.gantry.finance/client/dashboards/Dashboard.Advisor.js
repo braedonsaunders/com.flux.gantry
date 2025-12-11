@@ -4217,7 +4217,7 @@
         },
         
         /**
-         * Save session to storage
+         * Save session to storage (localStorage persists across page refreshes)
          */
         saveSession: function() {
             try {
@@ -4227,7 +4227,7 @@
                     activeRequest: activeRequest,    // Persist in-flight request for resume
                     timestamp: Date.now()
                 };
-                sessionStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+                localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
             } catch (e) {
                 console.warn('[Advisor] Save failed:', e);
             }
@@ -4238,7 +4238,7 @@
          */
         loadSession: function() {
             try {
-                const data = sessionStorage.getItem(STORAGE_KEY);
+                const data = localStorage.getItem(STORAGE_KEY);
                 if (data) {
                     const parsed = JSON.parse(data);
                     messages = parsed.messages || [];
