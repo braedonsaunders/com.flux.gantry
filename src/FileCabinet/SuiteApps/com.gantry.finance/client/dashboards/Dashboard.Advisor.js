@@ -1262,6 +1262,8 @@
                 const requestId = startResponse.request_id;
                 let lastStepCount = 0;
                 const startTime = Date.now();
+                let consecutiveErrors = 0;
+                const MAX_CONSECUTIVE_ERRORS = 5;
 
                 // Poll for updates
                 while (true) {
@@ -1270,8 +1272,20 @@
                         throw new Error('Request timed out');
                     }
 
-                    // Get status
-                    const status = await API.get('advisor_status', { id: requestId });
+                    // Get status with error handling for transient failures
+                    let status;
+                    try {
+                        status = await API.get('advisor_status', { id: requestId });
+                        consecutiveErrors = 0; // Reset on success
+                    } catch (pollErr) {
+                        consecutiveErrors++;
+                        console.warn('[Advisor Polling] API error, attempt ' + consecutiveErrors + '/' + MAX_CONSECUTIVE_ERRORS, pollErr.message);
+                        if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+                            throw new Error('Failed after ' + MAX_CONSECUTIVE_ERRORS + ' consecutive errors: ' + pollErr.message);
+                        }
+                        await this.sleep(POLL_INTERVAL);
+                        continue;
+                    }
 
                     console.log('[Advisor Polling]', {
                         status: status.status,
@@ -3998,12 +4012,18 @@
          */
         clearChat: function() {
             messages = [];
-            sessionContext = { 
+            sessionContext = {
                 resolvedEntities: {},
                 entityOrder: [],
                 topics: [],
                 queryHistory: []
             };  // Reset entity cache and context
+
+            // Clear stored table data to free memory
+            if (window.Gantry?.AdvisorRenderer?.clearTableData) {
+                window.Gantry.AdvisorRenderer.clearTableData();
+            }
+
             this.saveSession();
             
             const container = document.getElementById('advisor-messages-full');

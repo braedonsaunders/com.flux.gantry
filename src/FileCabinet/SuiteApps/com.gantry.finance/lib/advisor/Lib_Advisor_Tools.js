@@ -69,6 +69,16 @@ define([
     }
 
     /**
+     * Escape SQL LIKE pattern characters (% and _) in addition to SQL escaping
+     * Use this when the value will be used in a LIKE clause
+     */
+    function escapeSqlLike(str) {
+        if (!str) return '';
+        // First escape SQL quotes, then escape LIKE wildcards
+        return String(str).replace(/'/g, "''").replace(/%/g, '\\%').replace(/_/g, '\\_');
+    }
+
+    /**
      * Build date filter based on period string
      */
     function buildPeriodFilter(period, dateField) {

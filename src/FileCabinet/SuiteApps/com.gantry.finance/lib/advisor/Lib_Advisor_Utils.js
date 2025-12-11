@@ -81,6 +81,19 @@ define(['N/log', 'N/runtime', 'N/record', '../Lib_Config'], function(log, runtim
     }
 
     /**
+     * Gated debug logging - only logs when debug mode is enabled
+     * Use this instead of log.debug() for performance-sensitive paths
+     *
+     * @param {string} title - Log title
+     * @param {Object} [details] - Optional log details object
+     */
+    function debugLog(title, details) {
+        if (isDebugMode()) {
+            log.debug(title, details);
+        }
+    }
+
+    /**
      * Clean SQL query from markdown and other artifacts
      */
     function cleanQuery(query) {
@@ -809,7 +822,8 @@ define(['N/log', 'N/runtime', 'N/record', '../Lib_Config'], function(log, runtim
         // Debug mode (centralized control for all advisor modules)
         isDebugMode: isDebugMode,
         resetDebugModeCache: resetDebugModeCache,
-        setForceDebugMode: setForceDebugMode
+        setForceDebugMode: setForceDebugMode,
+        debugLog: debugLog
     };
 });
 

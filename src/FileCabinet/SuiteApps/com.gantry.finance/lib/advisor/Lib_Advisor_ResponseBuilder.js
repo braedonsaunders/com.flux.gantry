@@ -13,7 +13,7 @@
  * - Transaction card building
  * - Markdown table extraction
  */
-define(['N/log', './Lib_Advisor_Utils', './Lib_Advisor_AIProviders'], function(log, Utils, AIProviders) {
+define(['N/log', './Lib_Advisor_Utils', './Lib_Advisor_AIProviders', '../Lib_Dashboard_Registry'], function(log, Utils, AIProviders, DashboardRegistry) {
     'use strict';
 
     /**
@@ -113,33 +113,11 @@ define(['N/log', './Lib_Advisor_Utils', './Lib_Advisor_AIProviders'], function(l
         const entityName = firstEntity ? firstEntity.name : null;
         const entityType = firstEntity ? firstEntity.type : null;
         
-        // Dashboard-specific suggestions (highest priority)
+        // Dashboard-specific suggestions from Registry (highest priority - single source of truth)
         if (dashboardId) {
-            const dashboardSuggestions = {
-                cashflow: [
-                    'What are our upcoming payments this week?',
-                    'Show our top 10 customers by outstanding balance',
-                    'Compare cash position to last month'
-                ],
-                health: [
-                    'Which department has the highest profit margin?',
-                    'Compare this quarter revenue to last quarter',
-                    'What are our largest expense categories?'
-                ],
-                burden: [
-                    'Which employees have the lowest utilization?',
-                    'Show burden rate by department',
-                    'What projects have the most unbilled time?'
-                ],
-                time: [
-                    'Show billable hours by employee this month',
-                    'Which projects have the most hours logged?',
-                    'Compare utilization this month vs last month'
-                ]
-            };
-            
-            if (dashboardSuggestions[dashboardId]) {
-                return dashboardSuggestions[dashboardId];
+            const dashboardSuggestions = DashboardRegistry.getDashboardSuggestions(dashboardId);
+            if (dashboardSuggestions && dashboardSuggestions.length > 0) {
+                return dashboardSuggestions;
             }
         }
         
