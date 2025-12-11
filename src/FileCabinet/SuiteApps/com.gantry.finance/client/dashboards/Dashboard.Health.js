@@ -37,6 +37,7 @@
         fiscalCalendar: null,
         currencySymbol: '$',
         activeTab: 'overview',
+        employeeTypes: [],
         
         // Forecast state
         forecastMetric: 'revenue',
@@ -910,6 +911,7 @@
                 var res = await API.get('health_config');
                 this.subsidiaries = res.subsidiaries || [];
                 this.fiscalCalendar = res.fiscalCalendar || {};
+                this.employeeTypes = res.employeeTypes || [];
                 this.renderSubsidiaryDropdown();
                 this.configData = res.config || {};
                 this.savedScenarios = res.savedScenarios || [];
@@ -5109,6 +5111,20 @@
                             '</div>' +
                         '</div>' +
                     '</div>' +
+
+                    '<div class="card shadow-sm">' +
+                        '<div class="card-header py-2"><h6 class="mb-0"><i class="fas fa-user-slash mr-2"></i>Headcount Exclusions</h6></div>' +
+                        '<div class="card-body">' +
+                            '<label class="small font-weight-bold d-flex justify-content-between">' +
+                                '<span>Exclude Employee Types from Headcount</span>' +
+                                '<span class="badge badge-secondary" id="ppCfgExcludeEmpTypeCount">' + ((cfg.excludeEmployeeTypes || []).length) + ' excluded</span>' +
+                            '</label>' +
+                            '<p class="small text-muted mb-2">Employees of these types will not be counted in Revenue/Employee metrics.</p>' +
+                            '<div class="emp-type-exclude-list" style="max-height: 180px; overflow-y: auto; border: 1px solid #dee2e6; border-radius: 4px; background: #fff;" id="ppCfgEmpTypes">' +
+                                this.renderEmployeeTypeCheckboxes(cfg.excludeEmployeeTypes || []) +
+                            '</div>' +
+                        '</div>' +
+                    '</div>' +
                 '</div>' +
             '</div>' +
             '<hr class="my-4">' +
@@ -5126,7 +5142,7 @@
         applyIndustryPreset: function(industry) {
             var preset = this.industryPresets[industry];
             if (!preset) return;
-            
+
             if (el('#ppCfgGMTarget')) el('#ppCfgGMTarget').value = preset.gmTarget;
             if (el('#ppCfgOpTarget')) el('#ppCfgOpTarget').value = preset.opTarget;
             if (el('#ppCfgGMWarn')) el('#ppCfgGMWarn').value = Math.round(preset.gmTarget * 0.5);
@@ -5134,7 +5150,47 @@
             if (el('#ppCfgCurrentRatio')) el('#ppCfgCurrentRatio').value = preset.currentRatio;
             if (el('#ppCfgQuickRatio')) el('#ppCfgQuickRatio').value = preset.quickRatio;
         },
-        
+
+        renderEmployeeTypeCheckboxes: function(excludedTypes) {
+            var self = this;
+            var empTypes = this.employeeTypes || [];
+
+            if (empTypes.length === 0) {
+                return '<div class="p-2 text-muted small"><i class="fas fa-info-circle mr-1"></i>No employee types found</div>';
+            }
+
+            var excluded = (excludedTypes || []).map(function(id) { return String(id); });
+
+            return empTypes.map(function(t) {
+                var isExcluded = excluded.includes(String(t.id));
+                return '<label class="d-flex align-items-center px-2 py-1 border-bottom' +
+                    (isExcluded ? ' bg-danger-soft' : '') + '" style="cursor: pointer; margin: 0;">' +
+                    '<input type="checkbox" class="pp-cfg-emp-type-exclude mr-2" value="' + t.id + '"' +
+                    (isExcluded ? ' checked' : '') + ' onchange="HealthController.onEmpTypeExcludeChange(this)" style="margin: 0;">' +
+                    '<span class="small">' + (t.name || 'Unknown') + '</span>' +
+                '</label>';
+            }).join('');
+        },
+
+        onEmpTypeExcludeChange: function(checkbox) {
+            // Update visual feedback
+            var label = checkbox.closest('label');
+            if (label) {
+                if (checkbox.checked) {
+                    label.classList.add('bg-danger-soft');
+                } else {
+                    label.classList.remove('bg-danger-soft');
+                }
+            }
+
+            // Update count badge
+            var count = document.querySelectorAll('.pp-cfg-emp-type-exclude:checked').length;
+            var badge = el('#ppCfgExcludeEmpTypeCount');
+            if (badge) {
+                badge.textContent = count + ' excluded';
+            }
+        },
+
         resetConfig: function() {
             if (confirm('Reset all configuration to defaults?')) {
                 this.configData = {};
@@ -5143,6 +5199,12 @@
         },
 
         async saveConfig() {
+            // Collect excluded employee types
+            var excludeEmployeeTypes = [];
+            document.querySelectorAll('.pp-cfg-emp-type-exclude:checked').forEach(function(cb) {
+                excludeEmployeeTypes.push(cb.value);
+            });
+
             var configData = {
                 industry: el('#ppCfgIndustry')?.value || 'general',
                 gmTarget: parseFloat(el('#ppCfgGMTarget')?.value) || 30,
@@ -5156,7 +5218,8 @@
                 growthWeight: parseInt(el('#ppCfgGrowthWeight')?.value) || 20,
                 yoyAlert: parseFloat(el('#ppCfgYoYAlert')?.value) || 20,
                 budgetAlert: parseFloat(el('#ppCfgBudgetAlert')?.value) || 10,
-                minDriverChange: parseFloat(el('#ppCfgMinDriverChange')?.value) || 5000
+                minDriverChange: parseFloat(el('#ppCfgMinDriverChange')?.value) || 5000,
+                excludeEmployeeTypes: excludeEmployeeTypes
             };
             
             var btn = event?.target;

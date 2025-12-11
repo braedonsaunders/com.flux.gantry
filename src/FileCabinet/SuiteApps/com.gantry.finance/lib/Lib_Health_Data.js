@@ -209,7 +209,7 @@ define(["N/search", "N/query", "N/log", "./Lib_Shared", "./Lib_Config"], functio
             const anomalies = detectAnomalies(monthlyTrend, companyAccountsCurrent, config);
 
             // 11. Operating Metrics
-            const operatingMetrics = calculateOperatingMetrics(compRange, companyMetrics, monthsInRange, context.subsidiary);
+            const operatingMetrics = calculateOperatingMetrics(compRange, companyMetrics, monthsInRange, context.subsidiary, config);
 
             // 12. Top Movers (Drivers)
             const topMovers = calculateTopMovers(companyAccountsCurrent, companyAccountsPrior);
@@ -905,9 +905,10 @@ define(["N/search", "N/query", "N/log", "./Lib_Shared", "./Lib_Config"], functio
     // OPERATING METRICS
     // ═══════════════════════════════════════════════════════════════════════════
     
-    function calculateOperatingMetrics(metrics, periodMetrics, monthsInRange, subsidiaryId) {
+    function calculateOperatingMetrics(metrics, periodMetrics, monthsInRange, subsidiaryId, config) {
         // Try to get headcount (simplified - count employees with payroll)
-        const headcount = getApproximateHeadcount(subsidiaryId) || 10;
+        const excludeEmployeeTypes = (config && config.excludeEmployeeTypes) || [];
+        const headcount = getApproximateHeadcount(subsidiaryId, excludeEmployeeTypes) || 10;
         
         const revenuePerEmployee = headcount > 0 ? metrics.revenue / headcount : 0;
         const gmPerEmployee = headcount > 0 ? metrics.gm / headcount : 0;
@@ -929,13 +930,23 @@ define(["N/search", "N/query", "N/log", "./Lib_Shared", "./Lib_Config"], functio
         };
     }
     
-    function getApproximateHeadcount(subsidiaryId) {
+    function getApproximateHeadcount(subsidiaryId, excludeEmployeeTypes) {
         try {
+            // Build exclusion clause for employee types
+            let excludeClause = '';
+            if (excludeEmployeeTypes && excludeEmployeeTypes.length > 0) {
+                const excludeIds = excludeEmployeeTypes.map(id => parseInt(id)).filter(id => !isNaN(id));
+                if (excludeIds.length > 0) {
+                    excludeClause = `AND (e.employeetype IS NULL OR e.employeetype NOT IN (${excludeIds.join(',')}))`;
+                }
+            }
+
             const sql = `
                 SELECT COUNT(DISTINCT e.id) AS headcount
                 FROM Employee e
                 WHERE e.isinactive = 'F'
                 ${subsidiaryId ? `AND e.subsidiary = ${subsidiaryId}` : ''}
+                ${excludeClause}
             `;
             const results = Shared.runSuiteQL(sql);
             return results.length > 0 ? parseInt(results[0].headcount) || 0 : 0;
