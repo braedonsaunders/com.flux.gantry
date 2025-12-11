@@ -605,6 +605,96 @@ Respond with ONLY the JSON object.`;
     }
 
     /**
+     * Create a plan and UPDATE the thinking step with the actual AI plan
+     * This is called on the FIRST poll to show the user what the AI is planning
+     *
+     * @param {string} message - User's question
+     * @param {string} requestId - Request ID for progress tracking
+     * @returns {object|null} The plan object or null if failed
+     */
+    function createPlanAndUpdateThinking(message, requestId) {
+        const prompt = PLANNING_PROMPT.replace('{user_question}', message);
+
+        try {
+            const planResponse = AIProviders.callAI(prompt, {
+                systemPrompt: 'You are a financial analysis planning assistant. Create clear, actionable plans. Respond only with valid JSON.',
+                tier: THINKING_TIER,
+                purpose: 'Planning phase',
+                temperature: 0.3
+            });
+
+            if (planResponse && planResponse.text) {
+                try {
+                    let jsonText = planResponse.text.trim();
+                    const jsonMatch = jsonText.match(/\{[\s\S]*\}/);
+                    if (jsonMatch) jsonText = jsonMatch[0];
+
+                    const plan = JSON.parse(jsonText);
+
+                    // UPDATE the existing thinking step with the actual AI plan
+                    // This replaces the static keyword analysis with real AI output
+                    const thinkingUpdate = {
+                        title: 'Understanding your question',
+                        status: 'complete',
+                        plan: {
+                            goal_understanding: plan.goal_understanding,
+                            data_needed: plan.data_needed,
+                            plan_steps: plan.plan_steps ? plan.plan_steps.map((step, i) => ({
+                                step: step.step || (i + 1),
+                                action: step.action,
+                                tool: step.tool,
+                                purpose: step.purpose
+                            })) : [],
+                            completion_criteria: plan.completion_criteria,
+                            expected_output: plan.expected_output_format
+                        }
+                    };
+
+                    // Update the thinking step with actual AI plan
+                    const updated = ProgressStore.updateStepByType(requestId, 'thinking', thinkingUpdate);
+
+                    if (!updated) {
+                        // If thinking step doesn't exist, add the plan as a separate step
+                        ProgressStore.addStep(requestId, {
+                            type: 'planning',
+                            title: 'Analysis plan created',
+                            status: 'complete',
+                            plan: thinkingUpdate.plan
+                        });
+                    }
+
+                    log.debug('Plan created and thinking step updated', {
+                        requestId: requestId,
+                        goal: plan.goal_understanding,
+                        stepCount: plan.plan_steps ? plan.plan_steps.length : 0,
+                        thinkingUpdated: updated
+                    });
+
+                    return plan;
+                } catch (parseError) {
+                    log.debug('Failed to parse plan response', { error: parseError.message });
+
+                    // Update thinking step to show planning failed gracefully
+                    ProgressStore.updateStepByType(requestId, 'thinking', {
+                        title: 'Understanding your question',
+                        status: 'complete',
+                        plan: {
+                            goal_understanding: 'Analyzing your request...',
+                            data_needed: ['Will determine during analysis'],
+                            plan_steps: [],
+                            completion_criteria: 'Answer the user question'
+                        }
+                    });
+                }
+            }
+        } catch (e) {
+            log.debug('Planning call failed', { error: e.message });
+        }
+
+        return null;
+    }
+
+    /**
      * Reassess the plan when tools fail
      * Determines if we should continue, pivot, or answer with what we have
      */
@@ -964,19 +1054,14 @@ format_response({
         // NOTE: Initial thinking step is added by the orchestrator AFTER ProgressStore.create()
         // This ensures the request exists before adding steps
 
-        // Create initial plan for complex questions
-        // Skip planning for very simple queries (greetings, single-word queries)
+        // Determine if planning is needed (skip for simple queries)
+        // Planning will be executed on FIRST POLL to show actual AI plan in thinking step
         const isSimpleQuery = message.length < 30 && !message.includes('?') &&
             !/\b(show|get|what|how|why|compare|analyze|income|balance|cash|vendor|customer|expense)\b/i.test(message);
 
-        if (!isSimpleQuery) {
-            const plan = createPlan(message, requestId);
-            if (plan) {
-                agentState.plan = plan;
-                // Add plan context to conversation
-                agentState.conversationContext = buildPlanContext(plan);
-            }
-        }
+        // Flag for deferred planning - will be executed on first runAgentStep call
+        agentState.planPending = !isSimpleQuery;
+        agentState.plan = null;
 
         return agentState;
     }
@@ -1032,6 +1117,31 @@ format_response({
         }
 
         agentState.iteration++;
+
+        // On FIRST poll iteration, run the planning phase and update the thinking step
+        // This ensures the user sees the actual AI plan, not just static keyword analysis
+        if (agentState.iteration === 1 && agentState.planPending) {
+            try {
+                log.debug('Running deferred planning on first poll', { requestId: requestId });
+
+                const plan = createPlanAndUpdateThinking(agentState.message, requestId);
+                if (plan) {
+                    agentState.plan = plan;
+                    agentState.conversationContext = buildPlanContext(plan);
+                }
+                agentState.planPending = false;
+                ProgressStore.setAgentState(requestId, agentState);
+
+                // Return early - this iteration was just for planning
+                // Next poll will start the actual agent work
+                return { hasMore: true, step: { type: 'planning', status: 'complete' } };
+            } catch (planError) {
+                log.error('Planning phase failed', { requestId: requestId, error: planError.message });
+                agentState.planPending = false;
+                ProgressStore.setAgentState(requestId, agentState);
+                // Continue without plan - agent will work without it
+            }
+        }
 
         // Build the prompt for this iteration
         let currentPrompt = agentState.message;

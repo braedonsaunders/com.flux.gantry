@@ -18,7 +18,8 @@ define(['N/cache', 'N/log'], function(cache, log) {
 
     // Cache configuration
     const CACHE_NAME = 'ADVISOR_PROGRESS';
-    const DEFAULT_TTL = 300; // 5 minutes
+    const DEFAULT_TTL = 900; // 15 minutes - increased for complex queries
+    const REFRESH_TTL_ON_ACCESS = true; // Re-save on access to extend TTL
 
     // Get or create the cache
     let progressCache = null;
@@ -154,6 +155,38 @@ define(['N/cache', 'N/log'], function(cache, log) {
     }
 
     /**
+     * Update a specific step by type (e.g., update 'thinking' step with actual AI plan)
+     * @param {string} requestId - Request ID
+     * @param {string} stepType - The type of step to update
+     * @param {object} updates - Properties to update on the step
+     * @returns {boolean} True if step was found and updated
+     */
+    function updateStepByType(requestId, stepType, updates) {
+        try {
+            const raw = getCache().get({ key: requestId });
+            if (!raw) return false;
+
+            const state = JSON.parse(raw);
+            const stepIndex = state.steps.findIndex(s => s.type === stepType);
+            if (stepIndex === -1) return false;
+
+            Object.assign(state.steps[stepIndex], updates);
+            state.lastUpdate = Date.now();
+
+            getCache().put({
+                key: requestId,
+                value: JSON.stringify(state),
+                ttl: DEFAULT_TTL
+            });
+
+            return true;
+        } catch (e) {
+            log.error('ProgressStore.updateStepByType failed', { requestId: requestId, stepType: stepType, error: e.message });
+            return false;
+        }
+    }
+
+    /**
      * Mark request as complete with final answer
      * @param {string} requestId - Request ID
      * @param {object} result - Result object with answer, richContent, sessionContext
@@ -262,17 +295,36 @@ define(['N/cache', 'N/log'], function(cache, log) {
     }
 
     /**
-     * Get current progress state
+     * Get current progress state and optionally refresh TTL
      * @param {string} requestId - Request ID
+     * @param {boolean} refreshTtl - Whether to refresh TTL on access (default: REFRESH_TTL_ON_ACCESS)
      * @returns {object|null} Progress state or null if not found
      */
-    function get(requestId) {
+    function get(requestId, refreshTtl) {
         try {
             const raw = getCache().get({ key: requestId });
             if (!raw) {
                 return null;
             }
-            return JSON.parse(raw);
+            const state = JSON.parse(raw);
+
+            // Refresh TTL on access to extend cache lifetime during active polling
+            // This helps prevent cache expiration during long-running agent operations
+            if (refreshTtl !== false && REFRESH_TTL_ON_ACCESS && state.status === 'processing') {
+                try {
+                    state.lastAccess = Date.now();
+                    getCache().put({
+                        key: requestId,
+                        value: JSON.stringify(state),
+                        ttl: DEFAULT_TTL
+                    });
+                } catch (refreshError) {
+                    // Don't fail the get if refresh fails
+                    log.debug('ProgressStore.get TTL refresh failed', { requestId: requestId, error: refreshError.message });
+                }
+            }
+
+            return state;
         } catch (e) {
             log.error('ProgressStore.get failed', { requestId: requestId, error: e.message });
             return null;
@@ -399,6 +451,7 @@ define(['N/cache', 'N/log'], function(cache, log) {
         create: create,
         addStep: addStep,
         updateLastStep: updateLastStep,
+        updateStepByType: updateStepByType,
         complete: complete,
         fail: fail,
         get: get,
