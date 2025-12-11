@@ -1342,18 +1342,14 @@
             div.id = msgId;
             div.className = 'advisor-message assistant progressive-loading';
             div.innerHTML = `
-                <div class="message-avatar">
-                    <i class="fas fa-robot"></i>
-                </div>
                 <div class="message-bubble">
                     <div class="message-steps" id="${msgId}-steps">
                         <div class="progressive-thinking">
-                            <div class="thinking-indicator">
-                                <div class="thinking-dot"></div>
-                                <div class="thinking-dot"></div>
-                                <div class="thinking-dot"></div>
+                            <div class="typing-indicator">
+                                <span></span>
+                                <span></span>
+                                <span></span>
                             </div>
-                            <span class="thinking-text">Processing...</span>
                         </div>
                     </div>
                     <div class="message-content" id="${msgId}-content" style="display: none;"></div>
