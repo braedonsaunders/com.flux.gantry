@@ -127,13 +127,19 @@ Respond with JSON only:
 {execution_summary}
 
 ## AVAILABLE TOOLS:
-(Same as before - discovery, data, dashboard tools)
+resolve_entity, resolve_gl_account, resolve_classification, explore_schema, get_ap_aging, get_ar_aging,
+get_vendor_spend, get_customer_revenue, get_gl_activity, get_trial_balance, get_income_statement,
+get_balance_sheet, get_expense_breakdown, get_recent_transactions, compare_periods, find_anomalies,
+run_custom_query, run_saved_search, format_response
 
 ## YOUR TASK:
-Determine if we can still answer the question and how. Consider:
-1. Did we get enough data despite the failures?
-2. Are there alternative tools that could provide the same information?
-3. Should we try a completely different approach?
+Determine if we can still answer the question. BE OPTIMISTIC - there are many alternative tools!
+
+**CRITICAL RULES:**
+1. If entity resolution failed (not found), try get_gl_activity, get_expense_breakdown, run_custom_query instead
+2. If one tool failed, suggest ALTERNATIVE tools - don't give up!
+3. ONLY set should_answer_now=true if have_sufficient_data=true (we have actual data to present)
+4. If have_sufficient_data=false, you MUST set should_answer_now=false and provide a revised_plan
 
 Respond with JSON only:
 {
@@ -144,7 +150,7 @@ Respond with JSON only:
     ],
     "reasoning": "Why this revised approach will work",
     "should_answer_now": true|false,
-    "answer_guidance": "If should_answer_now is true, guidance on how to structure the answer with available data"
+    "answer_guidance": "ONLY if should_answer_now AND have_sufficient_data are both true"
 }`;
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -833,6 +839,17 @@ Respond with ONLY the JSON object.`;
 
                     const reassessment = JSON.parse(jsonText);
 
+                    // ═══════════════════════════════════════════════════════════
+                    // VALIDATION: Prevent contradictory reassessment
+                    // Cannot "answer now" if we don't have sufficient data
+                    // ═══════════════════════════════════════════════════════════
+                    if (reassessment.should_answer_now && !reassessment.have_sufficient_data) {
+                        Utils.debugLog('Correcting contradictory reassessment: should_answer_now=true but have_sufficient_data=false', {
+                            requestId: requestId
+                        });
+                        reassessment.should_answer_now = false;
+                    }
+
                     // Add reassessment step to progress
                     ProgressStore.addStep(requestId, {
                         type: 'plan_reassessment',
@@ -1189,6 +1206,7 @@ format_response({
         }
 
         agentState.iteration++;
+        agentState.justPivoted = false;  // Reset pivot flag each iteration
 
         // Regenerate toolDefinitions fresh each step (not stored in cache to save space)
         // This saves ~100KB of cache space per request
@@ -1439,7 +1457,7 @@ format_response({
 
                         // Check if we need to pivot strategy
                         if (reflection.should_pivot && agentState.strategyPivotCount < MAX_STRATEGY_PIVOTS) {
-                            log.debug('Triggering strategy pivot', {
+                            Utils.debugLog('Triggering strategy pivot', {
                                 requestId: requestId,
                                 pivotCount: agentState.strategyPivotCount,
                                 reason: reflection.pivot_reason
@@ -1447,6 +1465,7 @@ format_response({
 
                             const newStrategy = generateStrategyPivot(agentState, reflection, requestId);
                             agentState.strategyPivotCount++;
+                            agentState.justPivoted = true;  // Track that we just pivoted
 
                             if (newStrategy) {
                                 agentState.currentStrategy = newStrategy;
@@ -1463,11 +1482,13 @@ format_response({
 
                         // ═══════════════════════════════════════════════════════════
                         // PLAN REASSESSMENT: When reflection shows issues, reassess
+                        // Skip if we just pivoted - let the new strategy play out first
                         // ═══════════════════════════════════════════════════════════
                         if (agentState.plan && agentState.planReassessmentCount < 2 &&
+                            !agentState.justPivoted &&  // Don't reassess right after pivot
                             (reflection.assessment === 'blocked' || reflection.assessment === 'needs_pivot')) {
 
-                            log.debug('Triggering plan reassessment', {
+                            Utils.debugLog('Triggering plan reassessment', {
                                 requestId: requestId,
                                 assessment: reflection.assessment
                             });
