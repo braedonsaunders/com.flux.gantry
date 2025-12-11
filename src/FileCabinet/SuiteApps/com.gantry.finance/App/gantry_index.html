@@ -424,6 +424,33 @@
                     </div>
                 </div>
             </div>
+
+            <!-- Configuration Flyout Panel -->
+            <div id="cfConfigFlyoutOverlay" class="cf-flyout-overlay" onclick="ConfigController.closeConfigFlyout()"></div>
+            <div id="cfConfigFlyoutPanel" class="cf-flyout-panel">
+                <div class="cf-flyout-header">
+                    <span id="cfConfigFlyoutTitle"><i class="fas fa-sliders-h mr-2"></i>Edit Category</span>
+                    <button class="btn-close" onclick="ConfigController.closeConfigFlyout()"><i class="fas fa-times"></i></button>
+                </div>
+                <div class="cf-flyout-config-tabs" id="cfConfigFlyoutTabs" style="display:none;">
+                    <div class="cf-flyout-config-tab active" data-tab="details" onclick="ConfigController.switchConfigFlyoutTab('details')">Details</div>
+                    <div class="cf-flyout-config-tab" data-tab="preview" onclick="ConfigController.switchConfigFlyoutTab('preview')">Preview</div>
+                </div>
+                <div class="cf-flyout-body" id="cfConfigFlyoutBody" style="overflow-y:auto; flex:1;">
+                    <!-- Form content will be rendered here -->
+                </div>
+                <div class="cf-config-flyout-footer" id="cfConfigFlyoutFooter">
+                    <button class="cf-btn cf-btn-danger" id="cfConfigFlyoutDelete" onclick="ConfigController.deleteFromFlyout()">
+                        <i class="fas fa-trash"></i> Delete
+                    </button>
+                    <div>
+                        <button class="cf-btn cf-btn-secondary mr-2" onclick="ConfigController.closeConfigFlyout()">Cancel</button>
+                        <button class="cf-btn cf-btn-primary" onclick="ConfigController.saveFromFlyout()">
+                            <i class="fas fa-save"></i> Save Changes
+                        </button>
+                    </div>
+                </div>
+            </div>
         </div>
     </script>
 

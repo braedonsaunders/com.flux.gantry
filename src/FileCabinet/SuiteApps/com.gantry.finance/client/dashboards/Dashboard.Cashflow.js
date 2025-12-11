@@ -15,7 +15,16 @@
         viewMode: 'categories', // 'categories' or 'groups'
         subsidiaryId: null,
         subsidiaries: [],
-        
+
+        // Category Analysis state
+        categoryAnalysis: {
+            search: '',
+            sortCol: 'date',
+            sortDir: 'desc',
+            pageSize: 25,
+            currentCategory: null
+        },
+
         // Flyout state
         flyout: {
             open: false,
@@ -402,12 +411,12 @@
         renderARProfile(arData, sel) {
             const div = el(sel);
             if (!div) return;
-            
+
             const buckets = arData.buckets || [];
             const outstanding = arData.outstandingTotal || arData.totalOutstanding || 0;
             const pctCurrent = arData.pctCurrent || 0;
             const dso = arData.avgDaysToPay || arData.avgDaysUsed || 0;
-            
+
             // Determine health color based on pctCurrent
             let healthColor = 'text-success';
             let healthIcon = 'fa-check-circle';
@@ -418,7 +427,7 @@
                 healthColor = 'text-warning';
                 healthIcon = 'fa-exclamation-triangle';
             }
-            
+
             // Update header metrics
             const metricsEl = el("#cfArMetrics");
             if (metricsEl) {
@@ -439,40 +448,56 @@
                         <i class="fas fa-external-link-alt fa-xs"></i>
                     </a>`;
             }
-            
-            // Render buckets with flexbox proportional bars
+
+            // Render buckets with enhanced card-based design
             let html = '';
             const total = outstanding > 0 ? outstanding : 1;
-            
-            buckets.forEach((b) => {
+
+            buckets.forEach((b, idx) => {
                 const pct = (b.amount / total) * 100;
                 const isOverdue = b.label !== 'Current' && b.amount > 0;
                 const hasItems = b.amount > 0;
+
+                // Determine risk level for styling
+                let riskClass = 'risk-low';
+                if (b.label.includes('60') || b.label.includes('90+')) {
+                    riskClass = 'risk-high';
+                } else if (b.label.includes('30')) {
+                    riskClass = 'risk-medium';
+                }
+
+                // Use card-based bucket style for AR
+                const barColor = isOverdue ? '#ef4444' : '#3b82f6';
+
                 html += `
-                <div class="cf-bucket-row d-flex align-items-center justify-content-between mb-2 ${hasItems ? 'clickable' : ''}" 
-                     ${hasItems ? `onclick="CashflowController.showBucketFlyout('${b.label}', 'ar')" style="cursor:pointer;"` : ''}>
-                    <div style="width: 60px;" class="small font-weight-bold ${isOverdue ? 'text-danger' : 'text-muted'}">${b.label}</div>
-                    <div class="flex-grow-1 mx-2" style="display:flex; height:6px; background:#e2e8f0; border-radius:3px; overflow:hidden;">
-                        <div style="flex: ${b.amount}; background: ${isOverdue ? '#ef4444' : '#3b82f6'};"></div>
-                        <div style="flex: ${total - b.amount};"></div>
+                <div class="cf-bucket-card ${hasItems ? riskClass : ''}"
+                     ${hasItems ? `onclick="CashflowController.showBucketFlyout('${b.label}', 'ar')"` : 'style="cursor:default; opacity:0.6;"'}>
+                    <div class="bucket-header">
+                        <span class="bucket-label">${isOverdue ? '<i class="fas fa-exclamation-triangle mr-1" style="font-size:10px;"></i>' : ''}${b.label}</span>
+                        <span class="bucket-amount" style="color:${isOverdue ? '#ef4444' : '#3b82f6'};">${fmtMoney(b.amount)}</span>
                     </div>
-                    <div class="small font-weight-bold" style="min-width:80px; text-align:right;">${fmtMoney(b.amount)}</div>
-                    ${hasItems ? '<i class="fas fa-chevron-right text-muted ml-2" style="font-size:10px;"></i>' : ''}
+                    <div class="bucket-bar">
+                        <div class="bucket-bar-fill" style="width:${pct.toFixed(1)}%; background:${barColor};"></div>
+                    </div>
+                    <div class="bucket-meta">
+                        <span>${pct.toFixed(1)}% of total</span>
+                        <span class="bucket-chevron"><i class="fas fa-chevron-right"></i> Details</span>
+                    </div>
                 </div>`;
             });
-            
+
             div.innerHTML = html;
         },
 
         renderAPProfile(apData, sel) {
             const div = el(sel);
             if (!div) return;
-            
+
             const buckets = apData.buckets || [];
             const outstanding = apData.outstandingTotal || apData.totalOutstanding || 0;
             const pctCurrent = apData.pctCurrent || 0;
             const dpo = apData.avgDaysToPay || apData.avgDaysUsed || 0;
-            
+
             // For AP, higher current % is generally better (fewer overdue)
             let healthColor = 'text-success';
             let healthIcon = 'fa-check-circle';
@@ -483,7 +508,7 @@
                 healthColor = 'text-warning';
                 healthIcon = 'fa-exclamation-triangle';
             }
-            
+
             // Update header metrics
             const metricsEl = el("#cfApMetrics");
             if (metricsEl) {
@@ -504,28 +529,44 @@
                         <i class="fas fa-external-link-alt fa-xs"></i>
                     </a>`;
             }
-            
-            // Render buckets with flexbox proportional bars
+
+            // Render buckets with enhanced card-based design
             let html = '';
             const total = outstanding > 0 ? outstanding : 1;
-            
-            buckets.forEach((b) => {
+
+            buckets.forEach((b, idx) => {
                 const pct = (b.amount / total) * 100;
                 const isOverdue = b.label !== 'Current' && b.amount > 0;
                 const hasItems = b.amount > 0;
+
+                // Determine risk level for styling
+                let riskClass = 'risk-low';
+                if (b.label.includes('60') || b.label.includes('90+')) {
+                    riskClass = 'risk-high';
+                } else if (b.label.includes('30')) {
+                    riskClass = 'risk-medium';
+                }
+
+                // Use card-based bucket style for AP
+                const barColor = isOverdue ? '#f59e0b' : '#ef4444';
+
                 html += `
-                <div class="cf-bucket-row d-flex align-items-center justify-content-between mb-2 ${hasItems ? 'clickable' : ''}"
-                     ${hasItems ? `onclick="CashflowController.showBucketFlyout('${b.label}', 'ap')" style="cursor:pointer;"` : ''}>
-                    <div style="width: 60px;" class="small font-weight-bold ${isOverdue ? 'text-warning' : 'text-muted'}">${b.label}</div>
-                    <div class="flex-grow-1 mx-2" style="display:flex; height:6px; background:#e2e8f0; border-radius:3px; overflow:hidden;">
-                        <div style="flex: ${b.amount}; background: ${isOverdue ? '#f59e0b' : '#ef4444'};"></div>
-                        <div style="flex: ${total - b.amount};"></div>
+                <div class="cf-bucket-card ${hasItems ? riskClass : ''}"
+                     ${hasItems ? `onclick="CashflowController.showBucketFlyout('${b.label}', 'ap')"` : 'style="cursor:default; opacity:0.6;"'}>
+                    <div class="bucket-header">
+                        <span class="bucket-label">${isOverdue ? '<i class="fas fa-clock mr-1" style="font-size:10px;"></i>' : ''}${b.label}</span>
+                        <span class="bucket-amount" style="color:${isOverdue ? '#f59e0b' : '#ef4444'};">${fmtMoney(b.amount)}</span>
                     </div>
-                    <div class="small font-weight-bold" style="min-width:80px; text-align:right;">${fmtMoney(b.amount)}</div>
-                    ${hasItems ? '<i class="fas fa-chevron-right text-muted ml-2" style="font-size:10px;"></i>' : ''}
+                    <div class="bucket-bar">
+                        <div class="bucket-bar-fill" style="width:${pct.toFixed(1)}%; background:${barColor};"></div>
+                    </div>
+                    <div class="bucket-meta">
+                        <span>${pct.toFixed(1)}% of total</span>
+                        <span class="bucket-chevron"><i class="fas fa-chevron-right"></i> Details</span>
+                    </div>
                 </div>`;
             });
-            
+
             div.innerHTML = html;
         },
 
@@ -648,6 +689,10 @@
             const keys = Object.keys(cats || {});
             if (keys.length === 0) return;
 
+            // Store config for later reference
+            this.categoryAnalysis.config = config;
+            this.categoryAnalysis.allCategories = cats;
+
             keys.forEach(k => {
                 const conf = config.categories.find(c => c.id === k);
                 sel.innerHTML += `<option value="${k}">${conf ? conf.name : k}</option>`;
@@ -655,26 +700,296 @@
 
             sel.onchange = () => {
                 this.detailPage = 1;
+                this.categoryAnalysis.search = '';
+                this.categoryAnalysis.currentCategory = sel.value;
                 this.renderDetailTable(cats[sel.value]);
             };
+
+            this.categoryAnalysis.currentCategory = keys[0];
             this.renderDetailTable(cats[keys[0]]);
+        },
+
+        // Handle category analysis search
+        onCategorySearchInput(searchTerm) {
+            this.categoryAnalysis.search = searchTerm;
+            this.detailPage = 1;
+            this.rerenderDetailTable();
+        },
+
+        // Handle category analysis sorting
+        sortCategoryTable(col) {
+            if (this.categoryAnalysis.sortCol === col) {
+                this.categoryAnalysis.sortDir = this.categoryAnalysis.sortDir === 'asc' ? 'desc' : 'asc';
+            } else {
+                this.categoryAnalysis.sortCol = col;
+                this.categoryAnalysis.sortDir = col === 'amount' ? 'desc' : 'asc';
+            }
+            this.detailPage = 1;
+            this.rerenderDetailTable();
+        },
+
+        // Handle page size change
+        onCategoryPageSizeChange(size) {
+            this.detailPageSize = parseInt(size);
+            this.detailPage = 1;
+            this.rerenderDetailTable();
+        },
+
+        // Jump to specific page
+        goToCategoryPage(page) {
+            this.detailPage = page;
+            this.rerenderDetailTable();
+        },
+
+        // Export category data to CSV
+        exportCategoryCSV() {
+            const catData = this.currentDetailCatData;
+            if (!catData || !catData.breakdown || catData.breakdown.length === 0) return;
+
+            const config = this.categoryAnalysis.config || {};
+            const catKey = this.categoryAnalysis.currentCategory;
+            const catConf = config.categories ? config.categories.find(c => c.id === catKey) : null;
+            const catName = catConf ? catConf.name : catKey;
+
+            let csv = `"Category","${catName}"\n`;
+            csv += `"Total","${catData.total}"\n\n`;
+            csv += '"Entity/Description","Date","Amount","Type"\n';
+
+            catData.breakdown.forEach(row => {
+                csv += `"${(row.name || '').replace(/"/g, '""')}","${row.date || ''}","${row.amount}","${row.type || ''}"\n`;
+            });
+
+            const blob = new Blob([csv], { type: 'text/csv' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `cashflow_category_${catName.replace(/\s+/g, '_')}_${new Date().toISOString().slice(0, 10)}.csv`;
+            a.click();
+            URL.revokeObjectURL(url);
         },
 
         renderDetailTable(catData) {
             this.currentDetailCatData = catData;
-            const detailData = (catData && catData.breakdown) ? catData.breakdown : [];
-            const container = el("#cfDetailTable") ? el("#cfDetailTable").parentNode : null;
-            if(!container) return;
+            let detailData = (catData && catData.breakdown) ? [...catData.breakdown] : [];
+            const pane = el("#cf-details-pane");
+            if (!pane) return;
 
+            // Get category configuration
+            const config = this.categoryAnalysis.config || {};
+            const catKey = this.categoryAnalysis.currentCategory;
+            const catConf = config.categories ? config.categories.find(c => c.id === catKey) : null;
+            const catName = catConf ? catConf.name : catKey;
+            const catType = catConf ? catConf.type : 'outflow';
+            const catMethod = catData && catData.meta ? catData.meta.method : 'Unknown';
+
+            // Method pill color mapping
+            const methodColors = {
+                'GL Average': '#3b82f6',
+                'Vendor History (Median)': '#8b5cf6',
+                'Credit Card Cycle': '#ec4899',
+                'Manual Recurring': '#10b981',
+                'Vendor Recurring (Auto)': '#f59e0b',
+                'Bank Register History': '#06b6d4',
+                'Calculated Formula': '#6366f1'
+            };
+            const methodColor = methodColors[catMethod] || '#64748b';
+
+            // Build enhanced header card
+            const typeClass = catType === 'inflow' ? 'inflow' : 'outflow';
+            const totalColor = catType === 'inflow' ? '#10b981' : '#ef4444';
+
+            // Apply search filter
+            const searchTerm = (this.categoryAnalysis.search || '').toLowerCase();
+            if (searchTerm) {
+                detailData = detailData.filter(row =>
+                    (row.name && row.name.toLowerCase().includes(searchTerm)) ||
+                    (row.type && row.type.toLowerCase().includes(searchTerm)) ||
+                    (row.date && row.date.toLowerCase().includes(searchTerm))
+                );
+            }
+
+            // Apply sorting
+            const sortCol = this.categoryAnalysis.sortCol;
+            const sortDir = this.categoryAnalysis.sortDir;
+            detailData.sort((a, b) => {
+                let valA, valB;
+                if (sortCol === 'date') {
+                    valA = new Date(a.date || 0).getTime();
+                    valB = new Date(b.date || 0).getTime();
+                } else if (sortCol === 'amount') {
+                    valA = Math.abs(a.amount || 0);
+                    valB = Math.abs(b.amount || 0);
+                } else if (sortCol === 'name') {
+                    valA = (a.name || '').toLowerCase();
+                    valB = (b.name || '').toLowerCase();
+                } else {
+                    valA = (a[sortCol] || '').toString().toLowerCase();
+                    valB = (b[sortCol] || '').toString().toLowerCase();
+                }
+                if (valA < valB) return sortDir === 'asc' ? -1 : 1;
+                if (valA > valB) return sortDir === 'asc' ? 1 : -1;
+                return 0;
+            });
+
+            // Pagination
+            const totalItems = detailData.length;
+            const totalPages = Math.ceil(totalItems / this.detailPageSize) || 1;
+            if (this.detailPage > totalPages) this.detailPage = totalPages;
+            if (this.detailPage < 1) this.detailPage = 1;
+
+            const startIdx = (this.detailPage - 1) * this.detailPageSize;
+            const endIdx = Math.min(startIdx + this.detailPageSize, totalItems);
+            const pageData = detailData.slice(startIdx, endIdx);
+
+            // Generate sort indicator
+            const sortIndicator = (col) => {
+                const isSorted = this.categoryAnalysis.sortCol === col;
+                const arrow = this.categoryAnalysis.sortDir === 'asc' ? '▲' : '▼';
+                return `<span class="sort-indicator">${isSorted ? arrow : '↕'}</span>`;
+            };
+
+            // Build the enhanced HTML
+            let html = `
+                <!-- Category Header Card -->
+                <div class="cf-category-header-card">
+                    <div class="category-top">
+                        <div class="category-name">
+                            <span class="cf-type-badge ${typeClass}">${catType === 'inflow' ? 'Inflow' : 'Outflow'}</span>
+                            ${escapeHtml(catName)}
+                        </div>
+                        <div class="category-total" style="color:${totalColor};">${fmtMoney(catData ? catData.total : 0)}</div>
+                    </div>
+                    <div class="category-meta">
+                        <span><i class="fas fa-cogs"></i>Method: <span style="color:${methodColor}; font-weight:600;">${catMethod}</span></span>
+                        <span><i class="fas fa-list"></i>${totalItems} items</span>
+                        <button class="btn btn-sm btn-outline-success ml-auto" onclick="CashflowController.exportCategoryCSV()">
+                            <i class="fas fa-download mr-1"></i>Export CSV
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Search & Filter Bar -->
+                <div class="cf-search-bar">
+                    <div class="cf-search-input">
+                        <i class="fas fa-search"></i>
+                        <input type="text" placeholder="Search transactions..." value="${escapeHtml(searchTerm)}"
+                            oninput="CashflowController.onCategorySearchInput(this.value)">
+                    </div>
+                </div>
+
+                <!-- Enhanced Table -->
+                <div class="card border shadow-sm" style="border-radius: var(--cf-radius-lg); overflow: hidden;">
+                    <div class="table-responsive">
+                        <table class="cf-table-enhanced" id="cfDetailTableEnhanced">
+                            <thead>
+                                <tr>
+                                    <th class="${sortCol === 'name' ? 'sorted' : ''}" onclick="CashflowController.sortCategoryTable('name')">
+                                        Entity / Description ${sortIndicator('name')}
+                                    </th>
+                                    <th class="${sortCol === 'date' ? 'sorted' : ''}" onclick="CashflowController.sortCategoryTable('date')">
+                                        Date ${sortIndicator('date')}
+                                    </th>
+                                    <th class="${sortCol === 'amount' ? 'sorted' : ''}" style="text-align:right;" onclick="CashflowController.sortCategoryTable('amount')">
+                                        Amount ${sortIndicator('amount')}
+                                    </th>
+                                    <th class="${sortCol === 'type' ? 'sorted' : ''}" style="text-align:center;" onclick="CashflowController.sortCategoryTable('type')">
+                                        Type ${sortIndicator('type')}
+                                    </th>
+                                </tr>
+                            </thead>
+                            <tbody>`;
+
+            if (pageData.length === 0) {
+                html += `<tr><td colspan="4" class="text-center py-5">
+                    <div class="cf-empty-state">
+                        <i class="fas fa-search"></i>
+                        <div class="empty-title">${searchTerm ? 'No matching transactions' : 'No source data found'}</div>
+                        <div class="empty-text">${searchTerm ? 'Try adjusting your search criteria' : 'This category has no transaction data'}</div>
+                    </div>
+                </td></tr>`;
+            } else {
+                pageData.forEach(row => {
+                    const dateDisplay = row.date || "—";
+                    const typeDisplay = row.type || (row.amount < 0 ? 'Credit' : 'Debit');
+                    const amountColor = row.amount < 0 ? '#ef4444' : (catType === 'inflow' ? '#10b981' : '#1e293b');
+
+                    // Deep link if internalId is available
+                    const nameDisplay = row.internalId
+                        ? getNsLink(escapeHtml(row.name), row.internalId)
+                        : `<span>${escapeHtml(row.name)}</span>`;
+
+                    html += `
+                        <tr>
+                            <td>${nameDisplay}</td>
+                            <td style="color:#64748b;">${dateDisplay}</td>
+                            <td style="text-align:right; font-weight:600; color:${amountColor};">${fmtMoney(row.amount)}</td>
+                            <td style="text-align:center;"><span class="badge badge-light border">${typeDisplay}</span></td>
+                        </tr>`;
+                });
+            }
+
+            html += `</tbody></table></div>`;
+
+            // Enhanced Pagination
+            if (totalItems > 0) {
+                let pageButtons = '';
+                const maxVisiblePages = 5;
+                let startPage = Math.max(1, this.detailPage - Math.floor(maxVisiblePages / 2));
+                let endPage = Math.min(totalPages, startPage + maxVisiblePages - 1);
+                if (endPage - startPage + 1 < maxVisiblePages) {
+                    startPage = Math.max(1, endPage - maxVisiblePages + 1);
+                }
+
+                // Previous button
+                pageButtons += `<button class="page-btn" ${this.detailPage <= 1 ? 'disabled' : ''} onclick="CashflowController.goToCategoryPage(${this.detailPage - 1})"><i class="fas fa-chevron-left"></i></button>`;
+
+                // First page + ellipsis
+                if (startPage > 1) {
+                    pageButtons += `<button class="page-btn" onclick="CashflowController.goToCategoryPage(1)">1</button>`;
+                    if (startPage > 2) pageButtons += `<span style="padding: 0 8px; color: #94a3b8;">...</span>`;
+                }
+
+                // Page numbers
+                for (let p = startPage; p <= endPage; p++) {
+                    pageButtons += `<button class="page-btn ${p === this.detailPage ? 'active' : ''}" onclick="CashflowController.goToCategoryPage(${p})">${p}</button>`;
+                }
+
+                // Last page + ellipsis
+                if (endPage < totalPages) {
+                    if (endPage < totalPages - 1) pageButtons += `<span style="padding: 0 8px; color: #94a3b8;">...</span>`;
+                    pageButtons += `<button class="page-btn" onclick="CashflowController.goToCategoryPage(${totalPages})">${totalPages}</button>`;
+                }
+
+                // Next button
+                pageButtons += `<button class="page-btn" ${this.detailPage >= totalPages ? 'disabled' : ''} onclick="CashflowController.goToCategoryPage(${this.detailPage + 1})"><i class="fas fa-chevron-right"></i></button>`;
+
+                html += `
+                    <div class="cf-pagination-full">
+                        <div class="page-info">Showing ${startIdx + 1}-${endIdx} of ${totalItems} items</div>
+                        <div class="page-controls">
+                            ${pageButtons}
+                            <select class="page-size-select" onchange="CashflowController.onCategoryPageSizeChange(this.value)">
+                                <option value="10" ${this.detailPageSize === 10 ? 'selected' : ''}>10 / page</option>
+                                <option value="25" ${this.detailPageSize === 25 ? 'selected' : ''}>25 / page</option>
+                                <option value="50" ${this.detailPageSize === 50 ? 'selected' : ''}>50 / page</option>
+                                <option value="100" ${this.detailPageSize === 100 ? 'selected' : ''}>100 / page</option>
+                            </select>
+                        </div>
+                    </div>`;
+            }
+
+            html += `</div>`;
+
+            // Add forecast logic card if available
             let logicHtml = '';
             if (catData && catData.meta) {
                 const m = catData.meta;
                 let mathText = '';
                 let methodDesc = '';
-                
+
                 // --- FORECAST LOGIC HTML GENERATION ---
                 if (m.method === 'GL Average') {
-                    const extra = (m.expectedWeek && m.expectedWeek !== "") 
+                    const extra = (m.expectedWeek && m.expectedWeek !== "")
                         ? `Implied Monthly: <strong>${fmtMoney(m.rawAverage * 4.345)}</strong><br>Allocated to Week ${m.expectedWeek}`
                         : `Distributed Weekly`;
                     mathText = `<div class="d-flex justify-content-between small mb-1"><span>Total Source:</span> <strong>${fmtMoney(m.sourceTotal)}</strong></div>
@@ -694,160 +1009,77 @@
                     mathText = `<div class="d-flex justify-content-between small mb-1"><span>Monthly Median:</span> <strong>${fmtMoney(m.monthlyMedian)}</strong></div>
                         <div class="d-flex justify-content-between small mb-1 text-primary"><span>Adj:</span> <strong>${m.adjustment}%</strong></div>
                         <div class="d-flex justify-content-between font-weight-bold border-top pt-1 mt-2"><span>Final (Wkly):</span> <span>${fmtMoney(m.finalWeekly)}</span></div>`;
-                    methodDesc = `<p class="mb-2"><strong>Vendor Payment History</strong> aggregates historical payments to selected vendors to calculate a normalized run-rate.</p>
-                        <div class="small text-muted">
-                            <div class="mb-1"><i class="fas fa-store text-primary mr-1"></i><strong>Source:</strong> Check and VendPymt transactions to specified vendors</div>
-                            <div class="mb-1"><i class="fas fa-chart-bar text-info mr-1"></i><strong>Calculation:</strong> Monthly payment totals → Median value → Weekly conversion (÷ 4.345)</div>
-                            <div><i class="fas fa-shield-alt text-success mr-1"></i><strong>Why Median:</strong> Reduces impact of outlier payments for more stable forecasts</div>
-                        </div>`;
+                    methodDesc = `<p class="mb-2"><strong>Vendor Payment History</strong> aggregates historical payments to selected vendors.</p>`;
                 } else if (m.method === 'Credit Card Cycle') {
                     mathText = `<div class="d-flex justify-content-between small mb-1"><span>Balance:</span> <strong>${fmtMoney(m.outstanding)}</strong></div>
                         <div class="d-flex justify-content-between small mb-1 text-primary"><span>+ Growth:</span> <strong>${fmtMoney(m.projectedGrowth)}</strong></div>
                         <div class="border-top my-2"></div>
-                        <div class="d-flex justify-content-between font-weight-bold text-dark mb-1"><span>Next Pay:</span> <span>${fmtMoney(m.outstanding + m.projectedGrowth)}</span></div>
-                        <div class="small text-muted text-right">Target: ${m.nextPaymentDate || 'N/A'}</div>`;
-                    methodDesc = `<p class="mb-2"><strong>Credit Card Cycle</strong> combines real-time liability balances with historical spending patterns.</p>
-                        <div class="small text-muted">
-                            <div class="mb-1"><i class="fas fa-credit-card text-primary mr-1"></i><strong>Balance:</strong> Current outstanding amount from credit card liability accounts</div>
-                            <div class="mb-1"><i class="fas fa-chart-line text-info mr-1"></i><strong>Growth:</strong> Projected spending until payment date based on historical run-rate</div>
-                            <div><i class="fas fa-calendar-check text-success mr-1"></i><strong>Timing:</strong> Payment scheduled on configured day of month</div>
-                        </div>`;
+                        <div class="d-flex justify-content-between font-weight-bold text-dark mb-1"><span>Next Pay:</span> <span>${fmtMoney(m.outstanding + m.projectedGrowth)}</span></div>`;
+                    methodDesc = `<p class="mb-2"><strong>Credit Card Cycle</strong> combines real-time liability balances with historical spending.</p>`;
                 } else if (m.method === 'Manual Recurring') {
                     mathText = `<div class="d-flex justify-content-between small mb-1"><span>Amount:</span> <strong>${fmtMoney(m.amount)}</strong></div>
                     <div class="d-flex justify-content-between small mb-1"><span>Frequency:</span> <span>${m.frequency}</span></div>`;
-                    methodDesc = `<p class="mb-2"><strong>Manual Recurring</strong> creates deterministic, fixed cash flow events.</p>
-                        <div class="small text-muted">
-                            <div class="mb-1"><i class="fas fa-clock text-primary mr-1"></i><strong>Frequency:</strong> ${m.frequency} schedule</div>
-                            <div><i class="fas fa-lock text-info mr-1"></i><strong>Amount:</strong> Fixed at ${fmtMoney(m.amount)} per occurrence—no historical analysis</div>
-                        </div>`;
+                    methodDesc = `<p class="mb-2"><strong>Manual Recurring</strong> creates fixed cash flow events.</p>`;
                 } else if (m.method === 'Vendor Recurring (Auto)') {
-                    mathText = `<div class="d-flex justify-content-between small mb-1"><span>Detected:</span> <span class="badge badge-soft-primary text-uppercase">${m.frequency}</span></div>
+                    mathText = `<div class="d-flex justify-content-between small mb-1"><span>Detected:</span> <span class="badge badge-soft-primary">${m.frequency}</span></div>
                     <div class="d-flex justify-content-between small mb-1"><span>Interval:</span> <span>${m.interval} Days</span></div>
                     <div class="d-flex justify-content-between align-items-center border-top mt-2 pt-2"><span class="font-weight-bold">Run Rate:</span> <span class="font-weight-bold">${fmtMoney(m.avgAmount)}</span></div>`;
-                    methodDesc = `<p class="mb-2"><strong>Vendor Recurring (Auto)</strong> uses pattern recognition to detect payment frequency.</p>
-                        <div class="small text-muted">
-                            <div class="mb-1"><i class="fas fa-brain text-primary mr-1"></i><strong>Detection:</strong> Analyzes payment intervals to classify as Weekly, Bi-Weekly, Monthly, or Quarterly</div>
-                            <div class="mb-1"><i class="fas fa-calculator text-info mr-1"></i><strong>Amount:</strong> Average of historical payments at detected frequency</div>
-                            <div><i class="fas fa-sync text-success mr-1"></i><strong>Projection:</strong> Next payment date calculated from last payment + detected interval</div>
-                        </div>`;
+                    methodDesc = `<p class="mb-2"><strong>Vendor Recurring (Auto)</strong> uses pattern recognition.</p>`;
                 } else if (m.method === 'Bank Register History') {
                     mathText = `<div class="d-flex justify-content-between small mb-1"><span>Raw Avg:</span> <span>${fmtMoney(m.rawAverage)}</span></div>
-                    <div class="d-flex justify-content-between small mb-1 text-muted"><span>(Based on ${m.weeksUsed} weeks)</span></div>
                     <div class="d-flex justify-content-between font-weight-bold border-top pt-1 mt-2"><span>Final (Wkly):</span> <span>${fmtMoney(m.finalAverage)}</span></div>`;
-                    methodDesc = `<p class="mb-2"><strong>Bank Register History</strong> forecasts based on actual cash movements in bank accounts.</p>
-                        <div class="small text-muted">
-                            <div class="mb-1"><i class="fas fa-university text-primary mr-1"></i><strong>Source:</strong> Credits/debits from selected bank accounts (${m.bankAccounts ? m.bankAccounts.length + ' accounts' : 'N/A'})</div>
-                            <div class="mb-1"><i class="fas fa-filter text-info mr-1"></i><strong>Filters:</strong> ${m.memoKeywords && m.memoKeywords.length ? 'Memo keywords: ' + m.memoKeywords.join(', ') : 'No memo filters applied'}</div>
-                            <div><i class="fas fa-history text-success mr-1"></i><strong>Lookback:</strong> ${m.historyWeeks || 12} weeks of historical data</div>
-                        </div>`;
+                    methodDesc = `<p class="mb-2"><strong>Bank Register History</strong> forecasts from bank cash movements.</p>`;
                 } else if (m.method === 'Calculated Formula') {
-                    mathText = `<div class="small text-muted mb-1"><strong>Formula:</strong></div><code class="small d-block mb-2 text-wrap" style="background:#f8f9fa; padding:4px;">${m.formula}</code>`;
-                    methodDesc = `<p class="mb-2"><strong>Formula Expression</strong> executes programmable logic using Excel-style syntax.</p>
-                        <div class="small text-muted">
-                            <div class="mb-1"><i class="fas fa-code text-primary mr-1"></i><strong>Engine:</strong> Supports arithmetic, functions (IF, MIN, MAX, etc.), and category references</div>
-                            <div><i class="fas fa-link text-info mr-1"></i><strong>References:</strong> Use {CategoryID} to reference other category totals dynamically</div>
-                        </div>`;
-                } else {
-                    mathText = `<div class="text-muted small">Standard projection based on transaction dates.</div>`;
-                    methodDesc = `<p class="mb-0 small text-muted">This category uses default projection logic.</p>`;
+                    mathText = `<code class="small d-block mb-2" style="background:#f8f9fa; padding:4px;">${m.formula}</code>`;
+                    methodDesc = `<p class="mb-2"><strong>Formula Expression</strong> uses programmable logic.</p>`;
                 }
 
-                logicHtml = `<div class="card border mb-3">
-                        <div class="card-header bg-light py-2 d-flex justify-content-between align-items-center">
-                            <small class="font-weight-bold"><i class="fas fa-cogs mr-2 text-primary"></i>Forecast Logic: ${m.method}</small>
-                        </div>
-                        <div class="card-body p-3">
-                            <div class="row">
-                                <div class="col-md-5 border-right">
-                                    <div class="small font-weight-bold text-muted mb-2">CALCULATION</div>
-                                    ${mathText}
-                                </div>
-                                <div class="col-md-7">
-                                    <div class="small font-weight-bold text-muted mb-2">HOW IT WORKS</div>
-                                    ${methodDesc}
+                if (mathText) {
+                    logicHtml = `
+                        <div class="card border mb-3" style="margin-top:16px;">
+                            <div class="card-header bg-light py-2">
+                                <small class="font-weight-bold"><i class="fas fa-info-circle mr-2" style="color:${methodColor};"></i>Forecast Logic Details</small>
+                            </div>
+                            <div class="card-body p-3">
+                                <div class="row">
+                                    <div class="col-md-5 border-right">
+                                        <div class="small font-weight-bold text-muted mb-2">CALCULATION</div>
+                                        ${mathText}
+                                    </div>
+                                    <div class="col-md-7">
+                                        <div class="small font-weight-bold text-muted mb-2">HOW IT WORKS</div>
+                                        ${methodDesc}
+                                    </div>
                                 </div>
                             </div>
-                        </div>
+                        </div>`;
+                }
+            }
+
+            html += logicHtml;
+
+            // Update the pane content - keep the selector but replace the rest
+            const selector = el("#cfDetailCatSelect");
+            const selectorHtml = selector ? selector.outerHTML : '';
+            pane.innerHTML = `
+                <div class="p-4">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        ${selectorHtml}
                     </div>
-                    <h6 class="cf-section-header mt-2">Source Data Breakdown</h6>`;
+                    ${html}
+                </div>`;
+
+            // Re-attach event handler to selector
+            const newSelector = el("#cfDetailCatSelect");
+            if (newSelector && this.categoryAnalysis.allCategories) {
+                newSelector.value = catKey;
+                newSelector.onchange = () => {
+                    this.detailPage = 1;
+                    this.categoryAnalysis.search = '';
+                    this.categoryAnalysis.currentCategory = newSelector.value;
+                    this.renderDetailTable(this.categoryAnalysis.allCategories[newSelector.value]);
+                };
             }
-            const logicContainer = el("#cfDetailLogic");
-            if (!logicContainer) {
-                const lc = document.createElement("div");
-                lc.id = "cfDetailLogic";
-                container.insertBefore(lc, el("#cfDetailTable"));
-            }
-            el("#cfDetailLogic").innerHTML = logicHtml;
-
-            // Table Body with Pagination
-            const tbody = el("#cfDetailTable").querySelector("tbody");
-            tbody.innerHTML = "";
-            
-            const lblTotal = el("#cfDetailTotal");
-            const lblPage = el("#detailPageLabel");
-            const prevBtn = el("#btnDetailPrev");
-            const nextBtn = el("#btnDetailNext");
-
-            if (!detailData.length) {
-                tbody.innerHTML = "<tr><td colspan='4' class='text-muted text-center p-4'>No source data found.</td></tr>";
-                if (lblTotal) lblTotal.textContent = "$0";
-                if (lblPage) lblPage.textContent = "";
-                if (prevBtn) prevBtn.disabled = true;
-                if (nextBtn) nextBtn.disabled = true;
-                return;
-            }
-
-            // Sort & Group
-            const hasDate = detailData.some(x => x.date);
-            if (hasDate) detailData.sort((a,b) => new Date(b.date||0) - new Date(a.date||0));
-            else detailData.sort((a,b) => b.amount - a.amount);
-
-            // Pagination
-            const totalItems = detailData.length;
-            const totalPages = Math.ceil(totalItems / this.detailPageSize);
-            if (this.detailPage > totalPages) this.detailPage = totalPages;
-            if (this.detailPage < 1) this.detailPage = 1;
-            
-            const startIdx = (this.detailPage - 1) * this.detailPageSize;
-            const endIdx = Math.min(startIdx + this.detailPageSize, totalItems);
-            const pageData = detailData.slice(startIdx, endIdx);
-
-            let lastGroup = "";
-            pageData.forEach(row => {
-                let group = "General";
-                if (row.date) {
-                    const d = new Date(row.date);
-                    group = d.toLocaleString('default', { month: 'long', year: 'numeric' });
-                } else if (row.name && row.name.includes(':')) {
-                    group = row.name.split(':')[0].trim();
-                }
-
-                if (group !== lastGroup) {
-                    tbody.innerHTML += `<tr class="bg-light"><td colspan="4" class="font-weight-bold text-uppercase small text-muted pl-3 py-2" style="letter-spacing:0.05em;">${group}</td></tr>`;
-                    lastGroup = group;
-                }
-
-                const dateDisplay = row.date || "—";
-                const typeDisplay = row.type || (row.amount < 0 ? 'Credit' : 'Debit');
-                
-                // Deep link if internalId is available
-                const nameDisplay = row.internalId 
-                    ? getNsLink(row.name, row.internalId)
-                    : `<span class="text-dark">${row.name}</span>`;
-                
-                tbody.innerHTML += `
-                    <tr>
-                        <td class="pl-4"><div class="font-weight-medium">${nameDisplay}</div></td>
-                        <td class="small text-muted">${dateDisplay}</td>
-                        <td class="text-right font-weight-bold">${fmtMoney(row.amount)}</td>
-                        <td class="text-center"><span class="badge badge-light border">${typeDisplay}</span></td>
-                    </tr>`;
-            });
-            
-            if (lblTotal) lblTotal.textContent = fmtMoney(catData.total);
-            if (lblPage) lblPage.textContent = totalPages > 1 ? `Page ${this.detailPage} of ${totalPages} (${totalItems} items)` : `${totalItems} items`;
-            if (prevBtn) prevBtn.disabled = this.detailPage <= 1;
-            if (nextBtn) nextBtn.disabled = this.detailPage >= totalPages;
         },
 
         rerenderDetailTable() {
@@ -1787,66 +2019,18 @@
 
         addGroup() {
             if (!this.data.groups) this.data.groups = [];
-            this.data.groups.push({ 
-                id: "group_" + Date.now(), 
-                name: "New Group", 
-                categoryIds: [] 
+            this.data.groups.push({
+                id: "group_" + Date.now(),
+                name: "New Group",
+                categoryIds: []
             });
-            this.editGroup(this.data.groups.length - 1);
+            // Use flyout for new groups
+            this.editGroupInFlyout(this.data.groups.length - 1, true);
         },
 
         editGroup(i) {
-            this.idx = -1;
-            this.fixedType = null;
-            this.editingGroupIdx = i;
-            this.renderList();
-            
-            const g = this.data.groups[i];
-            const container = el('#cfConfigContainer');
-            
-            // Build category checkboxes
-            const cats = this.data.categories || [];
-            const selectedIds = g.categoryIds || [];
-            let catCheckboxes = '';
-            cats.forEach(c => {
-                const checked = selectedIds.includes(c.id) ? 'checked' : '';
-                catCheckboxes += `
-                    <div class="custom-control custom-checkbox mb-1">
-                        <input type="checkbox" class="custom-control-input group-cat-checkbox" id="grpcat_${c.id}" value="${c.id}" ${checked}>
-                        <label class="custom-control-label small" for="grpcat_${c.id}">${c.name}</label>
-                    </div>`;
-            });
-            if (cats.length === 0) {
-                catCheckboxes = '<p class="text-muted small mb-0">No categories defined yet</p>';
-            }
-            
-            container.innerHTML = `
-                <div class="d-flex align-items-center mb-4 pb-2 border-bottom">
-                    <div class="icon-box bg-purple-soft text-purple mr-3"><i class="fas fa-layer-group"></i></div>
-                    <div><h5 class="m-0 font-weight-bold">Edit Group</h5><small class="text-muted">ID: ${g.id}</small></div>
-                </div>
-                <div class="row">
-                    <div class="col-md-6 form-group">
-                        <label class="cf-label">Group Name</label>
-                        <input id="confGroupName" class="form-control form-control-sm" value="${g.name}">
-                    </div>
-                    <div class="col-md-6 form-group">
-                        <label class="cf-label">Internal ID</label>
-                        <input id="confGroupId" class="form-control form-control-sm" value="${g.id}">
-                        <small class="text-muted">Unique identifier</small>
-                    </div>
-                </div>
-                <div class="form-group">
-                    <label class="cf-label">Categories in Group</label>
-                    <div class="border rounded p-3 bg-light" style="max-height: 200px; overflow-y: auto;">
-                        ${catCheckboxes}
-                    </div>
-                </div>
-                <div class="d-flex justify-content-between">
-                    <button class="btn btn-outline-danger btn-sm" onclick="ConfigController.deleteGroup()">Delete Group</button>
-                    <button class="btn btn-primary btn-sm shadow-sm" onclick="ConfigController.saveGroup()">Save Group</button>
-                </div>
-            `;
+            // Use flyout for editing groups
+            this.editGroupInFlyout(i, false);
         },
 
         saveGroup() {
@@ -2222,55 +2406,8 @@
         },
         
         edit(i) {
-            this.idx = i;
-            this.fixedType = null;
-            this.editingGroupIdx = -1;
-            this.renderList();
-            const c = this.data.categories[i];
-            const container = el('#cfConfigContainer');
-            
-            // Render the Full Form Shell
-            container.innerHTML = `
-                <div class="d-flex align-items-center mb-4 pb-2 border-bottom">
-                    <div class="icon-box bg-blue-soft text-blue mr-3"><i class="fas fa-chart-line"></i></div>
-                    <div><h5 class="m-0 font-weight-bold">Edit Category</h5><small class="text-muted">ID: ${c.id}</small></div>
-                </div>
-                <div class="row">
-                    <div class="col-md-4 form-group"><label class="cf-label">Name</label><input id="confName" class="form-control form-control-sm" value="${c.name}"></div>
-                    <div class="col-md-4 form-group"><label class="cf-label">Internal ID</label><input id="confId" class="form-control form-control-sm" value="${c.id}"><small class="text-muted">Unique identifier</small></div>
-                    <div class="col-md-4 form-group"><label class="cf-label">Type</label>
-                        <select id="confType" class="form-control form-control-sm">
-                            <option value="outflow" ${c.type==='outflow'?'selected':''}>Outflow</option>
-                            <option value="inflow" ${c.type==='inflow'?'selected':''}>Inflow</option>
-                        </select>
-                    </div>
-                </div>
-                <div class="form-group">
-                    <label class="cf-label">Logic Method</label>
-                    <select id="confMethod" class="form-control form-control-sm" onchange="ConfigController.onMethodChange()">
-                        <option value="gl_history_average" ${c.method==='gl_history_average'?'selected':''}>GL History Average</option>
-                        <option value="vendor_payment_history" ${c.method==='vendor_payment_history'?'selected':''}>Vendor Payment History</option>
-                        <option value="credit_card_cycle" ${c.method==='credit_card_cycle'?'selected':''}>Credit Card Cycle</option>
-                        <option value="manual_recurring" ${c.method==='manual_recurring'?'selected':''}>Manual Recurring</option>
-                        <option value="formula_expression" ${c.method==='formula_expression'?'selected':''}>Formula Expression</option>
-                        <option value="vendor_recurring_average" ${c.method==='vendor_recurring_average'?'selected':''}>Vendor Recurring (Auto)</option>
-                        <option value="bank_register_history" ${c.method==='bank_register_history'?'selected':''}>Bank Register History</option>
-                    </select>
-                </div>
-                <div class="row">
-                    <div class="col-12">
-                        <div id="confMethodDescription" class="mt-2 mb-3 p-2 bg-light rounded border-left border-primary small text-muted" style="line-height: 1.4; display:none;"></div>
-                    </div>
-                </div>
-                <div id="conf-extra-fields" class="bg-light p-3 rounded border mb-4"></div>
-                <div class="d-flex justify-content-between">
-                    <button class="btn btn-outline-danger btn-sm" onclick="ConfigController.delete()">Delete</button>
-                    <button class="btn btn-primary btn-sm shadow-sm" onclick="ConfigController.save()">Save Changes</button>
-                </div>
-            `;
-            
-            this.renderDynamicFields(c);
-            this.updateMethodDescription(c.method);
+            // Use flyout for editing categories
+            this.editCategoryInFlyout(i, false);
         },
 
         onMethodChange() {
@@ -2406,8 +2543,9 @@
         },
 
         addCategory() {
-            this.data.categories.push({ id: "new_"+Date.now(), name: "New Category", method: "gl_history_average", type: "outflow", accounts: [] });
-            this.edit(this.data.categories.length - 1);
+            this.data.categories.push({ id: "new_" + Date.now(), name: "New Category", method: "gl_history_average", type: "outflow", accounts: [] });
+            // Use flyout for new categories
+            this.editCategoryInFlyout(this.data.categories.length - 1, true);
         },
 
         delete() {
@@ -2538,6 +2676,700 @@
                 this.data.bankAccountIds = Array.from(bankEl.selectedOptions).map(o => o.value);
             }
             this.save();
+        },
+
+        // ═══════════════════════════════════════════════════════════════════════════
+        // CONFIGURATION FLYOUT SYSTEM
+        // ═══════════════════════════════════════════════════════════════════════════
+
+        configFlyout: {
+            open: false,
+            type: null, // 'category' or 'group'
+            isNew: false,
+            activeTab: 'details'
+        },
+
+        openConfigFlyout() {
+            this.configFlyout.open = true;
+            const overlay = el('#cfConfigFlyoutOverlay');
+            const panel = el('#cfConfigFlyoutPanel');
+            if (overlay) overlay.classList.add('open');
+            if (panel) panel.classList.add('open');
+            document.body.style.overflow = 'hidden';
+
+            // Keyboard escape to close
+            this._flyoutEscHandler = (e) => {
+                if (e.key === 'Escape' && this.configFlyout.open) {
+                    this.closeConfigFlyout();
+                }
+            };
+            document.addEventListener('keydown', this._flyoutEscHandler);
+        },
+
+        closeConfigFlyout() {
+            this.configFlyout.open = false;
+            this.configFlyout.type = null;
+            this.configFlyout.isNew = false;
+            const overlay = el('#cfConfigFlyoutOverlay');
+            const panel = el('#cfConfigFlyoutPanel');
+            if (overlay) overlay.classList.remove('open');
+            if (panel) panel.classList.remove('open');
+            document.body.style.overflow = '';
+
+            if (this._flyoutEscHandler) {
+                document.removeEventListener('keydown', this._flyoutEscHandler);
+            }
+
+            // Show landing content in main container
+            this.showConfigLanding();
+        },
+
+        showConfigLanding() {
+            const container = el('#cfConfigContainer');
+            if (!container) return;
+
+            const catCount = this.data && this.data.categories ? this.data.categories.length : 0;
+            const grpCount = this.data && this.data.groups ? this.data.groups.length : 0;
+            const bankCount = this.data && this.data.bankAccountIds ? this.data.bankAccountIds.length : 0;
+
+            container.innerHTML = `
+                <div class="cf-config-landing">
+                    <div class="landing-icon">
+                        <i class="fas fa-cogs"></i>
+                    </div>
+                    <div class="landing-title">Cashflow Configuration</div>
+                    <div class="landing-text">Select an item from the sidebar to view or edit its settings</div>
+                    <div class="landing-stats">
+                        <div class="landing-stat">
+                            <div class="landing-stat-value">${bankCount}</div>
+                            <div class="landing-stat-label">Bank Accounts</div>
+                        </div>
+                        <div class="landing-stat">
+                            <div class="landing-stat-value">${catCount}</div>
+                            <div class="landing-stat-label">Categories</div>
+                        </div>
+                        <div class="landing-stat">
+                            <div class="landing-stat-value">${grpCount}</div>
+                            <div class="landing-stat-label">Groups</div>
+                        </div>
+                    </div>
+                </div>`;
+        },
+
+        switchConfigFlyoutTab(tab) {
+            this.configFlyout.activeTab = tab;
+
+            // Update tab UI
+            document.querySelectorAll('.cf-flyout-config-tab').forEach(t => {
+                t.classList.toggle('active', t.dataset.tab === tab);
+            });
+
+            // Show/hide content based on tab
+            const previewPane = el('#cfConfigFlyoutPreview');
+            const detailsPane = el('#cfConfigFlyoutDetails');
+
+            if (tab === 'preview' && previewPane) {
+                if (detailsPane) detailsPane.style.display = 'none';
+                previewPane.style.display = 'block';
+                this.renderConfigPreview();
+            } else {
+                if (previewPane) previewPane.style.display = 'none';
+                if (detailsPane) detailsPane.style.display = 'block';
+            }
+        },
+
+        renderConfigPreview() {
+            const previewPane = el('#cfConfigFlyoutPreview');
+            if (!previewPane) return;
+
+            if (this.configFlyout.type === 'category' && this.idx !== -1) {
+                const c = this.data.categories[this.idx];
+                previewPane.innerHTML = `
+                    <div class="cf-config-flyout-form">
+                        <div class="cf-form-section">
+                            <div class="cf-form-section-header">Preview</div>
+                            <p class="text-muted small">Save the category to see forecast preview data.</p>
+                        </div>
+                    </div>`;
+            } else {
+                previewPane.innerHTML = `
+                    <div class="cf-config-flyout-form">
+                        <div class="text-muted text-center p-4">Preview not available</div>
+                    </div>`;
+            }
+        },
+
+        editCategoryInFlyout(i, isNew = false) {
+            this.idx = i;
+            this.fixedType = null;
+            this.editingGroupIdx = -1;
+            this.configFlyout.type = 'category';
+            this.configFlyout.isNew = isNew;
+            this.configFlyout.activeTab = 'details';
+            this.renderList();
+            this.openConfigFlyout();
+
+            const c = this.data.categories[i];
+            const typeClass = c.type === 'inflow' ? 'inflow' : 'outflow';
+            const typeLabel = c.type === 'inflow' ? 'Inflow' : 'Outflow';
+
+            // Set flyout title
+            el('#cfConfigFlyoutTitle').innerHTML = `
+                <i class="fas fa-chart-line mr-2"></i>${isNew ? 'New Category' : 'Edit Category'}
+                <span class="cf-type-badge ${typeClass} ml-2" style="font-size:10px;">${typeLabel}</span>`;
+
+            // Show/hide tabs
+            el('#cfConfigFlyoutTabs').style.display = 'none'; // Hide tabs for now - can enable later
+
+            // Update delete button visibility
+            const deleteBtn = el('#cfConfigFlyoutDelete');
+            if (deleteBtn) deleteBtn.style.display = isNew ? 'none' : 'inline-flex';
+
+            // Render form
+            this.renderCategoryFlyoutForm(c);
+        },
+
+        renderCategoryFlyoutForm(c) {
+            const body = el('#cfConfigFlyoutBody');
+            if (!body) return;
+
+            // Method descriptions
+            const methodDescriptions = {
+                'gl_history_average': 'Analyzes GL account postings over a defined period to calculate weekly averages',
+                'vendor_payment_history': 'Aggregates historical payments to vendors by category to project future spend',
+                'credit_card_cycle': 'Tracks credit card liability + projected growth until payment date',
+                'manual_recurring': 'Fixed amount at specified frequency (weekly, bi-weekly, monthly)',
+                'formula_expression': 'Custom formula using Excel-style syntax with category references',
+                'vendor_recurring_average': 'Auto-detects payment frequency and calculates run rate from vendor history',
+                'bank_register_history': 'Forecasts from actual bank account cash movements'
+            };
+
+            const methodDesc = methodDescriptions[c.method] || 'Standard projection method';
+
+            body.innerHTML = `
+                <div class="cf-config-flyout-form" id="cfConfigFlyoutDetails">
+                    <!-- General Section -->
+                    <div class="cf-form-section">
+                        <div class="cf-form-section-header">General</div>
+                        <div class="cf-form-row">
+                            <div class="cf-form-group">
+                                <label class="cf-form-label">Name</label>
+                                <input id="confName" class="cf-form-input" value="${escapeHtml(c.name)}">
+                            </div>
+                            <div class="cf-form-group">
+                                <label class="cf-form-label">Internal ID</label>
+                                <input id="confId" class="cf-form-input" value="${escapeHtml(c.id)}">
+                                <div class="cf-form-help">Unique identifier for references</div>
+                            </div>
+                        </div>
+                        <div class="cf-form-row single">
+                            <div class="cf-form-group">
+                                <label class="cf-form-label">Type</label>
+                                <select id="confType" class="cf-form-select">
+                                    <option value="outflow" ${c.type === 'outflow' ? 'selected' : ''}>Outflow (Expense/Payment)</option>
+                                    <option value="inflow" ${c.type === 'inflow' ? 'selected' : ''}>Inflow (Revenue/Collection)</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Method Section -->
+                    <div class="cf-form-section">
+                        <div class="cf-form-section-header">Calculation Method</div>
+                        <div class="cf-form-row single">
+                            <div class="cf-form-group">
+                                <label class="cf-form-label">Method</label>
+                                <select id="confMethod" class="cf-form-select" onchange="ConfigController.onFlyoutMethodChange()">
+                                    <option value="gl_history_average" ${c.method === 'gl_history_average' ? 'selected' : ''}>GL History Average</option>
+                                    <option value="vendor_payment_history" ${c.method === 'vendor_payment_history' ? 'selected' : ''}>Vendor Payment History</option>
+                                    <option value="credit_card_cycle" ${c.method === 'credit_card_cycle' ? 'selected' : ''}>Credit Card Cycle</option>
+                                    <option value="manual_recurring" ${c.method === 'manual_recurring' ? 'selected' : ''}>Manual Recurring</option>
+                                    <option value="formula_expression" ${c.method === 'formula_expression' ? 'selected' : ''}>Formula Expression</option>
+                                    <option value="vendor_recurring_average" ${c.method === 'vendor_recurring_average' ? 'selected' : ''}>Vendor Recurring (Auto)</option>
+                                    <option value="bank_register_history" ${c.method === 'bank_register_history' ? 'selected' : ''}>Bank Register History</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="cf-method-info" id="confMethodInfo">
+                            <div class="cf-method-info-title">${this.getMethodTitle(c.method)}</div>
+                            <div class="cf-method-info-text">${methodDesc}</div>
+                        </div>
+                    </div>
+
+                    <!-- Dynamic Fields Section -->
+                    <div class="cf-form-section" id="conf-flyout-extra-fields">
+                        <!-- Dynamic fields rendered here -->
+                    </div>
+                </div>
+                <div id="cfConfigFlyoutPreview" style="display:none;"></div>`;
+
+            // Render dynamic fields based on method
+            this.renderFlyoutDynamicFields(c);
+        },
+
+        getMethodTitle(method) {
+            const titles = {
+                'gl_history_average': 'GL History Average',
+                'vendor_payment_history': 'Vendor Payment History',
+                'credit_card_cycle': 'Credit Card Cycle',
+                'manual_recurring': 'Manual Recurring',
+                'formula_expression': 'Formula Expression',
+                'vendor_recurring_average': 'Vendor Recurring (Auto)',
+                'bank_register_history': 'Bank Register History'
+            };
+            return titles[method] || method;
+        },
+
+        onFlyoutMethodChange() {
+            const method = el("#confMethod").value;
+            const current = this.idx > -1 ? this.data.categories[this.idx] : {};
+
+            // Update method info
+            const methodDescriptions = {
+                'gl_history_average': 'Analyzes GL account postings over a defined period to calculate weekly averages',
+                'vendor_payment_history': 'Aggregates historical payments to vendors by category to project future spend',
+                'credit_card_cycle': 'Tracks credit card liability + projected growth until payment date',
+                'manual_recurring': 'Fixed amount at specified frequency (weekly, bi-weekly, monthly)',
+                'formula_expression': 'Custom formula using Excel-style syntax with category references',
+                'vendor_recurring_average': 'Auto-detects payment frequency and calculates run rate from vendor history',
+                'bank_register_history': 'Forecasts from actual bank account cash movements'
+            };
+
+            const infoEl = el('#confMethodInfo');
+            if (infoEl) {
+                infoEl.innerHTML = `
+                    <div class="cf-method-info-title">${this.getMethodTitle(method)}</div>
+                    <div class="cf-method-info-text">${methodDescriptions[method] || ''}</div>`;
+            }
+
+            // Re-render dynamic fields
+            this.renderFlyoutDynamicFields({ ...current, method: method });
+        },
+
+        renderFlyoutDynamicFields(c) {
+            const container = el("#conf-flyout-extra-fields");
+            if (!container) return;
+
+            container.innerHTML = '<div class="cf-form-section-header">Method Settings</div>';
+
+            // Helper for day select
+            const getDaySelect = (val) => {
+                const days = [{ k: '', v: 'Distributed' }, { k: '0', v: 'Sunday' }, { k: '1', v: 'Monday' }, { k: '2', v: 'Tuesday' }, { k: '3', v: 'Wednesday' }, { k: '4', v: 'Thursday' }, { k: '5', v: 'Friday' }, { k: '6', v: 'Saturday' }];
+                let opts = days.map(d => `<option value="${d.k}" ${String(val) === d.k ? 'selected' : ''}>${d.v}</option>`).join('');
+                return `<select id="field_expectedDay" class="cf-form-select">${opts}</select>`;
+            };
+
+            if (c.method === 'gl_history_average') {
+                const selIds = c.accounts || [];
+                const sorted = [...(window.accountList || [])].sort((a, b) => selIds.includes(b.id) - selIds.includes(a.id));
+                const opts = sorted.map(a => `<option value="${a.id}" ${selIds.includes(a.id) ? 'selected' : ''}>${a.acctNumber} - ${a.name}</option>`).join('');
+
+                const wks = [{ k: '', v: 'Distributed' }, { k: '1', v: '1st Week' }, { k: '2', v: '2nd Week' }, { k: '3', v: '3rd Week' }, { k: '4', v: '4th Week' }];
+                const wkOpts = wks.map(d => `<option value="${d.k}" ${String(c.expectedWeek) === d.k ? 'selected' : ''}>${d.v}</option>`).join('');
+
+                container.innerHTML += `
+                    <div class="cf-form-row single">
+                        <div class="cf-form-group">
+                            <label class="cf-form-label">GL Accounts</label>
+                            <input type="text" class="cf-form-input mb-2" placeholder="Search accounts..." onkeyup="const t=this.value.toLowerCase();document.getElementById('field_accounts').querySelectorAll('option').forEach(o=>o.style.display=o.text.toLowerCase().includes(t)?'':'none')">
+                            <div class="cf-form-multiselect">
+                                <select id="field_accounts" class="cf-form-select" multiple style="height:150px;border:none;">${opts}</select>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="cf-form-row">
+                        <div class="cf-form-group">
+                            <label class="cf-form-label">Expected Day</label>
+                            ${getDaySelect(c.expectedDay)}
+                        </div>
+                        <div class="cf-form-group">
+                            <label class="cf-form-label">Expected Week</label>
+                            <select id="field_expectedWeek" class="cf-form-select">${wkOpts}</select>
+                        </div>
+                    </div>
+                    <div class="cf-form-row">
+                        <div class="cf-form-group">
+                            <label class="cf-form-label">History Weeks</label>
+                            <input id="field_history" type="number" class="cf-form-input" value="${c.historyWeeks || 12}">
+                        </div>
+                        <div class="cf-form-group">
+                            <label class="cf-form-label">Adjustment %</label>
+                            <input id="field_adjustment" type="number" step="0.1" class="cf-form-input" value="${c.adjustmentPercent || 0}">
+                        </div>
+                    </div>
+                    <div class="cf-form-row single">
+                        <div class="cf-form-group">
+                            <label class="cf-form-label" style="display:flex;align-items:center;gap:8px;">
+                                <input type="checkbox" id="field_useNetAmt" ${c.useNetAmt ? 'checked' : ''}>
+                                Use Net Amount (Respect +/-)
+                            </label>
+                        </div>
+                    </div>`;
+            }
+            else if (c.method === 'vendor_payment_history') {
+                container.innerHTML += `
+                    <div class="cf-form-row single">
+                        <div class="cf-form-group">
+                            <label class="cf-form-label">Vendor Category IDs</label>
+                            <input id="field_vendorCategories" class="cf-form-input" value="${(c.vendorCategories || []).join(',')}">
+                            <div class="cf-form-help">Comma-separated NetSuite vendor category IDs</div>
+                        </div>
+                    </div>
+                    <div class="cf-form-row">
+                        <div class="cf-form-group">
+                            <label class="cf-form-label">Expected Day</label>
+                            ${getDaySelect(c.expectedDay)}
+                        </div>
+                        <div class="cf-form-group">
+                            <label class="cf-form-label">History Months</label>
+                            <input id="field_history" type="number" class="cf-form-input" value="${c.historyMonths || 12}">
+                        </div>
+                    </div>
+                    <div class="cf-form-row single">
+                        <div class="cf-form-group">
+                            <label class="cf-form-label">Adjustment %</label>
+                            <input id="field_adjustment" type="number" step="0.1" class="cf-form-input" value="${c.adjustmentPercent || 0}">
+                        </div>
+                    </div>`;
+            }
+            else if (c.method === 'manual_recurring') {
+                const freq = c.frequency || 'weekly';
+                container.innerHTML += `
+                    <div class="cf-form-row">
+                        <div class="cf-form-group">
+                            <label class="cf-form-label">Amount</label>
+                            <input id="field_amount" type="number" class="cf-form-input" value="${c.amount || 0}">
+                        </div>
+                        <div class="cf-form-group">
+                            <label class="cf-form-label">Frequency</label>
+                            <select id="field_frequency" class="cf-form-select">
+                                <option value="weekly" ${freq === 'weekly' ? 'selected' : ''}>Weekly</option>
+                                <option value="bi_weekly" ${freq === 'bi_weekly' ? 'selected' : ''}>Bi-Weekly</option>
+                                <option value="monthly" ${freq === 'monthly' ? 'selected' : ''}>Monthly</option>
+                            </select>
+                        </div>
+                    </div>`;
+            }
+            else if (c.method === 'vendor_recurring_average') {
+                const selIds = c.vendorIds || [];
+                const sorted = [...(window.vendorList || [])].sort((a, b) => {
+                    const aSel = selIds.includes(a.id);
+                    const bSel = selIds.includes(b.id);
+                    if (aSel && !bSel) return -1;
+                    if (!aSel && bSel) return 1;
+                    return a.name.localeCompare(b.name);
+                });
+                const opts = sorted.map(v => `<option value="${v.id}" ${selIds.includes(v.id) ? 'selected' : ''}>${v.name}</option>`).join('');
+
+                container.innerHTML += `
+                    <div class="cf-form-row single">
+                        <div class="cf-form-group">
+                            <label class="cf-form-label">Vendors</label>
+                            <input type="text" class="cf-form-input mb-2" placeholder="Search vendors..." onkeyup="const t=this.value.toLowerCase();document.getElementById('field_vendorIds').querySelectorAll('option').forEach(o=>o.style.display=o.text.toLowerCase().includes(t)?'':'none')">
+                            <select id="field_vendorIds" class="cf-form-select" multiple style="height:150px;">${opts}</select>
+                        </div>
+                    </div>
+                    <div class="cf-form-row">
+                        <div class="cf-form-group">
+                            <label class="cf-form-label">History Months</label>
+                            <input id="field_history" type="number" class="cf-form-input" value="${c.historyMonths || 3}">
+                        </div>
+                        <div class="cf-form-group">
+                            <label class="cf-form-label">Buffer Days</label>
+                            <input id="field_adjustment" type="number" class="cf-form-input" value="${c.adjustmentPercent || 0}">
+                        </div>
+                    </div>`;
+            }
+            else if (c.method === 'bank_register_history') {
+                const selIds = c.bankAccountIds || [];
+                const bankOpts = (window.bankAccountList || []).map(b =>
+                    `<option value="${b.id}" ${selIds.includes(b.id) ? 'selected' : ''}>${b.name}</option>`
+                ).join('');
+
+                container.innerHTML += `
+                    <div class="cf-form-row single">
+                        <div class="cf-form-group">
+                            <label class="cf-form-label">Bank Accounts</label>
+                            <select id="field_bankAccountIds" class="cf-form-select" multiple style="height:100px;">${bankOpts}</select>
+                        </div>
+                    </div>
+                    <div class="cf-form-row single">
+                        <div class="cf-form-group">
+                            <label class="cf-form-label">Memo Keywords</label>
+                            <input id="field_memoKeywords" class="cf-form-input" value="${(c.memoKeywords || []).join(', ')}">
+                            <div class="cf-form-help">Comma-separated keywords to filter transactions</div>
+                        </div>
+                    </div>
+                    <div class="cf-form-row">
+                        <label class="cf-form-label mr-3"><input type="checkbox" id="field_incTransfers" ${c.includeTransfers !== false ? 'checked' : ''}> Transfers</label>
+                        <label class="cf-form-label mr-3"><input type="checkbox" id="field_incChecks" ${c.includeChecks !== false ? 'checked' : ''}> Checks</label>
+                        <label class="cf-form-label"><input type="checkbox" id="field_incJournals" ${c.includeJournals === true ? 'checked' : ''}> Journals</label>
+                    </div>
+                    <div class="cf-form-row">
+                        <div class="cf-form-group">
+                            <label class="cf-form-label">Expected Day</label>
+                            ${getDaySelect(c.expectedDay)}
+                        </div>
+                        <div class="cf-form-group">
+                            <label class="cf-form-label">History Weeks</label>
+                            <input id="field_history" type="number" class="cf-form-input" value="${c.historyWeeks || 12}">
+                        </div>
+                    </div>
+                    <div class="cf-form-row single">
+                        <div class="cf-form-group">
+                            <label class="cf-form-label">Adjustment %</label>
+                            <input id="field_adjustment" type="number" step="0.1" class="cf-form-input" value="${c.adjustmentPercent || 0}">
+                        </div>
+                    </div>`;
+            }
+            else if (c.method === 'formula_expression') {
+                container.innerHTML += `
+                    <div class="cf-form-row single">
+                        <div class="cf-form-group">
+                            <label class="cf-form-label">Formula</label>
+                            <textarea id="field_formula" class="cf-form-input" rows="4" style="font-family:monospace;">${c.formula || ''}</textarea>
+                            <div class="cf-form-help">Variables: {AR_IN}, {AP_OUT}, {NET_FLOW}, {WEEK_NUM}, {IS_MONTH_END}</div>
+                        </div>
+                    </div>`;
+            }
+            else {
+                container.innerHTML += `<div class="text-muted small">Standard configuration for this method</div>`;
+            }
+        },
+
+        editGroupInFlyout(i, isNew = false) {
+            this.idx = -1;
+            this.fixedType = null;
+            this.editingGroupIdx = i;
+            this.configFlyout.type = 'group';
+            this.configFlyout.isNew = isNew;
+            this.renderList();
+            this.openConfigFlyout();
+
+            const g = this.data.groups[i];
+
+            // Set flyout title
+            el('#cfConfigFlyoutTitle').innerHTML = `<i class="fas fa-layer-group mr-2"></i>${isNew ? 'New Group' : 'Edit Group'}`;
+
+            // Hide tabs for groups
+            el('#cfConfigFlyoutTabs').style.display = 'none';
+
+            // Update delete button visibility
+            const deleteBtn = el('#cfConfigFlyoutDelete');
+            if (deleteBtn) deleteBtn.style.display = isNew ? 'none' : 'inline-flex';
+
+            // Render group form
+            this.renderGroupFlyoutForm(g);
+        },
+
+        renderGroupFlyoutForm(g) {
+            const body = el('#cfConfigFlyoutBody');
+            if (!body) return;
+
+            // Build category checkboxes
+            const cats = this.data.categories || [];
+            const selectedIds = g.categoryIds || [];
+            let catCheckboxes = '';
+
+            cats.forEach(c => {
+                const checked = selectedIds.includes(c.id) ? 'checked' : '';
+                const typeClass = c.type === 'inflow' ? 'inflow' : 'outflow';
+                catCheckboxes += `
+                    <div class="cf-form-multiselect-item">
+                        <input type="checkbox" class="group-cat-checkbox" id="grpcat_${c.id}" value="${c.id}" ${checked}>
+                        <label for="grpcat_${c.id}" style="flex:1;margin:0;cursor:pointer;">${escapeHtml(c.name)}</label>
+                        <span class="cf-type-badge ${typeClass}" style="font-size:9px;">${c.type === 'inflow' ? 'IN' : 'OUT'}</span>
+                    </div>`;
+            });
+
+            if (cats.length === 0) {
+                catCheckboxes = '<div class="text-muted small p-3">No categories defined yet. Create categories first.</div>';
+            }
+
+            body.innerHTML = `
+                <div class="cf-config-flyout-form">
+                    <div class="cf-form-section">
+                        <div class="cf-form-section-header">Group Settings</div>
+                        <div class="cf-form-row">
+                            <div class="cf-form-group">
+                                <label class="cf-form-label">Group Name</label>
+                                <input id="confGroupName" class="cf-form-input" value="${escapeHtml(g.name)}">
+                            </div>
+                            <div class="cf-form-group">
+                                <label class="cf-form-label">Internal ID</label>
+                                <input id="confGroupId" class="cf-form-input" value="${escapeHtml(g.id)}">
+                                <div class="cf-form-help">Unique identifier</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="cf-form-section">
+                        <div class="cf-form-section-header">Categories in Group</div>
+                        <div class="cf-form-multiselect" style="max-height:300px;">
+                            ${catCheckboxes}
+                        </div>
+                    </div>
+                </div>`;
+        },
+
+        saveFromFlyout() {
+            if (this.configFlyout.type === 'category') {
+                this.saveCategoryFromFlyout();
+            } else if (this.configFlyout.type === 'group') {
+                this.saveGroupFromFlyout();
+            }
+        },
+
+        saveCategoryFromFlyout() {
+            if (this.idx === -1) return;
+
+            const c = this.data.categories[this.idx];
+            const oldId = c.id;
+
+            c.name = el('#confName').value;
+            c.type = el('#confType').value;
+            c.method = el('#confMethod').value;
+
+            // Handle ID change
+            const newIdEl = el('#confId');
+            if (newIdEl) {
+                const newId = newIdEl.value.trim();
+                if (newId && newId !== oldId) {
+                    const isDupe = this.data.categories.some((cat, idx) => idx !== this.idx && cat.id === newId);
+                    if (isDupe) {
+                        alert('A category with this ID already exists');
+                        return;
+                    }
+                    // Update group references
+                    if (this.data.groups) {
+                        this.data.groups.forEach(g => {
+                            const idx = (g.categoryIds || []).indexOf(oldId);
+                            if (idx !== -1) {
+                                g.categoryIds[idx] = newId;
+                            }
+                        });
+                    }
+                    c.id = newId;
+                }
+            }
+
+            // Collect dynamic fields
+            const acc = el("#field_accounts");
+            if (acc) c.accounts = Array.from(acc.selectedOptions).map(o => o.value);
+            const vc = el("#field_vendorCategories");
+            if (vc) c.vendorCategories = vc.value.split(",").map(s => s.trim()).filter(s => s);
+            const vid = el("#field_vendorIds");
+            if (vid) c.vendorIds = Array.from(vid.selectedOptions).map(o => o.value);
+
+            const day = el("#field_expectedDay");
+            if (day) c.expectedDay = day.value;
+            const wk = el("#field_expectedWeek");
+            if (wk) c.expectedWeek = wk.value;
+
+            const hist = el("#field_history");
+            if (hist) {
+                if (c.method.includes('month') || c.method === 'vendor_recurring_average') c.historyMonths = parseInt(hist.value);
+                else c.historyWeeks = parseInt(hist.value);
+            }
+
+            const adj = el("#field_adjustment");
+            if (adj) c.adjustmentPercent = parseFloat(adj.value);
+
+            const net = el("#field_useNetAmt");
+            if (net) c.useNetAmt = net.checked;
+
+            const amt = el("#field_amount");
+            if (amt) c.amount = parseFloat(amt.value);
+            const freq = el("#field_frequency");
+            if (freq) c.frequency = freq.value;
+
+            const form = el("#field_formula");
+            if (form) c.formula = form.value;
+
+            const bIds = el("#field_bankAccountIds");
+            if (bIds) c.bankAccountIds = Array.from(bIds.selectedOptions).map(o => o.value);
+            const memos = el("#field_memoKeywords");
+            if (memos) c.memoKeywords = memos.value.split(',').map(s => s.trim()).filter(s => s);
+            const iTrn = el("#field_incTransfers");
+            if (iTrn) c.includeTransfers = iTrn.checked;
+            const iChk = el("#field_incChecks");
+            if (iChk) c.includeChecks = iChk.checked;
+            const iJrn = el("#field_incJournals");
+            if (iJrn) c.includeJournals = iJrn.checked;
+
+            // Save and close
+            const configName = CashflowController.getConfigName();
+            API.post('save_config', { config: this.data, configName: configName }).then(res => {
+                if (res.status === 'success') {
+                    showToast("Category Saved");
+                    this.renderList();
+                    this.closeConfigFlyout();
+                    CashflowController.loadData();
+                } else {
+                    alert('Error saving: ' + res.message);
+                }
+            });
+        },
+
+        saveGroupFromFlyout() {
+            if (this.editingGroupIdx === -1) return;
+
+            const g = this.data.groups[this.editingGroupIdx];
+
+            g.name = el('#confGroupName').value;
+            const newId = el('#confGroupId').value.trim();
+            if (newId && newId !== g.id) {
+                const isDupe = this.data.groups.some((grp, idx) => idx !== this.editingGroupIdx && grp.id === newId);
+                if (isDupe) {
+                    alert('A group with this ID already exists');
+                    return;
+                }
+                g.id = newId;
+            }
+
+            // Collect selected categories
+            const selectedCats = [];
+            document.querySelectorAll('.group-cat-checkbox:checked').forEach(cb => {
+                selectedCats.push(cb.value);
+            });
+            g.categoryIds = selectedCats;
+
+            // Save and close
+            const configName = CashflowController.getConfigName();
+            API.post('save_config', { config: this.data, configName: configName }).then(res => {
+                if (res.status === 'success') {
+                    showToast("Group Saved");
+                    this.renderList();
+                    this.closeConfigFlyout();
+                    CashflowController.loadData();
+                } else {
+                    alert('Error saving: ' + res.message);
+                }
+            });
+        },
+
+        deleteFromFlyout() {
+            if (this.configFlyout.type === 'category' && this.idx !== -1) {
+                $('#deleteConfirmModal').modal('show');
+                el('#btnConfirmDelete').onclick = () => {
+                    this.data.categories.splice(this.idx, 1);
+                    this.idx = -1;
+                    this.renderList();
+                    this.closeConfigFlyout();
+                    $('#deleteConfirmModal').modal('hide');
+                    this.save();
+                };
+            } else if (this.configFlyout.type === 'group' && this.editingGroupIdx !== -1) {
+                $('#deleteConfirmModal').modal('show');
+                el('#btnConfirmDelete').onclick = () => {
+                    this.data.groups.splice(this.editingGroupIdx, 1);
+                    this.editingGroupIdx = -1;
+                    this.renderList();
+                    this.closeConfigFlyout();
+                    $('#deleteConfirmModal').modal('hide');
+                    this.save();
+                };
+            }
         }
     };
 
