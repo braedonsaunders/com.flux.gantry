@@ -1951,7 +1951,7 @@
                 <div class="thought-node ${statusClass} animate-in cascade-delay-${idx + 1}"
                      data-step-idx="${idx}"
                      data-chain-id="${chainId}"
-                     onclick="GantryAdvisor.toggleExpansion('${chainId}', ${idx})">
+                     onclick="AdvisorController.toggleExpansion('${chainId}', ${idx})">
                     <div class="node-core">${icon}</div>
                     <div class="node-ring"></div>
                     ${statusClass === 'running' ? '<div class="orbital-dots"><span></span><span></span><span></span></div>' : ''}
@@ -2053,7 +2053,7 @@
             let html = `
                 <div class="expansion-panel-header">
                     <div class="expansion-panel-title">${icon} ${this.escapeHtml(title)}</div>
-                    <button class="expansion-panel-close" onclick="GantryAdvisor.closeExpansion('${chainId}')">
+                    <button class="expansion-panel-close" onclick="AdvisorController.closeExpansion('${chainId}')">
                         <i class="fas fa-times"></i>
                     </button>
                 </div>
