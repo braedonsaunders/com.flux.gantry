@@ -116,6 +116,15 @@
     height: 100%;
     border-radius: 2px;
     transition: width 0.3s ease;
+    background: var(--cf-primary);
+}
+
+.cf-bucket-card.risk-medium .bucket-bar-fill {
+    background: #f59e0b;
+}
+
+.cf-bucket-card.risk-high .bucket-bar-fill {
+    background: #ef4444;
 }
 
 .cf-bucket-card .bucket-meta {

@@ -286,7 +286,7 @@
             if (el("#CF_OutflowsLabel")) el("#CF_OutflowsLabel").textContent = `Forecast Outflows (${weeks}wk)`;
             
             // Find and display lowest cash point
-            let lowestCash = co.cash.startingCash;
+            let lowestCash = co.cash.startingCash || 0;
             let lowestWeek = 'Start';
             if (co.weeklyCash && co.weeklyCash.length > 0) {
                 co.weeklyCash.forEach(w => {
@@ -296,16 +296,16 @@
                     }
                 });
             }
-            
+
             const lowestEl = el("#CF_LowestCash");
             const lowestDateEl = el("#CF_LowestCashDate");
             const lowestCard = el("#cfLowestCashCard");
             if (lowestEl) {
                 lowestEl.textContent = fmtMoney(lowestCash);
-                lowestEl.className = lowestCash < 0 ? 'kpi-value text-danger' : 'kpi-value';
+                lowestEl.className = 'kpi-value' + (lowestCash < 0 ? ' text-danger' : '');
             }
             if (lowestDateEl) {
-                lowestDateEl.textContent = lowestWeek;
+                lowestDateEl.textContent = lowestWeek || '--';
             }
             if (lowestCard) {
                 // Highlight card if lowest point is negative
@@ -581,8 +581,8 @@
             const tableEl = thead ? thead.closest('table') : null;
             if (!thead || !tbody) return;
 
-            // Apply enhanced table class
-            if (tableEl) tableEl.className = 'cf-timeline-table';
+            // Apply enhanced table class (keep Bootstrap's table class for base styling)
+            if (tableEl) tableEl.className = 'table cf-timeline-table';
 
             const groups = config.groups || [];
             const isGroupMode = this.viewMode === 'groups' && groups.length > 0;
@@ -1189,6 +1189,11 @@
             el('#cfFlyoutOverlay').classList.remove('open');
             el('#cfFlyoutPanel').classList.remove('open');
             document.body.style.overflow = '';
+
+            // Clear any selected rows in the weekly table
+            document.querySelectorAll('.cf-row-selected').forEach(row => {
+                row.classList.remove('cf-row-selected');
+            });
         },
         
         goBackFlyout() {
@@ -2831,7 +2836,7 @@
                             <button class="cf-btn cf-btn-secondary" onclick="ConfigController.showFixed('AP')">
                                 <i class="fas fa-arrow-up text-danger"></i> AP Settings
                             </button>
-                            <button class="cf-btn cf-btn-primary" onclick="ConfigController.add()">
+                            <button class="cf-btn cf-btn-primary" onclick="ConfigController.addCategory()">
                                 <i class="fas fa-plus"></i> New Category
                             </button>
                         </div>
