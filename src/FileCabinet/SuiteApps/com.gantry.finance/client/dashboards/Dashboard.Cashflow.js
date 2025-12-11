@@ -173,13 +173,13 @@
 
                                 <!-- Bridge and Chart Row -->
                                 <div class="row mb-3">
-                                    <div class="col-lg-5">
+                                    <div class="col-lg-6">
                                         <div class="cf-panel-card h-100">
                                             <h6 class="cf-panel-header"><i class="fas fa-project-diagram mr-2"></i>Cash Flow Bridge</h6>
                                             <div class="cf-bridge-container" id="cfCashBridge"></div>
                                         </div>
                                     </div>
-                                    <div class="col-lg-7">
+                                    <div class="col-lg-6">
                                         <div class="cf-panel-card h-100">
                                             <h6 class="cf-panel-header"><i class="fas fa-chart-area mr-2"></i>Cash Position Forecast</h6>
                                             <div id="cfCashChart" class="chart-container-sm"></div>
