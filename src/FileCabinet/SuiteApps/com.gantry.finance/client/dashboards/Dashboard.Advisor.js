@@ -1948,6 +1948,37 @@
         },
 
         /**
+         * Format column header for display (enhanced version)
+         */
+        formatColumnHeader: function(col) {
+            if (!col) return '';
+            // Common abbreviations to expand
+            const expansions = {
+                'id': 'ID', 'ar': 'AR', 'ap': 'AP', 'gl': 'GL',
+                'ytd': 'YTD', 'mtd': 'MTD', 'qty': 'Qty'
+            };
+            return col
+                .replace(/_/g, ' ')
+                .split(' ')
+                .map(word => expansions[word.toLowerCase()] || word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+                .join(' ');
+        },
+
+        /**
+         * Check if a column contains monetary values
+         */
+        isMonetaryColumn: function(col) {
+            if (!col) return false;
+            const lower = col.toLowerCase();
+            const monetaryPatterns = [
+                'amount', 'total', 'balance', 'spend', 'revenue', 'cost',
+                'price', 'debit', 'credit', 'payment', 'bucket', 'outstanding',
+                'current_bucket', 'days_1_30', 'days_31_60', 'days_61_90', 'days_over_90'
+            ];
+            return monetaryPatterns.some(p => lower.includes(p));
+        },
+
+        /**
          * Remove progressive message (for cleanup on major errors)
          */
         removeProgressiveMessage: function() {
@@ -2601,8 +2632,238 @@
 
             // Special handling for thinking steps - show AI plan if available
             if (step.type === 'thinking') {
+                // SCA Phase-specific rendering with rich context data
+                if (step.context && step.context.phase) {
+                    const ctx = step.context;
+                    detailContent += '<div class="sca-phase-details">';
+
+                    // ═══ INTENT PHASE ═══
+                    if (ctx.phase === 'intent') {
+                        // Intent classification badge
+                        if (ctx.intent) {
+                            const intentIcons = {
+                                'entity_lookup': 'fa-search',
+                                'top_list': 'fa-list-ol',
+                                'aging': 'fa-clock',
+                                'reporting': 'fa-chart-bar',
+                                'dashboard': 'fa-tachometer-alt',
+                                'comparison': 'fa-balance-scale',
+                                'transaction': 'fa-receipt',
+                                'general': 'fa-comment'
+                            };
+                            const intentColors = {
+                                'entity_lookup': '#6366f1',
+                                'top_list': '#8b5cf6',
+                                'aging': '#f59e0b',
+                                'reporting': '#10b981',
+                                'dashboard': '#3b82f6',
+                                'comparison': '#ec4899',
+                                'transaction': '#14b8a6',
+                                'general': '#6b7280'
+                            };
+                            const icon = intentIcons[ctx.intent] || 'fa-question';
+                            const color = intentColors[ctx.intent] || '#6b7280';
+                            detailContent += `
+                                <div class="sca-intent-card">
+                                    <div class="intent-badge" style="background: ${color}20; border-left: 3px solid ${color};">
+                                        <i class="fas ${icon}" style="color: ${color};"></i>
+                                        <span class="intent-label">Intent Classified</span>
+                                        <span class="intent-value" style="color: ${color};">${this.escapeHtml(ctx.intent.replace(/_/g, ' '))}</span>
+                                    </div>
+                                </div>`;
+                        }
+
+                        // Question analyzed
+                        if (ctx.question) {
+                            detailContent += `
+                                <div class="sca-section">
+                                    <div class="sca-label"><i class="fas fa-quote-left"></i> Query Analyzed</div>
+                                    <div class="sca-query-text">"${this.escapeHtml(ctx.question)}"</div>
+                                </div>`;
+                        }
+
+                        // Entities detected
+                        if (ctx.entities && ctx.entities.length > 0) {
+                            detailContent += `
+                                <div class="sca-section">
+                                    <div class="sca-label"><i class="fas fa-tags"></i> Entities Detected</div>
+                                    <div class="sca-entity-chips">
+                                        ${ctx.entities.map(e => `<span class="sca-chip entity-chip"><i class="fas fa-tag"></i> ${this.escapeHtml(e)}</span>`).join('')}
+                                    </div>
+                                </div>`;
+                        }
+
+                        // Time scope
+                        if (ctx.timeScope && ctx.timeScope !== 'none') {
+                            const scopeLabels = { 'ytd': 'Year to Date', 'mtd': 'Month to Date', 'last_30': 'Last 30 Days', 'custom': 'Custom Range' };
+                            detailContent += `
+                                <div class="sca-inline-item">
+                                    <i class="fas fa-calendar-alt"></i>
+                                    <span class="sca-scope-badge">${scopeLabels[ctx.timeScope] || ctx.timeScope}</span>
+                                </div>`;
+                        }
+
+                        // Needs resolution indicator
+                        if (ctx.needsResolution) {
+                            detailContent += `
+                                <div class="sca-inline-item sca-needs-resolution">
+                                    <i class="fas fa-search-plus"></i>
+                                    <span>Entity resolution required</span>
+                                </div>`;
+                        }
+                    }
+
+                    // ═══ SELECT PHASE ═══
+                    else if (ctx.phase === 'select') {
+                        // Selected tools with icons
+                        if (ctx.selectedTools && ctx.selectedTools.length > 0) {
+                            const toolIcons = {
+                                'get_ar_aging': 'fa-clock', 'get_ap_aging': 'fa-clock',
+                                'get_top_customers': 'fa-users', 'get_top_vendors': 'fa-truck',
+                                'get_customer_revenue': 'fa-dollar-sign', 'get_vendor_spend': 'fa-shopping-cart',
+                                'get_gl_activity': 'fa-book', 'get_trial_balance': 'fa-balance-scale',
+                                'get_cash_position': 'fa-piggy-bank', 'get_recent_transactions': 'fa-list',
+                                'resolve_entity': 'fa-search', 'run_custom_query': 'fa-code'
+                            };
+                            detailContent += `
+                                <div class="sca-section">
+                                    <div class="sca-label"><i class="fas fa-toolbox"></i> Tools Selected</div>
+                                    <div class="sca-tools-grid">
+                                        ${ctx.selectedTools.map(tool => {
+                                            const icon = toolIcons[tool] || 'fa-cog';
+                                            const displayName = tool.replace(/^get_/, '').replace(/_/g, ' ');
+                                            return `<div class="sca-tool-card">
+                                                <i class="fas ${icon}"></i>
+                                                <span>${this.escapeHtml(displayName)}</span>
+                                            </div>`;
+                                        }).join('')}
+                                    </div>
+                                </div>`;
+                        }
+
+                        // AI reasoning
+                        if (ctx.reasoning) {
+                            detailContent += `
+                                <div class="sca-section">
+                                    <div class="sca-label"><i class="fas fa-lightbulb"></i> AI Reasoning</div>
+                                    <div class="sca-reasoning-text">${this.escapeHtml(ctx.reasoning)}</div>
+                                </div>`;
+                        }
+
+                        // Intent context
+                        if (ctx.intent) {
+                            detailContent += `
+                                <div class="sca-inline-item">
+                                    <i class="fas fa-crosshairs"></i>
+                                    <span>For <strong>${this.escapeHtml(ctx.intent.replace(/_/g, ' '))}</strong> query</span>
+                                </div>`;
+                        }
+                    }
+
+                    // ═══ ANALYZE PHASE ═══
+                    else if (ctx.phase === 'analyze') {
+                        if (ctx.hasAnalysis) {
+                            detailContent += `
+                                <div class="sca-analysis-card">
+                                    <div class="analysis-status success">
+                                        <i class="fas fa-check-circle"></i>
+                                        <span>Analysis Complete</span>
+                                    </div>
+                                    ${ctx.findingsCount > 0 ? `
+                                        <div class="analysis-findings">
+                                            <i class="fas fa-lightbulb"></i>
+                                            <span>${ctx.findingsCount} key finding${ctx.findingsCount !== 1 ? 's' : ''} identified</span>
+                                        </div>
+                                    ` : ''}
+                                </div>`;
+                        } else if (ctx.loadingMoreData) {
+                            detailContent += `
+                                <div class="sca-analysis-card">
+                                    <div class="analysis-status loading">
+                                        <i class="fas fa-spinner fa-spin"></i>
+                                        <span>Loading additional data...</span>
+                                    </div>
+                                    ${ctx.refId ? `<div class="analysis-ref">Reference: <code>${ctx.refId}</code></div>` : ''}
+                                </div>`;
+                        } else if (ctx.noData) {
+                            detailContent += `
+                                <div class="sca-analysis-card">
+                                    <div class="analysis-status warning">
+                                        <i class="fas fa-exclamation-triangle"></i>
+                                        <span>No data available for analysis</span>
+                                    </div>
+                                </div>`;
+                        } else {
+                            detailContent += `
+                                <div class="sca-analysis-card">
+                                    <div class="analysis-status active">
+                                        <i class="fas fa-microscope"></i>
+                                        <span>Analyzing ${ctx.dataRefs || 0} data source${ctx.dataRefs !== 1 ? 's' : ''}...</span>
+                                    </div>
+                                </div>`;
+                        }
+
+                        // Iteration count (for debugging/transparency)
+                        if (ctx.iteration && ctx.iteration > 1) {
+                            detailContent += `
+                                <div class="sca-inline-item">
+                                    <i class="fas fa-redo"></i>
+                                    <span>Analysis iteration ${ctx.iteration}</span>
+                                </div>`;
+                        }
+                    }
+
+                    // ═══ FORMAT PHASE ═══
+                    else if (ctx.phase === 'format') {
+                        if (ctx.blockCount > 0) {
+                            const blockIcons = { 'text': 'fa-paragraph', 'table': 'fa-table', 'metrics': 'fa-chart-line', 'list': 'fa-list-ul' };
+                            detailContent += `
+                                <div class="sca-format-card">
+                                    <div class="format-header">
+                                        <i class="fas fa-magic"></i>
+                                        <span>Generating ${ctx.blockCount} content block${ctx.blockCount !== 1 ? 's' : ''}</span>
+                                    </div>
+                                    ${ctx.blockTypes && ctx.blockTypes.length > 0 ? `
+                                        <div class="format-blocks">
+                                            ${ctx.blockTypes.map(type => {
+                                                const icon = blockIcons[type] || 'fa-cube';
+                                                return `<span class="format-block-chip"><i class="fas ${icon}"></i> ${type}</span>`;
+                                            }).join('')}
+                                        </div>
+                                    ` : ''}
+                                </div>`;
+                        } else {
+                            detailContent += `
+                                <div class="sca-format-card">
+                                    <div class="format-header active">
+                                        <i class="fas fa-spinner fa-spin"></i>
+                                        <span>Formatting response...</span>
+                                    </div>
+                                </div>`;
+                        }
+                    }
+
+                    // Circuit breaker / fallback indicators
+                    if (ctx.circuitBreaker) {
+                        detailContent += `
+                            <div class="sca-circuit-breaker">
+                                <i class="fas fa-bolt"></i>
+                                <span>Circuit breaker triggered - using optimized path</span>
+                            </div>`;
+                    }
+                    if (ctx.fallback) {
+                        detailContent += `
+                            <div class="sca-fallback-notice">
+                                <i class="fas fa-life-ring"></i>
+                                <span>Using fallback response</span>
+                                ${ctx.error ? `<div class="fallback-error">${this.escapeHtml(ctx.error.substring(0, 100))}</div>` : ''}
+                            </div>`;
+                    }
+
+                    detailContent += '</div>';
+                }
                 // Check for new AI plan format first (from createPlanAndUpdateThinking)
-                if (step.plan && step.plan.goal_understanding) {
+                else if (step.plan && step.plan.goal_understanding) {
                     const plan = step.plan;
                     detailContent += '<div class="thinking-plan-details">';
 
@@ -2777,110 +3038,202 @@
                 }
             }
             
-            // Special handling for tool_call steps (from v2 Agent)
+            // Special handling for tool_call steps (from v2 Agent / SCA)
             // Note: duration and tool badge are shown in expansion-panel-meta (buildExpansionContent)
             if (step.type === 'tool_call') {
-                // Show parameters
+                // Get result data (SCA stores in step.result, legacy stores directly on step)
+                const result = step.result || {};
+                const rowCount = step.rowCount !== undefined ? step.rowCount : result.rowCount;
+                const columns = step.columns || result.columns || [];
+                const preview = step.preview || result.preview || [];
+                const dataRef = step.dataRef || result.dataRef;
+
+                detailContent += '<div class="sca-tool-call-details">';
+
+                // Tool execution header with status
+                const isSuccess = step.success !== false && result.success !== false && !step.error;
+                detailContent += `
+                    <div class="tool-execution-header ${isSuccess ? 'success' : 'error'}">
+                        <div class="execution-status">
+                            <i class="fas ${isSuccess ? 'fa-check-circle' : 'fa-times-circle'}"></i>
+                            <span>${isSuccess ? 'Executed Successfully' : 'Execution Failed'}</span>
+                        </div>
+                        ${step.duration ? `<div class="execution-time"><i class="fas fa-clock"></i> ${step.duration}ms</div>` : ''}
+                    </div>`;
+
+                // Show parameters as chips
                 if (step.params && Object.keys(step.params).length > 0) {
-                    const paramChips = Object.entries(step.params)
-                        .filter(([k, v]) => v !== null && v !== undefined)
-                        .map(([k, v]) => `<span class="param-chip"><strong>${this.escapeHtml(k)}:</strong> ${this.escapeHtml(String(v))}</span>`)
-                        .join('');
-                    if (paramChips) {
-                        detailContent += `<div class="step-params"><i class="fas fa-sliders-h"></i> ${paramChips}</div>`;
+                    const hasParams = Object.entries(step.params).some(([k, v]) => v !== null && v !== undefined);
+                    if (hasParams) {
+                        detailContent += `
+                            <div class="tool-params-section">
+                                <div class="section-label"><i class="fas fa-sliders-h"></i> Parameters</div>
+                                <div class="tool-params-grid">
+                                    ${Object.entries(step.params)
+                                        .filter(([k, v]) => v !== null && v !== undefined)
+                                        .map(([k, v]) => `
+                                            <div class="param-item">
+                                                <span class="param-key">${this.escapeHtml(k)}</span>
+                                                <span class="param-value">${this.escapeHtml(String(v))}</span>
+                                            </div>
+                                        `).join('')}
+                                </div>
+                            </div>`;
                     }
                 }
 
                 // Show resolved entity details (from resolve_entity, resolve_gl_account, etc.)
-                if (step.entity) {
-                    const e = step.entity;
-                    detailContent += `<div class="step-entity-result">
-                        <div class="entity-found"><i class="fas fa-check-circle"></i> <strong>Found:</strong> ${this.escapeHtml(e.name)}</div>
-                        <div class="entity-details">
-                            <span class="entity-type"><i class="fas fa-tag"></i> Type: ${this.escapeHtml(e.type)}</span>
-                            <span class="entity-id"><i class="fas fa-key"></i> ID: <code>${e.id}</code></span>
-                        </div>
-                    </div>`;
-                } else if (step.bestMatch) {
-                    const m = step.bestMatch;
-                    detailContent += `<div class="step-entity-result">
-                        <div class="entity-found"><i class="fas fa-check-circle"></i> <strong>Found:</strong> ${this.escapeHtml(m.name || m.account_name)}</div>
-                        <div class="entity-details">
-                            <span class="entity-id"><i class="fas fa-key"></i> ID: <code>${m.id}</code></span>
-                            ${m.account_type ? `<span class="entity-type"><i class="fas fa-tag"></i> ${this.escapeHtml(m.account_type)}</span>` : ''}
-                            ${m.dimension_type ? `<span class="entity-type"><i class="fas fa-layer-group"></i> ${this.escapeHtml(m.dimension_type)}</span>` : ''}
-                        </div>
-                    </div>`;
-                } else if (step.found === false) {
-                    detailContent += `<div class="step-entity-not-found">
-                        <i class="fas fa-times-circle"></i> Entity not found - try different search terms
-                    </div>`;
+                const entity = step.entity || result.entity;
+                const bestMatch = step.bestMatch || result.bestMatch;
+                if (entity) {
+                    detailContent += `
+                        <div class="entity-result-card">
+                            <div class="entity-header">
+                                <i class="fas fa-check-circle"></i>
+                                <span>Entity Resolved</span>
+                            </div>
+                            <div class="entity-details-grid">
+                                <div class="entity-name">${this.escapeHtml(entity.name)}</div>
+                                <div class="entity-meta">
+                                    <span class="entity-type-badge">${this.escapeHtml(entity.type)}</span>
+                                    <span class="entity-id-badge">ID: ${entity.id}</span>
+                                </div>
+                            </div>
+                        </div>`;
+                } else if (bestMatch) {
+                    detailContent += `
+                        <div class="entity-result-card">
+                            <div class="entity-header">
+                                <i class="fas fa-check-circle"></i>
+                                <span>Match Found</span>
+                            </div>
+                            <div class="entity-details-grid">
+                                <div class="entity-name">${this.escapeHtml(bestMatch.name || bestMatch.account_name)}</div>
+                                <div class="entity-meta">
+                                    ${bestMatch.account_type ? `<span class="entity-type-badge">${this.escapeHtml(bestMatch.account_type)}</span>` : ''}
+                                    ${bestMatch.dimension_type ? `<span class="entity-type-badge">${this.escapeHtml(bestMatch.dimension_type)}</span>` : ''}
+                                    <span class="entity-id-badge">ID: ${bestMatch.id}</span>
+                                </div>
+                            </div>
+                        </div>`;
+                } else if (step.found === false || result.found === false) {
+                    detailContent += `
+                        <div class="entity-result-card not-found">
+                            <div class="entity-header">
+                                <i class="fas fa-search"></i>
+                                <span>No Match Found</span>
+                            </div>
+                            <div class="entity-suggestion">Try different search terms or check spelling</div>
+                        </div>`;
                 }
 
-                // Show result count and totals
-                if (step.rowCount !== undefined && step.rowCount > 0) {
-                    detailContent += `<div class="step-result-count"><i class="fas fa-table"></i> ${step.rowCount} rows returned</div>`;
+                // Show result summary stats
+                if (rowCount !== undefined && rowCount > 0) {
+                    detailContent += `
+                        <div class="result-stats-card">
+                            <div class="stat-item primary">
+                                <i class="fas fa-table"></i>
+                                <span class="stat-value">${rowCount.toLocaleString()}</span>
+                                <span class="stat-label">rows returned</span>
+                            </div>
+                            ${columns.length > 0 ? `
+                                <div class="stat-item">
+                                    <i class="fas fa-columns"></i>
+                                    <span class="stat-value">${columns.length}</span>
+                                    <span class="stat-label">columns</span>
+                                </div>
+                            ` : ''}
+                            ${dataRef ? `
+                                <div class="stat-item">
+                                    <i class="fas fa-database"></i>
+                                    <span class="stat-label">Ref: <code>${dataRef}</code></span>
+                                </div>
+                            ` : ''}
+                        </div>`;
 
-                    // Show computed totals if present
-                    if (step.totalCash !== undefined) {
-                        detailContent += `<div class="step-total"><i class="fas fa-money-bill-wave"></i> Total Cash: ${this.formatCurrency(step.totalCash)}</div>`;
-                    }
-                    if (step.totalExpenses !== undefined) {
-                        detailContent += `<div class="step-total"><i class="fas fa-receipt"></i> Total Expenses: ${this.formatCurrency(step.totalExpenses)}</div>`;
+                    // Show columns as chips
+                    if (columns.length > 0) {
+                        detailContent += `
+                            <div class="columns-section">
+                                <div class="section-label"><i class="fas fa-columns"></i> Columns</div>
+                                <div class="column-chips">
+                                    ${columns.slice(0, 10).map(col => `<span class="column-chip">${this.escapeHtml(col)}</span>`).join('')}
+                                    ${columns.length > 10 ? `<span class="column-chip more">+${columns.length - 10} more</span>` : ''}
+                                </div>
+                            </div>`;
                     }
                 }
 
                 // Show data preview (first few rows)
-                if (step.preview && step.preview.length > 0) {
-                    const previewRows = step.preview.slice(0, 5);
-                    const columns = step.columns && step.columns.length > 0
-                        ? step.columns
-                        : Object.keys(previewRows[0] || {});
+                if (preview && preview.length > 0) {
+                    const previewRows = preview.slice(0, 5);
+                    const previewCols = columns.length > 0 ? columns : Object.keys(previewRows[0] || {});
 
-                    if (columns.length > 0) {
-                        detailContent += '<div class="step-data-preview">';
-                        detailContent += '<div class="preview-header"><i class="fas fa-eye"></i> Data Preview</div>';
-                        detailContent += '<div class="preview-table-wrapper"><table class="preview-table"><thead><tr>';
-                        columns.slice(0, 6).forEach(col => {  // Max 6 columns
-                            detailContent += `<th>${this.escapeHtml(col)}</th>`;
-                        });
-                        if (columns.length > 6) {
-                            detailContent += '<th>...</th>';
-                        }
-                        detailContent += '</tr></thead><tbody>';
-                        previewRows.forEach(row => {
-                            detailContent += '<tr>';
-                            columns.slice(0, 6).forEach(col => {
-                                let val = row[col];
-                                // Format numbers and currency
-                                if (typeof val === 'number') {
-                                    if (col.toLowerCase().includes('amount') || col.toLowerCase().includes('total') ||
-                                        col.toLowerCase().includes('spend') || col.toLowerCase().includes('balance') ||
-                                        col.toLowerCase().includes('debit') || col.toLowerCase().includes('credit')) {
-                                        val = this.formatCurrency(val);
-                                    } else {
-                                        val = val.toLocaleString();
-                                    }
-                                }
-                                detailContent += `<td>${this.escapeHtml(String(val ?? ''))}</td>`;
-                            });
-                            if (columns.length > 6) {
-                                detailContent += '<td>...</td>';
-                            }
-                            detailContent += '</tr>';
-                        });
-                        detailContent += '</tbody></table></div>';
-                        if (step.rowCount > previewRows.length) {
-                            detailContent += `<div class="preview-more">... and ${step.rowCount - previewRows.length} more rows</div>`;
-                        }
-                        detailContent += '</div>';
+                    if (previewCols.length > 0) {
+                        detailContent += `
+                            <div class="data-preview-section">
+                                <div class="preview-header">
+                                    <i class="fas fa-eye"></i>
+                                    <span>Data Preview</span>
+                                    <span class="preview-count">${previewRows.length} of ${rowCount || previewRows.length}</span>
+                                </div>
+                                <div class="preview-table-container">
+                                    <table class="preview-table-enhanced">
+                                        <thead>
+                                            <tr>
+                                                ${previewCols.slice(0, 6).map(col => `<th>${this.escapeHtml(this.formatColumnHeader(col))}</th>`).join('')}
+                                                ${previewCols.length > 6 ? '<th class="more-col">...</th>' : ''}
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            ${previewRows.map(row => `
+                                                <tr>
+                                                    ${previewCols.slice(0, 6).map(col => {
+                                                        let val = row[col];
+                                                        const isMonetary = this.isMonetaryColumn(col);
+                                                        if (typeof val === 'number') {
+                                                            val = isMonetary ? this.formatCurrency(val) : val.toLocaleString();
+                                                        }
+                                                        return `<td class="${isMonetary ? 'monetary' : ''}">${this.escapeHtml(String(val ?? ''))}</td>`;
+                                                    }).join('')}
+                                                    ${previewCols.length > 6 ? '<td class="more-col">...</td>' : ''}
+                                                </tr>
+                                            `).join('')}
+                                        </tbody>
+                                    </table>
+                                </div>
+                                ${rowCount && rowCount > previewRows.length ? `
+                                    <div class="preview-footer">
+                                        <i class="fas fa-ellipsis-h"></i>
+                                        <span>${(rowCount - previewRows.length).toLocaleString()} more rows</span>
+                                    </div>
+                                ` : ''}
+                            </div>`;
                     }
                 }
 
-                // Show summary (fallback if no rich data)
-                if (step.summary && !step.entity && !step.bestMatch && !step.preview) {
-                    detailContent += `<div class="step-summary"><i class="fas fa-check-circle"></i> ${this.escapeHtml(step.summary)}</div>`;
+                // Show error if present
+                if (step.error || result.error) {
+                    detailContent += `
+                        <div class="tool-error-section">
+                            <div class="error-header">
+                                <i class="fas fa-exclamation-triangle"></i>
+                                <span>Error</span>
+                            </div>
+                            <div class="error-message">${this.escapeHtml(step.error || result.error)}</div>
+                        </div>`;
                 }
+
+                // Show summary (fallback if no rich data)
+                if (step.summary && !entity && !bestMatch && !preview.length && !step.error) {
+                    detailContent += `
+                        <div class="tool-summary-section">
+                            <i class="fas fa-info-circle"></i>
+                            <span>${this.escapeHtml(step.summary)}</span>
+                        </div>`;
+                }
+
+                detailContent += '</div>'; // close sca-tool-call-details
             }
 
             // Special handling for agent_step and tool types - show rich execution details
