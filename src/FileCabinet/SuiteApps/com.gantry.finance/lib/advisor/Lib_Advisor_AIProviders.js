@@ -64,6 +64,38 @@ define([
     }
 
     /**
+     * Recursively sanitize tool parameters for Gemini API
+     * Gemini does not allow empty strings in enum arrays
+     * @param {Object} params - The parameters object to sanitize
+     * @returns {Object} - Sanitized parameters with empty enum values removed
+     */
+    function sanitizeParametersForGemini(params) {
+        if (!params || typeof params !== 'object') {
+            return params;
+        }
+
+        const result = Array.isArray(params) ? [] : {};
+
+        for (const key in params) {
+            if (!params.hasOwnProperty(key)) continue;
+
+            const value = params[key];
+
+            if (key === 'enum' && Array.isArray(value)) {
+                // Filter out empty strings from enum arrays
+                result[key] = value.filter(item => item !== '');
+            } else if (value && typeof value === 'object') {
+                // Recursively sanitize nested objects
+                result[key] = sanitizeParametersForGemini(value);
+            } else {
+                result[key] = value;
+            }
+        }
+
+        return result;
+    }
+
+    /**
      * Get NetSuite model family for a model name
      * Must be a function since llm.ModelFamily can't be accessed during define()
      * Uses dynamic lookup with fallback for future NetSuite model additions
@@ -1113,7 +1145,7 @@ define([
                 functionDeclarations: options.tools.map(tool => ({
                     name: tool.name,
                     description: tool.description,
-                    parameters: tool.parameters
+                    parameters: sanitizeParametersForGemini(tool.parameters)
                 }))
             }];
         }
