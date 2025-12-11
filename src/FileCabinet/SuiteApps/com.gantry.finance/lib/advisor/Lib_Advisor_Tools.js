@@ -21,6 +21,7 @@
  */
 define([
     'N/log',
+    'N/search',
     './Lib_Advisor_EntityResolver',
     './Lib_Advisor_QueryExecutor',
     './Lib_Advisor_Utils',
@@ -37,6 +38,7 @@ define([
     '../Lib_SpendVelocity_Data'
 ], function(
     log,
+    search,
     EntityResolver,
     QueryExecutor,
     Utils,
@@ -2540,6 +2542,451 @@ IMPORTANT SuiteQL notes:
             },
             displayName: function(args) {
                 return args.purpose || 'Running custom query...';
+            }
+        },
+
+        run_saved_search: {
+            name: 'run_saved_search',
+            description: `Execute a NetSuite saved search by its internal ID or script ID.
+Use this when:
+- User mentions a specific saved search name or ID
+- User wants to run a pre-built report
+- You need data from a custom search the user has created
+
+The search returns up to 1000 rows with all available columns.
+Use list_saved_searches first if you need to find available searches.
+
+Examples:
+- run_saved_search({ search_id: "customsearch_ar_aging" })
+- run_saved_search({ search_id: "123", filters: [["customer", "is", "456"]] })`,
+            parameters: {
+                type: 'object',
+                properties: {
+                    search_id: {
+                        type: 'string',
+                        description: 'The internal ID (e.g., "123") or script ID (e.g., "customsearch_ar_aging") of the saved search'
+                    },
+                    filters: {
+                        type: 'array',
+                        description: 'Optional additional filters to apply. Format: [["fieldname", "operator", "value"], ...]. Operators: is, isnot, anyof, noneof, greaterthan, lessthan, contains, doesnotcontain, startswith, isempty, isnotempty',
+                        items: {
+                            type: 'array',
+                            items: { type: 'string' }
+                        }
+                    },
+                    max_results: {
+                        type: 'number',
+                        description: 'Maximum number of results to return (default: 500, max: 1000)'
+                    }
+                },
+                required: ['search_id']
+            },
+            execute: function(args) {
+                const searchId = args.search_id;
+                const additionalFilters = args.filters || [];
+                const maxResults = Math.min(args.max_results || 500, 1000);
+
+                log.debug('run_saved_search', {
+                    searchId: searchId,
+                    filterCount: additionalFilters.length,
+                    maxResults: maxResults
+                });
+
+                try {
+                    // Load the saved search
+                    const savedSearch = search.load({ id: searchId });
+
+                    // Add additional filters if provided
+                    if (additionalFilters.length > 0) {
+                        const existingFilters = savedSearch.filters || [];
+                        additionalFilters.forEach(function(filter) {
+                            if (Array.isArray(filter) && filter.length >= 3) {
+                                existingFilters.push(search.createFilter({
+                                    name: filter[0],
+                                    operator: search.Operator[filter[1].toUpperCase()] || filter[1],
+                                    values: filter.slice(2)
+                                }));
+                            }
+                        });
+                        savedSearch.filters = existingFilters;
+                    }
+
+                    // Execute and collect results
+                    const rows = [];
+                    const columns = [];
+                    let columnsMapped = false;
+
+                    savedSearch.run().each(function(result) {
+                        // Map column names on first result
+                        if (!columnsMapped) {
+                            result.columns.forEach(function(col) {
+                                const colName = col.label || col.name || col.join + '_' + col.name;
+                                columns.push(colName);
+                            });
+                            columnsMapped = true;
+                        }
+
+                        // Build row object
+                        const row = {};
+                        result.columns.forEach(function(col, idx) {
+                            const colName = columns[idx];
+                            const value = result.getValue(col);
+                            const text = result.getText(col);
+                            // Use text if available (for select fields), otherwise value
+                            row[colName] = text || value;
+                        });
+                        rows.push(row);
+
+                        return rows.length < maxResults;
+                    });
+
+                    return {
+                        success: true,
+                        searchId: searchId,
+                        searchTitle: savedSearch.title || searchId,
+                        recordType: savedSearch.searchType,
+                        columns: columns,
+                        rows: rows,
+                        rowCount: rows.length,
+                        truncated: rows.length >= maxResults,
+                        tool: 'run_saved_search'
+                    };
+
+                } catch (e) {
+                    log.error('run_saved_search error', {
+                        searchId: searchId,
+                        error: e.message
+                    });
+
+                    return {
+                        success: false,
+                        error: e.message,
+                        searchId: searchId,
+                        hint: e.message.includes('Invalid search') ?
+                            'The search ID may be incorrect. Use list_saved_searches to find available searches.' :
+                            'Check that you have permission to run this search.',
+                        tool: 'run_saved_search'
+                    };
+                }
+            },
+            displayName: function(args) {
+                return 'Running saved search ' + (args.search_id || '') + '...';
+            }
+        },
+
+        list_saved_searches: {
+            name: 'list_saved_searches',
+            description: `List available saved searches in the system, optionally filtered by record type or title.
+Use this to:
+- Find available searches before running them
+- Help user identify the right search by name
+- Discover what pre-built reports exist
+
+Returns search ID, title, record type, and description.`,
+            parameters: {
+                type: 'object',
+                properties: {
+                    record_type: {
+                        type: 'string',
+                        description: 'Filter by record type (e.g., "transaction", "customer", "vendor", "invoice", "salesorder"). Leave empty for all types.',
+                        enum: ['transaction', 'customer', 'vendor', 'employee', 'invoice', 'salesorder', 'purchaseorder', 'item', 'account', 'journalentry', 'creditmemo', 'vendorbill', 'vendorpayment', 'customerpayment', '']
+                    },
+                    title_contains: {
+                        type: 'string',
+                        description: 'Filter searches where title contains this text (case-insensitive)'
+                    },
+                    max_results: {
+                        type: 'number',
+                        description: 'Maximum number of searches to return (default: 50, max: 200)'
+                    }
+                },
+                required: []
+            },
+            execute: function(args) {
+                const recordType = args.record_type || '';
+                const titleContains = (args.title_contains || '').toLowerCase();
+                const maxResults = Math.min(args.max_results || 50, 200);
+
+                log.debug('list_saved_searches', {
+                    recordType: recordType,
+                    titleContains: titleContains
+                });
+
+                try {
+                    // Build search for saved searches
+                    const filters = [
+                        ['isinactive', 'is', 'F'],
+                        'AND',
+                        ['ispublic', 'is', 'T']  // Only public searches
+                    ];
+
+                    if (recordType) {
+                        filters.push('AND');
+                        filters.push(['recordtype', 'is', recordType]);
+                    }
+
+                    if (titleContains) {
+                        filters.push('AND');
+                        filters.push(['title', 'contains', titleContains]);
+                    }
+
+                    const searchSearch = search.create({
+                        type: 'savedsearch',
+                        filters: filters,
+                        columns: [
+                            search.createColumn({ name: 'internalid' }),
+                            search.createColumn({ name: 'title', sort: search.Sort.ASC }),
+                            search.createColumn({ name: 'recordtype' }),
+                            search.createColumn({ name: 'id' })  // Script ID
+                        ]
+                    });
+
+                    const searches = [];
+                    searchSearch.run().each(function(result) {
+                        searches.push({
+                            internalId: result.getValue('internalid'),
+                            scriptId: result.getValue('id'),
+                            title: result.getValue('title'),
+                            recordType: result.getText('recordtype') || result.getValue('recordtype')
+                        });
+                        return searches.length < maxResults;
+                    });
+
+                    return {
+                        success: true,
+                        searches: searches,
+                        count: searches.length,
+                        truncated: searches.length >= maxResults,
+                        filters: {
+                            recordType: recordType || 'all',
+                            titleContains: titleContains || 'none'
+                        },
+                        tool: 'list_saved_searches'
+                    };
+
+                } catch (e) {
+                    log.error('list_saved_searches error', { error: e.message });
+
+                    return {
+                        success: false,
+                        error: e.message,
+                        tool: 'list_saved_searches'
+                    };
+                }
+            },
+            displayName: function(args) {
+                const type = args.record_type ? ' for ' + args.record_type : '';
+                return 'Listing saved searches' + type + '...';
+            }
+        },
+
+        run_report: {
+            name: 'run_report',
+            description: `Execute a financial report from NetSuite's standard reports or custom reports.
+This executes the report and returns the data in a structured format.
+
+Common report types:
+- income_statement: Profit & Loss report
+- balance_sheet: Balance Sheet report
+- cash_flow: Cash Flow Statement
+- ar_aging: AR Aging Summary
+- ap_aging: AP Aging Summary
+- trial_balance: Trial Balance
+- general_ledger: GL Detail
+
+Use parameters to filter by date range, subsidiary, class, department, etc.`,
+            parameters: {
+                type: 'object',
+                properties: {
+                    report_type: {
+                        type: 'string',
+                        description: 'Type of report to run',
+                        enum: ['income_statement', 'balance_sheet', 'cash_flow', 'ar_aging', 'ap_aging', 'trial_balance', 'general_ledger', 'custom']
+                    },
+                    report_id: {
+                        type: 'string',
+                        description: 'For custom reports, the internal ID or script ID of the report'
+                    },
+                    period: {
+                        type: 'string',
+                        description: 'Time period: "this_month", "last_month", "this_quarter", "last_quarter", "ytd", "last_year", or specific dates as "YYYY-MM-DD to YYYY-MM-DD"'
+                    },
+                    subsidiary_id: {
+                        type: 'number',
+                        description: 'Filter by subsidiary internal ID'
+                    },
+                    class_id: {
+                        type: 'number',
+                        description: 'Filter by class internal ID'
+                    },
+                    department_id: {
+                        type: 'number',
+                        description: 'Filter by department internal ID'
+                    },
+                    location_id: {
+                        type: 'number',
+                        description: 'Filter by location internal ID'
+                    }
+                },
+                required: ['report_type']
+            },
+            execute: function(args) {
+                const reportType = args.report_type;
+                const period = args.period || 'this_month';
+
+                log.debug('run_report', { reportType: reportType, period: period });
+
+                try {
+                    // Map report types to our existing dashboard/data tools
+                    // Since N/report is not available, we simulate reports using our data tools
+                    let result;
+
+                    switch (reportType) {
+                        case 'income_statement':
+                            // Use existing income statement query
+                            const incomeSQL = `
+                                SELECT
+                                    account.accttype AS account_type,
+                                    account.displaynamewithhierarchy AS account_name,
+                                    SUM(CASE WHEN tal.credit IS NOT NULL THEN tal.credit ELSE 0 END) AS credit,
+                                    SUM(CASE WHEN tal.debit IS NOT NULL THEN tal.debit ELSE 0 END) AS debit,
+                                    SUM(COALESCE(tal.credit, 0) - COALESCE(tal.debit, 0)) AS net_amount
+                                FROM transactionaccountingline tal
+                                JOIN transaction t ON t.id = tal.transaction
+                                JOIN account ON account.id = tal.account
+                                WHERE t.posting = 'T'
+                                AND account.accttype IN ('Income', 'COGS', 'Expense', 'OthIncome', 'OthExpense')
+                                AND t.trandate >= ADD_MONTHS(TRUNC(SYSDATE, 'YEAR'), 0)
+                                GROUP BY account.accttype, account.displaynamewithhierarchy
+                                ORDER BY account.accttype, account.displaynamewithhierarchy
+                                FETCH FIRST 500 ROWS ONLY
+                            `;
+                            result = QueryExecutor.executeQuery(incomeSQL);
+                            result.reportType = 'Income Statement';
+                            break;
+
+                        case 'balance_sheet':
+                            const balanceSQL = `
+                                SELECT
+                                    account.accttype AS account_type,
+                                    account.displaynamewithhierarchy AS account_name,
+                                    SUM(COALESCE(tal.debit, 0) - COALESCE(tal.credit, 0)) AS balance
+                                FROM transactionaccountingline tal
+                                JOIN transaction t ON t.id = tal.transaction
+                                JOIN account ON account.id = tal.account
+                                WHERE t.posting = 'T'
+                                AND account.accttype IN ('Bank', 'AcctRec', 'OthCurrAsset', 'FixedAsset', 'OthAsset',
+                                                         'AcctPay', 'CreditCard', 'OthCurrLiab', 'LongTermLiab',
+                                                         'Equity', 'RetainEarn')
+                                GROUP BY account.accttype, account.displaynamewithhierarchy
+                                ORDER BY account.accttype, account.displaynamewithhierarchy
+                                FETCH FIRST 500 ROWS ONLY
+                            `;
+                            result = QueryExecutor.executeQuery(balanceSQL);
+                            result.reportType = 'Balance Sheet';
+                            break;
+
+                        case 'ar_aging':
+                            // Delegate to existing get_ar_aging functionality
+                            const arResult = DATA_TOOLS.get_ar_aging.execute({});
+                            return {
+                                success: arResult.success,
+                                reportType: 'AR Aging Summary',
+                                columns: arResult.columns,
+                                rows: arResult.rows,
+                                rowCount: arResult.rowCount,
+                                tool: 'run_report'
+                            };
+
+                        case 'ap_aging':
+                            // Delegate to existing get_ap_aging functionality
+                            const apResult = DATA_TOOLS.get_ap_aging.execute({});
+                            return {
+                                success: apResult.success,
+                                reportType: 'AP Aging Summary',
+                                columns: apResult.columns,
+                                rows: apResult.rows,
+                                rowCount: apResult.rowCount,
+                                tool: 'run_report'
+                            };
+
+                        case 'trial_balance':
+                            const trialResult = DATA_TOOLS.get_trial_balance.execute({});
+                            return {
+                                success: trialResult.success,
+                                reportType: 'Trial Balance',
+                                columns: trialResult.columns,
+                                rows: trialResult.rows,
+                                rowCount: trialResult.rowCount,
+                                tool: 'run_report'
+                            };
+
+                        case 'cash_flow':
+                            // Use cash flow dashboard
+                            const cashResult = DASHBOARD_TOOLS.dashboard_cashflow.execute({});
+                            return {
+                                success: cashResult.success,
+                                reportType: 'Cash Flow Summary',
+                                data: cashResult.data,
+                                tool: 'run_report'
+                            };
+
+                        case 'general_ledger':
+                            const glResult = DATA_TOOLS.get_gl_activity.execute({
+                                period: period
+                            });
+                            return {
+                                success: glResult.success,
+                                reportType: 'General Ledger',
+                                columns: glResult.columns,
+                                rows: glResult.rows,
+                                rowCount: glResult.rowCount,
+                                tool: 'run_report'
+                            };
+
+                        case 'custom':
+                            if (!args.report_id) {
+                                return {
+                                    success: false,
+                                    error: 'report_id is required for custom reports',
+                                    tool: 'run_report'
+                                };
+                            }
+                            // For custom reports, try to run as a saved search
+                            return UTILITY_TOOLS.run_saved_search.execute({
+                                search_id: args.report_id,
+                                max_results: 500
+                            });
+
+                        default:
+                            return {
+                                success: false,
+                                error: 'Unknown report type: ' + reportType,
+                                availableTypes: ['income_statement', 'balance_sheet', 'cash_flow', 'ar_aging', 'ap_aging', 'trial_balance', 'general_ledger', 'custom'],
+                                tool: 'run_report'
+                            };
+                    }
+
+                    const formatted = formatResult(result, 'run_report');
+                    formatted.reportType = result.reportType || reportType;
+                    return formatted;
+
+                } catch (e) {
+                    log.error('run_report error', {
+                        reportType: reportType,
+                        error: e.message
+                    });
+
+                    return {
+                        success: false,
+                        error: e.message,
+                        reportType: reportType,
+                        tool: 'run_report'
+                    };
+                }
+            },
+            displayName: function(args) {
+                return 'Running ' + (args.report_type || 'report') + '...';
             }
         },
 
