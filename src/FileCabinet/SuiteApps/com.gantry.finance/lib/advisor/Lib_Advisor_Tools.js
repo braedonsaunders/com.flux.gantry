@@ -2603,15 +2603,29 @@ ALWAYS use this tool for your final response instead of plain text.
                                 },
                                 items: {
                                     type: 'array',
-                                    description: 'For metrics: array of {label, value, change?, trend?}. For list: array of strings'
+                                    description: 'For metrics: array of {label, value, change?, trend?}. For list: array of strings',
+                                    items: {
+                                        type: 'object',
+                                        properties: {
+                                            label: { type: 'string', description: 'Label for the metric or list item text' },
+                                            value: { type: 'string', description: 'Value for the metric' },
+                                            change: { type: 'string', description: 'Change indicator (e.g., "+5%")' },
+                                            trend: { type: 'string', enum: ['up', 'down'], description: 'Trend direction' }
+                                        }
+                                    }
                                 },
                                 headers: {
                                     type: 'array',
-                                    description: 'For table: column headers'
+                                    description: 'For table: column headers',
+                                    items: { type: 'string' }
                                 },
                                 rows: {
                                     type: 'array',
-                                    description: 'For table: array of row arrays'
+                                    description: 'For table: array of row arrays',
+                                    items: {
+                                        type: 'array',
+                                        items: { type: 'string' }
+                                    }
                                 },
                                 chartType: {
                                     type: 'string',
@@ -2620,7 +2634,15 @@ ALWAYS use this tool for your final response instead of plain text.
                                 },
                                 data: {
                                     type: 'array',
-                                    description: 'For chart: array of {label, value} objects'
+                                    description: 'For chart: array of {label, value} objects',
+                                    items: {
+                                        type: 'object',
+                                        properties: {
+                                            label: { type: 'string', description: 'Data point label' },
+                                            value: { type: 'number', description: 'Data point value' }
+                                        },
+                                        required: ['label', 'value']
+                                    }
                                 }
                             },
                             required: ['type']
