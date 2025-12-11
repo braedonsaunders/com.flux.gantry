@@ -328,13 +328,44 @@
             net.textContent = (co.cash.netChange >= 0 ? "+" : "") + fmtMoney(co.cash.netChange);
             net.className = co.cash.netChange >= 0 ? "kpi-sub text-green" : "kpi-sub text-red";
 
-            // Runway Bar
+            // Runway Bar (hidden, for compatibility)
             const runwayContainer = el("#cfRunwayBar");
             if (runwayContainer && runway) {
-                // Pass the full runway object with all fields
                 runwayContainer.innerHTML = RunwayBar.generate(runway, {
                     maxWeeks: Math.max(26, (meta.activeConfig.horizonWeeks || 8) * 2)
                 });
+            }
+
+            // Compact Runway Display
+            const runwayWeeksEl = el("#cfRunwayWeeks");
+            const runwayStatusEl = el("#cfRunwayStatus");
+            if (runwayWeeksEl && runway) {
+                const weeks = runway.weeksRunway || 0;
+                const netChange = runway.netWeeklyChange || (runway.avgWeeklyInflow - runway.avgWeeklyBurn);
+                const isNegativeCash = (runway.currentCash || 0) < 0;
+                const isNetPositive = netChange > 0;
+
+                if (isNegativeCash) {
+                    runwayWeeksEl.textContent = "⚠";
+                    runwayWeeksEl.style.color = "#ef4444";
+                    if (runwayStatusEl) runwayStatusEl.textContent = "Negative Cash";
+                } else if (isNetPositive) {
+                    runwayWeeksEl.textContent = "∞";
+                    runwayWeeksEl.style.color = "#10b981";
+                    if (runwayStatusEl) runwayStatusEl.textContent = "Cash Flow Positive";
+                } else if (weeks <= 4) {
+                    runwayWeeksEl.textContent = weeks.toFixed(0) + "w";
+                    runwayWeeksEl.style.color = "#ef4444";
+                    if (runwayStatusEl) runwayStatusEl.textContent = "Critical runway";
+                } else if (weeks <= 8) {
+                    runwayWeeksEl.textContent = weeks.toFixed(0) + "w";
+                    runwayWeeksEl.style.color = "#f59e0b";
+                    if (runwayStatusEl) runwayStatusEl.textContent = "Limited runway";
+                } else {
+                    runwayWeeksEl.textContent = weeks.toFixed(0) + "w+";
+                    runwayWeeksEl.style.color = "#10b981";
+                    if (runwayStatusEl) runwayStatusEl.textContent = "Healthy runway";
+                }
             }
 
             // Vitals

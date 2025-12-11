@@ -364,20 +364,23 @@
                                             </div>
                                         </div>
 
-                                        <!-- Runway Card -->
+                                        <!-- Runway Card - Compact -->
                                         <div class="cf-vital-card cf-vital-runway">
                                             <div class="cf-vital-header">
                                                 <div class="cf-vital-icon-ring bg-indigo-gradient">
                                                     <i class="fas fa-road"></i>
                                                 </div>
-                                                <div class="cf-vital-badge">Runway</div>
                                             </div>
                                             <div class="cf-vital-body">
-                                                <div class="cf-runway-display" id="cfRunwayBar"></div>
+                                                <span class="cf-vital-label">Cash Runway</span>
+                                                <span class="cf-vital-value" id="cfRunwayWeeks">-</span>
+                                                <span class="cf-vital-hint" id="cfRunwayStatus">Calculating...</span>
                                             </div>
                                         </div>
                                     </div>
                                 </div>
+                                <!-- Hidden runway bar for JS compatibility -->
+                                <div id="cfRunwayBar" style="display:none;"></div>
 
                                 <!-- Bridge and Chart Row -->
                                 <div class="row mb-3">
