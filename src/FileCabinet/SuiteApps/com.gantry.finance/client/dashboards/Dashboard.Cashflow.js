@@ -379,8 +379,8 @@
             const arCoverage = liquidLiab > 0 ? liquidAssets / liquidLiab : 0;
             el("#cfVitalLiquid").textContent = arCoverage > 0 ? arCoverage.toFixed(2) + 'x' : "N/A";
             
-            el("#cfVitalDso").textContent = (co.ar.avgDaysToPay || "0") + " Days";
-            el("#cfVitalDpo").textContent = (co.ap.avgDaysToPay || "0") + " Days";
+            el("#cfVitalDso").textContent = (co.ar.avgDaysToPay || "0");
+            el("#cfVitalDpo").textContent = (co.ap.avgDaysToPay || "0");
 
             const netFlow = co.cash.totalInflows - co.cash.totalOutflows;
             const elNetFlow = el("#cfVitalNetFlow");

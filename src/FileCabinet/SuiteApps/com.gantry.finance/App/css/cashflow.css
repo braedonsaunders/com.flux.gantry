@@ -2600,6 +2600,21 @@ body.dark-mode .cf-group-header td {
     margin-top: 1px;
 }
 
+/* Inline metric display (DSO/DPO) */
+.cf-vital-inline {
+    display: flex;
+    align-items: baseline;
+    gap: 3px;
+    font-size: 14px;
+    font-weight: 700;
+    line-height: 1.1;
+}
+
+.cf-vital-sep {
+    color: #cbd5e1;
+    font-weight: 400;
+}
+
 /* Dual metric card (DSO/DPO) */
 .cf-vital-dual {
     display: flex;
