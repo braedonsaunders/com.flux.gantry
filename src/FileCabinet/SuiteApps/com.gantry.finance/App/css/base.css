@@ -421,17 +421,17 @@ body {
     position: absolute;
     inset: 0;
     border: 2px solid transparent;
-    border-top-color: #3b82f6;
-    border-right-color: #3b82f6;
+    border-top-color: #f59e0b;
+    border-right-color: #f59e0b;
     border-radius: 50%;
     animation: gantry-ring-spin 1.5s cubic-bezier(0.5, 0, 0.5, 1) infinite;
 }
 
 .gantry-loading-icon-ring-2 {
     inset: 8px;
-    border-top-color: #60a5fa;
+    border-top-color: #fbbf24;
     border-right-color: transparent;
-    border-bottom-color: #60a5fa;
+    border-bottom-color: #fbbf24;
     border-left-color: transparent;
     animation: gantry-ring-spin 2s cubic-bezier(0.5, 0, 0.5, 1) infinite reverse;
 }
@@ -439,7 +439,7 @@ body {
 /* The main icon */
 .gantry-loading-icon {
     font-size: 28px;
-    color: #1e40af;
+    color: #b45309;
     animation: gantry-icon-pulse 2s ease-in-out infinite;
     z-index: 1;
 }
@@ -483,7 +483,7 @@ body {
     position: absolute;
     height: 100%;
     width: 40%;
-    background: linear-gradient(90deg, #3b82f6 0%, #60a5fa 50%, #3b82f6 100%);
+    background: linear-gradient(90deg, #f59e0b 0%, #fbbf24 50%, #f59e0b 100%);
     border-radius: 3px;
     animation: gantry-progress-slide 1.5s ease-in-out infinite;
 }
@@ -537,17 +537,17 @@ body.dark-mode .gantry-loading-screen {
 }
 
 body.dark-mode .gantry-loading-icon {
-    color: #60a5fa;
+    color: #fbbf24;
 }
 
 body.dark-mode .gantry-loading-icon-ring {
-    border-top-color: #3b82f6;
-    border-right-color: #3b82f6;
+    border-top-color: #f59e0b;
+    border-right-color: #f59e0b;
 }
 
 body.dark-mode .gantry-loading-icon-ring-2 {
-    border-top-color: #60a5fa;
-    border-bottom-color: #60a5fa;
+    border-top-color: #fbbf24;
+    border-bottom-color: #fbbf24;
 }
 
 body.dark-mode .gantry-loading-brand {
@@ -563,7 +563,7 @@ body.dark-mode .gantry-loading-progress {
 }
 
 body.dark-mode .gantry-loading-progress-bar {
-    background: linear-gradient(90deg, #3b82f6 0%, #60a5fa 50%, #3b82f6 100%);
+    background: linear-gradient(90deg, #f59e0b 0%, #fbbf24 50%, #f59e0b 100%);
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
