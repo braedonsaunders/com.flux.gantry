@@ -193,9 +193,31 @@ define([
         });
 
         // Styling for full-width iframe below NS header (no grey bar)
+        // CRITICAL: Inject hiding CSS as early as possible to prevent form header flash
         field.defaultValue = `
             <style>
-                /* Hide the form elements that create the grey bar */
+                /* === ANTI-FLASH: Hide form elements BEFORE first paint === */
+                /* These rules must load before NetSuite renders to prevent FOUC */
+                #main_form > table:first-child,
+                .uir-page-title-secondline,
+                .uir-page-title,
+                .uir-page-title-firstline,
+                #main_form > tbody > tr:first-child,
+                #main_form > table > tbody > tr:first-child {
+                    visibility: hidden !important;
+                    height: 0 !important;
+                    max-height: 0 !important;
+                    overflow: hidden !important;
+                    padding: 0 !important;
+                    margin: 0 !important;
+                    border: none !important;
+                    opacity: 0 !important;
+                    pointer-events: none !important;
+                    position: absolute !important;
+                    clip: rect(0, 0, 0, 0) !important;
+                }
+
+                /* Double-ensure with display none (fires after visibility) */
                 #main_form > table:first-child,
                 .uir-page-title-secondline {
                     display: none !important;

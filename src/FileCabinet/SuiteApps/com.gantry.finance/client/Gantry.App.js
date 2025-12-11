@@ -267,16 +267,18 @@
         // Calculate hover and border colors from the adjusted sidebar color
         let hoverRgb, borderRgb;
 
+        const sidebar = document.querySelector('.gantry-sidebar');
+
         if (needsLightTheme) {
             // Light sidebar: darken for hover/border, use dark text
             hoverRgb = adjustBrightness(sidebarRgb, -0.08);
             borderRgb = adjustBrightness(sidebarRgb, -0.12);
-            document.querySelector('.gantry-sidebar')?.classList.add('light-theme');
+            sidebar?.classList.add('light-theme');
         } else {
             // Dark sidebar: lighten for hover/border, use light text
             hoverRgb = adjustBrightness(sidebarRgb, 0.15);
             borderRgb = adjustBrightness(sidebarRgb, 0.20);
-            document.querySelector('.gantry-sidebar')?.classList.remove('light-theme');
+            sidebar?.classList.remove('light-theme');
         }
 
         root.style.setProperty('--sidebar-bg-hover', `rgb(${hoverRgb.r}, ${hoverRgb.g}, ${hoverRgb.b})`);
@@ -295,6 +297,16 @@
                 border: `rgb(${borderRgb.r}, ${borderRgb.g}, ${borderRgb.b})`
             }
         };
+
+        // === SIDEBAR REVEAL: Trigger elegant slide-in animation ===
+        // Color is now applied, sidebar can be revealed
+        if (sidebar && !sidebar.classList.contains('sidebar-ready')) {
+            // Small delay to ensure CSS variables are painted before animation
+            requestAnimationFrame(() => {
+                sidebar.classList.add('sidebar-ready');
+                console.log('[Gantry] Sidebar revealed with synced color');
+            });
+        }
 
         return true;
     }
@@ -397,7 +409,7 @@
         if (window.SettingsController && SettingsController.loadAndApplySidebarSettings) {
             try {
                 await SettingsController.loadAndApplySidebarSettings();
-                
+
                 // Check if a specific default is set in settings
                 if (SettingsController.data && SettingsController.data.defaultDashboard) {
                     defaultRoute = SettingsController.data.defaultDashboard;
@@ -406,12 +418,28 @@
                 console.warn('[Gantry.App] Could not load settings, using defaults', e);
             }
         }
-        
+
         // Navigate to default route
         Router.navigate(defaultRoute);
         console.log('[Gantry.App] Started - navigated to', defaultRoute);
+
+        // === HIDE LOADING SCREEN ===
+        // Fade out the loading screen after app is initialized
+        const loadingScreen = document.getElementById('gantry-loading-screen');
+        if (loadingScreen) {
+            // Small delay to ensure first paint of dashboard content
+            setTimeout(() => {
+                loadingScreen.classList.add('hidden');
+                console.log('[Gantry.App] Loading screen hidden');
+
+                // Remove from DOM after animation completes
+                setTimeout(() => {
+                    loadingScreen.remove();
+                }, 500);
+            }, 100);
+        }
     }
-    
+
     startApp();
 
 })(window);
