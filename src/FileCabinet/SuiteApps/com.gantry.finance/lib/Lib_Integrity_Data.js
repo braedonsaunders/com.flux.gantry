@@ -39,11 +39,13 @@ function(query, record, search, runtime, format, Shared, Utils) {
     const Z_SCORE_THRESHOLD = 3;
     const RSF_THRESHOLD = 10;
     const SEQUENTIAL_INVOICE_MIN = 3;
-    // Sequential invoice date thresholds - invoices spread over time are NORMAL
-    // Only flag when sequential invoices are clustered within a short time window
-    const SEQUENTIAL_SAME_DAY_THRESHOLD = 0;      // Same day = HIGH risk
-    const SEQUENTIAL_CLOSE_DAYS_THRESHOLD = 7;    // Within 7 days = MEDIUM risk
-    const SEQUENTIAL_SPREAD_DAYS_THRESHOLD = 30;  // More than 30 days apart = likely normal, don't flag
+    // Sequential invoice detection - Shell Company Indicator
+    // If a vendor's invoices to us are perfectly sequential with NO GAPS over time,
+    // it suggests we're their ONLY customer - a key shell company red flag.
+    // Same-day sequential invoices are LESS suspicious (normal bulk ordering).
+    const SEQUENTIAL_SAME_DAY_THRESHOLD = 1;       // Same day = LOW risk (bulk orders)
+    const SEQUENTIAL_MIN_DAYS_FOR_FLAG = 7;        // Need at least 7 days spread to be suspicious
+    const SEQUENTIAL_HIGH_RISK_DAYS = 30;          // 30+ days of sequential = HIGH risk (shell company)
     
     // Benford Expected Frequencies - First Digit
     const BENFORD_EXPECTED_1D = {
@@ -1229,9 +1231,17 @@ function(query, record, search, runtime, format, Shared, Utils) {
     }
 
     // ==========================================
-    // SEQUENTIAL INVOICE DETECTION - CORRECTED: Per-Vendor Grouping + Date Proximity
-    // Only detects sequential invoices from the SAME vendor that are TEMPORALLY CLUSTERED
-    // Sequential invoices spread over weeks/months are NORMAL vendor behavior
+    // SEQUENTIAL INVOICE DETECTION - Shell Company Indicator
+    // Detects sequential invoices from the SAME vendor with NO GAPS over time.
+    //
+    // KEY INSIGHT: If a vendor's invoice numbers to us are perfectly sequential
+    // (001, 002, 003...) over weeks/months, it means we're their ONLY customer.
+    // Legitimate vendors have gaps because they invoice OTHER customers too.
+    //
+    // Risk levels:
+    // - Same day sequential: LOW risk (normal bulk ordering)
+    // - Spread over 7-30 days: MEDIUM risk
+    // - Spread over 30+ days: HIGH risk (strong shell company indicator)
     // ==========================================
 
     /**
@@ -1270,7 +1280,6 @@ function(query, record, search, runtime, format, Shared, Utils) {
     function detectSequentialInvoices(startDate, endDate, subsidiaryId, config) {
         const subFilter = subsidiaryId ? `AND T.subsidiary = ${subsidiaryId}` : '';
         const minCount = (config && config.sequentialMinCount) || SEQUENTIAL_INVOICE_MIN;
-        const maxDateSpread = (config && config.sequentialMaxDateSpread) || SEQUENTIAL_SPREAD_DAYS_THRESHOLD;
 
         // Get vendor bills with entity information
         const sql = `
@@ -1342,8 +1351,8 @@ function(query, record, search, runtime, format, Shared, Utils) {
                         } else {
                             // End of run - check if it meets requirements
                             if (run.length >= minCount) {
-                                const group = buildSequentialGroup(run, vendorGroup, maxDateSpread);
-                                // Only add if date proximity check passes (not spread over too many days)
+                                const group = buildSequentialGroup(run, vendorGroup);
+                                // Only add if it passes the date spread check (same-day is less suspicious)
                                 if (group) groups.push(group);
                             }
                             // Start new run
@@ -1354,7 +1363,7 @@ function(query, record, search, runtime, format, Shared, Utils) {
 
                 // Check final run for this vendor
                 if (run.length >= minCount) {
-                    const group = buildSequentialGroup(run, vendorGroup, maxDateSpread);
+                    const group = buildSequentialGroup(run, vendorGroup);
                     if (group) groups.push(group);
                 }
             });
@@ -1368,43 +1377,45 @@ function(query, record, search, runtime, format, Shared, Utils) {
 
     /**
      * Helper function to build a sequential group object
-     * Returns null if the sequential invoices are spread over too many days (normal behavior)
+     * Returns null if same-day invoices (normal bulk ordering behavior)
+     *
+     * SHELL COMPANY INDICATOR: If sequential invoices are spread over many days,
+     * it means we're likely their ONLY customer (no gaps from other customers).
      */
-    function buildSequentialGroup(run, vendorGroup, maxDateSpread) {
+    function buildSequentialGroup(run, vendorGroup) {
         const totalAmt = run.reduce((s, inv) => s + inv.amount, 0);
         const dateSpan = calculateDateSpan(run);
 
-        // KEY CHECK: If invoices are spread over too many days, this is NORMAL vendor behavior
-        // Don't flag sequential invoices that are spread over weeks/months
-        if (dateSpan.days > maxDateSpread) {
-            return null; // Not suspicious - normal vendor invoice sequence over time
+        // SAME DAY = Normal bulk ordering, don't flag (or flag with very low priority)
+        if (dateSpan.allSameDay || dateSpan.days < SEQUENTIAL_MIN_DAYS_FOR_FLAG) {
+            // Could return null to not flag at all, or return with low risk
+            // For now, don't flag same-day sequential invoices - they're normal
+            return null;
         }
 
-        // Calculate risk based on temporal clustering
+        // Calculate risk based on DATE SPREAD (more spread = more suspicious)
         let riskScore = 0;
         let riskLevel = 'low';
         let dateReason = '';
 
-        if (dateSpan.allSameDay) {
-            // SAME DAY - Very suspicious: multiple sequential invoices created on same day
-            riskScore = 70;
+        if (dateSpan.days >= SEQUENTIAL_HIGH_RISK_DAYS) {
+            // SPREAD OVER 30+ DAYS - HIGH RISK: Shell company indicator
+            // This vendor has invoiced us sequentially over a month+ with no gaps
+            // Strong indicator that we're their ONLY customer
+            riskScore = 75;
             riskLevel = 'high';
-            dateReason = 'all on same day';
-        } else if (dateSpan.days <= SEQUENTIAL_CLOSE_DAYS_THRESHOLD) {
-            // CLOSE TOGETHER - Suspicious: sequential invoices within a week
-            riskScore = 55;
+            dateReason = `over ${dateSpan.days} days (no gaps - possible shell company)`;
+        } else if (dateSpan.days >= SEQUENTIAL_MIN_DAYS_FOR_FLAG) {
+            // SPREAD OVER 7-30 DAYS - MEDIUM RISK
+            // Sequential with no gaps over multiple weeks
+            riskScore = 50;
             riskLevel = 'medium';
-            dateReason = `within ${dateSpan.days} days`;
-        } else {
-            // SOMEWHAT SPREAD - Lower risk but still clustered enough to flag
-            riskScore = 40;
-            riskLevel = 'low';
-            dateReason = `over ${dateSpan.days} days`;
+            dateReason = `over ${dateSpan.days} days with no gaps`;
         }
 
         // Additional risk factors
-        // More sequential invoices = higher risk
-        riskScore += Math.min(run.length * 3, 15);
+        // More sequential invoices = higher risk (more evidence of being sole customer)
+        riskScore += Math.min(run.length * 4, 20);
         // Higher total amount = higher risk
         if (totalAmt > 100000) riskScore += 10;
         else if (totalAmt > 50000) riskScore += 7;

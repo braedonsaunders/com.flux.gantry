@@ -1491,18 +1491,18 @@
             var totalInvoices = sequentialInvoices.reduce(function(s, seq) {
                 return s + (seq.count || seq.sequenceLength || (seq.invoices ? seq.invoices.length : 0));
             }, 0);
-            var sameDayCount = sequentialInvoices.filter(function(s) { return s.allSameDay; }).length;
-            var highRiskCount = sequentialInvoices.filter(function(s) { return s.riskLevel === 'high' || s.allSameDay; }).length;
+            // High risk = spread over 30+ days (shell company indicator)
+            var highRiskCount = sequentialInvoices.filter(function(s) { return s.riskLevel === 'high' || s.dateSpanDays >= 30; }).length;
 
             var kpiHtml = this.buildKPIRow([
                 { label: 'Patterns Found', value: sequentialInvoices.length, icon: 'sort-numeric-down', color: sequentialInvoices.length > 0 ? 'warning' : 'success' },
-                { label: 'Same-Day Clusters', value: sameDayCount, icon: 'calendar-day', color: sameDayCount > 0 ? 'danger' : 'success', subtext: 'Highest risk' },
+                { label: 'High Risk (30+ days)', value: highRiskCount, icon: 'exclamation-triangle', color: highRiskCount > 0 ? 'danger' : 'success', subtext: 'Shell company indicator' },
                 { label: 'Total Invoices', value: totalInvoices, icon: 'file-invoice' },
                 { label: 'Total Amount', value: fmtMoney(totalAmount), icon: 'dollar-sign' }
             ]);
 
             if (sequentialInvoices.length === 0) {
-                container.innerHTML = kpiHtml + '<div class="empty-state mt-3"><i class="fas fa-check-circle text-success fa-3x mb-3"></i><h5>No Suspicious Sequential Patterns</h5><p>No temporally-clustered sequential invoice patterns detected.</p><p class="text-muted small">Sequential invoices spread over weeks or months are considered normal vendor behavior and are not flagged.</p></div>';
+                container.innerHTML = kpiHtml + '<div class="empty-state mt-3"><i class="fas fa-check-circle text-success fa-3x mb-3"></i><h5>No Suspicious Sequential Patterns</h5><p>No shell company indicators detected.</p><p class="text-muted small">Same-day sequential invoices (bulk orders) and normal vendor patterns are not flagged.</p></div>';
                 return;
             }
 
@@ -1528,15 +1528,18 @@
                 var firstTranId = invoices.length > 0 ? invoices[0].tranId : 'N/A';
                 var entityName = s.entityName || (invoices.length > 0 && invoices[0].entityName) || 'Unknown';
 
-                // Date clustering indicator
+                // Date span indicator - MORE days = MORE suspicious (reversed from before)
                 var dateSpanDays = s.dateSpanDays != null ? s.dateSpanDays : null;
                 var clusterBadge = '';
-                if (s.allSameDay) {
-                    clusterBadge = '<span class="badge badge-danger ml-1" title="All invoices on same day">Same Day</span>';
-                } else if (dateSpanDays != null && dateSpanDays <= 7) {
-                    clusterBadge = '<span class="badge badge-warning ml-1" title="Invoices within ' + dateSpanDays + ' days">' + dateSpanDays + ' days</span>';
+                if (dateSpanDays != null && dateSpanDays >= 30) {
+                    // 30+ days spread = HIGH risk (shell company indicator)
+                    clusterBadge = '<span class="badge badge-danger ml-1" title="Sequential over ' + dateSpanDays + ' days - possible shell company">' + dateSpanDays + ' days</span>';
+                } else if (dateSpanDays != null && dateSpanDays >= 7) {
+                    // 7-30 days = MEDIUM risk
+                    clusterBadge = '<span class="badge badge-warning ml-1" title="Sequential over ' + dateSpanDays + ' days">' + dateSpanDays + ' days</span>';
                 } else if (dateSpanDays != null) {
-                    clusterBadge = '<span class="badge badge-secondary ml-1" title="Invoices spread over ' + dateSpanDays + ' days">' + dateSpanDays + ' days</span>';
+                    // Less than 7 days (shouldn't appear since we don't flag these)
+                    clusterBadge = '<span class="badge badge-secondary ml-1">' + dateSpanDays + ' days</span>';
                 }
 
                 return '<tr class="clickable-row" onclick="IntegrityController.openSequentialDetailFlyout(' + idx + ')">' +
@@ -1551,7 +1554,7 @@
             }).join('');
 
             container.innerHTML = kpiHtml +
-                '<div class="alert alert-info py-2 mb-2"><i class="fas fa-sort-numeric-down mr-2"></i><strong>Sequential Invoice Detection</strong> - Only sequential invoices that are <strong>temporally clustered</strong> (within 30 days) are flagged. Same-day clusters are highest risk. Sequential invoices spread over months are normal vendor behavior.</div>' +
+                '<div class="alert alert-warning py-2 mb-2"><i class="fas fa-building mr-2"></i><strong>Shell Company Detection</strong> - Sequential invoice numbers with <strong>no gaps over time</strong> suggest you may be the vendor\'s ONLY customer. Legitimate vendors have gaps because they invoice other customers. Longer time spans = higher risk.</div>' +
                 '<div class="table-responsive"><table class="table table-sm table-hover">' +
                 '<thead><tr><th>First Invoice</th><th style="cursor:pointer" onclick="IntegrityController.sortTable(\'sequential\',\'entityName\')">Entity <i class="fas ' + sortIcon('entityName') + '"></i></th><th>Invoice Range</th><th class="text-center" style="cursor:pointer" onclick="IntegrityController.sortTable(\'sequential\',\'sequenceLength\')">Count <i class="fas ' + sortIcon('sequenceLength') + '"></i></th><th>Date Range</th><th class="text-right" style="cursor:pointer" onclick="IntegrityController.sortTable(\'sequential\',\'totalAmount\')">Amount <i class="fas ' + sortIcon('totalAmount') + '"></i></th><th style="cursor:pointer" onclick="IntegrityController.sortTable(\'sequential\',\'riskScore\')">Risk <i class="fas ' + sortIcon('riskScore') + '"></i></th></tr></thead>' +
                 '<tbody>' + rowsHtml + '</tbody></table></div>' +
@@ -2749,16 +2752,20 @@
             var invoiceCount = seq.count || seq.sequenceLength || invoices.length;
             var invoiceRange = (seq.startInvoice || seq.startNum) + ' - ' + (seq.endInvoice || seq.endNum);
 
-            // Date span info
+            // Date span info - MORE days = MORE suspicious (shell company indicator)
             var dateSpanLabel = 'Date Span';
             var dateSpanValue = 'N/A';
             var dateSpanColor = 'info';
-            if (seq.allSameDay) {
-                dateSpanValue = 'Same Day';
-                dateSpanColor = 'danger';
-            } else if (seq.dateSpanDays != null) {
+            if (seq.dateSpanDays != null) {
                 dateSpanValue = seq.dateSpanDays + ' days';
-                dateSpanColor = seq.dateSpanDays <= 7 ? 'warning' : 'info';
+                // Longer span = higher risk (opposite of before)
+                if (seq.dateSpanDays >= 30) {
+                    dateSpanColor = 'danger';  // 30+ days = high risk
+                } else if (seq.dateSpanDays >= 7) {
+                    dateSpanColor = 'warning'; // 7-30 days = medium risk
+                } else {
+                    dateSpanColor = 'info';    // Less than 7 days = lower risk
+                }
             }
 
             document.getElementById('atFlyoutTitle').textContent = entityName;
