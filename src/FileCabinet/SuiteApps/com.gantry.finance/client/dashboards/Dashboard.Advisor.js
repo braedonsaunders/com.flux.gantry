@@ -1510,26 +1510,30 @@
                 }
             }
 
-            // Add text content
+            // Rich content takes priority - if we have richContent, render ALL of it (including text blocks)
+            // Only fall back to response.text if no richContent exists
             const contentEl = document.getElementById(msgId + '-content');
-            if (contentEl && response.text) {
-                contentEl.innerHTML = this.formatText(response.text);
-                contentEl.style.display = 'block';
-            }
-
-            // Add rich content
             const richEl = document.getElementById(msgId + '-rich');
-            if (richEl && response.richContent && response.richContent.length > 0) {
+            const hasRichContent = response.richContent && response.richContent.length > 0;
+
+            if (hasRichContent && richEl) {
+                // Render ALL rich content items (text, tables, metrics, etc.)
                 let richHtml = '';
                 response.richContent.forEach(item => {
-                    if (item.type !== 'text' || !response.text) {
-                        richHtml += this.renderRichContent(item);
-                    }
+                    richHtml += this.renderRichContent(item);
                 });
                 if (richHtml) {
                     richEl.innerHTML = richHtml;
                     richEl.style.display = 'block';
                 }
+                // Hide text fallback since we have rich content
+                if (contentEl) {
+                    contentEl.style.display = 'none';
+                }
+            } else if (contentEl && response.text) {
+                // Fallback: no rich content, show plain text
+                contentEl.innerHTML = this.formatText(response.text);
+                contentEl.style.display = 'block';
             }
 
             // Add to messages array for history
