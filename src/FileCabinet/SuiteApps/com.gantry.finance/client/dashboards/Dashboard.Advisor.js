@@ -13,7 +13,8 @@
     'use strict';
 
     // Constants
-    const STORAGE_KEY = 'gantry_advisor_session';
+    const STORAGE_KEY = 'gantry_advisor_session';           // localStorage - persists across reloads
+    const ACTIVE_REQUEST_KEY = 'gantry_advisor_active_req'; // sessionStorage - cleared on reload
     const MAX_HISTORY = 50;
     
     // State
@@ -4231,16 +4232,25 @@
         
         /**
          * Save session to storage
+         * - Chat history goes to localStorage (persists across page reloads)
+         * - Active request goes to sessionStorage (only persists during navigation)
          */
         saveSession: function() {
             try {
-                const data = {
+                // Save chat history to localStorage (persists across reloads)
+                const historyData = {
                     messages: messages.slice(-MAX_HISTORY),
-                    sessionContext: sessionContext,  // Persist entity resolutions
-                    activeRequest: activeRequest,    // Persist in-flight request for resume
+                    sessionContext: sessionContext,
                     timestamp: Date.now()
                 };
-                sessionStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+                localStorage.setItem(STORAGE_KEY, JSON.stringify(historyData));
+
+                // Save active request to sessionStorage (cleared on page reload)
+                if (activeRequest) {
+                    sessionStorage.setItem(ACTIVE_REQUEST_KEY, JSON.stringify(activeRequest));
+                } else {
+                    sessionStorage.removeItem(ACTIVE_REQUEST_KEY);
+                }
             } catch (e) {
                 console.warn('[Advisor] Save failed:', e);
             }
@@ -4251,19 +4261,21 @@
          */
         loadSession: function() {
             try {
-                const data = sessionStorage.getItem(STORAGE_KEY);
-                if (data) {
-                    const parsed = JSON.parse(data);
+                // Load chat history from localStorage
+                const historyData = localStorage.getItem(STORAGE_KEY);
+                if (historyData) {
+                    const parsed = JSON.parse(historyData);
                     messages = parsed.messages || [];
-                    // Load full sessionContext with all fields, with defaults for missing
                     sessionContext = parsed.sessionContext || {};
                     sessionContext.resolvedEntities = sessionContext.resolvedEntities || {};
                     sessionContext.entityOrder = sessionContext.entityOrder || [];
                     sessionContext.topics = sessionContext.topics || [];
                     sessionContext.queryHistory = sessionContext.queryHistory || [];
-                    // Load active request if present
-                    activeRequest = parsed.activeRequest || null;
                 }
+
+                // Load active request from sessionStorage (only present during same-page navigation)
+                const activeData = sessionStorage.getItem(ACTIVE_REQUEST_KEY);
+                activeRequest = activeData ? JSON.parse(activeData) : null;
             } catch (e) {
                 messages = [];
                 sessionContext = {
