@@ -371,26 +371,72 @@ define(['N/log'], function(log) {
     }
 
     /**
-     * Check if query has a row limit
+     * Check if query has a proper SuiteQL row limit (FETCH FIRST)
      */
-    function hasRowLimit(sql) {
-        return /FETCH\s+FIRST\s+\d+\s+ROWS?\s+ONLY/i.test(sql) ||
-               /ROWNUM\s*<=?\s*\d+/i.test(sql) ||
-               /LIMIT\s+\d+/i.test(sql);
+    function hasFetchFirst(sql) {
+        return /FETCH\s+FIRST\s+\d+\s+ROWS?\s+ONLY/i.test(sql);
     }
 
     /**
-     * Add row limit to query if missing
+     * Check if query has LIMIT clause (not valid SuiteQL but LLM might write it)
      */
-    function ensureRowLimit(sql, limit = MAX_ROWS) {
-        if (hasRowLimit(sql)) {
+    function hasLimitClause(sql) {
+        return /\bLIMIT\s+\d+/i.test(sql);
+    }
+
+    /**
+     * Check if query has any row limit (for backward compatibility)
+     */
+    function hasRowLimit(sql) {
+        return hasFetchFirst(sql) ||
+               /ROWNUM\s*<=?\s*\d+/i.test(sql) ||
+               hasLimitClause(sql);
+    }
+
+    /**
+     * Convert LIMIT N to FETCH FIRST N ROWS ONLY (SuiteQL syntax)
+     * LLMs often write standard SQL LIMIT which SuiteQL doesn't support
+     */
+    function convertLimitToFetchFirst(sql) {
+        // Match LIMIT N (with optional OFFSET which SuiteQL also doesn't support)
+        const limitMatch = sql.match(/\bLIMIT\s+(\d+)(?:\s+OFFSET\s+\d+)?/i);
+        if (!limitMatch) {
             return sql;
         }
 
+        const limitValue = parseInt(limitMatch[1], 10);
+
+        // Remove the LIMIT clause and add FETCH FIRST
+        let cleanSql = sql.replace(/\bLIMIT\s+\d+(?:\s+OFFSET\s+\d+)?/i, '').trim();
+
         // Remove any trailing semicolon
+        cleanSql = cleanSql.replace(/;\s*$/, '');
+
+        return cleanSql + ` FETCH FIRST ${limitValue} ROWS ONLY`;
+    }
+
+    /**
+     * Add row limit to query if missing, or convert LIMIT to FETCH FIRST
+     * SuiteQL requires FETCH FIRST N ROWS ONLY syntax (not LIMIT)
+     */
+    function ensureRowLimit(sql, limit = MAX_ROWS) {
+        // Remove any trailing semicolon first
         let cleanSql = sql.trim().replace(/;\s*$/, '');
-        
-        // Add FETCH FIRST clause
+
+        // If query already has proper FETCH FIRST, return as-is
+        if (hasFetchFirst(cleanSql)) {
+            return cleanSql;
+        }
+
+        // If query has LIMIT (invalid SuiteQL), convert to FETCH FIRST
+        if (hasLimitClause(cleanSql)) {
+            log.debug('QueryValidator converting LIMIT to FETCH FIRST', {
+                originalSql: cleanSql.substring(0, 200)
+            });
+            return convertLimitToFetchFirst(cleanSql);
+        }
+
+        // No limit at all - add FETCH FIRST
         return cleanSql + ` FETCH FIRST ${limit} ROWS ONLY`;
     }
 
@@ -549,12 +595,23 @@ define(['N/log'], function(log) {
             suggestions.push('Use table aliases to qualify column names');
         }
 
+        // LIMIT syntax error - common LLM mistake
+        if (lowerError.includes('limit') || (lowerError.includes('syntax') && failedQuery && /\bLIMIT\b/i.test(failedQuery))) {
+            suggestions.push('SuiteQL does NOT support LIMIT syntax');
+            suggestions.push('Use: FETCH FIRST N ROWS ONLY (at end of query)');
+            suggestions.push('Example: SELECT * FROM transaction FETCH FIRST 100 ROWS ONLY');
+        }
+
         return suggestions;
     }
 
     return {
         validateQuery: validateQuery,
         ensureRowLimit: ensureRowLimit,
+        convertLimitToFetchFirst: convertLimitToFetchFirst,
+        hasFetchFirst: hasFetchFirst,
+        hasLimitClause: hasLimitClause,
+        hasRowLimit: hasRowLimit,
         getTableSchema: getTableSchema,
         suggestFix: suggestFix,
         isTableAllowed: isTableAllowed,
