@@ -1,7 +1,736 @@
 /**
  * Cashflow Dashboard Styles
  * World-class flyout system + component styling
+ * Upgraded to match Burden Dashboard design patterns
  */
+
+/* ===========================================
+   CSS VARIABLES - Align with Burden Dashboard
+   =========================================== */
+:root {
+    --cf-primary: #3b82f6;
+    --cf-success: #10b981;
+    --cf-danger: #ef4444;
+    --cf-warning: #f59e0b;
+    --cf-purple: #8b5cf6;
+    --cf-gray: #64748b;
+    --cf-dark: #1e293b;
+    --cf-light: #f8fafc;
+    --cf-border: #e2e8f0;
+    --cf-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+    --cf-shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+    --cf-shadow-hover: 0 8px 16px rgba(0, 0, 0, 0.08);
+    --cf-transition: all 0.15s ease;
+    --cf-radius-sm: 6px;
+    --cf-radius-md: 10px;
+    --cf-radius-lg: 12px;
+}
+
+/* ===========================================
+   ENHANCED KPI CARDS - Hover & Animation
+   =========================================== */
+
+.cf-kpi-row .cf-kpi-card {
+    transition: var(--cf-transition);
+    border: 1px solid transparent;
+}
+
+.cf-kpi-row .cf-kpi-card:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--cf-shadow-hover);
+    border-color: var(--cf-border);
+}
+
+.cf-kpi-card .kpi-value {
+    transition: var(--cf-transition);
+}
+
+.cf-kpi-card.cf-kpi-warning {
+    animation: cf-attention-pulse 2s ease-in-out infinite;
+}
+
+@keyframes cf-attention-pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.2); }
+    50% { box-shadow: 0 0 0 8px rgba(239, 68, 68, 0); }
+}
+
+/* Delta indicators */
+.cf-delta-up::before {
+    content: '▲ ';
+    font-size: 10px;
+}
+
+.cf-delta-down::before {
+    content: '▼ ';
+    font-size: 10px;
+}
+
+/* ===========================================
+   ENHANCED AGING BUCKETS - Card Style
+   =========================================== */
+
+.cf-bucket-card {
+    background: var(--cf-light);
+    border: 1px solid var(--cf-border);
+    border-radius: var(--cf-radius-md);
+    padding: 12px 16px;
+    margin-bottom: 8px;
+    transition: var(--cf-transition);
+    cursor: pointer;
+}
+
+.cf-bucket-card:hover {
+    background: #fff;
+    border-color: var(--cf-primary);
+    box-shadow: var(--cf-shadow);
+    transform: translateX(4px);
+}
+
+.cf-bucket-card .bucket-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+}
+
+.cf-bucket-card .bucket-label {
+    font-weight: 600;
+    font-size: 12px;
+    color: var(--cf-dark);
+}
+
+.cf-bucket-card .bucket-amount {
+    font-weight: 700;
+    font-size: 14px;
+}
+
+.cf-bucket-card .bucket-bar {
+    height: 6px;
+    background: var(--cf-border);
+    border-radius: 3px;
+    overflow: hidden;
+    margin-bottom: 6px;
+}
+
+.cf-bucket-card .bucket-bar-fill {
+    height: 100%;
+    border-radius: 3px;
+    transition: width 0.3s ease;
+}
+
+.cf-bucket-card .bucket-meta {
+    display: flex;
+    justify-content: space-between;
+    font-size: 11px;
+    color: var(--cf-gray);
+}
+
+.cf-bucket-card .bucket-chevron {
+    opacity: 0;
+    transition: var(--cf-transition);
+}
+
+.cf-bucket-card:hover .bucket-chevron {
+    opacity: 1;
+}
+
+/* Risk severity colors */
+.cf-bucket-card.risk-low .bucket-label { color: var(--cf-success); }
+.cf-bucket-card.risk-medium .bucket-label { color: var(--cf-warning); }
+.cf-bucket-card.risk-high .bucket-label { color: var(--cf-danger); }
+
+.cf-bucket-card.risk-low .bucket-bar-fill { background: var(--cf-success); }
+.cf-bucket-card.risk-medium .bucket-bar-fill { background: var(--cf-warning); }
+.cf-bucket-card.risk-high .bucket-bar-fill { background: var(--cf-danger); }
+
+/* ===========================================
+   CATEGORY ANALYSIS - Enhanced Table & Header
+   =========================================== */
+
+.cf-category-header-card {
+    background: #fff;
+    border: 1px solid var(--cf-border);
+    border-radius: var(--cf-radius-lg);
+    padding: 16px 20px;
+    margin-bottom: 16px;
+    box-shadow: var(--cf-shadow);
+}
+
+.cf-category-header-card .category-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 12px;
+}
+
+.cf-category-header-card .category-name {
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--cf-dark);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.cf-category-header-card .category-total {
+    font-size: 24px;
+    font-weight: 700;
+}
+
+.cf-category-header-card .category-meta {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding-top: 12px;
+    border-top: 1px solid var(--cf-border);
+    font-size: 13px;
+    color: var(--cf-gray);
+}
+
+.cf-category-header-card .category-meta i {
+    margin-right: 6px;
+}
+
+/* Type badges */
+.cf-type-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 4px 10px;
+    border-radius: 20px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.cf-type-badge.inflow {
+    background: rgba(16, 185, 129, 0.12);
+    color: var(--cf-success);
+}
+
+.cf-type-badge.outflow {
+    background: rgba(239, 68, 68, 0.12);
+    color: var(--cf-danger);
+}
+
+/* Enhanced table */
+.cf-table-enhanced {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+}
+
+.cf-table-enhanced thead {
+    background: var(--cf-light);
+    position: sticky;
+    top: 0;
+    z-index: 10;
+}
+
+.cf-table-enhanced th {
+    padding: 12px 16px;
+    text-align: left;
+    font-weight: 600;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--cf-gray);
+    border-bottom: 2px solid var(--cf-border);
+    cursor: pointer;
+    user-select: none;
+    transition: var(--cf-transition);
+}
+
+.cf-table-enhanced th:hover {
+    background: #f1f5f9;
+    color: var(--cf-dark);
+}
+
+.cf-table-enhanced th.sorted {
+    color: var(--cf-primary);
+}
+
+.cf-table-enhanced th .sort-indicator {
+    margin-left: 6px;
+    opacity: 0.4;
+    font-size: 10px;
+}
+
+.cf-table-enhanced th.sorted .sort-indicator {
+    opacity: 1;
+    color: var(--cf-primary);
+}
+
+.cf-table-enhanced td {
+    padding: 12px 16px;
+    border-bottom: 1px solid #f1f5f9;
+    color: var(--cf-dark);
+}
+
+.cf-table-enhanced tbody tr {
+    transition: var(--cf-transition);
+}
+
+.cf-table-enhanced tbody tr:hover {
+    background: var(--cf-light);
+}
+
+/* Search bar */
+.cf-search-bar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 16px;
+}
+
+.cf-search-input {
+    position: relative;
+    flex: 1;
+    max-width: 300px;
+}
+
+.cf-search-input input {
+    width: 100%;
+    padding: 10px 16px 10px 40px;
+    border: 1px solid var(--cf-border);
+    border-radius: var(--cf-radius-md);
+    font-size: 13px;
+    transition: var(--cf-transition);
+}
+
+.cf-search-input input:focus {
+    outline: none;
+    border-color: var(--cf-primary);
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+.cf-search-input i {
+    position: absolute;
+    left: 14px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: #94a3b8;
+}
+
+.cf-filter-select {
+    padding: 10px 14px;
+    border: 1px solid var(--cf-border);
+    border-radius: var(--cf-radius-md);
+    font-size: 13px;
+    background: #fff;
+    cursor: pointer;
+}
+
+/* Enhanced pagination */
+.cf-pagination-full {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 16px 20px;
+    background: var(--cf-light);
+    border-top: 1px solid var(--cf-border);
+    border-radius: 0 0 var(--cf-radius-lg) var(--cf-radius-lg);
+}
+
+.cf-pagination-full .page-info {
+    font-size: 13px;
+    color: var(--cf-gray);
+}
+
+.cf-pagination-full .page-controls {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.cf-pagination-full .page-btn {
+    min-width: 36px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--cf-border);
+    background: #fff;
+    border-radius: var(--cf-radius-sm);
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--cf-dark);
+    cursor: pointer;
+    transition: var(--cf-transition);
+}
+
+.cf-pagination-full .page-btn:hover:not(:disabled) {
+    background: var(--cf-light);
+    border-color: #cbd5e1;
+}
+
+.cf-pagination-full .page-btn.active {
+    background: var(--cf-primary);
+    border-color: var(--cf-primary);
+    color: #fff;
+}
+
+.cf-pagination-full .page-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.cf-pagination-full .page-size-select {
+    padding: 6px 10px;
+    border: 1px solid var(--cf-border);
+    border-radius: var(--cf-radius-sm);
+    font-size: 12px;
+    margin-left: 12px;
+}
+
+/* Empty state */
+.cf-empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 60px 20px;
+    text-align: center;
+}
+
+.cf-empty-state i {
+    font-size: 48px;
+    color: #cbd5e1;
+    margin-bottom: 16px;
+}
+
+.cf-empty-state .empty-title {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--cf-gray);
+    margin-bottom: 8px;
+}
+
+.cf-empty-state .empty-text {
+    font-size: 13px;
+    color: #94a3b8;
+}
+
+/* ===========================================
+   CONFIGURATION FLYOUT - Category/Group Editing
+   =========================================== */
+
+.cf-config-flyout-form {
+    padding: 20px 24px;
+}
+
+.cf-form-section {
+    background: #fff;
+    border: 1px solid var(--cf-border);
+    border-radius: var(--cf-radius-md);
+    padding: 16px 20px;
+    margin-bottom: 16px;
+}
+
+.cf-form-section-header {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--cf-gray);
+    margin-bottom: 12px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--cf-border);
+}
+
+.cf-form-row {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 16px;
+    margin-bottom: 12px;
+}
+
+.cf-form-row.single {
+    grid-template-columns: 1fr;
+}
+
+.cf-form-group {
+    display: flex;
+    flex-direction: column;
+}
+
+.cf-form-label {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--cf-dark);
+    margin-bottom: 6px;
+}
+
+.cf-form-input {
+    padding: 10px 12px;
+    border: 1px solid var(--cf-border);
+    border-radius: var(--cf-radius-sm);
+    font-size: 13px;
+    transition: var(--cf-transition);
+}
+
+.cf-form-input:focus {
+    outline: none;
+    border-color: var(--cf-primary);
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+.cf-form-select {
+    padding: 10px 12px;
+    border: 1px solid var(--cf-border);
+    border-radius: var(--cf-radius-sm);
+    font-size: 13px;
+    background: #fff;
+    cursor: pointer;
+}
+
+.cf-form-help {
+    font-size: 11px;
+    color: #94a3b8;
+    margin-top: 4px;
+}
+
+.cf-form-multiselect {
+    border: 1px solid var(--cf-border);
+    border-radius: var(--cf-radius-sm);
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.cf-form-multiselect-item {
+    display: flex;
+    align-items: center;
+    padding: 8px 12px;
+    border-bottom: 1px solid #f1f5f9;
+    cursor: pointer;
+    transition: var(--cf-transition);
+}
+
+.cf-form-multiselect-item:hover {
+    background: var(--cf-light);
+}
+
+.cf-form-multiselect-item:last-child {
+    border-bottom: none;
+}
+
+.cf-form-multiselect-item input {
+    margin-right: 10px;
+}
+
+.cf-form-multiselect-search {
+    padding: 10px 12px;
+    border: none;
+    border-bottom: 1px solid var(--cf-border);
+    width: 100%;
+    font-size: 13px;
+}
+
+.cf-form-multiselect-search:focus {
+    outline: none;
+    background: var(--cf-light);
+}
+
+/* Method info box */
+.cf-method-info {
+    background: linear-gradient(135deg, #eff6ff 0%, #f8fafc 100%);
+    border: 1px solid #bfdbfe;
+    border-radius: var(--cf-radius-md);
+    padding: 12px 16px;
+    margin-bottom: 16px;
+}
+
+.cf-method-info-title {
+    font-weight: 600;
+    color: var(--cf-primary);
+    margin-bottom: 4px;
+    font-size: 13px;
+}
+
+.cf-method-info-text {
+    font-size: 12px;
+    color: var(--cf-gray);
+    line-height: 1.5;
+}
+
+/* Config flyout footer */
+.cf-config-flyout-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 16px 24px;
+    background: var(--cf-light);
+    border-top: 1px solid var(--cf-border);
+    position: sticky;
+    bottom: 0;
+}
+
+.cf-btn {
+    padding: 10px 20px;
+    border-radius: var(--cf-radius-sm);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: var(--cf-transition);
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.cf-btn-primary {
+    background: var(--cf-primary);
+    color: #fff;
+    border: none;
+}
+
+.cf-btn-primary:hover {
+    background: #2563eb;
+}
+
+.cf-btn-secondary {
+    background: #fff;
+    color: var(--cf-dark);
+    border: 1px solid var(--cf-border);
+}
+
+.cf-btn-secondary:hover {
+    background: var(--cf-light);
+}
+
+.cf-btn-danger {
+    background: transparent;
+    color: var(--cf-danger);
+    border: 1px solid var(--cf-danger);
+}
+
+.cf-btn-danger:hover {
+    background: rgba(239, 68, 68, 0.1);
+}
+
+/* Config sidebar enhancements */
+.cf-config-sidebar .config-header {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    color: var(--cf-gray);
+    padding: 16px 16px 8px;
+    background: var(--cf-light);
+}
+
+.cf-config-sidebar .list-group-item {
+    border: none;
+    border-bottom: 1px solid #f1f5f9;
+    padding: 12px 16px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    transition: var(--cf-transition);
+}
+
+.cf-config-sidebar .list-group-item:hover {
+    background: var(--cf-light);
+}
+
+.cf-config-sidebar .list-group-item.active-config-item {
+    background: linear-gradient(135deg, #eff6ff 0%, #f0f9ff 100%);
+    border-left: 3px solid var(--cf-primary);
+}
+
+/* Landing content for config */
+.cf-config-landing {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 40px;
+    text-align: center;
+    min-height: 400px;
+}
+
+.cf-config-landing .landing-icon {
+    width: 80px;
+    height: 80px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, var(--cf-light) 0%, #fff 100%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 20px;
+    border: 1px solid var(--cf-border);
+}
+
+.cf-config-landing .landing-icon i {
+    font-size: 32px;
+    color: var(--cf-gray);
+}
+
+.cf-config-landing .landing-title {
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--cf-dark);
+    margin-bottom: 8px;
+}
+
+.cf-config-landing .landing-text {
+    font-size: 13px;
+    color: var(--cf-gray);
+    margin-bottom: 24px;
+}
+
+.cf-config-landing .landing-stats {
+    display: flex;
+    gap: 24px;
+}
+
+.cf-config-landing .landing-stat {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+.cf-config-landing .landing-stat-value {
+    font-size: 24px;
+    font-weight: 700;
+    color: var(--cf-dark);
+}
+
+.cf-config-landing .landing-stat-label {
+    font-size: 11px;
+    color: var(--cf-gray);
+    text-transform: uppercase;
+}
+
+/* ===========================================
+   FLYOUT TABS - Config Flyout Tabs
+   =========================================== */
+
+.cf-flyout-config-tabs {
+    display: flex;
+    border-bottom: 1px solid var(--cf-border);
+    background: #fff;
+    padding: 0 24px;
+}
+
+.cf-flyout-config-tab {
+    padding: 14px 20px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--cf-gray);
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    transition: var(--cf-transition);
+    margin-bottom: -1px;
+}
+
+.cf-flyout-config-tab:hover {
+    color: var(--cf-dark);
+}
+
+.cf-flyout-config-tab.active {
+    color: var(--cf-primary);
+    border-bottom-color: var(--cf-primary);
+}
 
 /* ===========================================
    FLYOUT PANEL SYSTEM
