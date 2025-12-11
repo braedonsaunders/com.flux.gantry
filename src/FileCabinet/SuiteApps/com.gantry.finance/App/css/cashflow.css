@@ -2482,6 +2482,211 @@ body.dark-mode .cf-group-header td {
     }
 }
 
+/* ===========================================
+   CASH FLOW VITALS - Premium KPI Display
+   =========================================== */
+
+.cf-vitals-hero {
+    background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+    border-radius: 16px;
+    padding: 20px;
+    border: 1px solid #e2e8f0;
+}
+
+.cf-vitals-grid {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 16px;
+}
+
+.cf-vital-card {
+    background: #ffffff;
+    border-radius: 12px;
+    padding: 16px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04), 0 4px 12px rgba(0, 0, 0, 0.03);
+    border: 1px solid #e2e8f0;
+    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    display: flex;
+    flex-direction: column;
+    position: relative;
+    overflow: hidden;
+}
+
+.cf-vital-card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 3px;
+    background: linear-gradient(90deg, transparent, transparent);
+    transition: background 0.3s ease;
+}
+
+.cf-vital-card:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08), 0 2px 8px rgba(0, 0, 0, 0.04);
+    border-color: #cbd5e1;
+}
+
+.cf-vital-burn::before { background: linear-gradient(90deg, #a855f7, #7c3aed); }
+.cf-vital-coverage::before { background: linear-gradient(90deg, #3b82f6, #2563eb); }
+.cf-vital-cycle::before { background: linear-gradient(90deg, #14b8a6, #0d9488); }
+.cf-vital-flow::before { background: linear-gradient(90deg, #64748b, #475569); }
+.cf-vital-runway::before { background: linear-gradient(90deg, #6366f1, #4f46e5); }
+
+.cf-vital-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+}
+
+.cf-vital-icon-ring {
+    width: 42px;
+    height: 42px;
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+    color: #ffffff;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+.bg-purple-gradient { background: linear-gradient(135deg, #a855f7 0%, #7c3aed 100%); }
+.bg-blue-gradient { background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%); }
+.bg-teal-gradient { background: linear-gradient(135deg, #14b8a6 0%, #0d9488 100%); }
+.bg-gray-gradient { background: linear-gradient(135deg, #64748b 0%, #475569 100%); }
+.bg-indigo-gradient { background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%); }
+.bg-green-gradient { background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%); }
+.bg-red-gradient { background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); }
+
+.cf-vital-badge {
+    font-size: 9px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: #64748b;
+    background: #f1f5f9;
+    padding: 3px 8px;
+    border-radius: 6px;
+}
+
+.cf-vital-body {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+}
+
+.cf-vital-label {
+    font-size: 11px;
+    font-weight: 600;
+    color: #64748b;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    margin-bottom: 4px;
+}
+
+.cf-vital-value {
+    font-size: 24px;
+    font-weight: 800;
+    color: #0f172a;
+    line-height: 1.1;
+    margin-bottom: 4px;
+}
+
+.cf-vital-hint {
+    font-size: 10px;
+    color: #94a3b8;
+    margin-top: auto;
+}
+
+/* Dual metric card (DSO/DPO) */
+.cf-vital-dual {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 4px;
+}
+
+.cf-vital-metric {
+    flex: 1;
+    text-align: center;
+}
+
+.cf-vital-metric-label {
+    display: block;
+    font-size: 10px;
+    font-weight: 600;
+    color: #94a3b8;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    margin-bottom: 2px;
+}
+
+.cf-vital-metric-value {
+    font-size: 22px;
+    font-weight: 800;
+    line-height: 1.1;
+}
+
+.cf-vital-divider {
+    width: 1px;
+    height: 36px;
+    background: linear-gradient(180deg, transparent, #e2e8f0, transparent);
+}
+
+/* Runway display */
+.cf-runway-display {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+}
+
+/* Dynamic color classes for net flow icon */
+.cf-vital-icon-ring.positive { background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%); }
+.cf-vital-icon-ring.negative { background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); }
+
+/* Responsive grid for vitals */
+@media (max-width: 1400px) {
+    .cf-vitals-grid {
+        grid-template-columns: repeat(3, 1fr);
+    }
+    .cf-vital-runway {
+        grid-column: span 2;
+    }
+}
+
+@media (max-width: 992px) {
+    .cf-vitals-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+    .cf-vital-runway {
+        grid-column: span 2;
+    }
+}
+
+@media (max-width: 576px) {
+    .cf-vitals-hero {
+        padding: 12px;
+    }
+    .cf-vitals-grid {
+        grid-template-columns: 1fr;
+        gap: 12px;
+    }
+    .cf-vital-runway {
+        grid-column: span 1;
+    }
+    .cf-vital-value {
+        font-size: 20px;
+    }
+    .cf-vital-metric-value {
+        font-size: 18px;
+    }
+}
+
 /* Bridge Container */
 .cf-bridge-container {
     display: flex;
