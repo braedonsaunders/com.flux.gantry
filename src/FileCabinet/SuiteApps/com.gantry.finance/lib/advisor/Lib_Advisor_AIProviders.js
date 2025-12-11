@@ -606,8 +606,9 @@ define([
             prompt: fullPrompt,
             modelFamily: modelFamily,
             modelParameters: {
-                maxTokens: Math.min(options.maxTokens, 4000),
-                temperature: options.temperature
+                // Defensive: ensure maxTokens is a valid number, default to 4000
+                maxTokens: Math.min(options.maxTokens || 4000, 4000),
+                temperature: options.temperature || 0.3
             }
         };
         
