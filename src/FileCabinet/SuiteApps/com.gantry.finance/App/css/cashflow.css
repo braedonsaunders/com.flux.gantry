@@ -101,7 +101,18 @@
     visibility: visible !important;
     opacity: 1 !important;
     overflow: visible !important;
-    color: inherit !important;
+}
+
+#cfLowestCashCard .kpi-value {
+    color: #1e293b !important;
+}
+
+#cfLowestCashCard .kpi-label {
+    color: #64748b !important;
+}
+
+#cfLowestCashCard .kpi-sub {
+    color: #64748b !important;
 }
 
 #cfLowestCashCard .kpi-value.text-danger {
