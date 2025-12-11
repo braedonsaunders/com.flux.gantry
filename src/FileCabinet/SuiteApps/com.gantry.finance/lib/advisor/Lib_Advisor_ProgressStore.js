@@ -36,6 +36,10 @@ define(['N/cache', 'N/log'], function(cache, log) {
     const LOCK_PREFIX = 'lock_';
     const LOCK_TTL = 30; // Lock expires after 30 seconds (safety net)
 
+    // Processing lock configuration - prevents concurrent step execution
+    const PROC_LOCK_PREFIX = 'proc_';
+    const PROC_LOCK_TTL = 60; // Processing lock expires after 60 seconds (longer than any single step)
+
     /**
      * Get the cache - always get fresh reference
      * Uses PUBLIC scope to share across all scripts in the account
@@ -192,6 +196,66 @@ define(['N/cache', 'N/log'], function(cache, log) {
         }
 
         return false;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // PROCESSING LOCK
+    // Prevents concurrent polls from executing steps simultaneously
+    // Different from completion lock - this is acquired at START of processing
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Try to acquire processing lock for a request
+     * This prevents multiple concurrent polls from running steps simultaneously
+     * @param {string} requestId - Request ID
+     * @returns {boolean} True if lock acquired, false if another poll is processing
+     */
+    function acquireProcessingLock(requestId) {
+        const lockKey = PROC_LOCK_PREFIX + requestId;
+        try {
+            const existing = getCache().get({ key: lockKey });
+            if (existing) {
+                // Another poll is currently processing
+                log.debug('ProgressStore.acquireProcessingLock - already locked', { requestId: requestId });
+                return false;
+            }
+
+            // Set the lock
+            getCache().put({
+                key: lockKey,
+                value: JSON.stringify({ processing: true, timestamp: Date.now() }),
+                ttl: PROC_LOCK_TTL
+            });
+
+            return true;
+        } catch (e) {
+            log.error('ProgressStore.acquireProcessingLock failed', { requestId: requestId, error: e.message });
+            return false;
+        }
+    }
+
+    /**
+     * Release processing lock after step completes
+     * @param {string} requestId - Request ID
+     */
+    function releaseProcessingLock(requestId) {
+        const lockKey = PROC_LOCK_PREFIX + requestId;
+        safeRemove(lockKey);
+    }
+
+    /**
+     * Check if a request has a processing lock (without acquiring)
+     * @param {string} requestId - Request ID
+     * @returns {boolean} True if locked
+     */
+    function hasProcessingLock(requestId) {
+        const lockKey = PROC_LOCK_PREFIX + requestId;
+        try {
+            const existing = getCache().get({ key: lockKey });
+            return !!existing;
+        } catch (e) {
+            return false;
+        }
     }
 
     /**
@@ -697,6 +761,11 @@ define(['N/cache', 'N/log'], function(cache, log) {
         acquireCompletionLock: acquireCompletionLock,
         hasCompletionLock: hasCompletionLock,
         releaseCompletionLock: releaseCompletionLock,
-        isCompleteOrLocked: isCompleteOrLocked
+        isCompleteOrLocked: isCompleteOrLocked,
+
+        // Processing lock functions (prevent concurrent step execution)
+        acquireProcessingLock: acquireProcessingLock,
+        releaseProcessingLock: releaseProcessingLock,
+        hasProcessingLock: hasProcessingLock
     };
 });

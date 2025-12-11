@@ -701,7 +701,7 @@ Response format:
         state.analyzeIterations++;
 
         // Circuit breaker: prevent infinite analyze loops
-        if (state.analyzeIterations > MAX_ANALYZE_ITERATIONS) {
+        if (state.analyzeIterations >= MAX_ANALYZE_ITERATIONS) {
             log.audit('SCA Analyze circuit breaker triggered', {
                 iterations: state.analyzeIterations,
                 requestId: state.requestId
@@ -909,7 +909,7 @@ Response format:
         state.formatIterations++;
 
         // Circuit breaker: prevent infinite format loops
-        if (state.formatIterations > MAX_FORMAT_ITERATIONS) {
+        if (state.formatIterations >= MAX_FORMAT_ITERATIONS) {
             log.audit('SCA Format circuit breaker triggered', {
                 iterations: state.formatIterations,
                 requestId: state.requestId
