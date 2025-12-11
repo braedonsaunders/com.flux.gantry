@@ -361,6 +361,7 @@ body {
     overflow-x: hidden;
     height: 100vh;
     overflow-y: auto;
+    position: relative; /* Required for loading screen absolute positioning */
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
