@@ -360,6 +360,52 @@ define(['N/cache', 'N/log'], function(cache, log) {
     }
 
     /**
+     * Update a step by its phase context (used by SCA streaming agent)
+     * Finds the LAST step matching the phase and updates it
+     * @param {string} requestId - Request ID
+     * @param {object} stepData - Full step data with context.phase
+     * @returns {boolean} True if step was found and updated
+     */
+    function updateStep(requestId, stepData) {
+        try {
+            const state = safeGet(requestId);
+            if (!state || !state.steps || state.steps.length === 0) return false;
+
+            const phase = stepData.context?.phase;
+            if (!phase) {
+                // Fallback: update last step
+                Object.assign(state.steps[state.steps.length - 1], stepData);
+                state.lastUpdate = Date.now();
+                return safePut(requestId, state);
+            }
+
+            // Find LAST step matching this phase (reverse search)
+            let stepIndex = -1;
+            for (let i = state.steps.length - 1; i >= 0; i--) {
+                if (state.steps[i].context?.phase === phase) {
+                    stepIndex = i;
+                    break;
+                }
+            }
+
+            if (stepIndex === -1) {
+                // No matching step found - add as new step
+                if (!stepData.timestamp) stepData.timestamp = Date.now();
+                state.steps.push(stepData);
+            } else {
+                // Update existing step
+                Object.assign(state.steps[stepIndex], stepData);
+            }
+
+            state.lastUpdate = Date.now();
+            return safePut(requestId, state);
+        } catch (e) {
+            log.error('ProgressStore.updateStep failed', { requestId: requestId, error: e.message });
+            return false;
+        }
+    }
+
+    /**
      * Mark request as complete with final answer (ATOMIC)
      * Uses completion lock to prevent race conditions from concurrent polls
      * @param {string} requestId - Request ID
@@ -637,7 +683,7 @@ define(['N/cache', 'N/log'], function(cache, log) {
         addStep: addStep,
         updateLastStep: updateLastStep,
         updateStepByType: updateStepByType,
-        updateStep: updateStepByType, // Alias for streaming agent compatibility
+        updateStep: updateStep, // Phase-aware step update for SCA
         complete: complete,
         fail: fail,
         get: get,
