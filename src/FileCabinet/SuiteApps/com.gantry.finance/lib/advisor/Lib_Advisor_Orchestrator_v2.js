@@ -197,31 +197,36 @@ define([
 
             ProgressStore.addStep(requestId, thinkingStep);
 
-            // Run first step immediately to get things started
-            const stepResult = Agent.runAgentStep(requestId);
+            // TRULY ASYNC: Return immediately - first LLM step runs on first poll
+            // This ensures instant response to user, with progressive updates via polling
+            log.debug('ProcessChatAsync returning immediately (truly async)', {
+                requestId: requestId,
+                provider: aiSettings.provider || 'default'
+            });
 
-            // Return status based on first step result
-            if (stepResult.hasMore) {
-                return {
-                    request_id: requestId,
-                    status: 'processing'
-                };
-            } else if (stepResult.error) {
-                return {
-                    request_id: requestId,
-                    status: 'error',
-                    error: stepResult.error
-                };
-            } else {
-                return {
-                    request_id: requestId,
-                    status: 'complete'
-                };
-            }
+            return {
+                request_id: requestId,
+                status: 'processing'
+            };
 
         } catch (e) {
-            log.error('ProcessChatAsync Error', { requestId: requestId, error: e.message });
-            ProgressStore.fail(requestId, e.message);
+            log.error('ProcessChatAsync Error', {
+                requestId: requestId,
+                error: e.message,
+                stack: e.stack,
+                phase: 'initialization'
+            });
+
+            // Ensure cache entry exists even on error so polling doesn't return not_found
+            try {
+                ProgressStore.fail(requestId, e.message);
+            } catch (cacheError) {
+                log.error('Failed to store error state in cache', {
+                    requestId: requestId,
+                    originalError: e.message,
+                    cacheError: cacheError.message
+                });
+            }
 
             return {
                 request_id: requestId,
@@ -239,13 +244,37 @@ define([
      * @returns {Object} Progress state with current steps
      */
     function getStatus(requestId) {
+        // Validate request ID format
+        if (!requestId || typeof requestId !== 'string') {
+            log.error('getStatus called with invalid requestId', {
+                requestId: requestId,
+                type: typeof requestId
+            });
+            return {
+                status: 'not_found',
+                error: 'Invalid request ID'
+            };
+        }
+
         // Get current state first
         const progressState = ProgressStore.get(requestId);
 
         if (!progressState) {
+            // Enhanced diagnostic logging for cache misses
+            log.error('getStatus cache miss - request not found', {
+                requestId: requestId,
+                requestIdLength: requestId.length,
+                requestIdPrefix: requestId.substring(0, 10),
+                possibleCauses: [
+                    'Request never created (init failed)',
+                    'Cache TTL expired (5 min)',
+                    'Cache scope mismatch (different user session)',
+                    'Request ID corrupted in transit'
+                ]
+            });
             return {
                 status: 'not_found',
-                error: 'Request not found or expired'
+                error: 'Request not found or expired. This may occur if the initial request failed or the session timed out.'
             };
         }
 
@@ -261,14 +290,38 @@ define([
             log.debug('getStatus ran step', {
                 requestId: requestId,
                 hasMore: stepResult.hasMore,
-                hasError: !!stepResult.error
+                hasError: !!stepResult.error,
+                iteration: progressState.agentState?.iteration || 0
             });
 
             // Return updated polling response
             return ProgressStore.getPollingResponse(requestId);
 
         } catch (e) {
-            log.error('getStatus step error', { requestId: requestId, error: e.message });
+            // Enhanced error logging with provider info
+            const errorDetails = {
+                requestId: requestId,
+                error: e.message,
+                stack: e.stack,
+                errorName: e.name,
+                iteration: progressState.agentState?.iteration || 0
+            };
+
+            // Check for provider-specific errors
+            if (e.message && (e.message.includes('NetSuite') || e.message.includes('Cohere'))) {
+                errorDetails.provider = 'netsuite';
+                errorDetails.hint = 'NetSuite/Cohere LLM error - check N/llm module compatibility';
+            } else if (e.message && e.message.includes('OpenAI')) {
+                errorDetails.provider = 'openai';
+            } else if (e.message && e.message.includes('Gemini')) {
+                errorDetails.provider = 'gemini';
+            } else if (e.message && e.message.includes('Anthropic')) {
+                errorDetails.provider = 'anthropic';
+            }
+
+            log.error('getStatus step error', errorDetails);
+
+            // Store failure state so subsequent polls don't retry
             ProgressStore.fail(requestId, e.message);
             return ProgressStore.getPollingResponse(requestId);
         }

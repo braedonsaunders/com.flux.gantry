@@ -194,19 +194,60 @@ define(['N/cache', 'N/log'], function(cache, log) {
 
     /**
      * Mark request as failed with error
+     * Creates an error entry if one doesn't exist (for early failures)
      * @param {string} requestId - Request ID
      * @param {string} error - Error message
      */
     function fail(requestId, error) {
         try {
             const raw = getCache().get({ key: requestId });
-            if (!raw) return;
+            let state;
 
-            const state = JSON.parse(raw);
-            state.status = 'error';
-            state.error = error;
-            state.duration = Date.now() - state.startTime;
-            state.lastUpdate = Date.now();
+            if (!raw) {
+                // Create an error entry if none exists (handles early failures)
+                log.debug('ProgressStore.fail - creating error entry for missing request', {
+                    requestId: requestId,
+                    error: error
+                });
+                state = {
+                    requestId: requestId,
+                    status: 'error',
+                    message: '',
+                    steps: [{
+                        type: 'error',
+                        title: 'Request failed',
+                        status: 'error',
+                        error: error,
+                        timestamp: Date.now()
+                    }],
+                    startTime: Date.now(),
+                    lastUpdate: Date.now(),
+                    answer: null,
+                    richContent: null,
+                    sessionContext: null,
+                    error: error,
+                    agentState: null,
+                    duration: 0
+                };
+            } else {
+                state = JSON.parse(raw);
+                state.status = 'error';
+                state.error = error;
+                state.duration = Date.now() - state.startTime;
+                state.lastUpdate = Date.now();
+
+                // Add error step if not already present
+                const hasErrorStep = state.steps.some(s => s.type === 'error');
+                if (!hasErrorStep) {
+                    state.steps.push({
+                        type: 'error',
+                        title: 'An error occurred',
+                        status: 'error',
+                        error: error,
+                        timestamp: Date.now()
+                    });
+                }
+            }
 
             getCache().put({
                 key: requestId,
@@ -214,9 +255,9 @@ define(['N/cache', 'N/log'], function(cache, log) {
                 ttl: DEFAULT_TTL
             });
 
-            log.error('ProgressStore.fail', { requestId: requestId, error: error });
+            log.error('ProgressStore.fail', { requestId: requestId, error: error, hadExistingEntry: !!raw });
         } catch (e) {
-            log.error('ProgressStore.fail failed', { requestId: requestId, error: e.message });
+            log.error('ProgressStore.fail failed', { requestId: requestId, error: e.message, originalError: error });
         }
     }
 
