@@ -1973,7 +1973,9 @@
                     html += `<div class="node-connector ${connectorClass} animate-in cascade-delay-${idx}" style="--flow-delay: ${idx * 0.3}s"></div>`;
                 }
 
-                html += this.renderThoughtNode(step, idx, chainId);
+                // Mark as final if it's the last node and we're not still loading
+                const isFinal = (idx === filteredSteps.length - 1) && !showPending;
+                html += this.renderThoughtNode(step, idx, chainId, isFinal);
             });
 
             // Add pending indicator at end if still loading
@@ -2007,8 +2009,12 @@
 
         /**
          * Render a single thought node for Neural Flow
+         * @param {Object} step - Step object
+         * @param {number} idx - Index in chain
+         * @param {string} chainId - Chain ID
+         * @param {boolean} isFinal - Whether this is the final node (for special styling)
          */
-        renderThoughtNode: function(step, idx, chainId) {
+        renderThoughtNode: function(step, idx, chainId, isFinal) {
             // Normalize status - handle various backend status values
             let statusClass = step.status || 'complete';
             // Map various "in progress" statuses to "running"
@@ -2034,9 +2040,10 @@
                                        statusClass === 'error' ? 'error' : 'pending';
 
             const isRunning = statusClass === 'running';
+            const finalClass = isFinal ? ' final' : '';
 
             let html = `
-                <div class="thought-node ${statusClass} animate-in cascade-delay-${idx + 1}"
+                <div class="thought-node ${statusClass}${finalClass} animate-in cascade-delay-${idx + 1}"
                      data-step-idx="${idx}"
                      data-chain-id="${chainId}"
                      onclick="AdvisorController.toggleExpansion('${chainId}', ${idx}); event.stopPropagation();">
@@ -3002,7 +3009,7 @@
             // This now uses the thought node format internally but returns a
             // backwards-compatible wrapper for any code that calls renderStep directly
             const chainId = 'legacy-' + Date.now();
-            return this.renderThoughtNode(step, idx, chainId);
+            return this.renderThoughtNode(step, idx, chainId, false);
         },
         
         /**
