@@ -142,14 +142,8 @@ IMPORTANT: Use transaction_context to help determine entity type:
                     },
                     transaction_context: {
                         type: 'string',
-                        enum: [
-                            'bill', 'vendor_bill', 'VendBill',
-                            'invoice', 'customer_invoice', 'CustInvc',
-                            'vendor_payment', 'VendPymt',
-                            'customer_payment', 'CustPymt',
-                            'expense', 'ap', 'ar'
-                        ],
-                        description: 'Optional: The transaction type context helps determine entity type. Bills/AP suggest vendor, Invoices/AR suggest customer.'
+                        enum: ['VendBill', 'VendPymt', 'VendCred', 'CustInvc', 'CustPymt', 'CustCred', 'ExpRept', 'PurchOrd', 'SalesOrd'],
+                        description: 'Optional: NetSuite transaction type code. VendBill/VendPymt/VendCred/ExpRept/PurchOrd → vendor, CustInvc/CustPymt/CustCred/SalesOrd → customer'
                     }
                 },
                 required: ['term']
@@ -160,10 +154,12 @@ IMPORTANT: Use transaction_context to help determine entity type:
 
                 // Infer type_hint from transaction_context if not explicitly set
                 if (typeHint === 'auto' && args.transaction_context) {
-                    const ctx = args.transaction_context.toLowerCase();
-                    if (ctx.includes('bill') || ctx.includes('vend') || ctx.includes('ap') || ctx.includes('expense')) {
+                    const vendorTypes = ['VendBill', 'VendPymt', 'VendCred', 'ExpRept', 'PurchOrd'];
+                    const customerTypes = ['CustInvc', 'CustPymt', 'CustCred', 'SalesOrd'];
+
+                    if (vendorTypes.includes(args.transaction_context)) {
                         typeHint = 'vendor';
-                    } else if (ctx.includes('invoice') || ctx.includes('cust') || ctx.includes('ar')) {
+                    } else if (customerTypes.includes(args.transaction_context)) {
                         typeHint = 'customer';
                     }
                     log.debug('resolve_entity inferred type from transaction_context', {
@@ -1526,31 +1522,27 @@ ALWAYS use this for: "expense breakdown", "where are we spending", "expense by c
             description: `Get recent transactions, optionally filtered by type or entity.
 Use for: "recent transactions", "latest invoices", "recent bills", "show transactions"
 
-Transaction types (use common names OR NetSuite codes):
-- bill/vendor bill/VendBill → Vendor Bills
-- invoice/customer invoice/CustInvc → Customer Invoices
-- payment/vendor payment/VendPymt → Vendor Payments
-- customer payment/CustPymt → Customer Payments
-- credit memo/VendCred/CustCred → Credit Memos
-- journal/Journal → Journal Entries
-- check/Check → Checks
-- deposit/Deposit → Deposits`,
+IMPORTANT: You MUST use exact NetSuite type codes from the enum:
+- VendBill = Vendor Bills (use for "bills from vendor")
+- VendPymt = Vendor Payments
+- VendCred = Vendor Credits
+- CustInvc = Customer Invoices (use for "invoices to customer")
+- CustPymt = Customer Payments
+- CustCred = Customer Credits / Credit Memos
+- CashSale = Cash Sales
+- Journal = Journal Entries
+- Check = Checks
+- Deposit = Deposits
+- ExpRept = Expense Reports
+- PurchOrd = Purchase Orders
+- SalesOrd = Sales Orders`,
             parameters: {
                 type: 'object',
                 properties: {
                     transaction_type: {
                         type: 'string',
-                        enum: [
-                            // Common names (will be mapped)
-                            'bill', 'vendor bill', 'invoice', 'customer invoice',
-                            'payment', 'vendor payment', 'customer payment',
-                            'credit memo', 'journal', 'check', 'deposit', 'cash sale', 'expense report',
-                            // NetSuite internal codes (used directly)
-                            'VendBill', 'VendPymt', 'VendCred',
-                            'CustInvc', 'CustPymt', 'CustCred',
-                            'CashSale', 'Journal', 'Check', 'Deposit', 'ExpRept'
-                        ],
-                        description: 'Filter by transaction type. Use common names (bill, invoice) or NetSuite codes (VendBill, CustInvc)'
+                        enum: ['VendBill', 'VendPymt', 'VendCred', 'CustInvc', 'CustPymt', 'CustCred', 'CashSale', 'Journal', 'Check', 'Deposit', 'ExpRept', 'PurchOrd', 'SalesOrd'],
+                        description: 'REQUIRED: NetSuite transaction type code. Must be exact value from enum.'
                     },
                     entity_id: {
                         type: 'number',
@@ -1569,51 +1561,15 @@ Transaction types (use common names OR NetSuite codes):
                 required: []
             },
             execute: function(args) {
-                // Map common transaction type names to NetSuite internal codes
-                const typeMapping = {
-                    // Vendor transactions
-                    'bill': 'VendBill',
-                    'vendor bill': 'VendBill',
-                    'vendbill': 'VendBill',
-                    'vendor payment': 'VendPymt',
-                    'vendpymt': 'VendPymt',
-                    'vendor credit': 'VendCred',
-                    'vendcred': 'VendCred',
-                    // Customer transactions
-                    'invoice': 'CustInvc',
-                    'customer invoice': 'CustInvc',
-                    'custinvc': 'CustInvc',
-                    'customer payment': 'CustPymt',
-                    'custpymt': 'CustPymt',
-                    'customer credit': 'CustCred',
-                    'credit memo': 'CustCred',
-                    'custcred': 'CustCred',
-                    // Other
-                    'cash sale': 'CashSale',
-                    'cashsale': 'CashSale',
-                    'journal': 'Journal',
-                    'journal entry': 'Journal',
-                    'check': 'Check',
-                    'deposit': 'Deposit',
-                    'expense report': 'ExpRept',
-                    'exprept': 'ExpRept'
-                };
+                // Transaction type is used directly - enum enforces exact NetSuite codes
+                const transactionType = args.transaction_type;
 
-                // Normalize and map transaction type
-                let mappedType = null;
-                if (args.transaction_type) {
-                    const normalizedType = args.transaction_type.toLowerCase().trim();
-                    mappedType = typeMapping[normalizedType] || args.transaction_type;
-
-                    log.debug('Transaction type mapping', {
-                        original: args.transaction_type,
-                        normalized: normalizedType,
-                        mapped: mappedType
-                    });
+                if (transactionType) {
+                    log.debug('get_recent_transactions using type', { type: transactionType });
                 }
 
-                const typeFilter = mappedType ?
-                    `AND transaction.type = '${escapeSql(mappedType)}'` : '';
+                const typeFilter = transactionType ?
+                    `AND transaction.type = '${escapeSql(transactionType)}'` : '';
                 const entityFilter = args.entity_id ?
                     `AND transaction.entity = ${args.entity_id}` : '';
 
