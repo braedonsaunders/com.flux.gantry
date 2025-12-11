@@ -1104,25 +1104,27 @@ define(["N/search", "N/query", "N/log", "./Lib_Shared", "./Lib_Config"], functio
             // Build variance report
             const byAccount = [];
             const summary = { revenue: { budget: 0, actual: 0 }, cogs: { budget: 0, actual: 0 }, opex: { budget: 0, actual: 0 } };
-            
+            const processedAccountIds = new Set();
+
             budgetData.forEach(b => {
                 const accId = b.account_id;
+                processedAccountIds.add(String(accId));
                 // Pro-rate annual budget to match selected period
                 const annualBudget = parseFloat(b.budget_amount) || 0;
                 const budgetAmt = annualBudget * proRateFactor;
                 const actualRaw = actualsByAccount[accId] ? actualsByAccount[accId].amount : 0;
                 const type = b.accttype;
-                
+
                 // Normalize signs
                 let actualAmt = actualRaw;
                 if (type === 'Income' || type === 'OthIncome') {
                     actualAmt = actualRaw * -1;
                 }
-                
+
                 const variance = actualAmt - budgetAmt;
                 const variancePct = budgetAmt !== 0 ? variance / budgetAmt : 0;
                 const isGood = (type === 'Income' || type === 'OthIncome') ? variance >= 0 : variance <= 0;
-                
+
                 byAccount.push({
                     accountId: accId,
                     accountName: b.account_name || accountMap[accId]?.acctName || 'Unknown',
@@ -1133,7 +1135,7 @@ define(["N/search", "N/query", "N/log", "./Lib_Shared", "./Lib_Config"], functio
                     variancePercent: Shared.round2(variancePct),
                     status: isGood ? 'good' : (Math.abs(variancePct) > 0.1 ? 'critical' : 'warning')
                 });
-                
+
                 // Aggregate to summary
                 if (type === 'Income' || type === 'OthIncome') {
                     summary.revenue.budget += budgetAmt;
@@ -1143,6 +1145,41 @@ define(["N/search", "N/query", "N/log", "./Lib_Shared", "./Lib_Config"], functio
                     summary.cogs.actual += actualAmt;
                 } else {
                     summary.opex.budget += budgetAmt;
+                    summary.opex.actual += actualAmt;
+                }
+            });
+
+            // Add accounts with actuals but no budget (unbudgeted spending/revenue)
+            Object.keys(actualsByAccount).forEach(accId => {
+                if (processedAccountIds.has(String(accId))) return; // Already processed
+
+                const data = actualsByAccount[accId];
+                const meta = accountMap[accId] || {};
+                const type = data.type;
+                let actualAmt = data.amount;
+
+                // Normalize signs for income
+                if (type === 'Income' || type === 'OthIncome') {
+                    actualAmt = actualAmt * -1;
+                }
+
+                byAccount.push({
+                    accountId: accId,
+                    accountName: meta.acctName || 'Unknown',
+                    accountType: type,
+                    budget: 0,
+                    actual: Shared.round2(actualAmt),
+                    variance: Shared.round2(actualAmt), // Variance is full amount when no budget
+                    variancePercent: 0,
+                    status: 'no-budget'
+                });
+
+                // Aggregate to summary (actuals only, budget stays 0)
+                if (type === 'Income' || type === 'OthIncome') {
+                    summary.revenue.actual += actualAmt;
+                } else if (type === 'COGS') {
+                    summary.cogs.actual += actualAmt;
+                } else {
                     summary.opex.actual += actualAmt;
                 }
             });
