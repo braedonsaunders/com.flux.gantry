@@ -1370,12 +1370,27 @@
 
         /**
          * Append steps to a progressive message
+         * Includes retry mechanism for race condition when DOM hasn't rendered yet
          */
-        appendStepsToProgressiveMessage: function(msgId, steps) {
-            console.log('[Advisor appendSteps] msgId:', msgId, 'steps:', steps.length);
+        appendStepsToProgressiveMessage: function(msgId, steps, retryCount) {
+            retryCount = retryCount || 0;
+            const MAX_RETRIES = 5;
+
+            console.log('[Advisor appendSteps] msgId:', msgId, 'steps:', steps.length, 'retry:', retryCount);
             const stepsContainer = document.getElementById(msgId + '-steps');
             if (!stepsContainer) {
-                console.log('[Advisor appendSteps] Container NOT FOUND:', msgId + '-steps');
+                if (retryCount < MAX_RETRIES) {
+                    console.log('[Advisor appendSteps] Container NOT FOUND, scheduling retry:', msgId + '-steps');
+                    // Use requestAnimationFrame + setTimeout to wait for DOM render
+                    const self = this;
+                    requestAnimationFrame(function() {
+                        setTimeout(function() {
+                            self.appendStepsToProgressiveMessage(msgId, steps, retryCount + 1);
+                        }, 50);
+                    });
+                } else {
+                    console.error('[Advisor appendSteps] Container NOT FOUND after max retries:', msgId + '-steps');
+                }
                 return;
             }
             console.log('[Advisor appendSteps] Container found:', stepsContainer);
@@ -1407,10 +1422,27 @@
 
         /**
          * Finalize a progressive message with the final response
+         * Includes retry mechanism for race condition when DOM hasn't rendered yet
          */
-        finalizeProgressiveMessage: function(msgId, response) {
+        finalizeProgressiveMessage: function(msgId, response, retryCount) {
+            retryCount = retryCount || 0;
+            const MAX_RETRIES = 5;
+
             const msgEl = document.getElementById(msgId);
-            if (!msgEl) return;
+            if (!msgEl) {
+                if (retryCount < MAX_RETRIES) {
+                    console.log('[Advisor finalizeMessage] Container NOT FOUND, scheduling retry:', msgId);
+                    const self = this;
+                    requestAnimationFrame(function() {
+                        setTimeout(function() {
+                            self.finalizeProgressiveMessage(msgId, response, retryCount + 1);
+                        }, 50);
+                    });
+                } else {
+                    console.error('[Advisor finalizeMessage] Container NOT FOUND after max retries:', msgId);
+                }
+                return;
+            }
 
             // Remove loading state
             msgEl.classList.remove('progressive-loading');
