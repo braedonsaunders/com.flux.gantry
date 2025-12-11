@@ -188,8 +188,8 @@
                                 </div>
                                 <div class="row">
                                     <div class="col-lg-6 mb-3">
-                                        <div class="card shadow-sm h-100">
-                                            <div class="card-header bg-white d-flex justify-content-between align-items-center" id="cfArHeader">
+                                        <div class="cf-panel-card h-100">
+                                            <div class="card-header bg-white d-flex justify-content-between align-items-center" id="cfArHeader" style="border-radius: 10px 10px 0 0;">
                                                 <h5 class="cf-section-header text-primary mb-0">Accounts Receivable</h5>
                                                 <div class="d-flex align-items-center" id="cfArMetrics"></div>
                                             </div>
@@ -197,8 +197,8 @@
                                         </div>
                                     </div>
                                     <div class="col-lg-6 mb-3">
-                                        <div class="card shadow-sm h-100">
-                                            <div class="card-header bg-white d-flex justify-content-between align-items-center" id="cfApHeader">
+                                        <div class="cf-panel-card h-100">
+                                            <div class="card-header bg-white d-flex justify-content-between align-items-center" id="cfApHeader" style="border-radius: 10px 10px 0 0;">
                                                 <h5 class="cf-section-header text-danger mb-0">Accounts Payable</h5>
                                                 <div class="d-flex align-items-center" id="cfApMetrics"></div>
                                             </div>
