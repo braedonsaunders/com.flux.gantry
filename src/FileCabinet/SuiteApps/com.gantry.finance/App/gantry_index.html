@@ -101,13 +101,35 @@
 
         <!-- MAIN CONTENT -->
         <main class="gantry-main">
-            <div id="gantry-view-container">
-                <div class="text-center mt-5">
-                    <div class="spinner-border text-primary" role="status">
-                        <span class="sr-only">Loading Gantry...</span>
+            <!-- Premium Loading Screen - Shown until app is ready -->
+            <div class="gantry-loading-screen" id="gantry-loading-screen">
+                <div class="gantry-loading-content">
+                    <!-- Animated Logo -->
+                    <div class="gantry-loading-logo">
+                        <div class="gantry-loading-icon-ring"></div>
+                        <div class="gantry-loading-icon-ring gantry-loading-icon-ring-2"></div>
+                        <i class="fas fa-layer-group gantry-loading-icon"></i>
+                    </div>
+                    <!-- Brand Text -->
+                    <div class="gantry-loading-brand">
+                        <span class="gantry-loading-letter" style="--i:0">G</span>
+                        <span class="gantry-loading-letter" style="--i:1">A</span>
+                        <span class="gantry-loading-letter" style="--i:2">N</span>
+                        <span class="gantry-loading-letter" style="--i:3">T</span>
+                        <span class="gantry-loading-letter" style="--i:4">R</span>
+                        <span class="gantry-loading-letter" style="--i:5">Y</span>
+                    </div>
+                    <!-- Loading Text -->
+                    <div class="gantry-loading-text">LOADING</div>
+                    <!-- Progress Bar -->
+                    <div class="gantry-loading-progress">
+                        <div class="gantry-loading-progress-bar"></div>
                     </div>
                 </div>
             </div>
+
+            <!-- View Container - Hidden until loaded -->
+            <div id="gantry-view-container"></div>
         </main>
     </div>
 

@@ -362,3 +362,219 @@ body {
     height: 100vh;
     overflow-y: auto;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   PREMIUM LOADING SCREEN
+   Sophisticated loading animation for first load experience
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.gantry-loading-screen {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 50%, #e2e8f0 100%);
+    z-index: 1000;
+    opacity: 1;
+    transition: opacity 0.5s ease, visibility 0.5s ease;
+}
+
+.gantry-loading-screen.hidden {
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+}
+
+.gantry-loading-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 24px;
+}
+
+/* Animated Logo Container */
+.gantry-loading-logo {
+    position: relative;
+    width: 80px;
+    height: 80px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+/* Rotating rings around the icon */
+.gantry-loading-icon-ring {
+    position: absolute;
+    inset: 0;
+    border: 2px solid transparent;
+    border-top-color: #3b82f6;
+    border-right-color: #3b82f6;
+    border-radius: 50%;
+    animation: gantry-ring-spin 1.5s cubic-bezier(0.5, 0, 0.5, 1) infinite;
+}
+
+.gantry-loading-icon-ring-2 {
+    inset: 8px;
+    border-top-color: #60a5fa;
+    border-right-color: transparent;
+    border-bottom-color: #60a5fa;
+    border-left-color: transparent;
+    animation: gantry-ring-spin 2s cubic-bezier(0.5, 0, 0.5, 1) infinite reverse;
+}
+
+/* The main icon */
+.gantry-loading-icon {
+    font-size: 28px;
+    color: #1e40af;
+    animation: gantry-icon-pulse 2s ease-in-out infinite;
+    z-index: 1;
+}
+
+/* Brand text with staggered letter animation */
+.gantry-loading-brand {
+    display: flex;
+    gap: 4px;
+    font-size: 24px;
+    font-weight: 700;
+    letter-spacing: 6px;
+    color: #1e293b;
+}
+
+.gantry-loading-letter {
+    display: inline-block;
+    animation: gantry-letter-wave 1.5s ease-in-out infinite;
+    animation-delay: calc(var(--i) * 0.08s);
+}
+
+/* Loading text */
+.gantry-loading-text {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 4px;
+    color: #64748b;
+    animation: gantry-text-pulse 2s ease-in-out infinite;
+}
+
+/* Progress bar */
+.gantry-loading-progress {
+    width: 200px;
+    height: 3px;
+    background: #e2e8f0;
+    border-radius: 3px;
+    overflow: hidden;
+    position: relative;
+}
+
+.gantry-loading-progress-bar {
+    position: absolute;
+    height: 100%;
+    width: 40%;
+    background: linear-gradient(90deg, #3b82f6 0%, #60a5fa 50%, #3b82f6 100%);
+    border-radius: 3px;
+    animation: gantry-progress-slide 1.5s ease-in-out infinite;
+}
+
+/* === KEYFRAME ANIMATIONS === */
+
+@keyframes gantry-ring-spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+@keyframes gantry-icon-pulse {
+    0%, 100% {
+        transform: scale(1);
+        opacity: 0.85;
+    }
+    50% {
+        transform: scale(1.08);
+        opacity: 1;
+    }
+}
+
+@keyframes gantry-letter-wave {
+    0%, 100% {
+        transform: translateY(0);
+        opacity: 0.7;
+    }
+    50% {
+        transform: translateY(-3px);
+        opacity: 1;
+    }
+}
+
+@keyframes gantry-text-pulse {
+    0%, 100% { opacity: 0.5; }
+    50% { opacity: 1; }
+}
+
+@keyframes gantry-progress-slide {
+    0% {
+        left: -40%;
+    }
+    100% {
+        left: 100%;
+    }
+}
+
+/* === DARK MODE LOADING SCREEN === */
+body.dark-mode .gantry-loading-screen {
+    background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #0f172a 100%);
+}
+
+body.dark-mode .gantry-loading-icon {
+    color: #60a5fa;
+}
+
+body.dark-mode .gantry-loading-icon-ring {
+    border-top-color: #3b82f6;
+    border-right-color: #3b82f6;
+}
+
+body.dark-mode .gantry-loading-icon-ring-2 {
+    border-top-color: #60a5fa;
+    border-bottom-color: #60a5fa;
+}
+
+body.dark-mode .gantry-loading-brand {
+    color: #f1f5f9;
+}
+
+body.dark-mode .gantry-loading-text {
+    color: #94a3b8;
+}
+
+body.dark-mode .gantry-loading-progress {
+    background: #334155;
+}
+
+body.dark-mode .gantry-loading-progress-bar {
+    background: linear-gradient(90deg, #3b82f6 0%, #60a5fa 50%, #3b82f6 100%);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   SIDEBAR REVEAL ANIMATION
+   Sidebar starts hidden and slides in once color is synced
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Initial hidden state - sidebar off-screen */
+.gantry-sidebar {
+    transform: translateX(-100%);
+    opacity: 0;
+    transition:
+        transform 0.5s cubic-bezier(0.16, 1, 0.3, 1),
+        opacity 0.4s ease,
+        width 0.2s ease;
+}
+
+/* Revealed state - sidebar slides in elegantly */
+.gantry-sidebar.sidebar-ready {
+    transform: translateX(0);
+    opacity: 1;
+}
+
+/* Ensure collapsed state still works after reveal */
+.gantry-sidebar.sidebar-ready.collapsed {
+    width: var(--sidebar-width-collapsed);
+}
