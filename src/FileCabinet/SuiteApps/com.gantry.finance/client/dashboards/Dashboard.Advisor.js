@@ -1556,6 +1556,8 @@
                 content: response.text || '',
                 richContent: response.richContent,
                 steps: response.steps,
+                model: response.model,
+                userQuery: this.lastUserMessage || '',
                 timestamp: Date.now()
             };
             messages.push(msg);
@@ -1564,6 +1566,33 @@
             // Generate follow-up suggestions (if method exists)
             if (typeof this.generateFollowUpSuggestions === 'function') {
                 this.generateFollowUpSuggestions(response);
+            }
+
+            // Add message footer with model badge and response actions (retry, copy, print)
+            if (response.model) {
+                const bubble = msgEl.querySelector('.message-bubble');
+                if (bubble) {
+                    const footerId = 'msg-' + Date.now() + '-' + Math.random().toString(36).substr(2, 5);
+                    const retryQuery = this.lastUserMessage ? this.escapeHtml(this.lastUserMessage).replace(/'/g, "\\'") : '';
+                    const footer = document.createElement('div');
+                    footer.className = 'message-footer';
+                    footer.id = footerId;
+                    footer.innerHTML = `
+                        <div class="model-badge">${this.escapeHtml(response.model)}</div>
+                        <div class="response-actions">
+                            <button class="action-btn action-btn-subtle" onclick="AdvisorChat.retryQuery('${retryQuery}')" title="Retry">
+                                <i class="fas fa-redo"></i>
+                            </button>
+                            <button class="action-btn" onclick="AdvisorChat.copyResponse('${footerId}')" title="Copy">
+                                <i class="fas fa-copy"></i>
+                            </button>
+                            <button class="action-btn" onclick="AdvisorChat.printResponse('${footerId}')" title="Print">
+                                <i class="fas fa-print"></i>
+                            </button>
+                        </div>
+                    `;
+                    bubble.appendChild(footer);
+                }
             }
 
             this.scrollToBottom();
