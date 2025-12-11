@@ -361,6 +361,7 @@ body {
     overflow-x: hidden;
     height: 100vh;
     overflow-y: auto;
+    position: relative; /* Required for loading screen absolute positioning */
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -378,12 +379,24 @@ body {
     z-index: 1000;
     opacity: 1;
     transition: opacity 0.5s ease, visibility 0.5s ease;
+    /* CSS-only fallback: auto-hide after 3s if JS fails */
+    animation: gantry-loading-fallback-hide 0.5s ease 3s forwards;
 }
 
 .gantry-loading-screen.hidden {
     opacity: 0;
     visibility: hidden;
     pointer-events: none;
+    animation: none;
+}
+
+/* CSS fallback animation - hides loading screen if JS doesn't dismiss it */
+@keyframes gantry-loading-fallback-hide {
+    to {
+        opacity: 0;
+        visibility: hidden;
+        pointer-events: none;
+    }
 }
 
 .gantry-loading-content {
@@ -566,12 +579,24 @@ body.dark-mode .gantry-loading-progress-bar {
         transform 0.5s cubic-bezier(0.16, 1, 0.3, 1),
         opacity 0.4s ease,
         width 0.2s ease;
+    /* CSS-only fallback: auto-reveal after 2s if JS fails */
+    animation: gantry-sidebar-fallback-reveal 0.5s ease 2s forwards;
 }
 
 /* Revealed state - sidebar slides in elegantly */
 .gantry-sidebar.sidebar-ready {
     transform: translateX(0);
     opacity: 1;
+    /* Cancel the fallback animation once JS has revealed */
+    animation: none;
+}
+
+/* CSS fallback animation - reveals sidebar if JS doesn't add sidebar-ready */
+@keyframes gantry-sidebar-fallback-reveal {
+    to {
+        transform: translateX(0);
+        opacity: 1;
+    }
 }
 
 /* Ensure collapsed state still works after reveal */
