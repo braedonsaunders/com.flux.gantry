@@ -1163,6 +1163,103 @@ body.dark-mode .thinking-debug-details .debug-code {
     color: var(--primary);
 }
 
+/* --- AI Plan Styles (thinking step with actual AI plan) --- */
+.thinking-plan-details {
+    padding: 10px;
+    background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%);
+    border: 1px solid #3b82f6;
+    border-radius: 8px;
+}
+
+body.dark-mode .thinking-plan-details {
+    background: linear-gradient(135deg, #1e3a5f 0%, #1e40af 100%);
+    border-color: #60a5fa;
+}
+
+.thinking-plan-details .plan-section {
+    margin-bottom: 12px;
+}
+
+.thinking-plan-details .plan-section:last-child {
+    margin-bottom: 0;
+}
+
+.thinking-plan-details .plan-label {
+    font-size: 10px;
+    font-weight: 600;
+    color: #1e40af;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    margin-bottom: 4px;
+}
+
+body.dark-mode .thinking-plan-details .plan-label {
+    color: #93c5fd;
+}
+
+.thinking-plan-details .plan-label i {
+    margin-right: 4px;
+}
+
+.thinking-plan-details .plan-value {
+    font-size: 12px;
+    color: #1e3a8a;
+    line-height: 1.4;
+}
+
+body.dark-mode .thinking-plan-details .plan-value {
+    color: #dbeafe;
+}
+
+.thinking-plan-details .plan-data-list {
+    margin: 4px 0 0 16px;
+    padding: 0;
+    font-size: 11px;
+    color: #1e3a8a;
+}
+
+body.dark-mode .thinking-plan-details .plan-data-list {
+    color: #bfdbfe;
+}
+
+.thinking-plan-details .plan-data-list li {
+    margin-bottom: 2px;
+}
+
+.thinking-plan-details .plan-step-list {
+    margin: 4px 0 0 16px;
+    padding: 0;
+    font-size: 11px;
+    color: #1e3a8a;
+}
+
+body.dark-mode .thinking-plan-details .plan-step-list {
+    color: #bfdbfe;
+}
+
+.thinking-plan-details .plan-step-list li {
+    margin-bottom: 4px;
+    line-height: 1.5;
+}
+
+.thinking-plan-details .tool-badge {
+    display: inline-block;
+    font-family: 'SF Mono', Monaco, monospace;
+    font-size: 9px;
+    background: #dbeafe;
+    color: #1e40af;
+    padding: 1px 6px;
+    border-radius: 4px;
+    border: 1px solid #93c5fd;
+    margin-left: 4px;
+}
+
+body.dark-mode .thinking-plan-details .tool-badge {
+    background: #1e3a8a;
+    color: #93c5fd;
+    border-color: #3b82f6;
+}
+
 /* --- Rich Content: Headings & Lists (from format_response tool) --- */
 .rich-heading {
     color: var(--text-dark);

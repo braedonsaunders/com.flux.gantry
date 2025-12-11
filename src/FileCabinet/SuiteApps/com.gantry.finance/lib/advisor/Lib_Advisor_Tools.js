@@ -2141,6 +2141,91 @@ Use for: "expense breakdown", "where is money going", "expenses by category"`,
     // ═══════════════════════════════════════════════════════════════════════════
 
     const DASHBOARD_TOOLS = {
+        list_dashboards: {
+            name: 'list_dashboards',
+            description: `List all available financial dashboards and their purposes.
+Use this when:
+- User asks "what dashboards are available?"
+- User asks "what can you show me?"
+- You need to recommend the right dashboard for a question`,
+            parameters: {
+                type: 'object',
+                properties: {},
+                required: []
+            },
+            execute: function(args) {
+                const dashboards = [
+                    {
+                        id: 'dashboard_cashflow',
+                        name: 'Treasury / Cash Flow Dashboard',
+                        description: 'Cash position, projections, runway, AR/AP aging, burn rate analysis',
+                        use_cases: ['cash flow', 'runway', 'liquidity', 'working capital', 'will we run out of cash'],
+                        key_metrics: ['cash_position', 'cash_runway_days', 'burn_rate', 'ar_total', 'ap_total', 'projected_cash']
+                    },
+                    {
+                        id: 'dashboard_health',
+                        name: 'Profitability Pulse Dashboard',
+                        description: 'Financial health score, margins, profitability metrics, key ratios',
+                        use_cases: ['profitability', 'margins', 'financial health', 'how are we doing'],
+                        key_metrics: ['health_score', 'gross_margin', 'net_margin', 'current_ratio', 'quick_ratio']
+                    },
+                    {
+                        id: 'dashboard_burden',
+                        name: 'Rate Engine / Burden Dashboard',
+                        description: 'Overhead rates, burden calculations, cost allocation analysis',
+                        use_cases: ['overhead', 'burden rate', 'indirect costs', 'cost allocation'],
+                        key_metrics: ['burden_rate', 'overhead_ratio', 'indirect_costs', 'cost_per_hour']
+                    },
+                    {
+                        id: 'dashboard_time',
+                        name: 'Utilization Dashboard',
+                        description: 'Time tracking, billable hours, utilization rates, resource efficiency',
+                        use_cases: ['utilization', 'billable hours', 'time tracking', 'productivity'],
+                        key_metrics: ['utilization_rate', 'billable_hours', 'non_billable_hours', 'effective_rate']
+                    },
+                    {
+                        id: 'dashboard_integrity',
+                        name: 'Sentinel / Data Integrity Dashboard',
+                        description: 'Fraud detection, anomaly identification, data quality checks',
+                        use_cases: ['fraud', 'anomalies', 'data integrity', 'suspicious activity'],
+                        key_metrics: ['anomaly_count', 'risk_score', 'flagged_transactions', 'data_quality_score']
+                    },
+                    {
+                        id: 'dashboard_vendorperformance',
+                        name: 'Procurement / Vendor Performance Dashboard',
+                        description: 'Vendor analysis, payment terms, spend concentration, vendor risk',
+                        use_cases: ['vendor analysis', 'procurement', 'supplier performance', 'vendor spend'],
+                        key_metrics: ['top_vendors', 'avg_payment_days', 'spend_concentration', 'vendor_count']
+                    },
+                    {
+                        id: 'dashboard_customervalue',
+                        name: 'Revenue Intelligence / Customer Value Dashboard',
+                        description: 'Customer lifetime value, RFM analysis, revenue concentration, churn risk',
+                        use_cases: ['customer value', 'CLV', 'revenue analysis', 'customer concentration', 'churn'],
+                        key_metrics: ['top_customers', 'customer_clv', 'revenue_concentration', 'avg_order_value']
+                    },
+                    {
+                        id: 'dashboard_spendvelocity',
+                        name: 'Cost Dynamics / Spend Velocity Dashboard',
+                        description: 'Expense trends, cost analysis, spending velocity, budget variance',
+                        use_cases: ['expenses', 'cost trends', 'spending analysis', 'budget variance'],
+                        key_metrics: ['total_spend', 'spend_trend', 'top_expense_categories', 'yoy_change']
+                    }
+                ];
+
+                return {
+                    success: true,
+                    dashboards: dashboards,
+                    count: dashboards.length,
+                    usage: 'Call the dashboard tool directly, e.g., dashboard_cashflow() for cash flow analysis',
+                    tool: 'list_dashboards'
+                };
+            },
+            displayName: function(args) {
+                return 'Listing available dashboards...';
+            }
+        },
+
         dashboard_cashflow: {
             name: 'dashboard_cashflow',
             description: `Get comprehensive TREASURY/CASHFLOW dashboard data including:
@@ -2892,6 +2977,281 @@ Returns search ID, title, record type, and description.`,
             displayName: function(args) {
                 const type = args.record_type ? ' for ' + args.record_type : '';
                 return 'Listing saved searches' + type + '...';
+            }
+        },
+
+        list_capabilities: {
+            name: 'list_capabilities',
+            description: `Get a summary of all available tools and capabilities.
+Use this when user asks:
+- "What can you do?"
+- "What tools do you have?"
+- "Help me understand your capabilities"`,
+            parameters: {
+                type: 'object',
+                properties: {
+                    category: {
+                        type: 'string',
+                        enum: ['all', 'discovery', 'data', 'dashboards', 'reports', 'queries'],
+                        description: 'Filter by tool category (default: all)'
+                    }
+                },
+                required: []
+            },
+            execute: function(args) {
+                const category = args.category || 'all';
+
+                const capabilities = {
+                    discovery: {
+                        description: 'Find entities and resolve IDs',
+                        tools: [
+                            { name: 'resolve_entity', purpose: 'Find customer, vendor, employee, item, project by name' },
+                            { name: 'resolve_gl_account', purpose: 'Find GL account by name, number, or type' },
+                            { name: 'resolve_classification', purpose: 'Find class, department, location, or subsidiary' }
+                        ]
+                    },
+                    data: {
+                        description: 'Get financial data and metrics',
+                        tools: [
+                            { name: 'get_cash_position', purpose: 'Current bank balances and cash position' },
+                            { name: 'get_ap_aging', purpose: 'Accounts payable aging by vendor' },
+                            { name: 'get_ar_aging', purpose: 'Accounts receivable aging by customer' },
+                            { name: 'get_vendor_spend', purpose: 'Spending analysis by vendor' },
+                            { name: 'get_customer_revenue', purpose: 'Revenue analysis by customer' },
+                            { name: 'get_gl_activity', purpose: 'GL transactions by account/class/dept' },
+                            { name: 'get_trial_balance', purpose: 'Account balances with debits/credits' },
+                            { name: 'get_recent_transactions', purpose: 'Recent transactions filtered by type/entity' },
+                            { name: 'get_expense_breakdown', purpose: 'Expenses by category' },
+                            { name: 'compare_periods', purpose: 'Period over period comparison' },
+                            { name: 'find_anomalies', purpose: 'Detect outliers and unusual patterns' }
+                        ]
+                    },
+                    dashboards: {
+                        description: 'Comprehensive pre-computed analysis',
+                        tools: [
+                            { name: 'dashboard_cashflow', purpose: 'Treasury: cash, runway, projections' },
+                            { name: 'dashboard_health', purpose: 'Profitability: margins, ratios, health score' },
+                            { name: 'dashboard_burden', purpose: 'Rate Engine: overhead, burden rates' },
+                            { name: 'dashboard_time', purpose: 'Utilization: billable hours, productivity' },
+                            { name: 'dashboard_integrity', purpose: 'Sentinel: fraud detection, anomalies' },
+                            { name: 'dashboard_vendorperformance', purpose: 'Procurement: vendor analysis' },
+                            { name: 'dashboard_customervalue', purpose: 'Revenue Intelligence: customer CLV, RFM' },
+                            { name: 'dashboard_spendvelocity', purpose: 'Cost Dynamics: expense trends' },
+                            { name: 'list_dashboards', purpose: 'List all available dashboards' }
+                        ]
+                    },
+                    reports: {
+                        description: 'Standard and custom reports',
+                        tools: [
+                            { name: 'run_report', purpose: 'Execute standard financial reports (P&L, Balance Sheet, etc.)' },
+                            { name: 'list_reports', purpose: 'List available reports' },
+                            { name: 'run_saved_search', purpose: 'Execute a saved search by ID' },
+                            { name: 'list_saved_searches', purpose: 'Find available saved searches' }
+                        ]
+                    },
+                    queries: {
+                        description: 'Custom data queries',
+                        tools: [
+                            { name: 'run_custom_query', purpose: 'Execute custom SuiteQL query for specific data needs' }
+                        ]
+                    }
+                };
+
+                let result = {};
+                if (category === 'all') {
+                    result = capabilities;
+                } else if (capabilities[category]) {
+                    result[category] = capabilities[category];
+                }
+
+                const totalTools = Object.values(capabilities).reduce((sum, cat) => sum + cat.tools.length, 0);
+
+                return {
+                    success: true,
+                    capabilities: result,
+                    totalTools: totalTools,
+                    categories: Object.keys(capabilities),
+                    tip: 'Use list_dashboards, list_reports, or list_saved_searches for detailed discovery',
+                    tool: 'list_capabilities'
+                };
+            },
+            displayName: function(args) {
+                return 'Listing capabilities...';
+            }
+        },
+
+        list_reports: {
+            name: 'list_reports',
+            description: `List available reports that can be run with run_report.
+Returns both standard financial reports and discovered custom reports.
+
+Use this when:
+- User asks "what reports are available?"
+- You need to find a specific report type
+- You want to see filtering options for reports`,
+            parameters: {
+                type: 'object',
+                properties: {
+                    category: {
+                        type: 'string',
+                        enum: ['all', 'financial', 'operational', 'custom'],
+                        description: 'Filter by report category (default: all)'
+                    },
+                    include_custom: {
+                        type: 'boolean',
+                        description: 'Include custom/saved report definitions (default: true)'
+                    }
+                },
+                required: []
+            },
+            execute: function(args) {
+                const category = args.category || 'all';
+                const includeCustom = args.include_custom !== false;
+
+                log.debug('list_reports', { category: category, includeCustom: includeCustom });
+
+                try {
+                    // Standard reports available through run_report
+                    const standardReports = {
+                        financial: [
+                            {
+                                id: 'income_statement',
+                                name: 'Income Statement (P&L)',
+                                description: 'Profit & Loss report showing revenue, expenses, and net income',
+                                parameters: ['period', 'subsidiary_id', 'class_id', 'department_id', 'location_id']
+                            },
+                            {
+                                id: 'balance_sheet',
+                                name: 'Balance Sheet',
+                                description: 'Assets, liabilities, and equity as of a specific date',
+                                parameters: ['period', 'subsidiary_id', 'class_id', 'department_id', 'location_id']
+                            },
+                            {
+                                id: 'cash_flow',
+                                name: 'Cash Flow Statement',
+                                description: 'Cash inflows and outflows from operating, investing, and financing activities',
+                                parameters: ['period', 'subsidiary_id']
+                            },
+                            {
+                                id: 'trial_balance',
+                                name: 'Trial Balance',
+                                description: 'All account balances showing debits and credits',
+                                parameters: ['period', 'subsidiary_id', 'class_id', 'department_id']
+                            },
+                            {
+                                id: 'general_ledger',
+                                name: 'General Ledger Detail',
+                                description: 'Detailed GL transactions by account',
+                                parameters: ['period', 'account_id', 'subsidiary_id']
+                            }
+                        ],
+                        operational: [
+                            {
+                                id: 'ar_aging',
+                                name: 'AR Aging Summary',
+                                description: 'Accounts receivable aging by customer',
+                                parameters: ['as_of_date', 'customer_id']
+                            },
+                            {
+                                id: 'ap_aging',
+                                name: 'AP Aging Summary',
+                                description: 'Accounts payable aging by vendor',
+                                parameters: ['as_of_date', 'vendor_id']
+                            }
+                        ]
+                    };
+
+                    // Build result based on category filter
+                    let reports = [];
+
+                    if (category === 'all' || category === 'financial') {
+                        reports = reports.concat(standardReports.financial.map(r => ({
+                            ...r,
+                            category: 'financial',
+                            type: 'standard'
+                        })));
+                    }
+
+                    if (category === 'all' || category === 'operational') {
+                        reports = reports.concat(standardReports.operational.map(r => ({
+                            ...r,
+                            category: 'operational',
+                            type: 'standard'
+                        })));
+                    }
+
+                    // Try to find custom reports (saved searches that act as reports)
+                    let customReports = [];
+                    if (includeCustom && (category === 'all' || category === 'custom')) {
+                        try {
+                            // Search for report-like saved searches
+                            const reportSearch = search.create({
+                                type: 'savedsearch',
+                                filters: [
+                                    ['isinactive', 'is', 'F'],
+                                    'AND',
+                                    ['ispublic', 'is', 'T'],
+                                    'AND',
+                                    [
+                                        ['title', 'contains', 'report'],
+                                        'OR',
+                                        ['title', 'contains', 'summary'],
+                                        'OR',
+                                        ['title', 'contains', 'analysis'],
+                                        'OR',
+                                        ['title', 'contains', 'dashboard']
+                                    ]
+                                ],
+                                columns: [
+                                    search.createColumn({ name: 'internalid' }),
+                                    search.createColumn({ name: 'title', sort: search.Sort.ASC }),
+                                    search.createColumn({ name: 'recordtype' }),
+                                    search.createColumn({ name: 'id' })
+                                ]
+                            });
+
+                            reportSearch.run().each(function(result) {
+                                customReports.push({
+                                    id: result.getValue('id') || result.getValue('internalid'),
+                                    name: result.getValue('title'),
+                                    description: 'Custom saved search report on ' + (result.getText('recordtype') || result.getValue('recordtype') || 'records'),
+                                    category: 'custom',
+                                    type: 'saved_search',
+                                    recordType: result.getText('recordtype') || result.getValue('recordtype'),
+                                    parameters: ['filters (optional)']
+                                });
+                                return customReports.length < 25; // Limit custom reports
+                            });
+                        } catch (searchErr) {
+                            log.debug('Could not search for custom reports', { error: searchErr.message });
+                        }
+                    }
+
+                    reports = reports.concat(customReports);
+
+                    return {
+                        success: true,
+                        reports: reports,
+                        count: reports.length,
+                        standardCount: reports.filter(r => r.type === 'standard').length,
+                        customCount: customReports.length,
+                        categories: category === 'all' ? ['financial', 'operational', 'custom'] : [category],
+                        usage: 'Use run_report({ report_type: "report_id" }) for standard reports, or run_saved_search({ search_id: "id" }) for custom reports',
+                        tool: 'list_reports'
+                    };
+
+                } catch (e) {
+                    log.error('list_reports error', { error: e.message });
+
+                    return {
+                        success: false,
+                        error: e.message,
+                        tool: 'list_reports'
+                    };
+                }
+            },
+            displayName: function(args) {
+                return 'Listing available reports...';
             }
         },
 

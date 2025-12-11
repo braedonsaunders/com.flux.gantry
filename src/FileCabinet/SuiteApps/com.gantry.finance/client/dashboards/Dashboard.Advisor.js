@@ -1872,9 +1872,56 @@
             // Build detail content
             let detailContent = '';
 
-            // Special handling for thinking steps - show debug info if available
+            // Special handling for thinking steps - show AI plan if available
             if (step.type === 'thinking') {
-                if (step.debug) {
+                // Check for new AI plan format first (from createPlanAndUpdateThinking)
+                if (step.plan && step.plan.goal_understanding) {
+                    const plan = step.plan;
+                    detailContent += '<div class="thinking-plan-details">';
+
+                    // Goal understanding
+                    if (plan.goal_understanding) {
+                        detailContent += `<div class="plan-section">
+                            <div class="plan-label"><i class="fas fa-bullseye"></i> Understanding:</div>
+                            <div class="plan-value">${this.escapeHtml(plan.goal_understanding)}</div>
+                        </div>`;
+                    }
+
+                    // Data needed
+                    if (plan.data_needed && plan.data_needed.length > 0) {
+                        detailContent += `<div class="plan-section">
+                            <div class="plan-label"><i class="fas fa-database"></i> Data Needed:</div>
+                            <ul class="plan-data-list">
+                                ${plan.data_needed.map(d => `<li>${this.escapeHtml(d)}</li>`).join('')}
+                            </ul>
+                        </div>`;
+                    }
+
+                    // Plan steps
+                    if (plan.plan_steps && plan.plan_steps.length > 0) {
+                        detailContent += `<div class="plan-section">
+                            <div class="plan-label"><i class="fas fa-tasks"></i> Plan:</div>
+                            <ol class="plan-step-list">
+                                ${plan.plan_steps.map(s => {
+                                    const toolBadge = s.tool ? `<code class="tool-badge">${this.escapeHtml(s.tool)}</code>` : '';
+                                    return `<li>${this.escapeHtml(s.action)} ${toolBadge}</li>`;
+                                }).join('')}
+                            </ol>
+                        </div>`;
+                    }
+
+                    // Completion criteria
+                    if (plan.completion_criteria) {
+                        detailContent += `<div class="plan-section">
+                            <div class="plan-label"><i class="fas fa-check-circle"></i> Done When:</div>
+                            <div class="plan-value">${this.escapeHtml(plan.completion_criteria)}</div>
+                        </div>`;
+                    }
+
+                    detailContent += '</div>';
+                }
+                // Debug info (when debug mode is on)
+                else if (step.debug) {
                     const debug = step.debug;
                     detailContent += '<div class="thinking-debug-details">';
 
@@ -1923,7 +1970,7 @@
 
                     detailContent += '</div>';
                 } else {
-                    // No debug info - show basic message
+                    // No plan or debug info - show basic message
                     detailContent += `<div class="thinking-basic">
                         <i class="fas fa-brain"></i> Analyzing your question and determining which tools to use...
                     </div>`;
