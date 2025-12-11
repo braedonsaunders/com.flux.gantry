@@ -298,12 +298,14 @@
             }
         };
 
-        // === SIDEBAR REVEAL: Trigger elegant slide-in animation ===
-        // Color is now applied, sidebar can be revealed
-        if (sidebar && !sidebar.classList.contains('sidebar-ready')) {
-            // Small delay to ensure CSS variables are painted before animation
+        // Mark that color is ready (sidebar reveal happens in DOM init section)
+        window.GANTRY_COLOR_READY = true;
+
+        // Try to reveal sidebar if DOM is already ready
+        const sidebarEl = document.querySelector('.gantry-sidebar');
+        if (sidebarEl && !sidebarEl.classList.contains('sidebar-ready')) {
             requestAnimationFrame(() => {
-                sidebar.classList.add('sidebar-ready');
+                sidebarEl.classList.add('sidebar-ready');
                 console.log('[Gantry] Sidebar revealed with synced color');
             });
         }
@@ -395,6 +397,15 @@
         }
     }
 
+    // === SIDEBAR REVEAL FALLBACK ===
+    // If color was already detected before DOM was ready, reveal sidebar now
+    if (sidebar && window.GANTRY_COLOR_READY && !sidebar.classList.contains('sidebar-ready')) {
+        requestAnimationFrame(() => {
+            sidebar.classList.add('sidebar-ready');
+            console.log('[Gantry] Sidebar revealed (DOM init fallback)');
+        });
+    }
+
     // Log loaded state
     console.log('[Gantry.App] Routes registered:', Object.keys(Router.routes));
     
@@ -402,6 +413,14 @@
     // START APPLICATION
     // ==========================================
     async function startApp() {
+        // === FINAL SIDEBAR REVEAL SAFETY NET ===
+        // Ensure sidebar is visible before showing app content
+        const sidebarFinal = document.querySelector('.gantry-sidebar');
+        if (sidebarFinal && !sidebarFinal.classList.contains('sidebar-ready')) {
+            sidebarFinal.classList.add('sidebar-ready');
+            console.log('[Gantry] Sidebar revealed (startApp safety net)');
+        }
+
         // Default to advisor as the first route
         let defaultRoute = 'advisor';
 
