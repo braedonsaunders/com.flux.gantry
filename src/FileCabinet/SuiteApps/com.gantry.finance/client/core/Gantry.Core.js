@@ -1106,18 +1106,39 @@
     // ==========================================
     const Router = {
         routes: {},
+        currentRoute: null,
         navigate(route) {
+            // Call cleanup for previous route if it exists
+            if (this.currentRoute && this.routes[this.currentRoute] && this.routes[this.currentRoute].cleanup) {
+                try {
+                    this.routes[this.currentRoute].cleanup();
+                } catch (e) {
+                    console.warn('[Router] Cleanup error for route:', this.currentRoute, e);
+                }
+            }
+
             document.querySelectorAll('.gantry-nav-link').forEach(a => {
                 a.classList.toggle('active', a.dataset.route === route);
             });
             const container = el('#gantry-view-container');
             if(container) container.innerHTML = '';
-            
-            if (this.routes[route]) this.routes[route]();
-            else if (this.routes['cashflow']) this.routes['cashflow']();
+
+            // Get handler - support both old (function) and new ({ init, cleanup }) formats
+            const routeConfig = this.routes[route] || this.routes['cashflow'];
+            if (routeConfig) {
+                const handler = typeof routeConfig === 'function' ? routeConfig : routeConfig.init;
+                if (handler) handler();
+            }
+
+            this.currentRoute = route;
         },
-        register(route, handler) {
-            this.routes[route] = handler;
+        register(route, handler, cleanup) {
+            // Support both old (handler only) and new (handler + cleanup) signatures
+            if (cleanup) {
+                this.routes[route] = { init: handler, cleanup: cleanup };
+            } else {
+                this.routes[route] = handler;
+            }
         }
     };
 

@@ -19,12 +19,13 @@
     // State
     let messages = [];
     let isProcessing = false;
-    let sessionContext = { 
+    let sessionContext = {
         resolvedEntities: {},
         entityOrder: [],      // Tracks chronological order of entity mentions for pronoun resolution
         topics: [],           // Conversation topics for context
         queryHistory: []      // Recent query history
     };  // Persists entity resolutions and context across messages
+    let activeRequest = null;  // Tracks in-flight request for resume on navigation
 
     /**
      * Advisor Controller
@@ -35,41 +36,39 @@
          * Initialize the advisor dashboard
          */
         init: function() {
-            // Don't reset processing state if already processing
-            const wasProcessing = isProcessing;
-            
             messages = messages || [];
-            
+
             const container = document.getElementById('gantry-view-container');
             const tpl = document.getElementById('tpl-advisor');
-            
+
             if (!tpl) {
                 console.error('[Advisor] Template not found');
                 return;
             }
-            
+
             container.innerHTML = tpl.innerHTML;
-            
+
             // Add dynamic CSS for metric labels and charts
             this.injectDynamicStyles();
-            
+
             // Hide floating panel if exists
             const fab = document.getElementById('advisor-fab');
             const panel = document.getElementById('advisor-panel');
             if (fab) fab.style.display = 'none';
             if (panel) panel.classList.remove('open');
-            
+
             this.loadSession();
             this.renderCategories(); // Render category buttons dynamically
             this.bindEvents();
             this.renderAllMessages();
-            
-            // Restore thinking indicator if we were processing
-            if (wasProcessing) {
-                this.showThinking();
-                this.updateSendButton(true);
+
+            // Check for and resume any active request from before navigation
+            if (activeRequest && activeRequest.requestId) {
+                console.log('[Advisor] Found active request to resume:', activeRequest.requestId);
+                // Resume polling in background (don't await - let init complete)
+                this.resumeActiveRequest(activeRequest);
             }
-            
+
             console.log('[Advisor] Initialized');
         },
         
@@ -843,10 +842,17 @@
         
         /**
          * Cleanup when leaving advisor
+         * Saves session state so active requests can be resumed on return
          */
         cleanup: function() {
+            // Save current state including any active request
+            this.saveSession();
+
+            // Show floating panel if it exists
             const fab = document.getElementById('advisor-fab');
             if (fab) fab.style.display = '';
+
+            console.log('[Advisor] Cleanup complete, active request preserved:', !!activeRequest);
         },
         
         /**
@@ -1265,8 +1271,25 @@
                 let consecutiveErrors = 0;
                 const MAX_CONSECUTIVE_ERRORS = 5;
 
+                // Store active request for resume on navigation
+                activeRequest = {
+                    requestId: requestId,
+                    userMessage: text,
+                    startTime: startTime,
+                    lastStepCount: 0,
+                    steps: [],
+                    aiSettings: aiSettings
+                };
+                this.saveSession();
+
                 // Poll for updates
                 while (true) {
+                    // Check if polling was aborted (user navigated away and back)
+                    if (!activeRequest || activeRequest.requestId !== requestId) {
+                        console.log('[Advisor Polling] Polling aborted - request no longer active');
+                        return;
+                    }
+
                     // Check timeout
                     if (Date.now() - startTime > MAX_POLL_TIME) {
                         throw new Error('Request timed out');
@@ -1300,10 +1323,21 @@
                         console.log('[Advisor Polling] Appending new steps:', newSteps.length, newSteps.map(s => s.title));
                         this.appendStepsToProgressiveMessage(progressiveMsgId, newSteps);
                         lastStepCount = status.steps.length;
+
+                        // Update active request state for resume
+                        if (activeRequest && activeRequest.requestId === requestId) {
+                            activeRequest.lastStepCount = lastStepCount;
+                            activeRequest.steps = status.steps;
+                            this.saveSession();
+                        }
                     }
 
                     // Check if complete
                     if (status.status === 'complete') {
+                        // Clear active request before finalizing
+                        activeRequest = null;
+                        this.saveSession();
+
                         // Finalize the message with answer and rich content
                         this.finalizeProgressiveMessage(progressiveMsgId, {
                             text: status.answer,
@@ -1337,9 +1371,141 @@
                 }
 
             } catch (err) {
+                // Clear active request on error
+                activeRequest = null;
+                this.saveSession();
+
                 // Update progressive message with error
                 this.updateProgressiveMessageError(progressiveMsgId, err.message);
                 throw err;
+            }
+        },
+
+        /**
+         * Resume an active request after navigating back to advisor
+         * Recreates the progressive message UI and continues polling
+         */
+        resumeActiveRequest: async function(savedRequest) {
+            const POLL_INTERVAL = 500;
+            const MAX_POLL_TIME = 120000;
+
+            console.log('[Advisor] Resuming active request:', savedRequest.requestId);
+
+            isProcessing = true;
+            this.updateSendButton(true);
+
+            // Create new progressive message placeholder
+            const progressiveMsgId = this.createProgressiveMessage();
+
+            // Render any steps we already received before navigating away
+            if (savedRequest.steps && savedRequest.steps.length > 0) {
+                console.log('[Advisor] Restoring', savedRequest.steps.length, 'previous steps');
+                this.appendStepsToProgressiveMessage(progressiveMsgId, savedRequest.steps);
+            }
+
+            let lastStepCount = savedRequest.lastStepCount || 0;
+            const requestId = savedRequest.requestId;
+            const startTime = savedRequest.startTime;
+            let consecutiveErrors = 0;
+            const MAX_CONSECUTIVE_ERRORS = 5;
+
+            try {
+                // Resume polling
+                while (true) {
+                    // Check if polling was aborted
+                    if (!activeRequest || activeRequest.requestId !== requestId) {
+                        console.log('[Advisor Polling] Resume polling aborted - request no longer active');
+                        return;
+                    }
+
+                    // Check overall timeout from original start time
+                    if (Date.now() - startTime > MAX_POLL_TIME) {
+                        throw new Error('Request timed out');
+                    }
+
+                    // Get status
+                    let status;
+                    try {
+                        status = await API.get('advisor_status', { id: requestId });
+                        consecutiveErrors = 0;
+                    } catch (pollErr) {
+                        consecutiveErrors++;
+                        console.warn('[Advisor Resume Polling] API error, attempt ' + consecutiveErrors + '/' + MAX_CONSECUTIVE_ERRORS, pollErr.message);
+                        if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+                            throw new Error('Failed after ' + MAX_CONSECUTIVE_ERRORS + ' consecutive errors: ' + pollErr.message);
+                        }
+                        await this.sleep(POLL_INTERVAL);
+                        continue;
+                    }
+
+                    console.log('[Advisor Resume Polling]', {
+                        status: status.status,
+                        stepCount: status.steps ? status.steps.length : 0,
+                        lastStepCount: lastStepCount
+                    });
+
+                    // Update steps progressively (only new ones since last seen)
+                    if (status.steps && status.steps.length > lastStepCount) {
+                        const newSteps = status.steps.slice(lastStepCount);
+                        console.log('[Advisor Resume Polling] Appending new steps:', newSteps.length);
+                        this.appendStepsToProgressiveMessage(progressiveMsgId, newSteps);
+                        lastStepCount = status.steps.length;
+
+                        // Update active request state
+                        if (activeRequest && activeRequest.requestId === requestId) {
+                            activeRequest.lastStepCount = lastStepCount;
+                            activeRequest.steps = status.steps;
+                            this.saveSession();
+                        }
+                    }
+
+                    // Check if complete
+                    if (status.status === 'complete') {
+                        // Clear active request
+                        activeRequest = null;
+                        this.saveSession();
+
+                        // Finalize the message
+                        this.finalizeProgressiveMessage(progressiveMsgId, {
+                            text: status.answer,
+                            richContent: status.richContent,
+                            steps: status.steps,
+                            sessionContext: status.sessionContext,
+                            model: status.model,
+                            provider: status.provider,
+                            duration: status.totalDuration
+                        });
+
+                        // Update session context if provided
+                        if (status.sessionContext) {
+                            sessionContext = { ...sessionContext, ...status.sessionContext };
+                        }
+                        break;
+                    }
+
+                    // Check for error
+                    if (status.status === 'error') {
+                        throw new Error(status.error || 'Unknown error during processing');
+                    }
+
+                    // Check for not found (request expired on server)
+                    if (status.status === 'not_found') {
+                        throw new Error('Request expired or not found. Please try your question again.');
+                    }
+
+                    await this.sleep(POLL_INTERVAL);
+                }
+
+            } catch (err) {
+                // Clear active request on error
+                activeRequest = null;
+                this.saveSession();
+
+                this.updateProgressiveMessageError(progressiveMsgId, err.message);
+                console.error('[Advisor Resume] Error:', err);
+            } finally {
+                isProcessing = false;
+                this.updateSendButton(false);
             }
         },
 
@@ -4049,6 +4215,7 @@
                 const data = {
                     messages: messages.slice(-MAX_HISTORY),
                     sessionContext: sessionContext,  // Persist entity resolutions
+                    activeRequest: activeRequest,    // Persist in-flight request for resume
                     timestamp: Date.now()
                 };
                 sessionStorage.setItem(STORAGE_KEY, JSON.stringify(data));
@@ -4056,7 +4223,7 @@
                 console.warn('[Advisor] Save failed:', e);
             }
         },
-        
+
         /**
          * Load session from storage
          */
@@ -4072,15 +4239,18 @@
                     sessionContext.entityOrder = sessionContext.entityOrder || [];
                     sessionContext.topics = sessionContext.topics || [];
                     sessionContext.queryHistory = sessionContext.queryHistory || [];
+                    // Load active request if present
+                    activeRequest = parsed.activeRequest || null;
                 }
             } catch (e) {
                 messages = [];
-                sessionContext = { 
+                sessionContext = {
                     resolvedEntities: {},
                     entityOrder: [],
                     topics: [],
                     queryHistory: []
                 };
+                activeRequest = null;
             }
         },
         
