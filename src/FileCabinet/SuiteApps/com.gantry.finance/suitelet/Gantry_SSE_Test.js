@@ -5,271 +5,277 @@
  *
  * Gantry_SSE_Test.js
  *
- * EXPERIMENTAL: Test Server-Sent Events (SSE) streaming from NetSuite
+ * EXPERIMENTAL: Test streaming/chunked responses from NetSuite
  *
- * This Suitelet attempts to stream partial responses using SSE format.
- * If successful, this enables real-time progressive updates to the frontend.
- *
- * SSE Format:
- *   data: {"type":"step","content":"..."}\n\n
- *
- * Frontend consumption:
- *   const eventSource = new EventSource(suiteletUrl);
- *   eventSource.onmessage = (e) => console.log(JSON.parse(e.data));
+ * Tests multiple approaches:
+ * 1. Plain text with newlines (safest)
+ * 2. JSON Lines format (NDJSON)
+ * 3. SSE format (may not work if headers rejected)
  */
 define([
     'N/log',
-    'N/search',
     'N/query'
-], function(log, search, query) {
+], function(log, query) {
     'use strict';
 
     /**
-     * Send an SSE event
-     * @param {ServerResponse} response - NetSuite response object
-     * @param {object} data - Data to send
+     * Write a chunk of data
      */
-    function sendEvent(response, data) {
-        const eventData = 'data: ' + JSON.stringify(data) + '\n\n';
-        response.write(eventData);
+    function writeChunk(response, data, format) {
+        let output;
 
-        // Try to flush if method exists (undocumented)
-        if (typeof response.flush === 'function') {
-            response.flush();
+        if (format === 'sse') {
+            output = 'data: ' + JSON.stringify(data) + '\n\n';
+        } else if (format === 'ndjson') {
+            output = JSON.stringify(data) + '\n';
+        } else {
+            // Plain text with delimiter
+            output = '---CHUNK---' + JSON.stringify(data) + '---END---\n';
         }
+
+        response.write(output);
     }
 
     /**
      * Simulate a delay (blocking)
-     * @param {number} ms - Milliseconds to wait
      */
     function simulateWork(ms) {
         const start = Date.now();
         while (Date.now() - start < ms) {
-            // Busy wait - not ideal but only way in NetSuite
+            // Busy wait
         }
     }
 
     /**
-     * Handle GET requests - SSE stream
+     * Handle GET requests
      */
     function onRequest(context) {
         const request = context.request;
         const response = context.response;
 
-        // Only handle GET for SSE
         if (request.method !== 'GET') {
-            response.write(JSON.stringify({ error: 'Use GET for SSE' }));
+            response.write(JSON.stringify({ error: 'Use GET' }));
             return;
         }
 
         const mode = request.parameters.mode || 'simple';
+        const format = request.parameters.format || 'ndjson'; // ndjson, sse, plain
 
-        log.debug('SSE Test Starting', { mode: mode });
+        log.debug('Streaming Test Starting', { mode: mode, format: format });
+
+        // Try to set appropriate content type based on format
+        try {
+            if (format === 'sse') {
+                // This might fail in NetSuite
+                response.setHeader({
+                    name: 'Content-Type',
+                    value: 'text/event-stream; charset=utf-8'
+                });
+            } else if (format === 'ndjson') {
+                response.setHeader({
+                    name: 'Content-Type',
+                    value: 'application/x-ndjson'
+                });
+            } else {
+                response.setHeader({
+                    name: 'Content-Type',
+                    value: 'text/plain; charset=utf-8'
+                });
+            }
+        } catch (headerErr) {
+            log.error('Header error', headerErr.message);
+            // Continue anyway with default content type
+        }
+
+        // Don't try Connection header - NetSuite doesn't allow it
+        // Don't try Cache-Control in setHeader - use different approach if needed
 
         try {
-            // Set SSE headers
-            response.setHeader({
-                name: 'Content-Type',
-                value: 'text/event-stream'
-            });
-            response.setHeader({
-                name: 'Cache-Control',
-                value: 'no-cache'
-            });
-            response.setHeader({
-                name: 'Connection',
-                value: 'keep-alive'
-            });
-            // CORS headers for cross-origin if needed
-            response.setHeader({
-                name: 'Access-Control-Allow-Origin',
-                value: '*'
-            });
-
             if (mode === 'simple') {
-                // Simple test - just send a few events with delays
-                runSimpleTest(response);
+                runSimpleTest(response, format);
             } else if (mode === 'advisor') {
-                // Simulate advisor flow
-                runAdvisorSimulation(response);
+                runAdvisorSimulation(response, format);
             } else if (mode === 'query') {
-                // Test with actual database queries
-                runQueryTest(response);
+                runQueryTest(response, format);
+            } else if (mode === 'instant') {
+                // Control test - write everything at once
+                runInstantTest(response, format);
             }
 
-            // Send completion event
-            sendEvent(response, {
+            // Send completion
+            writeChunk(response, {
                 type: 'complete',
                 message: 'Stream finished',
                 timestamp: Date.now()
-            });
+            }, format);
 
-            log.debug('SSE Test Complete', { mode: mode });
+            log.debug('Streaming Test Complete', { mode: mode });
 
         } catch (e) {
-            log.error('SSE Test Error', { message: e.message, stack: e.stack });
-
-            // Try to send error event
-            try {
-                sendEvent(response, {
-                    type: 'error',
-                    message: e.message
-                });
-            } catch (writeErr) {
-                // Response may already be closed
-            }
+            log.error('Streaming Test Error', { message: e.message, stack: e.stack });
+            writeChunk(response, {
+                type: 'error',
+                message: e.message
+            }, format);
         }
     }
 
     /**
-     * Simple test - send numbered events with delays
+     * Simple test - numbered events with delays
      */
-    function runSimpleTest(response) {
+    function runSimpleTest(response, format) {
         for (let i = 1; i <= 5; i++) {
-            sendEvent(response, {
+            writeChunk(response, {
                 type: 'step',
                 step: i,
-                message: `Processing step ${i} of 5...`,
+                total: 5,
+                message: 'Processing step ' + i + ' of 5...',
                 timestamp: Date.now()
-            });
+            }, format);
 
-            // Simulate work (1 second between events)
+            // 1 second between events
             simulateWork(1000);
         }
     }
 
     /**
-     * Simulate advisor flow with realistic steps
+     * Control test - write everything instantly (no delays)
      */
-    function runAdvisorSimulation(response) {
-        // Step 1: Thinking
-        sendEvent(response, {
+    function runInstantTest(response, format) {
+        for (let i = 1; i <= 10; i++) {
+            writeChunk(response, {
+                type: 'step',
+                step: i,
+                timestamp: Date.now()
+            }, format);
+        }
+    }
+
+    /**
+     * Simulate advisor flow
+     */
+    function runAdvisorSimulation(response, format) {
+        writeChunk(response, {
             type: 'thinking',
             title: 'Understanding your question...',
             timestamp: Date.now()
-        });
+        }, format);
         simulateWork(500);
 
-        // Step 2: Tool call - resolve entity
-        sendEvent(response, {
+        writeChunk(response, {
             type: 'tool_call',
             tool: 'resolve_classification',
             params: { term: 'Hotels', dimension: 'class' },
             status: 'running',
             timestamp: Date.now()
-        });
+        }, format);
         simulateWork(1500);
 
-        // Step 3: Tool result
-        sendEvent(response, {
+        writeChunk(response, {
             type: 'tool_result',
             tool: 'resolve_classification',
             status: 'complete',
-            result: { found: false, message: 'Not found' },
+            result: { found: false },
             timestamp: Date.now()
-        });
+        }, format);
         simulateWork(300);
 
-        // Step 4: Another tool call
-        sendEvent(response, {
+        writeChunk(response, {
             type: 'tool_call',
             tool: 'get_gl_activity',
             params: { period: 'last_90_days' },
             status: 'running',
             timestamp: Date.now()
-        });
+        }, format);
         simulateWork(2000);
 
-        // Step 5: Tool result with data
-        sendEvent(response, {
+        writeChunk(response, {
             type: 'tool_result',
             tool: 'get_gl_activity',
             status: 'complete',
-            result: { rowCount: 42, sample: ['Entry 1', 'Entry 2'] },
+            result: { rowCount: 42 },
             timestamp: Date.now()
-        });
+        }, format);
         simulateWork(300);
 
-        // Step 6: Synthesizing
-        sendEvent(response, {
+        writeChunk(response, {
             type: 'synthesizing',
             title: 'Analyzing results...',
             timestamp: Date.now()
-        });
+        }, format);
         simulateWork(1000);
 
-        // Step 7: Final answer (could be chunked for text streaming)
-        sendEvent(response, {
+        writeChunk(response, {
             type: 'answer',
-            content: 'Based on my analysis of the GL activity, I found 42 transactions in the last 90 days. The largest variance was...',
+            content: 'Based on my analysis, I found 42 GL transactions in the last 90 days.',
             timestamp: Date.now()
-        });
+        }, format);
     }
 
     /**
-     * Test with actual database queries to measure real timing
+     * Test with real database queries
      */
-    function runQueryTest(response) {
-        // Step 1: Start
-        sendEvent(response, {
-            type: 'step',
+    function runQueryTest(response, format) {
+        writeChunk(response, {
+            type: 'start',
             message: 'Starting database query test...',
             timestamp: Date.now()
-        });
+        }, format);
 
-        // Step 2: Run a simple query
-        sendEvent(response, {
+        // Query 1: Accounts
+        writeChunk(response, {
             type: 'query_start',
-            message: 'Querying accounts...',
+            query: 'accounts',
             timestamp: Date.now()
-        });
+        }, format);
 
         try {
             const results = query.runSuiteQL({
-                query: `SELECT id, acctnumber, acctname FROM account WHERE isinactive = 'F' FETCH FIRST 10 ROWS ONLY`
+                query: "SELECT id, acctnumber, acctname FROM account WHERE isinactive = 'F' FETCH FIRST 10 ROWS ONLY"
             }).asMappedResults();
 
-            sendEvent(response, {
-                type: 'query_complete',
-                message: `Found ${results.length} accounts`,
+            writeChunk(response, {
+                type: 'query_result',
+                query: 'accounts',
                 rowCount: results.length,
                 timestamp: Date.now()
-            });
+            }, format);
         } catch (e) {
-            sendEvent(response, {
+            writeChunk(response, {
                 type: 'query_error',
-                message: e.message,
+                query: 'accounts',
+                error: e.message,
                 timestamp: Date.now()
-            });
+            }, format);
         }
 
         simulateWork(500);
 
-        // Step 3: Another query
-        sendEvent(response, {
+        // Query 2: Transactions
+        writeChunk(response, {
             type: 'query_start',
-            message: 'Querying transactions...',
+            query: 'transactions',
             timestamp: Date.now()
-        });
+        }, format);
 
         try {
             const txnResults = query.runSuiteQL({
-                query: `SELECT id, tranid, type FROM transaction FETCH FIRST 5 ROWS ONLY`
+                query: "SELECT id, tranid, type FROM transaction FETCH FIRST 5 ROWS ONLY"
             }).asMappedResults();
 
-            sendEvent(response, {
-                type: 'query_complete',
-                message: `Found ${txnResults.length} transactions`,
+            writeChunk(response, {
+                type: 'query_result',
+                query: 'transactions',
                 rowCount: txnResults.length,
                 timestamp: Date.now()
-            });
+            }, format);
         } catch (e) {
-            sendEvent(response, {
+            writeChunk(response, {
                 type: 'query_error',
-                message: e.message,
+                query: 'transactions',
+                error: e.message,
                 timestamp: Date.now()
-            });
+            }, format);
         }
     }
 
