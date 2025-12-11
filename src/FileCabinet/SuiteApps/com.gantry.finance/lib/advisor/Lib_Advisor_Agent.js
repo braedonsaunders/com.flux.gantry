@@ -167,6 +167,9 @@ ${dashboardDescriptions}
         let lastToolResults = null;
         let allToolCalls = [];
         let conversationContext = ''; // Accumulates tool call context
+        const toolCallSignatures = new Map(); // Track tool calls to detect loops
+        let consecutiveRepeats = 0; // Track consecutive repeated calls
+        const MAX_REPEATS = 2; // Max times to allow same tool call
 
         while (iterations < MAX_ITERATIONS) {
             iterations++;
@@ -178,11 +181,17 @@ ${dashboardDescriptions}
                 currentPrompt = message + '\n\n--- Previous tool calls and results ---\n' + conversationContext;
             }
 
+            // If too many repeats, force a final answer
+            if (consecutiveRepeats >= MAX_REPEATS) {
+                currentPrompt += '\n\n**IMPORTANT: You have tried the same tool multiple times with no results. You MUST now provide a final answer to the user based on what you know, or explain that you could not find the requested information. Do NOT call any more tools.**';
+            }
+
             log.debug('Agent iteration', {
                 requestId: requestId,
                 iteration: iterations,
                 promptLength: currentPrompt.length,
-                hasToolContext: !!conversationContext
+                hasToolContext: !!conversationContext,
+                consecutiveRepeats: consecutiveRepeats
             });
 
             try {
@@ -190,7 +199,7 @@ ${dashboardDescriptions}
                 const llmResponse = AIProviders.callAI(currentPrompt, {
                     systemPrompt: systemPrompt,
                     chatHistory: chatHistory,
-                    tools: toolDefinitions,
+                    tools: consecutiveRepeats >= MAX_REPEATS ? null : toolDefinitions, // Remove tools if forcing answer
                     tier: THINKING_TIER,
                     purpose: `Agent iteration ${iterations}`,
                     temperature: 0.2
@@ -210,6 +219,7 @@ ${dashboardDescriptions}
                 // Handle tool calls
                 if (llmResponse.type === 'tool_call' && llmResponse.toolCalls && llmResponse.toolCalls.length > 0) {
                     const toolResults = [];
+                    let hadRepeat = false;
 
                     for (const toolCall of llmResponse.toolCalls.slice(0, MAX_TOOL_CALLS_PER_TURN)) {
                         const toolName = toolCall.name || toolCall.function?.name;
@@ -224,6 +234,26 @@ ${dashboardDescriptions}
                                 parsedArgs = {};
                             }
                         }
+
+                        // Create signature to detect repeated calls
+                        const signature = toolName + '::' + JSON.stringify(parsedArgs);
+                        const previousCount = toolCallSignatures.get(signature) || 0;
+
+                        if (previousCount >= MAX_REPEATS) {
+                            // Skip this repeated call
+                            log.debug('Skipping repeated tool call', {
+                                tool: toolName,
+                                args: parsedArgs,
+                                previousCount: previousCount
+                            });
+
+                            hadRepeat = true;
+                            conversationContext += `\n[SKIPPED - Already called ${toolName} with same args ${previousCount} times. Try a different approach or provide your answer.]\n`;
+                            continue;
+                        }
+
+                        // Track this call
+                        toolCallSignatures.set(signature, previousCount + 1);
 
                         // Add progress step BEFORE executing
                         const displayName = Tools.getToolDisplayName(toolName, parsedArgs);
@@ -266,6 +296,18 @@ ${dashboardDescriptions}
                     }
 
                     lastToolResults = toolResults;
+
+                    // Track repeats - if all calls were skipped, increment repeat counter
+                    if (toolResults.length === 0 && hadRepeat) {
+                        consecutiveRepeats++;
+                        log.debug('All tool calls were repeats', {
+                            consecutiveRepeats: consecutiveRepeats,
+                            maxRepeats: MAX_REPEATS
+                        });
+                    } else if (toolResults.length > 0) {
+                        // Made progress, reset repeat counter
+                        consecutiveRepeats = 0;
+                    }
 
                     // Continue to next iteration with tool results in context
                     continue;
