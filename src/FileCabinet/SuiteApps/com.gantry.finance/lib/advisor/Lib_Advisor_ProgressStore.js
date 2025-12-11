@@ -33,12 +33,16 @@ define(['N/cache', 'N/log'], function(cache, log) {
     const MAX_CACHE_SIZE_BYTES = MAX_CACHE_SIZE_KB * 1024;
 
     // Atomic completion lock configuration
+    // NetSuite requires minimum 300s TTL, so we use timestamp-based logical expiration
     const LOCK_PREFIX = 'lock_';
-    const LOCK_TTL = 30; // Lock expires after 30 seconds (safety net)
+    const LOCK_TTL = 300; // Minimum allowed by NetSuite N/cache
+    const LOCK_TIMEOUT_MS = 30000; // Logical expiration: 30 seconds
 
     // Processing lock configuration - prevents concurrent step execution
+    // NetSuite requires minimum 300s TTL, so we use timestamp-based logical expiration
     const PROC_LOCK_PREFIX = 'proc_';
-    const PROC_LOCK_TTL = 60; // Processing lock expires after 60 seconds (longer than any single step)
+    const PROC_LOCK_TTL = 300; // Minimum allowed by NetSuite N/cache
+    const PROC_LOCK_TIMEOUT_MS = 15000; // Logical expiration: 15 seconds (if step takes longer, assume timeout)
 
     /**
      * Get the cache - always get fresh reference
@@ -127,16 +131,33 @@ define(['N/cache', 'N/log'], function(cache, log) {
 
     /**
      * Try to acquire completion lock for a request
+     * Uses timestamp-based logical expiration since NetSuite requires min 300s TTL.
      * @param {string} requestId - Request ID
-     * @returns {boolean} True if lock acquired, false if already locked
+     * @returns {boolean} True if lock acquired, false if actively locked
      */
     function acquireCompletionLock(requestId) {
         const lockKey = LOCK_PREFIX + requestId;
         try {
             const existing = getCache().get({ key: lockKey });
+
             if (existing) {
-                log.debug('ProgressStore.acquireCompletionLock - already locked', { requestId: requestId });
-                return false;
+                // Check if lock is stale
+                const lockData = JSON.parse(existing);
+                const elapsed = Date.now() - lockData.timestamp;
+
+                if (elapsed < LOCK_TIMEOUT_MS) {
+                    log.debug('ProgressStore.acquireCompletionLock - already locked', {
+                        requestId: requestId,
+                        elapsedMs: elapsed
+                    });
+                    return false;
+                }
+
+                // Lock is stale - take over
+                log.debug('ProgressStore.acquireCompletionLock - taking over stale lock', {
+                    requestId: requestId,
+                    elapsedMs: elapsed
+                });
             }
 
             // Set the lock
@@ -155,15 +176,21 @@ define(['N/cache', 'N/log'], function(cache, log) {
     }
 
     /**
-     * Check if a request has a completion lock (without acquiring)
+     * Check if a request has an active completion lock (without acquiring)
+     * Uses timestamp-based check - lock is only considered active if < LOCK_TIMEOUT_MS old
      * @param {string} requestId - Request ID
-     * @returns {boolean} True if locked
+     * @returns {boolean} True if actively locked
      */
     function hasCompletionLock(requestId) {
         const lockKey = LOCK_PREFIX + requestId;
         try {
             const existing = getCache().get({ key: lockKey });
-            return !!existing;
+            if (!existing) return false;
+
+            // Check if lock is stale
+            const lockData = JSON.parse(existing);
+            const elapsed = Date.now() - lockData.timestamp;
+            return elapsed < LOCK_TIMEOUT_MS;
         } catch (e) {
             return false;
         }
@@ -207,20 +234,42 @@ define(['N/cache', 'N/log'], function(cache, log) {
     /**
      * Try to acquire processing lock for a request
      * This prevents multiple concurrent polls from running steps simultaneously
+     *
+     * Uses timestamp-based logical expiration since NetSuite requires min 300s TTL.
+     * If a lock exists but is older than PROC_LOCK_TIMEOUT_MS, we assume the previous
+     * poll timed out and allow this poll to take over.
+     *
      * @param {string} requestId - Request ID
-     * @returns {boolean} True if lock acquired, false if another poll is processing
+     * @returns {boolean} True if lock acquired, false if another poll is actively processing
      */
     function acquireProcessingLock(requestId) {
         const lockKey = PROC_LOCK_PREFIX + requestId;
         try {
             const existing = getCache().get({ key: lockKey });
+
             if (existing) {
-                // Another poll is currently processing
-                log.debug('ProgressStore.acquireProcessingLock - already locked', { requestId: requestId });
-                return false;
+                // Check if lock is stale (previous poll timed out)
+                const lockData = JSON.parse(existing);
+                const elapsed = Date.now() - lockData.timestamp;
+
+                if (elapsed < PROC_LOCK_TIMEOUT_MS) {
+                    // Lock is still active - another poll is processing
+                    log.debug('ProgressStore.acquireProcessingLock - already locked', {
+                        requestId: requestId,
+                        elapsedMs: elapsed,
+                        timeoutMs: PROC_LOCK_TIMEOUT_MS
+                    });
+                    return false;
+                }
+
+                // Lock is stale - take over (previous poll likely timed out)
+                log.debug('ProgressStore.acquireProcessingLock - taking over stale lock', {
+                    requestId: requestId,
+                    elapsedMs: elapsed
+                });
             }
 
-            // Set the lock
+            // Set/update the lock with fresh timestamp
             getCache().put({
                 key: lockKey,
                 value: JSON.stringify({ processing: true, timestamp: Date.now() }),
@@ -244,15 +293,21 @@ define(['N/cache', 'N/log'], function(cache, log) {
     }
 
     /**
-     * Check if a request has a processing lock (without acquiring)
+     * Check if a request has an active processing lock (without acquiring)
+     * Uses timestamp-based check - lock is only considered active if < PROC_LOCK_TIMEOUT_MS old
      * @param {string} requestId - Request ID
-     * @returns {boolean} True if locked
+     * @returns {boolean} True if actively locked
      */
     function hasProcessingLock(requestId) {
         const lockKey = PROC_LOCK_PREFIX + requestId;
         try {
             const existing = getCache().get({ key: lockKey });
-            return !!existing;
+            if (!existing) return false;
+
+            // Check if lock is stale
+            const lockData = JSON.parse(existing);
+            const elapsed = Date.now() - lockData.timestamp;
+            return elapsed < PROC_LOCK_TIMEOUT_MS;
         } catch (e) {
             return false;
         }
