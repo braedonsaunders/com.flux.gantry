@@ -39,6 +39,11 @@ function(query, record, search, runtime, format, Shared, Utils) {
     const Z_SCORE_THRESHOLD = 3;
     const RSF_THRESHOLD = 10;
     const SEQUENTIAL_INVOICE_MIN = 3;
+    // Sequential invoice date thresholds - invoices spread over time are NORMAL
+    // Only flag when sequential invoices are clustered within a short time window
+    const SEQUENTIAL_SAME_DAY_THRESHOLD = 0;      // Same day = HIGH risk
+    const SEQUENTIAL_CLOSE_DAYS_THRESHOLD = 7;    // Within 7 days = MEDIUM risk
+    const SEQUENTIAL_SPREAD_DAYS_THRESHOLD = 30;  // More than 30 days apart = likely normal, don't flag
     
     // Benford Expected Frequencies - First Digit
     const BENFORD_EXPECTED_1D = {
@@ -609,7 +614,7 @@ function(query, record, search, runtime, format, Shared, Utils) {
                 AND T.trandate >= TO_DATE('${startDate}', 'YYYY-MM-DD')
                 AND T.trandate <= TO_DATE('${endDate}', 'YYYY-MM-DD')
                 ${subFilter}
-            ORDER BY ABS(COALESCE(T.foreigntotal, 0)) DESC
+            ORDER BY T.trandate DESC, ABS(COALESCE(T.foreigntotal, 0)) DESC
             FETCH FIRST 1000 ROWS ONLY
         `;
         
@@ -709,40 +714,42 @@ function(query, record, search, runtime, format, Shared, Utils) {
             // Benford First-Two-Digit anomalies (for display purposes - not 99 trap)
             const benfordAnomalies2D = digits2D.filter(d => d.isAnomaly && d.count >= 5);
             
-            // Build flagged transactions list for drill-down
-            // Note: entity/account/user fields unavailable in SuiteQL Transaction table
-            const benfordFlags = [];
-            
+            // Build transaction list for drill-down purposes ONLY
+            // NOTE: Benford's Law is a dataset-level analysis - individual transactions are NOT flagged
+            // These records are for drill-down/investigation context, not risk scoring
+            const benfordTransactions = [];
+
             txnData.forEach(t => {
                 const fd = parseInt(t.first_digit);
                 const ftd = parseInt(t.first_two);
                 const d1 = digits1D.find(x => x.digit === fd);
                 const d2 = digits2D.find(x => x.digits === ftd);
-                
-                const isAnomaly = (d1 && d1.isAnomaly) || (d2 && d2.isAnomaly);
-                
+
+                // Track which digit category this transaction falls into (for drill-down grouping)
+                const digitDeviates1D = d1 && d1.isAnomaly;
+                const digitDeviates2D = d2 && d2.isAnomaly;
+
                 // Include ALL transactions so users can drill down on any digit
-                benfordFlags.push({
-                    id: t.id, 
-                    tranId: t.tranid, 
-                    tranDate: t.trandate, 
+                benfordTransactions.push({
+                    id: t.id,
+                    tranId: t.tranid,
+                    tranDate: t.trandate,
                     type: t.type,
                     amount: parseFloat(t.amount) || 0,
-                    firstDigit: fd, 
+                    firstDigit: fd,
                     firstTwoDigits: ftd,
                     entityId: t.entityid,
                     entityName: t.entityname,
                     vendorId: t.entityid,
                     createdById: t.createdbyid,
                     createdBy: t.createdby,
-                    isAnomaly: isAnomaly,
-                    flagType: 'benford',
-                    reason: isAnomaly 
-                        ? (d2 && d2.isAnomaly 
-                            ? `First-two digits (${ftd}) deviate ${Math.abs(d2.deviationPct).toFixed(0)}%`
-                            : `First digit (${fd}) deviates ${Math.abs(d1.deviationPct).toFixed(0)}%`)
-                        : `Normal Benford distribution`,
-                    riskScore: isAnomaly ? 30 + Math.min(40, Math.abs((d2 || d1).deviationPct) / 2) : 10
+                    // Context info for drill-down - NOT a flag on the transaction itself
+                    digitDeviates: digitDeviates1D || digitDeviates2D,
+                    digitContext: digitDeviates1D || digitDeviates2D
+                        ? (digitDeviates2D
+                            ? `Digit pair ${ftd} deviates ${Math.abs(d2.deviationPct).toFixed(0)}% from expected`
+                            : `Digit ${fd} deviates ${Math.abs(d1.deviationPct).toFixed(0)}% from expected`)
+                        : `Within expected Benford distribution`
                 });
             });
             
@@ -759,11 +766,14 @@ function(query, record, search, runtime, format, Shared, Utils) {
                     conformityLevel: getConformityLevel(mad1D),
                     message: getBenfordMessage(mad1D, total1D),
                     topVendors, topUsers, topAccounts,
-                    flaggedTransactions: benfordFlags.slice(0, 500),
+                    // Renamed: these are for drill-down, NOT flagged transactions
+                    drillDownTransactions: benfordTransactions.slice(0, 500),
+                    // Legacy alias for backward compatibility with frontend
+                    flaggedTransactions: benfordTransactions.slice(0, 500),
                     _debug: {
                         txnDataCount: txnData.length,
-                        benfordFlagsCount: benfordFlags.length,
-                        anomalyCount: benfordFlags.filter(f => f.isAnomaly).length
+                        drillDownCount: benfordTransactions.length,
+                        deviatingDigitCount: benfordTransactions.filter(t => t.digitDeviates).length
                     }
                 },
                 firstTwoDigits: {
@@ -1219,17 +1229,52 @@ function(query, record, search, runtime, format, Shared, Utils) {
     }
 
     // ==========================================
-    // SEQUENTIAL INVOICE DETECTION - CORRECTED: Per-Vendor Grouping
-    // Only detects sequential invoices from the SAME vendor
+    // SEQUENTIAL INVOICE DETECTION - CORRECTED: Per-Vendor Grouping + Date Proximity
+    // Only detects sequential invoices from the SAME vendor that are TEMPORALLY CLUSTERED
+    // Sequential invoices spread over weeks/months are NORMAL vendor behavior
     // ==========================================
-    
+
+    /**
+     * Calculate the number of days between two dates
+     */
+    function daysBetween(date1, date2) {
+        if (!date1 || !date2) return Infinity;
+        const d1 = new Date(date1);
+        const d2 = new Date(date2);
+        if (isNaN(d1.getTime()) || isNaN(d2.getTime())) return Infinity;
+        const diffTime = Math.abs(d2 - d1);
+        return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    }
+
+    /**
+     * Calculate the date span (first to last date) of a run of invoices
+     */
+    function calculateDateSpan(invoices) {
+        if (!invoices || invoices.length === 0) return { days: Infinity, allSameDay: false };
+
+        const dates = invoices
+            .map(inv => inv.rawDate ? new Date(inv.rawDate) : null)
+            .filter(d => d && !isNaN(d.getTime()))
+            .sort((a, b) => a - b);
+
+        if (dates.length < 2) return { days: 0, allSameDay: true, firstDate: dates[0], lastDate: dates[0] };
+
+        const firstDate = dates[0];
+        const lastDate = dates[dates.length - 1];
+        const days = daysBetween(firstDate, lastDate);
+        const allSameDay = days === 0;
+
+        return { days, allSameDay, firstDate, lastDate };
+    }
+
     function detectSequentialInvoices(startDate, endDate, subsidiaryId, config) {
         const subFilter = subsidiaryId ? `AND T.subsidiary = ${subsidiaryId}` : '';
         const minCount = (config && config.sequentialMinCount) || SEQUENTIAL_INVOICE_MIN;
-        
+        const maxDateSpread = (config && config.sequentialMaxDateSpread) || SEQUENTIAL_SPREAD_DAYS_THRESHOLD;
+
         // Get vendor bills with entity information
         const sql = `
-            SELECT T.id, T.tranid, TO_CHAR(T.trandate, 'MM/DD/YYYY') AS trandate, 
+            SELECT T.id, T.tranid, TO_CHAR(T.trandate, 'MM/DD/YYYY') AS trandate,
                 T.trandate AS raw_date, ABS(T.foreigntotal) AS amount,
                 TL.entity AS entityId, BUILTIN.DF(TL.entity) AS entityName
             FROM Transaction T
@@ -1240,11 +1285,11 @@ function(query, record, search, runtime, format, Shared, Utils) {
                 AND T.tranid IS NOT NULL ${subFilter}
             ORDER BY TL.entity, T.tranid
         `;
-        
+
         try {
             const results = runSuiteQL(sql);
             if (!results || results.length < minCount) return [];
-            
+
             // Parse invoices and extract invoice numbers
             const invoices = results.map(row => ({
                 id: row.id,
@@ -1256,10 +1301,10 @@ function(query, record, search, runtime, format, Shared, Utils) {
                 entityId: row.entityid,
                 entityName: row.entityname || 'Unknown'
             })).filter(i => i.invoiceNum !== null);
-            
+
             if (invoices.length < minCount) return [];
-            
-            // CORRECTED: Group by vendor FIRST, then look for sequential patterns within each vendor
+
+            // Group by vendor FIRST, then look for sequential patterns within each vendor
             const vendorGroups = {};
             invoices.forEach(inv => {
                 const vendorId = inv.entityId || 'unknown';
@@ -1272,72 +1317,105 @@ function(query, record, search, runtime, format, Shared, Utils) {
                 }
                 vendorGroups[vendorId].invoices.push(inv);
             });
-            
+
             const groups = [];
-            
+
             // Check each vendor separately for sequential patterns
             Object.values(vendorGroups).forEach(vendorGroup => {
                 // Need minimum invoices to detect pattern
                 if (vendorGroup.invoices.length < minCount) return;
-                
+
                 // Sort this vendor's invoices by invoice number
                 const sortedInvoices = vendorGroup.invoices.slice().sort((a, b) => a.invoiceNum - b.invoiceNum);
-                
+
                 let run = [];
-                
+
                 for (let i = 0; i < sortedInvoices.length; i++) {
                     if (run.length === 0) {
                         run.push(sortedInvoices[i]);
                     } else {
                         // Check if sequential (no need to check vendor - already grouped by vendor)
                         const isSequential = sortedInvoices[i].invoiceNum === run[run.length - 1].invoiceNum + 1;
-                        
+
                         if (isSequential) {
                             run.push(sortedInvoices[i]);
                         } else {
-                            // End of run - check if it meets minimum requirement
+                            // End of run - check if it meets requirements
                             if (run.length >= minCount) {
-                                groups.push(buildSequentialGroup(run, vendorGroup));
+                                const group = buildSequentialGroup(run, vendorGroup, maxDateSpread);
+                                // Only add if date proximity check passes (not spread over too many days)
+                                if (group) groups.push(group);
                             }
                             // Start new run
                             run = [sortedInvoices[i]];
                         }
                     }
                 }
-                
+
                 // Check final run for this vendor
                 if (run.length >= minCount) {
-                    groups.push(buildSequentialGroup(run, vendorGroup));
+                    const group = buildSequentialGroup(run, vendorGroup, maxDateSpread);
+                    if (group) groups.push(group);
                 }
             });
-            
+
             return groups.sort((a, b) => b.riskScore - a.riskScore).slice(0, 20);
         } catch (e) {
             log.error('Sequential Invoice Error', { message: e.message });
             return [];
         }
     }
-    
+
     /**
      * Helper function to build a sequential group object
+     * Returns null if the sequential invoices are spread over too many days (normal behavior)
      */
-    function buildSequentialGroup(run, vendorGroup) {
+    function buildSequentialGroup(run, vendorGroup, maxDateSpread) {
         const totalAmt = run.reduce((s, inv) => s + inv.amount, 0);
-        
-        let riskScore = 40;
+        const dateSpan = calculateDateSpan(run);
+
+        // KEY CHECK: If invoices are spread over too many days, this is NORMAL vendor behavior
+        // Don't flag sequential invoices that are spread over weeks/months
+        if (dateSpan.days > maxDateSpread) {
+            return null; // Not suspicious - normal vendor invoice sequence over time
+        }
+
+        // Calculate risk based on temporal clustering
+        let riskScore = 0;
+        let riskLevel = 'low';
+        let dateReason = '';
+
+        if (dateSpan.allSameDay) {
+            // SAME DAY - Very suspicious: multiple sequential invoices created on same day
+            riskScore = 70;
+            riskLevel = 'high';
+            dateReason = 'all on same day';
+        } else if (dateSpan.days <= SEQUENTIAL_CLOSE_DAYS_THRESHOLD) {
+            // CLOSE TOGETHER - Suspicious: sequential invoices within a week
+            riskScore = 55;
+            riskLevel = 'medium';
+            dateReason = `within ${dateSpan.days} days`;
+        } else {
+            // SOMEWHAT SPREAD - Lower risk but still clustered enough to flag
+            riskScore = 40;
+            riskLevel = 'low';
+            dateReason = `over ${dateSpan.days} days`;
+        }
+
+        // Additional risk factors
         // More sequential invoices = higher risk
-        riskScore += Math.min(run.length * 5, 25);
+        riskScore += Math.min(run.length * 3, 15);
         // Higher total amount = higher risk
-        if (totalAmt > 100000) riskScore += 20;
-        else if (totalAmt > 50000) riskScore += 15;
-        else if (totalAmt > 25000) riskScore += 10;
-        
+        if (totalAmt > 100000) riskScore += 10;
+        else if (totalAmt > 50000) riskScore += 7;
+        else if (totalAmt > 25000) riskScore += 5;
+
         return {
             invoices: run.map(inv => ({
-                id: inv.id, 
-                tranId: inv.tranId, 
+                id: inv.id,
+                tranId: inv.tranId,
                 tranDate: inv.tranDate,
-                amount: inv.amount, 
+                amount: inv.amount,
                 invoiceNum: inv.invoiceNum,
                 entityName: inv.entityName
             })),
@@ -1345,20 +1423,44 @@ function(query, record, search, runtime, format, Shared, Utils) {
             totalAmount: totalAmt,
             startInvoice: run[0].invoiceNum,
             endInvoice: run[run.length - 1].invoiceNum,
+            dateSpanDays: dateSpan.days,
+            allSameDay: dateSpan.allSameDay,
+            riskLevel: riskLevel,
             entityName: vendorGroup.vendorName,
             entityId: vendorGroup.vendorId,
             vendorName: vendorGroup.vendorName,
             vendorId: vendorGroup.vendorId,
             flagType: 'sequential',
-            reason: `${run.length} sequential invoices (${run[0].invoiceNum}-${run[run.length - 1].invoiceNum}) from ${vendorGroup.vendorName}`,
+            reason: `${run.length} sequential invoices (${run[0].invoiceNum}-${run[run.length - 1].invoiceNum}) from ${vendorGroup.vendorName} - ${dateReason}`,
             riskScore: Math.min(100, riskScore)
         };
     }
-    
+
+    /**
+     * Extract invoice number from transaction ID
+     * Handles multiple common formats:
+     * - "INV-001" or "INV001" -> 1
+     * - "2024-INV-0042" -> 42
+     * - "ABC123" -> 123
+     * - "INV-2024-001" -> 1 (extracts the last numeric sequence)
+     */
     function extractInvoiceNumber(tranId) {
         if (!tranId) return null;
-        const match = tranId.match(/(\d+)$/);
-        return match ? parseInt(match[1]) : null;
+
+        // Strategy: Find all numeric sequences and use the last one
+        // This handles formats like "INV-2024-001" where we want "001" = 1
+        const matches = tranId.match(/\d+/g);
+        if (!matches || matches.length === 0) return null;
+
+        // Use the last numeric sequence (most likely to be the invoice number)
+        const lastNum = matches[matches.length - 1];
+        const parsed = parseInt(lastNum, 10);
+
+        // Sanity check: invoice numbers are typically reasonable
+        // Skip if the number is too large (likely a date like 20240115)
+        if (parsed > 9999999) return null;
+
+        return parsed;
     }
 
     // ==========================================

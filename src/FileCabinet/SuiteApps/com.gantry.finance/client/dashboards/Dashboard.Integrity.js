@@ -932,10 +932,10 @@
             
             var content1D = this.renderBenford1DSection(benford1D);
             var content2D = this.renderBenford2DSection(benford2D);
-            var investigationHtml = this.renderBenfordInvestigation(benford1D);
-            container.innerHTML = kpiHtml + 
-                '<div class="alert alert-info py-2 mb-2"><i class="fas fa-chart-bar mr-2"></i><strong>Benford\'s Law Analysis</strong> - Natural datasets follow predictable digit frequency patterns. Deviations may indicate data manipulation or fraud.</div>' +
-                '<div class="benford-dashboard"><ul class="nav nav-pills benford-sub-tabs mb-2"><li class="nav-item"><a class="nav-link' + active1D + '" data-toggle="tab" href="#benford-1d">First Digit (1D)</a></li><li class="nav-item"><a class="nav-link' + active2D + '" data-toggle="tab" href="#benford-2d">First Two Digits (2D)</a></li><li class="nav-item"><a class="nav-link" data-toggle="tab" href="#benford-investigation">Investigation</a></li></ul><div class="tab-content"><div class="tab-pane fade' + show1D + '" id="benford-1d">' + content1D + '</div><div class="tab-pane fade' + show2D + '" id="benford-2d">' + content2D + '</div><div class="tab-pane fade" id="benford-investigation">' + investigationHtml + '</div></div></div>';
+            var drillDownHtml = this.renderBenfordDrillDown(benford1D);
+            container.innerHTML = kpiHtml +
+                '<div class="alert alert-info py-2 mb-2"><i class="fas fa-chart-bar mr-2"></i><strong>Benford\'s Law Analysis</strong> - Natural datasets follow predictable digit frequency patterns. Deviations in the overall distribution (not individual transactions) may indicate data manipulation.</div>' +
+                '<div class="benford-dashboard"><ul class="nav nav-pills benford-sub-tabs mb-2"><li class="nav-item"><a class="nav-link' + active1D + '" data-toggle="tab" href="#benford-1d">First Digit (1D)</a></li><li class="nav-item"><a class="nav-link' + active2D + '" data-toggle="tab" href="#benford-2d">First Two Digits (2D)</a></li><li class="nav-item"><a class="nav-link" data-toggle="tab" href="#benford-drilldown">Drill-Down</a></li></ul><div class="tab-content"><div class="tab-pane fade' + show1D + '" id="benford-1d">' + content1D + '</div><div class="tab-pane fade' + show2D + '" id="benford-2d">' + content2D + '</div><div class="tab-pane fade" id="benford-drilldown">' + drillDownHtml + '</div></div></div>';
             setTimeout(function() { self.renderBenford1DChart(benford1D); self.renderBenford2DChart(benford2D); }, 100);
         },
         
@@ -971,179 +971,223 @@
             return '<div class="benford-2d-layout"><div class="b2d-chart-section"><div class="bcs-header"><i class="fas fa-th"></i> First Two Digits Heatmap (10-99)</div><div id="benford2DChart" style="height: 300px;"></div></div><div class="b2d-sidebar"><div class="conformity-badge" style="background: ' + cc.bg + '; border-color: ' + cc.border + ';"><span class="' + cc.text + '">' + benford2D.conformityLevel + '</span></div><div class="mad-display"><span class="mad-label">Mean Absolute Deviation</span><span class="mad-value">' + madValue + '</span></div><div class="thresholds"><h6>MAD Thresholds (2D)</h6><div class="threshold t-excellent">&lt; 0.0012 Close</div><div class="threshold t-acceptable">0.0012-0.0022 Acceptable</div><div class="threshold t-marginal">0.0022-0.0033 Marginal</div><div class="threshold t-bad">&gt; 0.0033 Non-Conforming</div></div></div>' + trapHtml + '<div class="b2d-anomalies"><div class="b2da-header"><i class="fas fa-exclamation-circle"></i> Top Anomalous Digit Pairs <small class="text-muted">(click to view)</small></div><table class="table table-sm table-hover"><thead><tr><th>Digits</th><th>Count</th><th>Observed</th><th>Expected</th><th>Deviation</th></tr></thead><tbody>' + anomalyRows + '</tbody></table></div></div>';
         },
         
-        renderBenfordInvestigation: function(benford) {
+        renderBenfordDrillDown: function(benford) {
             var self = this;
-            if (!benford) return '<div class="text-muted p-3">No investigation data</div>';
-            
-            // Use flagged transactions instead of vendor/user/account breakdowns
-            var flagged = benford.flaggedTransactions || [];
-            var anomalies = flagged.filter(function(t) { return t.isAnomaly; });
-            
-            if (anomalies.length === 0) {
-                return '<div class="benford-investigation"><div class="bi-header"><i class="fas fa-check-circle text-success"></i> Benford Analysis Results</div><div class="bi-no-anomalies"><div class="bi-success-icon"><i class="fas fa-shield-alt"></i></div><h6>Good Conformity - No Significant Anomalies Detected</h6><p class="text-muted small">Transaction amounts follow Benford\'s Law within acceptable parameters.</p></div></div>';
+            if (!benford) return '<div class="text-muted p-3">No drill-down data available</div>';
+
+            // Get transactions for drill-down (these are NOT flagged - just for context)
+            var transactions = benford.drillDownTransactions || benford.flaggedTransactions || [];
+
+            // Find digits that deviate from expected distribution (dataset-level, not transaction-level)
+            var deviatingDigits = (benford.digits || []).filter(function(d) { return d.isAnomaly; });
+
+            if (deviatingDigits.length === 0) {
+                return '<div class="benford-investigation"><div class="bi-header"><i class="fas fa-check-circle text-success"></i> Distribution Analysis</div><div class="bi-no-anomalies"><div class="bi-success-icon"><i class="fas fa-shield-alt"></i></div><h6>Good Conformity</h6><p class="text-muted small">The overall digit distribution follows Benford\'s Law. No digits show significant deviation from expected frequencies.</p><p class="text-muted small mt-2"><em>Note: Benford analysis evaluates the dataset as a whole, not individual transactions.</em></p></div></div>';
             }
-            
-            // Group by type
-            var typeGroups = {};
-            anomalies.forEach(function(t) {
-                var type = t.type || 'Unknown';
-                if (!typeGroups[type]) typeGroups[type] = { type: type, count: 0, amount: 0 };
-                typeGroups[type].count++;
-                typeGroups[type].amount += t.amount || 0;
-            });
-            var topTypes = Object.values(typeGroups).sort(function(a, b) { return b.count - a.count; }).slice(0, 8);
-            
-            // Group by first digit
+
+            // Show deviating digits with their stats
+            var deviatingDigitsHtml = deviatingDigits.map(function(d) {
+                var devClass = d.deviationPct > 0 ? 'text-warning' : 'text-info';
+                var devLabel = d.deviationPct > 0 ? 'over-represented' : 'under-represented';
+                return '<div class="bi-item clickable-row" onclick="IntegrityController.openBenford1DDigitFlyout(' + d.digit + ')">' +
+                    '<i class="fas fa-hashtag"></i>' +
+                    '<span class="bi-name">Digit ' + d.digit + '</span>' +
+                    '<span class="bi-stats ' + devClass + '">' + (d.deviationPct > 0 ? '+' : '') + d.deviationPct.toFixed(0) + '% ' + devLabel + '</span>' +
+                '</div>';
+            }).join('');
+
+            // Group transactions by digit for context
             var digitGroups = {};
-            anomalies.forEach(function(t) {
-                var digit = t.firstDigit || '?';
+            transactions.forEach(function(t) {
+                var digit = t.firstDigit;
+                if (!digit) return;
                 if (!digitGroups[digit]) digitGroups[digit] = { digit: digit, count: 0, amount: 0 };
                 digitGroups[digit].count++;
                 digitGroups[digit].amount += t.amount || 0;
             });
-            var topDigits = Object.values(digitGroups).sort(function(a, b) { return b.count - a.count; }).slice(0, 9);
-            
-            // Top anomaly transactions by amount
-            var topTxns = anomalies.sort(function(a, b) { return b.amount - a.amount; }).slice(0, 10);
-            
-            var typesHtml = topTypes.map(function(t) {
-                return '<div class="bi-item clickable-row" onclick="IntegrityController.filterBenfordByType(\'' + t.type + '\')"><i class="fas fa-file-invoice"></i><span class="bi-name">' + t.type + '</span><span class="bi-stats">' + t.count + ' txns / ' + fmtMoney(t.amount, 2) + '</span></div>';
+
+            // Show transaction counts per digit (for context)
+            var allDigitsHtml = Object.values(digitGroups).sort(function(a, b) { return a.digit - b.digit; }).map(function(d) {
+                var digitInfo = (benford.digits || []).find(function(x) { return x.digit === d.digit; });
+                var isDeviating = digitInfo && digitInfo.isAnomaly;
+                var cls = isDeviating ? 'bi-item-highlight' : '';
+                return '<div class="bi-item clickable-row ' + cls + '" onclick="IntegrityController.openBenford1DDigitFlyout(' + d.digit + ')">' +
+                    '<i class="fas fa-hashtag"></i>' +
+                    '<span class="bi-name">Digit ' + d.digit + (isDeviating ? ' ⚠' : '') + '</span>' +
+                    '<span class="bi-stats">' + d.count + ' txns / ' + fmtMoney(d.amount, 2) + '</span>' +
+                '</div>';
             }).join('') || '<div class="text-muted small">No data</div>';
-            
-            var digitsHtml = topDigits.map(function(d) {
-                return '<div class="bi-item clickable-row" onclick="IntegrityController.openBenford1DDigitFlyout(' + d.digit + ')"><i class="fas fa-hashtag"></i><span class="bi-name">Digit ' + d.digit + '</span><span class="bi-stats">' + d.count + ' txns / ' + fmtMoney(d.amount, 2) + '</span></div>';
-            }).join('') || '<div class="text-muted small">No data</div>';
-            
-            var txnsHtml = topTxns.map(function(t) {
-                return '<div class="bi-item"><i class="fas fa-dollar-sign"></i><span class="bi-name">' + getNsLink(t.tranId || 'N/A', t.id) + '</span><span class="bi-stats">' + (t.type || '-') + ' / ' + fmtMoney(t.amount, 2) + '</span></div>';
-            }).join('') || '<div class="text-muted small">No data</div>';
-            
-            return '<div class="benford-investigation"><div class="bi-header"><i class="fas fa-search"></i> Benford Anomaly Breakdown (' + anomalies.length + ' anomalies)</div><div class="bi-grid"><div class="bi-panel"><div class="bi-panel-header"><i class="fas fa-file-invoice"></i> By Transaction Type</div><div class="bi-panel-body">' + typesHtml + '</div></div><div class="bi-panel"><div class="bi-panel-header"><i class="fas fa-hashtag"></i> By First Digit</div><div class="bi-panel-body">' + digitsHtml + '</div></div><div class="bi-panel"><div class="bi-panel-header"><i class="fas fa-dollar-sign"></i> Largest Anomalies</div><div class="bi-panel-body">' + txnsHtml + '</div></div></div></div>';
+
+            // Recent transactions from deviating digits (for investigation context)
+            var deviatingDigitNums = deviatingDigits.map(function(d) { return d.digit; });
+            var contextTxns = transactions.filter(function(t) {
+                return deviatingDigitNums.indexOf(t.firstDigit) >= 0;
+            }).slice(0, 10);
+
+            var txnsHtml = contextTxns.map(function(t) {
+                return '<div class="bi-item">' +
+                    '<i class="fas fa-file-invoice"></i>' +
+                    '<span class="bi-name">' + getNsLink(t.tranId || 'N/A', t.id) + '</span>' +
+                    '<span class="bi-stats">' + (t.type || '-') + ' / ' + fmtMoney(t.amount, 2) + '</span>' +
+                '</div>';
+            }).join('') || '<div class="text-muted small">No transactions to display</div>';
+
+            return '<div class="benford-investigation">' +
+                '<div class="bi-header"><i class="fas fa-search"></i> Digit Distribution Drill-Down</div>' +
+                '<div class="alert alert-secondary py-2 mb-3"><small><i class="fas fa-info-circle mr-1"></i><strong>Important:</strong> Benford\'s Law is a dataset-level statistical test. The digits below deviate from expected frequencies across all transactions. Individual transactions are shown for investigation context only—they are not individually flagged or scored.</small></div>' +
+                '<div class="bi-grid">' +
+                    '<div class="bi-panel">' +
+                        '<div class="bi-panel-header"><i class="fas fa-exclamation-triangle text-warning"></i> Deviating Digits (' + deviatingDigits.length + ')</div>' +
+                        '<div class="bi-panel-body">' + deviatingDigitsHtml + '</div>' +
+                    '</div>' +
+                    '<div class="bi-panel">' +
+                        '<div class="bi-panel-header"><i class="fas fa-hashtag"></i> All Digits (click to explore)</div>' +
+                        '<div class="bi-panel-body">' + allDigitsHtml + '</div>' +
+                    '</div>' +
+                    '<div class="bi-panel">' +
+                        '<div class="bi-panel-header"><i class="fas fa-list"></i> Sample Transactions (from deviating digits)</div>' +
+                        '<div class="bi-panel-body">' + txnsHtml + '</div>' +
+                    '</div>' +
+                '</div>' +
+            '</div>';
+        },
+
+        // Legacy alias for backward compatibility
+        renderBenfordInvestigation: function(benford) {
+            return this.renderBenfordDrillDown(benford);
         },
         
         filterBenfordByType: function(type) {
             var benford = this.latestData && this.latestData.benfordAnalysis;
-            var flagged = (benford && benford.flaggedTransactions) || [];
-            var transactions = flagged.filter(function(t) { return t.type === type && t.isAnomaly; });
-            if (transactions.length === 0) {
-                this.showToast('No anomaly transactions found for type: ' + type, 'info');
+            var transactions = (benford && (benford.drillDownTransactions || benford.flaggedTransactions)) || [];
+            var filtered = transactions.filter(function(t) { return t.type === type; });
+            if (filtered.length === 0) {
+                this.showToast('No transactions found for type: ' + type, 'info');
                 return;
             }
-            var total = transactions.reduce(function(s, t) { return s + (t.amount || 0); }, 0);
-            this.showTransactionsFlyout('Benford: ' + type, transactions, transactions.length + ' anomalies | ' + fmtMoney(total, 2));
+            var total = filtered.reduce(function(s, t) { return s + (t.amount || 0); }, 0);
+            this.showTransactionsFlyout('Benford Drill-Down: ' + type, filtered, filtered.length + ' transactions | ' + fmtMoney(total, 2));
         },
         
         openBenfordFlyout: function(entityType, entityId, entityName, count, amount) {
             var flyout = document.getElementById('atFlyout');
             if (!flyout) return;
-            
+
             flyout.classList.add('open');
             document.body.classList.add('at-flyout-open');
-            
+
             document.getElementById('atFlyoutTitle').textContent = entityName;
             document.getElementById('atFlyoutSubtitle').style.display = 'none';
-            
+
             document.getElementById('atFlyoutStats').innerHTML = this.buildFlyoutKPIs([
                 { label: 'Transactions', value: count, icon: 'receipt', color: 'primary' },
                 { label: 'Total Amount', value: fmtMoney(amount), icon: 'dollar-sign', color: 'info' },
-                { label: 'Flag Type', value: 'Benford', icon: 'chart-bar', color: 'danger' }
+                { label: 'Analysis', value: 'Benford', icon: 'chart-bar', color: 'info' }
             ]);
-            
-            // Show Benford-specific info
+
+            // Show Benford-specific info - reframed as context, not flag
             var bodyHtml = '<div class="p-3">' +
-                '<div class="alert alert-warning mb-3"><i class="fas fa-chart-bar mr-2"></i><strong>Benford Analysis Flag</strong><br>' +
-                'This ' + entityType + ' has ' + count + ' transaction(s) totaling ' + fmtMoney(amount) + ' that deviate from expected Benford\'s Law distribution.</div>' +
-                '<div class="mb-3"><strong>Why This Matters:</strong><p class="text-muted small mb-0">Transaction amounts naturally follow Benford\'s Law. Significant deviations may indicate round-number manipulation, artificial pricing, or data entry anomalies.</p></div>' +
-                '<div><strong>Recommended Action:</strong><p class="text-muted small mb-0">Review the transaction amounts for this ' + entityType + ' to identify patterns such as repeated round numbers or unusual pricing.</p></div>' +
+                '<div class="alert alert-info mb-3"><i class="fas fa-chart-bar mr-2"></i><strong>Benford Analysis Context</strong><br>' +
+                'This ' + entityType + ' has ' + count + ' transaction(s) totaling ' + fmtMoney(amount) + ' that fall within digits showing distribution deviation.</div>' +
+                '<div class="mb-3"><strong>About Benford\'s Law:</strong><p class="text-muted small mb-0">Transaction amounts naturally follow Benford\'s Law at the dataset level. Individual transactions are not flagged—only the overall distribution is analyzed. Deviations in digit frequency patterns may warrant further review of data entry practices.</p></div>' +
+                '<div><strong>Context:</strong><p class="text-muted small mb-0">These transactions are shown for investigative context. The statistical deviation applies to the dataset as a whole, not to individual transactions.</p></div>' +
                 '</div>';
             document.getElementById('atFlyoutBody').innerHTML = bodyHtml;
         },
         
-        // Benford 1D digit flyout
+        // Benford 1D digit flyout - shows transactions starting with a specific digit for drill-down
         openBenford1DDigitFlyout: function(digit) {
             var benford = this.latestData && this.latestData.benfordAnalysis;
-            var flagged = (benford && benford.flaggedTransactions) || [];
-            
+            var allTransactions = (benford && (benford.drillDownTransactions || benford.flaggedTransactions)) || [];
+
             // Filter transactions that start with this digit
-            var transactions = flagged.filter(function(f) { 
-                return f.firstDigit === digit || String(f.firstDigit) === String(digit);
+            var transactions = allTransactions.filter(function(t) {
+                return t.firstDigit === digit || String(t.firstDigit) === String(digit);
             });
-            
+
             if (transactions.length === 0) {
                 showToast('No transactions found for digit ' + digit);
                 return;
             }
-            
+
             var digitInfo = (benford.digits || []).find(function(d) { return d.digit === digit; }) || {};
             var total = transactions.reduce(function(s, t) { return s + (t.amount || 0); }, 0);
-            
+
             var flyout = document.getElementById('atFlyout');
             if (!flyout) return;
             flyout.classList.add('open');
             document.body.classList.add('at-flyout-open');
-            
-            document.getElementById('atFlyoutTitle').textContent = 'First Digit: ' + digit;
+
+            document.getElementById('atFlyoutTitle').textContent = 'Digit ' + digit + ' - Drill-Down';
             document.getElementById('atFlyoutSubtitle').style.display = 'none';
-            
-            var isAnomaly = digitInfo.isAnomaly;
+
+            var digitDeviates = digitInfo.isAnomaly;
             var kpis = [
                 { label: 'Transactions', value: transactions.length, icon: 'receipt', color: 'primary' },
                 { label: 'Total Amount', value: fmtMoney(total, 2), icon: 'dollar-sign', color: 'info' },
                 { label: 'Observed', value: ((digitInfo.observed || 0) * 100).toFixed(1) + '%', icon: 'eye', color: 'warning' },
                 { label: 'Expected', value: ((digitInfo.expected || 0) * 100).toFixed(1) + '%', icon: 'chart-line', color: 'success' }
             ];
-            if (isAnomaly) kpis.push({ label: 'Status', value: 'Anomaly', icon: 'exclamation-triangle', color: 'danger' });
+            if (digitDeviates) kpis.push({ label: 'Distribution', value: 'Deviates', icon: 'chart-bar', color: 'warning' });
             document.getElementById('atFlyoutStats').innerHTML = this.buildFlyoutKPIs(kpis);
-            
+
+            var contextNote = digitDeviates
+                ? '<div class="alert alert-secondary py-2 mb-2"><small><i class="fas fa-info-circle mr-1"></i>This digit appears more/less frequently than Benford\'s Law predicts. These transactions are shown for context—individual transactions are not flagged.</small></div>'
+                : '';
+
             var rowsHtml = transactions.slice(0, 50).map(function(t) {
                 return '<tr><td>' + getNsLink(t.tranId || 'N/A', t.id) + '</td><td>' + (t.tranDate || 'N/A') + '</td><td>' + (t.type || '-') + '</td><td class="text-right">' + fmtMoney(t.amount, 2) + '</td></tr>';
             }).join('');
-            
-            document.getElementById('atFlyoutBody').innerHTML = '<div class="table-responsive"><table class="table table-sm"><thead><tr><th>Tran #</th><th>Date</th><th>Type</th><th class="text-right">Amount</th></tr></thead><tbody>' + rowsHtml + '</tbody></table></div>' + (transactions.length > 50 ? '<div class="text-muted text-center small p-2">Showing first 50 of ' + transactions.length + '</div>' : '');
+
+            document.getElementById('atFlyoutBody').innerHTML = contextNote + '<div class="table-responsive"><table class="table table-sm"><thead><tr><th>Tran #</th><th>Date</th><th>Type</th><th class="text-right">Amount</th></tr></thead><tbody>' + rowsHtml + '</tbody></table></div>' + (transactions.length > 50 ? '<div class="text-muted text-center small p-2">Showing first 50 of ' + transactions.length + '</div>' : '');
         },
-        
-        // Benford 2D digit flyout
+
+        // Benford 2D digit flyout - shows transactions starting with specific two digits for drill-down
         openBenford2DDigitFlyout: function(digits) {
             var benford = this.latestData && this.latestData.benfordAnalysis;
-            var flagged = (benford && benford.flaggedTransactions) || [];
-            
+            var allTransactions = (benford && (benford.drillDownTransactions || benford.flaggedTransactions)) || [];
+
             // Filter transactions that start with these two digits
-            var transactions = flagged.filter(function(f) { 
-                return f.firstTwoDigits === digits || parseInt(f.firstTwoDigits) === parseInt(digits);
+            var transactions = allTransactions.filter(function(t) {
+                return t.firstTwoDigits === digits || parseInt(t.firstTwoDigits) === parseInt(digits);
             });
-            
+
             if (transactions.length === 0) {
                 showToast('No transactions found for digits ' + digits);
                 return;
             }
-            
+
             var benford2D = this.latestData && this.latestData.benford2DAnalysis;
             var digitInfo = (benford2D && benford2D.digits || []).find(function(d) { return d.digits === digits; }) || {};
             var total = transactions.reduce(function(s, t) { return s + (t.amount || 0); }, 0);
-            
+
             var flyout = document.getElementById('atFlyout');
             if (!flyout) return;
             flyout.classList.add('open');
             document.body.classList.add('at-flyout-open');
-            
-            document.getElementById('atFlyoutTitle').textContent = 'First Two Digits: ' + digits;
+
+            document.getElementById('atFlyoutTitle').textContent = 'Digits ' + digits + ' - Drill-Down';
             document.getElementById('atFlyoutSubtitle').style.display = 'none';
-            
-            var isAnomaly = digitInfo.isAnomaly;
+
+            var digitDeviates = digitInfo.isAnomaly;
             var devPct = (digitInfo.deviationPct || 0);
             var kpis = [
                 { label: 'Transactions', value: transactions.length, icon: 'receipt', color: 'primary' },
                 { label: 'Total Amount', value: fmtMoney(total, 2), icon: 'dollar-sign', color: 'info' },
-                { label: 'Deviation', value: (devPct > 0 ? '+' : '') + devPct.toFixed(0) + '%', icon: 'percentage', color: Math.abs(devPct) > 50 ? 'danger' : 'warning' }
+                { label: 'Deviation', value: (devPct > 0 ? '+' : '') + devPct.toFixed(0) + '%', icon: 'percentage', color: Math.abs(devPct) > 50 ? 'warning' : 'info' }
             ];
-            if (isAnomaly) kpis.push({ label: 'Status', value: 'Anomaly', icon: 'exclamation-triangle', color: 'danger' });
+            if (digitDeviates) kpis.push({ label: 'Distribution', value: 'Deviates', icon: 'chart-bar', color: 'warning' });
             document.getElementById('atFlyoutStats').innerHTML = this.buildFlyoutKPIs(kpis);
-            
+
+            var contextNote = digitDeviates
+                ? '<div class="alert alert-secondary py-2 mb-2"><small><i class="fas fa-info-circle mr-1"></i>This digit pair appears more/less frequently than Benford\'s Law predicts. These transactions are shown for context—individual transactions are not flagged.</small></div>'
+                : '';
+
             var rowsHtml = transactions.slice(0, 50).map(function(t) {
                 return '<tr><td>' + getNsLink(t.tranId || 'N/A', t.id) + '</td><td>' + (t.tranDate || 'N/A') + '</td><td>' + (t.type || '-') + '</td><td class="text-right">' + fmtMoney(t.amount, 2) + '</td></tr>';
             }).join('');
-            
-            document.getElementById('atFlyoutBody').innerHTML = '<div class="table-responsive"><table class="table table-sm"><thead><tr><th>Tran #</th><th>Date</th><th>Type</th><th class="text-right">Amount</th></tr></thead><tbody>' + rowsHtml + '</tbody></table></div>' + (transactions.length > 50 ? '<div class="text-muted text-center small p-2">Showing first 50 of ' + transactions.length + '</div>' : '');
+
+            document.getElementById('atFlyoutBody').innerHTML = contextNote + '<div class="table-responsive"><table class="table table-sm"><thead><tr><th>Tran #</th><th>Date</th><th>Type</th><th class="text-right">Amount</th></tr></thead><tbody>' + rowsHtml + '</tbody></table></div>' + (transactions.length > 50 ? '<div class="text-muted text-center small p-2">Showing first 50 of ' + transactions.length + '</div>' : '');
         },
         
         getConformityConfig: function(level) {
@@ -1441,25 +1485,27 @@
             if (!container || !this.latestData) return;
             var self = this;
             var sequentialInvoices = this.latestData.sequentialInvoices || [];
-            
-            // KPI row - use count (or sequenceLength as fallback, or invoices.length)
+
+            // Calculate statistics
             var totalAmount = sequentialInvoices.reduce(function(s, seq) { return s + (seq.totalAmount || 0); }, 0);
-            var totalInvoices = sequentialInvoices.reduce(function(s, seq) { 
-                return s + (seq.count || seq.sequenceLength || (seq.invoices ? seq.invoices.length : 0)); 
+            var totalInvoices = sequentialInvoices.reduce(function(s, seq) {
+                return s + (seq.count || seq.sequenceLength || (seq.invoices ? seq.invoices.length : 0));
             }, 0);
-            var avgRisk = sequentialInvoices.length > 0 ? Math.round(sequentialInvoices.reduce(function(s, seq) { return s + (seq.riskScore || 0); }, 0) / sequentialInvoices.length) : 0;
+            var sameDayCount = sequentialInvoices.filter(function(s) { return s.allSameDay; }).length;
+            var highRiskCount = sequentialInvoices.filter(function(s) { return s.riskLevel === 'high' || s.allSameDay; }).length;
+
             var kpiHtml = this.buildKPIRow([
                 { label: 'Patterns Found', value: sequentialInvoices.length, icon: 'sort-numeric-down', color: sequentialInvoices.length > 0 ? 'warning' : 'success' },
+                { label: 'Same-Day Clusters', value: sameDayCount, icon: 'calendar-day', color: sameDayCount > 0 ? 'danger' : 'success', subtext: 'Highest risk' },
                 { label: 'Total Invoices', value: totalInvoices, icon: 'file-invoice' },
-                { label: 'Total Amount', value: fmtMoney(totalAmount), icon: 'dollar-sign' },
-                { label: 'Avg Risk Score', value: avgRisk, icon: 'exclamation-triangle' }
+                { label: 'Total Amount', value: fmtMoney(totalAmount), icon: 'dollar-sign' }
             ]);
-            
+
             if (sequentialInvoices.length === 0) {
-                container.innerHTML = kpiHtml + '<div class="empty-state mt-3"><i class="fas fa-check-circle text-success fa-3x mb-3"></i><h5>No Sequential Patterns</h5><p>No suspicious sequential invoice patterns detected</p></div>';
+                container.innerHTML = kpiHtml + '<div class="empty-state mt-3"><i class="fas fa-check-circle text-success fa-3x mb-3"></i><h5>No Suspicious Sequential Patterns</h5><p>No temporally-clustered sequential invoice patterns detected.</p><p class="text-muted small">Sequential invoices spread over weeks or months are considered normal vendor behavior and are not flagged.</p></div>';
                 return;
             }
-            
+
             // Apply sorting
             var sort = this.tableSort && this.tableSort.sequential ? this.tableSort.sequential : { col: 'riskScore', dir: 'desc' };
             var sortedData = sequentialInvoices.slice().sort(function(a, b) {
@@ -1470,30 +1516,42 @@
                 return sort.dir === 'asc' ? String(aVal || '').localeCompare(String(bVal || '')) : String(bVal || '').localeCompare(String(aVal || ''));
             });
             var sortIcon = function(col) { return sort.col === col ? (sort.dir === 'asc' ? 'fa-sort-up' : 'fa-sort-down') : 'fa-sort text-muted'; };
-            
+
             var pag = this.pagination.sequential || { page: 1, pageSize: 15 };
             var startIdx = (pag.page - 1) * pag.pageSize;
             var pageItems = sortedData.slice(startIdx, startIdx + pag.pageSize);
-            
+
             var rowsHtml = pageItems.map(function(s, idx) {
                 var invoices = s.invoices || [];
                 var dates = invoices.map(function(i) { return i.tranDate; }).filter(Boolean).sort();
                 var dateRange = dates.length > 1 ? dates[0] + ' - ' + dates[dates.length - 1] : (dates[0] || '-');
                 var firstTranId = invoices.length > 0 ? invoices[0].tranId : 'N/A';
                 var entityName = s.entityName || (invoices.length > 0 && invoices[0].entityName) || 'Unknown';
+
+                // Date clustering indicator
+                var dateSpanDays = s.dateSpanDays != null ? s.dateSpanDays : null;
+                var clusterBadge = '';
+                if (s.allSameDay) {
+                    clusterBadge = '<span class="badge badge-danger ml-1" title="All invoices on same day">Same Day</span>';
+                } else if (dateSpanDays != null && dateSpanDays <= 7) {
+                    clusterBadge = '<span class="badge badge-warning ml-1" title="Invoices within ' + dateSpanDays + ' days">' + dateSpanDays + ' days</span>';
+                } else if (dateSpanDays != null) {
+                    clusterBadge = '<span class="badge badge-secondary ml-1" title="Invoices spread over ' + dateSpanDays + ' days">' + dateSpanDays + ' days</span>';
+                }
+
                 return '<tr class="clickable-row" onclick="IntegrityController.openSequentialDetailFlyout(' + idx + ')">' +
                     '<td><strong>' + firstTranId + '</strong></td>' +
                     '<td>' + self.truncateValue(entityName, 25) + '</td>' +
                     '<td class="font-monospace">' + (s.startInvoice || s.startNum) + ' - ' + (s.endInvoice || s.endNum) + '</td>' +
                     '<td class="text-center">' + (s.count || s.sequenceLength || invoices.length) + '</td>' +
-                    '<td class="small">' + dateRange + '</td>' +
+                    '<td class="small">' + dateRange + clusterBadge + '</td>' +
                     '<td class="text-right font-weight-bold">' + fmtMoney(s.totalAmount || 0, 2) + '</td>' +
                     '<td><span class="risk-score-badge ' + self.getSeverityClass(s.riskScore) + '">' + s.riskScore + '</span></td>' +
                 '</tr>';
             }).join('');
-            
+
             container.innerHTML = kpiHtml +
-                '<div class="alert alert-warning py-2 mb-2"><i class="fas fa-sort-numeric-down mr-2"></i><strong>Sequential Invoice Alert</strong> - Sequential invoice numbers may indicate shell companies or fabricated invoices.</div>' +
+                '<div class="alert alert-info py-2 mb-2"><i class="fas fa-sort-numeric-down mr-2"></i><strong>Sequential Invoice Detection</strong> - Only sequential invoices that are <strong>temporally clustered</strong> (within 30 days) are flagged. Same-day clusters are highest risk. Sequential invoices spread over months are normal vendor behavior.</div>' +
                 '<div class="table-responsive"><table class="table table-sm table-hover">' +
                 '<thead><tr><th>First Invoice</th><th style="cursor:pointer" onclick="IntegrityController.sortTable(\'sequential\',\'entityName\')">Entity <i class="fas ' + sortIcon('entityName') + '"></i></th><th>Invoice Range</th><th class="text-center" style="cursor:pointer" onclick="IntegrityController.sortTable(\'sequential\',\'sequenceLength\')">Count <i class="fas ' + sortIcon('sequenceLength') + '"></i></th><th>Date Range</th><th class="text-right" style="cursor:pointer" onclick="IntegrityController.sortTable(\'sequential\',\'totalAmount\')">Amount <i class="fas ' + sortIcon('totalAmount') + '"></i></th><th style="cursor:pointer" onclick="IntegrityController.sortTable(\'sequential\',\'riskScore\')">Risk <i class="fas ' + sortIcon('riskScore') + '"></i></th></tr></thead>' +
                 '<tbody>' + rowsHtml + '</tbody></table></div>' +
@@ -2679,23 +2737,36 @@
             var seqs = (this.latestData && this.latestData.sequentialInvoices) || [];
             var seq = seqs[idx];
             if (!seq) { this.showToast('Sequential invoice data not found', 'error'); return; }
-            
+
             var flyout = document.getElementById('atFlyout');
             if (!flyout) return;
-            
+
             flyout.classList.add('open');
             document.body.classList.add('at-flyout-open');
-            
+
             var invoices = seq.invoices || [];
             var entityName = seq.entityName || (invoices.length > 0 && invoices[0].entityName) || 'Unknown Entity';
             var invoiceCount = seq.count || seq.sequenceLength || invoices.length;
             var invoiceRange = (seq.startInvoice || seq.startNum) + ' - ' + (seq.endInvoice || seq.endNum);
-            
+
+            // Date span info
+            var dateSpanLabel = 'Date Span';
+            var dateSpanValue = 'N/A';
+            var dateSpanColor = 'info';
+            if (seq.allSameDay) {
+                dateSpanValue = 'Same Day';
+                dateSpanColor = 'danger';
+            } else if (seq.dateSpanDays != null) {
+                dateSpanValue = seq.dateSpanDays + ' days';
+                dateSpanColor = seq.dateSpanDays <= 7 ? 'warning' : 'info';
+            }
+
             document.getElementById('atFlyoutTitle').textContent = entityName;
             document.getElementById('atFlyoutSubtitle').style.display = 'none';
             document.getElementById('atFlyoutStats').innerHTML = this.buildFlyoutKPIs([
                 { label: 'Invoices', value: invoiceCount, icon: 'sort-numeric-down', color: 'warning' },
                 { label: 'Range', value: invoiceRange, icon: 'arrows-alt-h', color: 'info' },
+                { label: dateSpanLabel, value: dateSpanValue, icon: 'calendar-alt', color: dateSpanColor },
                 { label: 'Total Amount', value: fmtMoney(seq.totalAmount || 0, 2), icon: 'dollar-sign', color: 'primary' },
                 { label: 'Risk Score', value: seq.riskScore || 0, icon: 'exclamation-triangle', color: seq.riskScore >= 70 ? 'danger' : seq.riskScore >= 40 ? 'warning' : 'success' }
             ]);
