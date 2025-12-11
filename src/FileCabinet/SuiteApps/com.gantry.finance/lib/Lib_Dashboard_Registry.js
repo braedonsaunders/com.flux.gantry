@@ -47,8 +47,8 @@ define([], function() {
         // ═══════════════════════════════════════════════════════════════
         cashflow: {
             id: 'cashflow',
-            name: 'Treasury',
-            shortName: 'Treasury',
+            name: 'Liquidity',
+            shortName: 'Liquidity',
             description: 'Cash position, liquidity projections, and weekly cash forecasts (for detailed AR/AP aging by vendor/customer, use aging templates)',
             icon: 'fa-money-bill-wave',
             color: '#10b981',
@@ -116,8 +116,8 @@ define([], function() {
         // ═══════════════════════════════════════════════════════════════
         health: {
             id: 'health',
-            name: 'Profitability Pulse',
-            shortName: 'Profitability',
+            name: 'P&L',
+            shortName: 'P&L',
             description: 'Gross margin, profitability by department, revenue vs expenses',
             icon: 'fa-heartbeat',
             color: '#ef4444',
@@ -126,6 +126,7 @@ define([], function() {
             showInNav: true,
             
             keywords: [
+                'p&l', 'p and l', 'profit and loss', 'pnl',
                 'profitability pulse', 'profitability', 'profit pulse',
                 'health score', 'financial health', 'company health',
                 'overall health', 'business health',
@@ -193,8 +194,8 @@ define([], function() {
         // ═══════════════════════════════════════════════════════════════
         burden: {
             id: 'burden',
-            name: 'Rate Engine',
-            shortName: 'Rates',
+            name: 'True Cost',
+            shortName: 'True Cost',
             description: 'Burden rate analysis, overhead allocation, and cost recovery',
             icon: 'fa-weight-hanging',
             color: '#f59e0b',
@@ -203,6 +204,7 @@ define([], function() {
             showInNav: true,
             
             keywords: [
+                'true cost', 'true costs',
                 'rate engine', 'rates', 'billing rates',
                 'burden rate', 'overhead rate', 'burden',
                 'overhead', 'indirect costs', 'cost recovery',
@@ -239,8 +241,8 @@ define([], function() {
         // ═══════════════════════════════════════════════════════════════
         time: {
             id: 'time',
-            name: 'Utilization',
-            shortName: 'Utilization',
+            name: 'Billable IQ',
+            shortName: 'Billable IQ',
             description: 'Employee utilization, billable hours tracking, and revenue recognition',
             icon: 'fa-clock',
             color: '#3b82f6',
@@ -249,8 +251,9 @@ define([], function() {
             showInNav: true,
             
             keywords: [
+                'billable iq', 'billable intelligence',
                 'utilization', 'utilization rate', 'employee utilization',
-                'time', 'billable time', 'billable hours', 
+                'time', 'billable time', 'billable hours',
                 'time tracking', 'timesheet',
                 'unbilled time', 'hours worked', 'employee hours',
                 'billing rate', 'effective rate'
@@ -503,8 +506,8 @@ define([], function() {
         // ═══════════════════════════════════════════════════════════════
         spendvelocity: {
             id: 'spendvelocity',
-            name: 'Cost Dynamics',
-            shortName: 'Costs',
+            name: 'Spend Velocity',
+            shortName: 'Spend Velocity',
             description: 'Physics for Finance: Velocity-based spend analysis, subscription creep detection, Shadow IT radar, and commitment cliff analysis',
             icon: 'fa-tachometer-alt',
             color: '#6366f1',
