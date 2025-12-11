@@ -4750,6 +4750,28 @@ body.dark-mode .strategy-backups code {
     }
 }
 
+/* Inline thinking indicator (at end of chain while loading) */
+.thinking-node-indicator.inline {
+    position: relative;
+    width: 24px;
+    height: 24px;
+    flex-shrink: 0;
+}
+
+.thinking-node-indicator.inline .thinking-node-core {
+    width: 16px;
+    height: 16px;
+}
+
+.thinking-node-indicator.inline .thinking-node-core i {
+    font-size: 7px;
+}
+
+.thinking-node-indicator.inline .thinking-node-ring {
+    width: 24px;
+    height: 24px;
+}
+
 /* === THINKING DOTS (End of chain) === */
 .thinking-trail {
     display: flex;

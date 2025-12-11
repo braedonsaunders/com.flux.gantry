@@ -1226,13 +1226,8 @@
 
             } catch (err) {
                 console.error('[Advisor] Error:', err);
-                this.removeProgressiveMessage();
-                this.addMessage('assistant', 'I encountered an error. Please try again.', null, [{
-                    type: 'error',
-                    title: 'Error',
-                    content: err.message,
-                    status: 'error'
-                }]);
+                // Error is already handled by updateProgressiveMessageError in sendMessageWithPolling
+                // Don't add another error message - just log it
             } finally {
                 isProcessing = false;
                 this.updateSendButton(false);
@@ -1357,11 +1352,6 @@
                                 <div class="thinking-node-ring"></div>
                                 <div class="thinking-node-ring delay"></div>
                             </div>
-                            <div class="thinking-trail">
-                                <span></span>
-                                <span></span>
-                                <span></span>
-                            </div>
                         </div>
                     </div>
                     <div class="message-content" id="${msgId}-content" style="display: none;"></div>
@@ -1408,6 +1398,10 @@
                 thinking.remove();
             }
 
+            // Check if the message is still loading (show pending indicator)
+            const msgEl = document.getElementById(msgId);
+            const isStillLoading = msgEl && msgEl.classList.contains('progressive-loading');
+
             // Check if we already have a thought-chain
             let existingChain = stepsContainer.querySelector('.thought-chain');
 
@@ -1441,8 +1435,8 @@
                     return;
                 }
 
-                // Re-render the chain
-                const chainHtml = this.renderSteps(allSteps);
+                // Re-render the chain with pending indicator if still loading
+                const chainHtml = this.renderSteps(allSteps, isStillLoading);
                 const tempDiv = document.createElement('div');
                 tempDiv.innerHTML = chainHtml;
                 const newChain = tempDiv.firstElementChild;
@@ -1453,8 +1447,8 @@
                     existingChain.replaceWith(newChain);
                 }
             } else {
-                // Create new thought-chain
-                const chainHtml = this.renderSteps(steps);
+                // Create new thought-chain with pending indicator if still loading
+                const chainHtml = this.renderSteps(steps, isStillLoading);
                 const tempDiv = document.createElement('div');
                 tempDiv.innerHTML = chainHtml;
                 const newChain = tempDiv.firstElementChild;
@@ -1937,13 +1931,15 @@
 
         /**
          * Render steps as Neural Flow thought-chain
+         * @param {Array} steps - Array of step objects
+         * @param {boolean} showPending - Show pending indicator at end (while still loading)
          */
-        renderSteps: function(steps) {
+        renderSteps: function(steps, showPending) {
             if (!steps || steps.length === 0) return '';
 
             const chainId = 'chain-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
             const self = this;
-            const allComplete = steps.every(s => self.normalizeStepStatus(s.status) === 'complete');
+            const allComplete = steps.every(s => self.normalizeStepStatus(s.status) === 'complete') && !showPending;
             const hasRunning = steps.some(s => self.normalizeStepStatus(s.status) === 'running');
 
             let html = `<div class="thought-chain${allComplete ? ' chain-complete' : ''}" data-chain-id="${chainId}">`;
@@ -1952,7 +1948,6 @@
             steps.forEach((step, idx) => {
                 // Normalize status for connector logic
                 const stepStatus = this.normalizeStepStatus(step.status);
-                const prevStatus = idx > 0 ? this.normalizeStepStatus(steps[idx - 1].status) : null;
 
                 // Add connector before node (except for first)
                 if (idx > 0) {
@@ -1963,6 +1958,20 @@
 
                 html += this.renderThoughtNode(step, idx, chainId);
             });
+
+            // Add pending indicator at end if still loading
+            if (showPending && !hasRunning) {
+                const lastIdx = steps.length;
+                html += `<div class="node-connector active animate-in cascade-delay-${lastIdx}" style="--flow-delay: ${lastIdx * 0.3}s"></div>`;
+                html += `
+                    <div class="thinking-node-indicator inline">
+                        <div class="thinking-node-core">
+                            <i class="fas fa-circle-notch fa-spin"></i>
+                        </div>
+                        <div class="thinking-node-ring"></div>
+                    </div>
+                `;
+            }
 
             // Add thinking trail if there's a running step
             if (hasRunning) {
@@ -2050,13 +2059,20 @@
                 return;
             }
 
-            // Close any other open panels first
+            // Close any OTHER open panels first (not the one we're about to open)
             document.querySelectorAll('.expansion-panel.visible').forEach(p => {
-                p.classList.add('closing');
-                setTimeout(() => {
-                    p.classList.remove('visible', 'closing');
-                    p.setAttribute('data-expanded-idx', '');
-                }, 200);
+                if (p.id !== chainId + '-expansion') {
+                    p.classList.add('closing');
+                    setTimeout(() => {
+                        p.classList.remove('visible', 'closing');
+                        p.setAttribute('data-expanded-idx', '');
+                    }, 200);
+                    // Remove click handler if exists
+                    if (p._closeHandler) {
+                        document.removeEventListener('click', p._closeHandler);
+                        delete p._closeHandler;
+                    }
+                }
             });
             document.querySelectorAll('.thought-node.expanded').forEach(n => n.classList.remove('expanded'));
 
