@@ -380,6 +380,8 @@ define(['N/cache', 'N/log'], function(cache, log) {
             richContent: null,
             sessionContext: null,
             error: null,
+            // Progressive blocks - rendered immediately during processing
+            blocks: [],
             // Agent state embedded directly (trimmed to save space)
             agentState: trimAgentStateForStorage(agentState)
         };
@@ -430,6 +432,73 @@ define(['N/cache', 'N/log'], function(cache, log) {
             });
         } catch (e) {
             log.error('ProgressStore.addStep failed', { requestId: requestId, error: e.message });
+        }
+    }
+
+    /**
+     * Add a progressive content block (table, metrics, etc.)
+     * These are rendered immediately during processing, before final response
+     * @param {string} requestId - Request ID
+     * @param {object} block - Block object with type, data, etc.
+     */
+    function addBlock(requestId, block) {
+        try {
+            const state = safeGet(requestId);
+            if (!state) {
+                log.debug('ProgressStore.addBlock - request not found', { requestId: requestId });
+                return;
+            }
+
+            if (!state.blocks) {
+                state.blocks = [];
+            }
+
+            // Add timestamp and ID if not present
+            if (!block.timestamp) {
+                block.timestamp = Date.now();
+            }
+            if (!block.id) {
+                block.id = 'block_' + state.blocks.length + '_' + Date.now().toString(36);
+            }
+
+            state.blocks.push(block);
+            state.lastUpdate = Date.now();
+
+            if (!safePut(requestId, state)) {
+                log.error('ProgressStore.addBlock - failed to save', { requestId: requestId });
+            }
+
+            log.debug('ProgressStore.addBlock', {
+                requestId: requestId,
+                blockType: block.type,
+                blockId: block.id,
+                totalBlocks: state.blocks.length
+            });
+        } catch (e) {
+            log.error('ProgressStore.addBlock failed', { requestId: requestId, error: e.message });
+        }
+    }
+
+    /**
+     * Update a specific block by ID
+     * @param {string} requestId - Request ID
+     * @param {string} blockId - Block ID to update
+     * @param {object} updates - Properties to update
+     */
+    function updateBlock(requestId, blockId, updates) {
+        try {
+            const state = safeGet(requestId);
+            if (!state || !state.blocks) return;
+
+            const blockIndex = state.blocks.findIndex(b => b.id === blockId);
+            if (blockIndex === -1) return;
+
+            Object.assign(state.blocks[blockIndex], updates);
+            state.lastUpdate = Date.now();
+
+            safePut(requestId, state);
+        } catch (e) {
+            log.error('ProgressStore.updateBlock failed', { requestId: requestId, error: e.message });
         }
     }
 
@@ -779,6 +848,11 @@ define(['N/cache', 'N/log'], function(cache, log) {
             duration: Date.now() - state.startTime
         };
 
+        // Include progressive blocks during processing (for immediate rendering)
+        if (state.blocks && state.blocks.length > 0) {
+            response.blocks = state.blocks;
+        }
+
         if (state.status === 'complete') {
             response.answer = state.answer;
             response.richContent = state.richContent;
@@ -811,6 +885,10 @@ define(['N/cache', 'N/log'], function(cache, log) {
         exists: exists,
         remove: remove,
         getPollingResponse: getPollingResponse,
+
+        // Progressive block functions (for immediate rendering)
+        addBlock: addBlock,
+        updateBlock: updateBlock,
 
         // Atomic completion lock functions
         acquireCompletionLock: acquireCompletionLock,

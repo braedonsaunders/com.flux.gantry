@@ -1332,6 +1332,11 @@
                         }
                     }
 
+                    // Render progressive blocks (tables, metrics) immediately
+                    if (status.blocks && status.blocks.length > 0) {
+                        this.updateProgressiveMessageBlocks(progressiveMsgId, status.blocks);
+                    }
+
                     // Check if complete
                     if (status.status === 'complete') {
                         // Clear active request before finalizing
@@ -1457,6 +1462,11 @@
                             activeRequest.steps = status.steps;
                             this.saveSession();
                         }
+                    }
+
+                    // Render progressive blocks (tables, metrics) immediately
+                    if (status.blocks && status.blocks.length > 0) {
+                        this.updateProgressiveMessageBlocks(progressiveMsgId, status.blocks);
                     }
 
                     // Check if complete
@@ -1810,6 +1820,131 @@
                     }
                 }
             }
+        },
+
+        /**
+         * Update progressive message with blocks (tables, metrics)
+         * Renders blocks immediately during processing for instant feedback
+         */
+        updateProgressiveMessageBlocks: function(msgId, blocks) {
+            const msgEl = document.getElementById(msgId);
+            if (!msgEl || !blocks || blocks.length === 0) return;
+
+            // Find or create blocks container
+            let blocksContainer = document.getElementById(msgId + '-blocks');
+            if (!blocksContainer) {
+                blocksContainer = document.createElement('div');
+                blocksContainer.id = msgId + '-blocks';
+                blocksContainer.className = 'progressive-blocks-container';
+
+                // Insert after steps but before any existing content
+                const stepsContainer = document.getElementById(msgId + '-steps');
+                const bubble = msgEl.querySelector('.advisor-message-bubble');
+                if (bubble && stepsContainer) {
+                    stepsContainer.after(blocksContainer);
+                } else if (bubble) {
+                    bubble.appendChild(blocksContainer);
+                }
+            }
+
+            // Track which blocks we've already rendered
+            if (!blocksContainer._renderedBlockIds) {
+                blocksContainer._renderedBlockIds = new Set();
+            }
+
+            // Render new blocks
+            blocks.forEach(block => {
+                if (blocksContainer._renderedBlockIds.has(block.id)) {
+                    return; // Already rendered
+                }
+
+                const blockEl = document.createElement('div');
+                blockEl.className = 'progressive-block progressive-block-' + block.type;
+                blockEl.id = msgId + '-block-' + block.id;
+
+                if (block.type === 'table' && block.rows) {
+                    // Render table with real data
+                    blockEl.innerHTML = this.renderProgressiveTable(block);
+                } else if (block.type === 'metrics' && block.items) {
+                    blockEl.innerHTML = this.renderProgressiveMetrics(block);
+                } else if (block.type === 'text' && block.content) {
+                    blockEl.innerHTML = '<div class="progressive-text">' + this.escapeHtml(block.content) + '</div>';
+                }
+
+                blocksContainer.appendChild(blockEl);
+                blocksContainer._renderedBlockIds.add(block.id);
+
+                console.log('[Advisor] Rendered progressive block:', block.type, block.id);
+            });
+
+            this.scrollToBottom();
+        },
+
+        /**
+         * Render a progressive table block with real data
+         */
+        renderProgressiveTable: function(block) {
+            const title = block.title || 'Results';
+            const headers = block.headers || [];
+            const rows = block.rows || [];
+            const totalRows = block.totalRows || rows.length;
+
+            let html = '<div class="progressive-table-container">';
+            html += '<div class="progressive-table-header">';
+            html += '<span class="progressive-table-title">' + this.escapeHtml(title) + '</span>';
+            if (totalRows > rows.length) {
+                html += '<span class="progressive-table-count">Showing ' + rows.length + ' of ' + totalRows + '</span>';
+            } else {
+                html += '<span class="progressive-table-count">' + totalRows + ' rows</span>';
+            }
+            html += '</div>';
+
+            html += '<div class="progressive-table-scroll">';
+            html += '<table class="progressive-table">';
+            html += '<thead><tr>';
+            headers.forEach(h => {
+                html += '<th>' + this.escapeHtml(this.formatHeader(h)) + '</th>';
+            });
+            html += '</tr></thead>';
+
+            html += '<tbody>';
+            rows.forEach(row => {
+                html += '<tr>';
+                row.forEach(cell => {
+                    html += '<td>' + this.escapeHtml(String(cell)) + '</td>';
+                });
+                html += '</tr>';
+            });
+            html += '</tbody></table></div></div>';
+
+            return html;
+        },
+
+        /**
+         * Render progressive metrics block
+         */
+        renderProgressiveMetrics: function(block) {
+            const items = block.items || [];
+            let html = '<div class="progressive-metrics">';
+            items.forEach(item => {
+                const trendClass = item.trend === 'up' ? 'trend-up' : (item.trend === 'down' ? 'trend-down' : '');
+                html += '<div class="progressive-metric ' + trendClass + '">';
+                html += '<span class="metric-label">' + this.escapeHtml(item.label) + '</span>';
+                html += '<span class="metric-value">' + this.escapeHtml(String(item.value)) + '</span>';
+                html += '</div>';
+            });
+            html += '</div>';
+            return html;
+        },
+
+        /**
+         * Format header for display (convert snake_case to Title Case)
+         */
+        formatHeader: function(header) {
+            if (!header) return '';
+            return header
+                .replace(/_/g, ' ')
+                .replace(/\b\w/g, l => l.toUpperCase());
         },
 
         /**
