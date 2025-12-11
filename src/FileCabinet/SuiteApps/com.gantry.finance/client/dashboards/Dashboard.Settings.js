@@ -15,14 +15,14 @@
         // Dashboard definitions
         dashboards: [
     { id: 'advisor', icon: 'fa-robot', color: 'text-primary', defaultName: 'Advisor', route: 'advisor' },
-    { id: 'cashflow', icon: 'fa-money-bill-wave', color: 'text-success', defaultName: 'Treasury', route: 'cashflow' },
-    { id: 'health', icon: 'fa-heartbeat', color: 'text-danger', defaultName: 'Profitability', route: 'health' },
-    { id: 'burden', icon: 'fa-weight-hanging', color: 'text-warning', defaultName: 'Rate Engine', route: 'burden' },
-    { id: 'time', icon: 'fa-clock', color: 'text-info', defaultName: 'Utilization', route: 'time' },
+    { id: 'cashflow', icon: 'fa-money-bill-wave', color: 'text-success', defaultName: 'Liquidity', route: 'cashflow' },
+    { id: 'health', icon: 'fa-heartbeat', color: 'text-danger', defaultName: 'P&L', route: 'health' },
+    { id: 'burden', icon: 'fa-weight-hanging', color: 'text-warning', defaultName: 'True Cost', route: 'burden' },
+    { id: 'time', icon: 'fa-clock', color: 'text-info', defaultName: 'Billable IQ', route: 'time' },
     { id: 'integrity', icon: 'fa-shield-alt', color: 'text-danger', defaultName: 'Sentinel', route: 'integrity' },
     { id: 'vendorperformance', icon: 'fa-handshake', color: 'text-purple', defaultName: 'Procurement', route: 'vendorperformance' },
     { id: 'customervalue', icon: 'fa-users', color: 'text-success', defaultName: 'Revenue Intelligence', route: 'customervalue' },
-    { id: 'spendvelocity', icon: 'fa-tachometer-alt', color: 'text-indigo', defaultName: 'Cost Dynamics', route: 'spendvelocity' }
+    { id: 'spendvelocity', icon: 'fa-tachometer-alt', color: 'text-indigo', defaultName: 'Spend Velocity', route: 'spendvelocity' }
 ],
 
         // Settings sections - each section becomes a card
