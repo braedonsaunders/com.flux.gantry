@@ -527,15 +527,15 @@
                                 <span class="usage-label">Text Generation</span>
                                 <span class="usage-value" id="usage_generate_value">Loading...</span>
                             </div>
-                            <div class="progress mb-2" style="height: 8px;">
-                                <div class="progress-bar" id="usage_generate_bar" role="progressbar" style="width: 0%"></div>
+                            <div class="usage-bar mb-2" style="display: flex; height: 8px; background: #e9ecef; border-radius: 4px; overflow: hidden;">
+                                <div id="usage_generate_bar" role="progressbar" style="flex: 0 0 0%; border-radius: 4px; transition: flex-basis 0.3s ease;"></div>
                             </div>
                             <div class="d-flex justify-content-between align-items-center mb-1">
                                 <span class="usage-label">Embeddings</span>
                                 <span class="usage-value" id="usage_embed_value">Loading...</span>
                             </div>
-                            <div class="progress" style="height: 8px;">
-                                <div class="progress-bar bg-info" id="usage_embed_bar" role="progressbar" style="width: 0%"></div>
+                            <div class="usage-bar" style="display: flex; height: 8px; background: #e9ecef; border-radius: 4px; overflow: hidden;">
+                                <div id="usage_embed_bar" role="progressbar" style="flex: 0 0 0%; border-radius: 4px; transition: flex-basis 0.3s ease;"></div>
                             </div>
                             <button class="btn btn-sm btn-outline-secondary mt-2" onclick="SettingsController.refreshAIUsage()">
                                 <i class="fas fa-sync-alt"></i> Refresh
@@ -1169,13 +1169,13 @@
                 const remaining = usage.generate.remaining || 0;
                 const total = usage.generate.total || 1000;
                 const remainingPct = Math.round((remaining / total) * 100);
-                
+
                 // Bar shows remaining percentage (full = all credits available)
-                genBar.style.width = remainingPct + '%';
-                genBar.className = 'progress-bar ' + (remainingPct < 20 ? 'bg-danger' : remainingPct < 50 ? 'bg-warning' : 'bg-success');
+                genBar.style.flex = `0 0 ${remainingPct}%`;
+                genBar.style.backgroundColor = remainingPct < 20 ? '#dc3545' : remainingPct < 50 ? '#ffc107' : '#28a745';
                 genValue.textContent = `${remaining.toLocaleString()} / ${total.toLocaleString()} remaining`;
             }
-            
+
             // Embedding usage
             const embedBar = el('#usage_embed_bar');
             const embedValue = el('#usage_embed_value');
@@ -1183,10 +1183,10 @@
                 const remaining = usage.embed.remaining || 0;
                 const total = usage.embed.total || 1000;
                 const remainingPct = Math.round((remaining / total) * 100);
-                
+
                 // Bar shows remaining percentage (full = all credits available)
-                embedBar.style.width = remainingPct + '%';
-                embedBar.className = 'progress-bar ' + (remainingPct < 20 ? 'bg-danger' : remainingPct < 50 ? 'bg-warning' : 'bg-info');
+                embedBar.style.flex = `0 0 ${remainingPct}%`;
+                embedBar.style.backgroundColor = remainingPct < 20 ? '#dc3545' : remainingPct < 50 ? '#ffc107' : '#17a2b8';
                 embedValue.textContent = `${remaining.toLocaleString()} / ${total.toLocaleString()} remaining`;
             }
         },
