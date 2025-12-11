@@ -1168,11 +1168,11 @@
             if (genBar && genValue && usage.generate) {
                 const remaining = usage.generate.remaining || 0;
                 const total = usage.generate.total || 1000;
-                const remainingPct = Math.round((remaining / total) * 100);
+                const usedPct = Math.round(((total - remaining) / total) * 100);
 
-                // Bar shows remaining percentage (full = all credits available)
-                genBar.style.flex = `0 0 ${remainingPct}%`;
-                genBar.style.backgroundColor = remainingPct < 20 ? '#dc3545' : remainingPct < 50 ? '#ffc107' : '#28a745';
+                // Bar shows used percentage (full = quota exhausted)
+                genBar.style.flex = `0 0 ${usedPct}%`;
+                genBar.style.backgroundColor = usedPct > 80 ? '#dc3545' : usedPct > 50 ? '#ffc107' : '#28a745';
                 genValue.textContent = `${remaining.toLocaleString()} / ${total.toLocaleString()} remaining`;
             }
 
@@ -1182,11 +1182,11 @@
             if (embedBar && embedValue && usage.embed) {
                 const remaining = usage.embed.remaining || 0;
                 const total = usage.embed.total || 1000;
-                const remainingPct = Math.round((remaining / total) * 100);
+                const usedPct = Math.round(((total - remaining) / total) * 100);
 
-                // Bar shows remaining percentage (full = all credits available)
-                embedBar.style.flex = `0 0 ${remainingPct}%`;
-                embedBar.style.backgroundColor = remainingPct < 20 ? '#dc3545' : remainingPct < 50 ? '#ffc107' : '#17a2b8';
+                // Bar shows used percentage (full = quota exhausted)
+                embedBar.style.flex = `0 0 ${usedPct}%`;
+                embedBar.style.backgroundColor = usedPct > 80 ? '#dc3545' : usedPct > 50 ? '#ffc107' : '#17a2b8';
                 embedValue.textContent = `${remaining.toLocaleString()} / ${total.toLocaleString()} remaining`;
             }
         },
