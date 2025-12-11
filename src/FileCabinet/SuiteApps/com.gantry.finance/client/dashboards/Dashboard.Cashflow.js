@@ -290,24 +290,32 @@
             let lowestWeek = 'Start';
             if (co.weeklyCash && co.weeklyCash.length > 0) {
                 co.weeklyCash.forEach(w => {
-                    if (w.endingCash < lowestCash) {
+                    if (w && typeof w.endingCash === 'number' && w.endingCash < lowestCash) {
                         lowestCash = w.endingCash;
-                        lowestWeek = w.weekStart;
+                        lowestWeek = w.weekStart || 'Week';
                     }
                 });
             }
 
+            // Update Lowest Point KPI - ensure visibility
             const lowestEl = el("#CF_LowestCash");
             const lowestDateEl = el("#CF_LowestCashDate");
             const lowestCard = el("#cfLowestCashCard");
+
             if (lowestEl) {
                 lowestEl.textContent = fmtMoney(lowestCash);
                 lowestEl.className = 'kpi-value' + (lowestCash < 0 ? ' text-danger' : '');
+                // Ensure element is visible (fix for skeleton replacement)
+                lowestEl.style.display = '';
             }
             if (lowestDateEl) {
                 lowestDateEl.textContent = lowestWeek || '--';
+                lowestDateEl.style.display = '';
             }
             if (lowestCard) {
+                // Ensure the card container is visible
+                lowestCard.style.display = '';
+                lowestCard.parentElement.style.display = '';
                 // Highlight card if lowest point is negative
                 if (lowestCash < 0) {
                     lowestCard.classList.add('cf-kpi-warning');
@@ -2747,6 +2755,17 @@
         },
 
         closeConfigFlyout() {
+            // If closing a new unsaved group, remove it from the data
+            if (this.configFlyout.isNew && this.configFlyout.type === 'group' && this.editingGroupIdx !== -1) {
+                this.data.groups.splice(this.editingGroupIdx, 1);
+                this.editingGroupIdx = -1;
+            }
+            // If closing a new unsaved category, remove it from the data
+            if (this.configFlyout.isNew && this.configFlyout.type === 'category' && this.idx !== -1) {
+                this.data.categories.splice(this.idx, 1);
+                this.idx = -1;
+            }
+
             this.configFlyout.open = false;
             this.configFlyout.type = null;
             this.configFlyout.isNew = false;
@@ -2760,7 +2779,8 @@
                 document.removeEventListener('keydown', this._flyoutEscHandler);
             }
 
-            // Show landing content in main container
+            // Refresh sidebar list and show landing content
+            this.renderList();
             this.showConfigLanding();
         },
 
