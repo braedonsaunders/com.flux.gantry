@@ -20,7 +20,8 @@ define([
     '../lib/Lib_VendorPerformance_Data',
     '../lib/Lib_CustomerValue_Data',
     '../lib/Lib_SpendVelocity_Data',
-    '../lib/advisor/Lib_Advisor_Orchestrator',
+    '../lib/advisor/Lib_Advisor_Orchestrator_v2',
+    '../lib/advisor/Lib_Advisor_ProgressStore',
     '../lib/Lib_Model_Registry'
 ], function(
     log,
@@ -35,6 +36,7 @@ define([
     CustomerValueData,
     SpendVelocityData,
     AdvisorOrchestrator,
+    ProgressStore,
     ModelRegistry
 ) {
     'use strict';
@@ -101,6 +103,11 @@ define([
             // AI usage stats
             if (action === 'ai_usage') {
                 return getAIUsage();
+            }
+
+            // Advisor status polling endpoint (for progressive rendering)
+            if (action === 'advisor_status') {
+                return getAdvisorStatus(context.id);
             }
             
             // Models endpoint for Settings UI
@@ -176,9 +183,14 @@ define([
                 return ConfigLib.save(data, 'customer_value');
             }
             
-            // Advisor AI Chat
+            // Advisor AI Chat (synchronous - waits for completion)
             if (action === 'advisor_chat') {
                 return handleAdvisorChat(data);
+            }
+
+            // Advisor AI Chat Async (returns request_id immediately, poll for updates)
+            if (action === 'advisor_chat_async') {
+                return handleAdvisorChatAsync(data);
             }
             
             // AI Summary for dashboard
@@ -323,6 +335,77 @@ define([
         }
     }
     
+    /**
+     * Handle Advisor AI chat request (async mode)
+     * Returns request_id immediately, frontend polls for updates
+     * @param {Object} data - Request data with message, history, context, sessionContext
+     */
+    function handleAdvisorChatAsync(data) {
+        try {
+            auditLog('Advisor Chat Async Request', {
+                messageLength: data.message?.length || 0,
+                historyLength: data.history?.length || 0
+            });
+
+            // Validate message
+            if (!data.message || typeof data.message !== 'string') {
+                return {
+                    error: 'Message is required',
+                    status: 'error'
+                };
+            }
+
+            // Start async processing
+            const result = AdvisorOrchestrator.processChatAsync({
+                message: data.message.trim(),
+                history: data.history || [],
+                context: data.context || {},
+                sessionContext: data.sessionContext || {},
+                aiSettings: data.aiSettings || {}
+            });
+
+            return result;
+
+        } catch (e) {
+            log.error('Advisor Chat Async Error', {
+                message: e.message,
+                stack: e.stack
+            });
+
+            return {
+                status: 'error',
+                error: e.message
+            };
+        }
+    }
+
+    /**
+     * Get advisor request status (for polling)
+     * @param {string} requestId - Request ID from advisor_chat_async
+     */
+    function getAdvisorStatus(requestId) {
+        if (!requestId) {
+            return {
+                status: 'error',
+                error: 'request_id is required'
+            };
+        }
+
+        try {
+            return ProgressStore.getPollingResponse(requestId);
+        } catch (e) {
+            log.error('Advisor Status Error', {
+                requestId: requestId,
+                error: e.message
+            });
+
+            return {
+                status: 'error',
+                error: e.message
+            };
+        }
+    }
+
     /**
      * Get list of all available dashboards from registry
      */

@@ -1,23 +1,36 @@
 /**
  * @NApiVersion 2.1
  * @NModuleScope Public
- * 
+ *
  * Lib_Advisor_EntityResolver.js
  * Hybrid Entity Resolution Engine for the Advisor module
- * 
+ *
+ * ══════════════════════════════════════════════════════════════════════════════
+ * V2 ARCHITECTURE NOTE:
+ * This module is still actively used in the v2 architecture, but with a key
+ * difference: the LLM now decides WHEN to resolve entities via the
+ * `resolve_entity` tool (Lib_Advisor_Tools.js), rather than automatically
+ * running entity extraction on every message.
+ *
+ * Old flow (v1): Message → Regex extraction → Auto-resolve all → Planner
+ * New flow (v2): Message → LLM Agent → LLM decides if resolution needed → Tool call
+ *
+ * This eliminates the catastrophic failures where regex misidentified entities
+ * (e.g., "Drill down" → "Drill Press" inventory item).
+ * ══════════════════════════════════════════════════════════════════════════════
+ *
  * Architecture:
  * - Layer 1: Coreference Resolution (pronouns, demonstratives) - instant, no DB
  * - Layer 2: Pattern Extraction (detect entity mentions) - instant, no DB
  * - Layer 3: Multi-Strategy DB Resolution (exact, prefix, fuzzy) - 1-2 queries
  * - Layer 4: LLM Fallback (disambiguation) - only when ambiguous
- * 
+ *
  * Design Principles:
  * - Zero configuration - works in any NetSuite instance
- * - Resolve BEFORE planner sees message (faster, cheaper)
  * - LLM only as smart fallback for truly ambiguous cases
  * - No caching (stateless per request - NetSuite limitation)
  * - No hardcoded aliases (dynamically learns from data)
- * 
+ *
  * Recency Tracking:
  * - Uses entityOrder[] array to track order of entity mentions
  * - Most recent entity = entityOrder[entityOrder.length - 1]

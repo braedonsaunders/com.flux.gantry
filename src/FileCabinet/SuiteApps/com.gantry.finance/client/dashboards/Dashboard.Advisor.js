@@ -716,19 +716,104 @@
                         border: none;
                         box-shadow: none;
                     }
-                    
+
                     .fs-header {
                         background: white !important;
                         -webkit-print-color-adjust: exact;
                     }
-                    
+
                     .fs-section-header .chevron {
                         display: none;
                     }
-                    
+
                     .fs-section-rows {
                         display: table-row-group !important;
                     }
+                }
+
+                /* ═══════════════════════════════════════════════════════════════
+                   PROGRESSIVE RENDERING STYLES
+                   ═══════════════════════════════════════════════════════════════ */
+
+                .advisor-message.progressive-loading .message-bubble {
+                    min-height: 60px;
+                }
+
+                .progressive-thinking {
+                    display: flex;
+                    align-items: center;
+                    gap: 12px;
+                    padding: 8px 12px;
+                    background: #f8fafc;
+                    border-radius: 8px;
+                    margin-bottom: 8px;
+                }
+
+                body.dark-mode .progressive-thinking {
+                    background: #1e293b;
+                }
+
+                .progressive-thinking .thinking-indicator {
+                    display: flex;
+                    gap: 4px;
+                }
+
+                .progressive-thinking .thinking-dot {
+                    width: 6px;
+                    height: 6px;
+                    background: #3b82f6;
+                    border-radius: 50%;
+                    animation: progressivePulse 1.4s ease-in-out infinite;
+                }
+
+                .progressive-thinking .thinking-dot:nth-child(2) {
+                    animation-delay: 0.2s;
+                }
+
+                .progressive-thinking .thinking-dot:nth-child(3) {
+                    animation-delay: 0.4s;
+                }
+
+                @keyframes progressivePulse {
+                    0%, 80%, 100% {
+                        transform: scale(1);
+                        opacity: 0.5;
+                    }
+                    40% {
+                        transform: scale(1.2);
+                        opacity: 1;
+                    }
+                }
+
+                .progressive-thinking .thinking-text {
+                    font-size: 0.85rem;
+                    color: #64748b;
+                    font-style: italic;
+                }
+
+                body.dark-mode .progressive-thinking .thinking-text {
+                    color: #94a3b8;
+                }
+
+                /* Step appear animation */
+                .message-steps > div {
+                    animation: stepAppear 0.3s ease-out;
+                }
+
+                @keyframes stepAppear {
+                    from {
+                        opacity: 0;
+                        transform: translateY(8px);
+                    }
+                    to {
+                        opacity: 1;
+                        transform: translateY(0);
+                    }
+                }
+
+                /* Error state */
+                .advisor-message.has-error .message-bubble {
+                    border-left: 3px solid #ef4444;
                 }
             `;
             document.head.appendChild(style);
@@ -1087,40 +1172,39 @@
         
         /**
          * Send a message to the advisor
+         * Uses polling-based progressive rendering for real-time step updates
          */
         sendMessage: async function() {
             const input = document.getElementById('advisor-input-full');
             const text = input ? input.value.trim() : '';
-            
+
             if (!text || isProcessing) return;
-            
+
             // Store for retry functionality
             this.lastUserMessage = text;
-            
+
             // Clear input and follow-up suggestions
             input.value = '';
             input.style.height = 'auto';
             this.clearFollowUpSuggestions();
-            
+
             // Hide welcome
             const welcome = document.getElementById('advisor-welcome-full');
             if (welcome) welcome.style.display = 'none';
-            
+
             // Add user message
             this.addMessage('user', text);
-            
-            // Show thinking state
-            const thinkingId = this.showThinking();
+
             isProcessing = true;
             this.updateSendButton(true);
-            
+
             try {
                 // Build history for API
                 const history = messages
                     .filter(m => m.role !== 'thinking')
                     .slice(-MAX_HISTORY)
                     .map(m => ({ role: m.role, content: m.content }));
-                
+
                 // Get AI mode settings
                 const settings = this.getSettings();
                 const aiSettings = {
@@ -1128,27 +1212,16 @@
                     customProvider: settings.customProvider || 'gemini',
                     tier1Model: settings.tier1Model,
                     tier2Model: settings.tier2Model,
-                    tier3Model: settings.tier3Model
+                    tier3Model: settings.tier3Model,
+                    debugMode: settings.debugMode || false
                 };
-                
-                // Call API
-                const response = await API.post('advisor_chat', {
-                    message: text,
-                    history: history,
-                    context: { dashboard: 'advisor' },
-                    aiSettings: aiSettings,
-                    sessionContext: sessionContext  // Send resolved entities back to avoid re-resolution
-                });
-                
-                // Remove thinking
-                this.hideThinking(thinkingId);
-                
-                // Add response with progressive reveal
-                this.addAssistantMessage(response);
-                
+
+                // Use progressive rendering with polling
+                await this.sendMessageWithPolling(text, history, aiSettings);
+
             } catch (err) {
                 console.error('[Advisor] Error:', err);
-                this.hideThinking(thinkingId);
+                this.removeProgressiveMessage();
                 this.addMessage('assistant', 'I encountered an error. Please try again.', null, [{
                     type: 'error',
                     title: 'Error',
@@ -1159,6 +1232,251 @@
                 isProcessing = false;
                 this.updateSendButton(false);
             }
+        },
+
+        /**
+         * Send message with polling-based progressive rendering
+         * Creates a placeholder message and updates it as steps come in
+         */
+        sendMessageWithPolling: async function(text, history, aiSettings) {
+            const POLL_INTERVAL = 500; // Poll every 500ms
+            const MAX_POLL_TIME = 120000; // Max 2 minutes
+
+            // Create progressive message placeholder
+            const progressiveMsgId = this.createProgressiveMessage();
+
+            try {
+                // Start async processing
+                const startResponse = await API.post('advisor_chat_async', {
+                    message: text,
+                    history: history,
+                    context: { dashboard: 'advisor' },
+                    aiSettings: aiSettings,
+                    sessionContext: sessionContext
+                });
+
+                if (!startResponse.request_id) {
+                    throw new Error('No request_id returned from async endpoint');
+                }
+
+                const requestId = startResponse.request_id;
+                let lastStepCount = 0;
+                const startTime = Date.now();
+
+                // Poll for updates
+                while (true) {
+                    // Check timeout
+                    if (Date.now() - startTime > MAX_POLL_TIME) {
+                        throw new Error('Request timed out');
+                    }
+
+                    // Get status
+                    const status = await API.get('advisor_status', { id: requestId });
+
+                    // Update steps progressively
+                    if (status.steps && status.steps.length > lastStepCount) {
+                        const newSteps = status.steps.slice(lastStepCount);
+                        this.appendStepsToProgressiveMessage(progressiveMsgId, newSteps);
+                        lastStepCount = status.steps.length;
+                    }
+
+                    // Check if complete
+                    if (status.status === 'complete') {
+                        // Finalize the message with answer and rich content
+                        this.finalizeProgressiveMessage(progressiveMsgId, {
+                            text: status.answer,
+                            richContent: status.richContent,
+                            steps: status.steps,
+                            sessionContext: status.sessionContext,
+                            model: status.model,
+                            provider: status.provider,
+                            duration: status.totalDuration
+                        });
+
+                        // Update session context if provided
+                        if (status.sessionContext) {
+                            sessionContext = { ...sessionContext, ...status.sessionContext };
+                        }
+                        break;
+                    }
+
+                    // Check for error
+                    if (status.status === 'error') {
+                        throw new Error(status.error || 'Unknown error during processing');
+                    }
+
+                    // Check for not found
+                    if (status.status === 'not_found') {
+                        throw new Error('Request expired or not found');
+                    }
+
+                    // Wait before next poll
+                    await this.sleep(POLL_INTERVAL);
+                }
+
+            } catch (err) {
+                // Update progressive message with error
+                this.updateProgressiveMessageError(progressiveMsgId, err.message);
+                throw err;
+            }
+        },
+
+        /**
+         * Create a progressive message placeholder
+         */
+        createProgressiveMessage: function() {
+            const container = document.getElementById('advisor-messages-full');
+            if (!container) return null;
+
+            const msgId = 'progressive-msg-' + Date.now();
+
+            const div = document.createElement('div');
+            div.id = msgId;
+            div.className = 'advisor-message assistant progressive-loading';
+            div.innerHTML = `
+                <div class="message-avatar">
+                    <i class="fas fa-robot"></i>
+                </div>
+                <div class="message-bubble">
+                    <div class="message-steps" id="${msgId}-steps">
+                        <div class="progressive-thinking">
+                            <div class="thinking-indicator">
+                                <div class="thinking-dot"></div>
+                                <div class="thinking-dot"></div>
+                                <div class="thinking-dot"></div>
+                            </div>
+                            <span class="thinking-text">Processing...</span>
+                        </div>
+                    </div>
+                    <div class="message-content" id="${msgId}-content" style="display: none;"></div>
+                    <div class="message-rich" id="${msgId}-rich" style="display: none;"></div>
+                </div>
+            `;
+
+            container.appendChild(div);
+            this.scrollToBottom();
+
+            return msgId;
+        },
+
+        /**
+         * Append steps to a progressive message
+         */
+        appendStepsToProgressiveMessage: function(msgId, steps) {
+            const stepsContainer = document.getElementById(msgId + '-steps');
+            if (!stepsContainer) return;
+
+            // Remove thinking indicator if present
+            const thinking = stepsContainer.querySelector('.progressive-thinking');
+            if (thinking) thinking.remove();
+
+            // Add new steps
+            steps.forEach((step, idx) => {
+                const stepHtml = this.renderStep(step, idx);
+                const stepDiv = document.createElement('div');
+                stepDiv.innerHTML = stepHtml;
+                stepsContainer.appendChild(stepDiv.firstChild);
+            });
+
+            this.scrollToBottom();
+        },
+
+        /**
+         * Finalize a progressive message with the final response
+         */
+        finalizeProgressiveMessage: function(msgId, response) {
+            const msgEl = document.getElementById(msgId);
+            if (!msgEl) return;
+
+            // Remove loading state
+            msgEl.classList.remove('progressive-loading');
+
+            // Remove thinking indicator if still present
+            const stepsContainer = document.getElementById(msgId + '-steps');
+            if (stepsContainer) {
+                const thinking = stepsContainer.querySelector('.progressive-thinking');
+                if (thinking) thinking.remove();
+            }
+
+            // Add text content
+            const contentEl = document.getElementById(msgId + '-content');
+            if (contentEl && response.text) {
+                contentEl.innerHTML = this.formatText(response.text);
+                contentEl.style.display = 'block';
+            }
+
+            // Add rich content
+            const richEl = document.getElementById(msgId + '-rich');
+            if (richEl && response.richContent && response.richContent.length > 0) {
+                let richHtml = '';
+                response.richContent.forEach(item => {
+                    if (item.type !== 'text' || !response.text) {
+                        richHtml += this.renderRichContent(item);
+                    }
+                });
+                if (richHtml) {
+                    richEl.innerHTML = richHtml;
+                    richEl.style.display = 'block';
+                }
+            }
+
+            // Add to messages array for history
+            const msg = {
+                role: 'assistant',
+                content: response.text || '',
+                richContent: response.richContent,
+                steps: response.steps,
+                timestamp: Date.now()
+            };
+            messages.push(msg);
+            this.saveSession();
+
+            // Generate follow-up suggestions
+            this.generateFollowUpSuggestions(response);
+
+            this.scrollToBottom();
+        },
+
+        /**
+         * Update progressive message with error
+         */
+        updateProgressiveMessageError: function(msgId, errorMessage) {
+            const msgEl = document.getElementById(msgId);
+            if (!msgEl) return;
+
+            msgEl.classList.remove('progressive-loading');
+            msgEl.classList.add('has-error');
+
+            const stepsContainer = document.getElementById(msgId + '-steps');
+            if (stepsContainer) {
+                const thinking = stepsContainer.querySelector('.progressive-thinking');
+                if (thinking) thinking.remove();
+
+                // Add error step
+                const errorStep = {
+                    type: 'error',
+                    title: 'Error',
+                    content: errorMessage,
+                    status: 'error'
+                };
+                const stepHtml = this.renderStep(errorStep, 0);
+                stepsContainer.insertAdjacentHTML('beforeend', stepHtml);
+            }
+        },
+
+        /**
+         * Remove progressive message (for cleanup on major errors)
+         */
+        removeProgressiveMessage: function() {
+            const progressiveMsgs = document.querySelectorAll('.advisor-message.progressive-loading');
+            progressiveMsgs.forEach(msg => msg.remove());
+        },
+
+        /**
+         * Sleep helper for polling
+         */
+        sleep: function(ms) {
+            return new Promise(resolve => setTimeout(resolve, ms));
         },
         
         /**
@@ -1569,6 +1887,64 @@
                 }
             }
             
+            // Special handling for tool_call steps (from v2 Agent)
+            if (step.type === 'tool_call') {
+                // Show tool badge
+                if (step.tool) {
+                    const toolIcons = {
+                        'resolve_entity': 'fa-search',
+                        'resolve_gl_account': 'fa-calculator',
+                        'resolve_classification': 'fa-tags',
+                        'explore_schema': 'fa-sitemap',
+                        'get_ap_aging': 'fa-clock',
+                        'get_ar_aging': 'fa-clock',
+                        'get_vendor_spend': 'fa-store',
+                        'get_customer_revenue': 'fa-users',
+                        'get_gl_activity': 'fa-book',
+                        'get_trial_balance': 'fa-balance-scale',
+                        'get_recent_transactions': 'fa-list',
+                        'get_transaction_detail': 'fa-file-alt',
+                        'compare_periods': 'fa-chart-line',
+                        'find_anomalies': 'fa-exclamation-triangle',
+                        'get_cash_position': 'fa-money-bill-wave',
+                        'get_expense_breakdown': 'fa-receipt',
+                        'dashboard_cashflow': 'fa-chart-area',
+                        'dashboard_health': 'fa-heartbeat',
+                        'dashboard_burden': 'fa-weight-hanging',
+                        'dashboard_time': 'fa-clock',
+                        'dashboard_integrity': 'fa-shield-alt',
+                        'dashboard_vendorperformance': 'fa-handshake',
+                        'dashboard_customervalue': 'fa-gem',
+                        'dashboard_spendvelocity': 'fa-tachometer-alt',
+                        'run_custom_query': 'fa-database'
+                    };
+                    const toolIcon = toolIcons[step.tool] || 'fa-cog';
+                    const toolLabel = step.tool.replace(/_/g, ' ');
+                    detailContent += `<div class="step-tool-badge"><i class="fas ${toolIcon}"></i> ${this.escapeHtml(toolLabel)}</div>`;
+                }
+
+                // Show parameters
+                if (step.params && Object.keys(step.params).length > 0) {
+                    const paramChips = Object.entries(step.params)
+                        .filter(([k, v]) => v !== null && v !== undefined)
+                        .map(([k, v]) => `<span class="param-chip"><strong>${this.escapeHtml(k)}:</strong> ${this.escapeHtml(String(v))}</span>`)
+                        .join('');
+                    if (paramChips) {
+                        detailContent += `<div class="step-params"><i class="fas fa-sliders-h"></i> ${paramChips}</div>`;
+                    }
+                }
+
+                // Show result count
+                if (step.rowCount !== undefined) {
+                    detailContent += `<div class="step-result-count"><i class="fas fa-table"></i> ${step.rowCount} rows returned</div>`;
+                }
+
+                // Show summary
+                if (step.summary) {
+                    detailContent += `<div class="step-summary"><i class="fas fa-check-circle"></i> ${this.escapeHtml(step.summary)}</div>`;
+                }
+            }
+
             // Special handling for agent_step and tool types - show rich execution details
             if (step.type === 'agent_step' || step.type === 'tool') {
                 // Show tool badge
@@ -2000,9 +2376,12 @@
                 'planning': '<i class="fas fa-route"></i>',
                 'agent_step': '<i class="fas fa-cogs"></i>',
                 'tool': '<i class="fas fa-wrench"></i>',
+                'tool_call': '<i class="fas fa-tools"></i>',
                 'resolving': '<i class="fas fa-search-plus"></i>',
                 'entity_resolution': '<i class="fas fa-search-plus"></i>',
-                'text_response_warning': '<i class="fas fa-comment-slash"></i>'
+                'text_response_warning': '<i class="fas fa-comment-slash"></i>',
+                'synthesizing': '<i class="fas fa-magic"></i>',
+                'pre_resolution': '<i class="fas fa-tag"></i>'
             };
             return icons[step.type] || '<i class="fas fa-cog"></i>';
         },
