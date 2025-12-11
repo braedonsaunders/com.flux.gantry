@@ -70,11 +70,11 @@
                 </div>
             </div>
             <div class="row mb-2 gutters-sm cf-kpi-row">
-                <div class="col"><div class="cf-kpi-card"><div class="icon-wrapper bg-gray-soft"><i class="fas fa-university text-muted"></i></div><div class="kpi-content"><span class="kpi-label">Current Cash</span><span class="kpi-value" id="CF_StartingCash">$0</span></div></div></div>
+                <div class="col"><div class="cf-kpi-card"><div class="icon-wrapper bg-gray-soft"><i class="fas fa-university text-muted"></i></div><div class="kpi-content"><span class="kpi-label">Current Cash</span><span class="kpi-value" id="CF_StartingCash">$0</span><span class="kpi-sub">&nbsp;</span></div></div></div>
                 <div class="col"><div class="cf-kpi-card"><div class="icon-wrapper bg-blue-soft"><i class="fas fa-wallet text-blue"></i></div><div class="kpi-content"><span class="kpi-label">Projected End</span><span class="kpi-value" id="CF_ProjectedEndCash">$0</span><span class="kpi-sub" id="CF_NetChange">$0 Net</span></div></div></div>
                 <div class="col"><div class="cf-kpi-card" id="cfLowestCashCard"><div class="icon-wrapper bg-amber-soft"><i class="fas fa-exclamation-triangle text-amber"></i></div><div class="kpi-content"><span class="kpi-label">Lowest Point</span><span class="kpi-value" id="CF_LowestCash">$0</span><span class="kpi-sub text-muted" id="CF_LowestCashDate">--</span></div></div></div>
-                <div class="col"><div class="cf-kpi-card"><div class="icon-wrapper bg-green-soft"><i class="fas fa-arrow-down text-green"></i></div><div class="kpi-content"><span class="kpi-label" id="CF_InflowsLabel">Forecast Inflows</span><span class="kpi-value text-green" id="CF_TotalInflows">$0</span></div></div></div>
-                <div class="col"><div class="cf-kpi-card"><div class="icon-wrapper bg-red-soft"><i class="fas fa-arrow-up text-red"></i></div><div class="kpi-content"><span class="kpi-label" id="CF_OutflowsLabel">Forecast Outflows</span><span class="kpi-value text-red" id="CF_TotalOutflows">$0</span></div></div></div>
+                <div class="col"><div class="cf-kpi-card"><div class="icon-wrapper bg-green-soft"><i class="fas fa-arrow-down text-green"></i></div><div class="kpi-content"><span class="kpi-label" id="CF_InflowsLabel">Inflows</span><span class="kpi-value" id="CF_TotalInflows">$0</span><span class="kpi-sub">&nbsp;</span></div></div></div>
+                <div class="col"><div class="cf-kpi-card"><div class="icon-wrapper bg-red-soft"><i class="fas fa-arrow-up text-red"></i></div><div class="kpi-content"><span class="kpi-label" id="CF_OutflowsLabel">Outflows</span><span class="kpi-value" id="CF_TotalOutflows">$0</span><span class="kpi-sub">&nbsp;</span></div></div></div>
             </div>
             <div class="card cf-main-card shadow-sm">
                 <div class="card-header border-0 bg-white pt-3 pb-1 px-3">
