@@ -135,19 +135,24 @@ define(['N/cache', 'N/log'], function(cache, log) {
             // Don't store toolDefinitions - regenerated each step (~100KB savings)
             toolDefinitions: null,
             // Keep tool calls minimal - store summaries only
+            // CRITICAL: Keep property name as "result" (not "resultSummary") so all agent code works!
             allToolCalls: (agentState.allToolCalls || []).map(tc => ({
                 tool: tc.tool,
                 args: tc.args,
                 displayName: tc.displayName,
                 duration: tc.duration,
-                // Store summary instead of full result (saves significant space)
-                resultSummary: tc.result ? {
+                // Store trimmed result - keep name as "result" for consistency with agent code
+                result: tc.result ? {
                     success: tc.result.success,
-                    rowCount: tc.result.rowCount || 0,
+                    rowCount: tc.result.rowCount || (tc.result.rows ? tc.result.rows.length : 0),
                     found: tc.result.found,
-                    entityId: tc.result.entity?.id,
-                    error: tc.result.error
-                } : (tc.resultSummary || null)
+                    entity: tc.result.entity,  // Keep full entity for resolution tracking
+                    bestMatch: tc.result.bestMatch,  // Keep for classification/account resolution
+                    error: tc.result.error,
+                    isFormatResponse: tc.result.isFormatResponse,
+                    verificationPending: tc.result.verificationPending
+                    // Note: rows/data arrays are intentionally NOT stored to save space
+                } : null
             }))
         };
     }
