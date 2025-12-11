@@ -1350,7 +1350,14 @@
                 <div class="message-bubble">
                     <div class="message-steps" id="${msgId}-steps">
                         <div class="progressive-thinking">
-                            <div class="typing-indicator">
+                            <div class="thinking-node-indicator">
+                                <div class="thinking-node-core">
+                                    <i class="fas fa-brain"></i>
+                                </div>
+                                <div class="thinking-node-ring"></div>
+                                <div class="thinking-node-ring delay"></div>
+                            </div>
+                            <div class="thinking-trail">
                                 <span></span>
                                 <span></span>
                                 <span></span>
@@ -1552,15 +1559,37 @@
                 const thinking = stepsContainer.querySelector('.progressive-thinking');
                 if (thinking) thinking.remove();
 
-                // Add error step
+                // Add error step to existing chain or create new one
                 const errorStep = {
                     type: 'error',
                     title: 'Error',
                     content: errorMessage,
                     status: 'error'
                 };
-                const stepHtml = this.renderStep(errorStep, 0);
-                stepsContainer.insertAdjacentHTML('beforeend', stepHtml);
+
+                const existingChain = stepsContainer.querySelector('.thought-chain');
+                if (existingChain && existingChain._stepsData) {
+                    // Add error step to existing chain
+                    const allSteps = [...existingChain._stepsData, errorStep];
+                    const chainHtml = this.renderSteps(allSteps);
+                    const tempDiv = document.createElement('div');
+                    tempDiv.innerHTML = chainHtml;
+                    const newChain = tempDiv.firstElementChild;
+                    if (newChain) {
+                        newChain._stepsData = allSteps.map((s, i) => ({...s, _chainId: newChain.getAttribute('data-chain-id')}));
+                        existingChain.replaceWith(newChain);
+                    }
+                } else {
+                    // Create new chain with just the error step
+                    const chainHtml = this.renderSteps([errorStep]);
+                    const tempDiv = document.createElement('div');
+                    tempDiv.innerHTML = chainHtml;
+                    const newChain = tempDiv.firstElementChild;
+                    if (newChain) {
+                        newChain._stepsData = [errorStep].map((s, i) => ({...s, _chainId: newChain.getAttribute('data-chain-id')}));
+                        stepsContainer.appendChild(newChain);
+                    }
+                }
             }
         },
 
@@ -1893,26 +1922,42 @@
         },
         
         /**
+         * Normalize step status to standard values
+         */
+        normalizeStepStatus: function(status) {
+            if (!status) return 'complete';
+            if (status === 'in_progress' || status === 'processing' || status === 'pending' || status === 'running') {
+                return 'running';
+            }
+            if (status === 'error' || status === 'failed') {
+                return 'error';
+            }
+            return status;
+        },
+
+        /**
          * Render steps as Neural Flow thought-chain
          */
         renderSteps: function(steps) {
             if (!steps || steps.length === 0) return '';
 
             const chainId = 'chain-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
-            const allComplete = steps.every(s => s.status === 'complete');
-            const hasRunning = steps.some(s => s.status === 'running');
+            const self = this;
+            const allComplete = steps.every(s => self.normalizeStepStatus(s.status) === 'complete');
+            const hasRunning = steps.some(s => self.normalizeStepStatus(s.status) === 'running');
 
             let html = `<div class="thought-chain${allComplete ? ' chain-complete' : ''}" data-chain-id="${chainId}">`;
             html += '<div class="thought-nodes">';
 
             steps.forEach((step, idx) => {
+                // Normalize status for connector logic
+                const stepStatus = this.normalizeStepStatus(step.status);
+                const prevStatus = idx > 0 ? this.normalizeStepStatus(steps[idx - 1].status) : null;
+
                 // Add connector before node (except for first)
                 if (idx > 0) {
-                    const prevStep = steps[idx - 1];
-                    // Connector is "active" if current step is running, otherwise "completed" (for any finished step)
-                    const prevFinished = prevStep.status === 'complete' || prevStep.status === 'error';
-                    const connectorClass = step.status === 'running' ? 'active' :
-                                          prevFinished ? 'completed' : 'completed';
+                    // Connector is "active" if current step is running, otherwise "completed"
+                    const connectorClass = stepStatus === 'running' ? 'active' : 'completed';
                     html += `<div class="node-connector ${connectorClass} animate-in cascade-delay-${idx}" style="--flow-delay: ${idx * 0.3}s"></div>`;
                 }
 
@@ -1938,7 +1983,13 @@
          * Render a single thought node for Neural Flow
          */
         renderThoughtNode: function(step, idx, chainId) {
-            const statusClass = step.status || 'complete';
+            // Normalize status - handle various backend status values
+            let statusClass = step.status || 'complete';
+            // Map various "in progress" statuses to "running"
+            if (statusClass === 'in_progress' || statusClass === 'processing' || statusClass === 'pending') {
+                statusClass = 'running';
+            }
+
             const icon = this.getStepIcon(step);
             const title = step.title || step.type || 'Processing';
             const shortTitle = title.length > 30 ? title.substring(0, 30) + '...' : title;
@@ -1956,14 +2007,16 @@
                                        statusClass === 'running' ? 'running' :
                                        statusClass === 'error' ? 'error' : 'pending';
 
+            const isRunning = statusClass === 'running';
+
             let html = `
                 <div class="thought-node ${statusClass} animate-in cascade-delay-${idx + 1}"
                      data-step-idx="${idx}"
                      data-chain-id="${chainId}"
-                     onclick="AdvisorController.toggleExpansion('${chainId}', ${idx})">
+                     onclick="AdvisorController.toggleExpansion('${chainId}', ${idx}); event.stopPropagation();">
                     <div class="node-core">${icon}</div>
                     <div class="node-ring"></div>
-                    ${statusClass === 'running' ? '<div class="orbital-dots"><span></span><span></span><span></span></div>' : ''}
+                    ${isRunning ? '<div class="orbital-dots"><span></span><span></span><span></span></div>' : ''}
                     <div class="node-particles"><span></span><span></span><span></span><span></span><span></span><span></span></div>
                     <div class="node-tooltip">
                         <div class="tooltip-title">${icon} ${this.escapeHtml(shortTitle)}</div>
@@ -1971,7 +2024,7 @@
                             ${duration ? `<span class="tooltip-duration"><i class="fas fa-clock"></i> ${duration}</span>` : ''}
                             <span class="tooltip-status ${tooltipStatusClass}">${statusClass}</span>
                         </div>
-                        ${statusClass === 'running' ? '<div class="tooltip-progress"><div class="tooltip-progress-bar" style="width: 60%"></div></div>' : ''}
+                        ${isRunning ? '<div class="tooltip-progress"><div class="tooltip-progress-bar" style="width: 60%"></div></div>' : ''}
                     </div>
                 </div>
             `;
@@ -1993,17 +2046,25 @@
 
             // If clicking same node, close it
             if (currentIdx === String(stepIdx) && panel.classList.contains('visible')) {
-                panel.classList.remove('visible');
-                panel.setAttribute('data-expanded-idx', '');
+                this.closeExpansion(chainId);
                 return;
             }
+
+            // Close any other open panels first
+            document.querySelectorAll('.expansion-panel.visible').forEach(p => {
+                p.classList.add('closing');
+                setTimeout(() => {
+                    p.classList.remove('visible', 'closing');
+                    p.setAttribute('data-expanded-idx', '');
+                }, 200);
+            });
+            document.querySelectorAll('.thought-node.expanded').forEach(n => n.classList.remove('expanded'));
 
             // Get step data from the chain's stored data
             const steps = chain._stepsData || [];
             const step = steps[stepIdx];
 
             if (!step) {
-                // Try to reconstruct from the node if data not available
                 console.warn('Step data not found for expansion');
                 return;
             }
@@ -2019,16 +2080,38 @@
             chain.querySelectorAll('.thought-node').forEach((n, i) => {
                 n.classList.toggle('expanded', i === stepIdx);
             });
+
+            // Add click-outside listener
+            const self = this;
+            setTimeout(() => {
+                const closeHandler = function(e) {
+                    if (!panel.contains(e.target) && !e.target.closest('.thought-node')) {
+                        self.closeExpansion(chainId);
+                        document.removeEventListener('click', closeHandler);
+                    }
+                };
+                document.addEventListener('click', closeHandler);
+                panel._closeHandler = closeHandler;
+            }, 10);
         },
 
         /**
-         * Close expansion panel
+         * Close expansion panel with animation
          */
         closeExpansion: function(chainId) {
             const panel = document.getElementById(chainId + '-expansion');
-            if (panel) {
-                panel.classList.remove('visible');
-                panel.setAttribute('data-expanded-idx', '');
+            if (panel && panel.classList.contains('visible')) {
+                panel.classList.add('closing');
+                setTimeout(() => {
+                    panel.classList.remove('visible', 'closing');
+                    panel.setAttribute('data-expanded-idx', '');
+                }, 200);
+
+                // Remove click handler if exists
+                if (panel._closeHandler) {
+                    document.removeEventListener('click', panel._closeHandler);
+                    delete panel._closeHandler;
+                }
             }
 
             const chain = document.querySelector(`[data-chain-id="${chainId}"]`);

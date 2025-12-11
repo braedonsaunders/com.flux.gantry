@@ -4556,18 +4556,32 @@ body.dark-mode .strategy-backups code {
 
 .expansion-panel.visible {
     display: block;
+    animation: panelSlideIn 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
 }
 
-@keyframes panelUnfold {
+.expansion-panel.closing {
+    animation: panelSlideOut 0.2s ease-out forwards;
+}
+
+@keyframes panelSlideIn {
     0% {
         opacity: 0;
-        transform: scaleY(0.8) translateY(-8px);
-        max-height: 0;
+        transform: translateY(-12px) scale(0.95);
     }
     100% {
         opacity: 1;
-        transform: scaleY(1) translateY(0);
-        max-height: 500px;
+        transform: translateY(0) scale(1);
+    }
+}
+
+@keyframes panelSlideOut {
+    0% {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+    100% {
+        opacity: 0;
+        transform: translateY(-8px) scale(0.98);
     }
 }
 
@@ -4661,6 +4675,79 @@ body.dark-mode .strategy-backups code {
     font-family: 'SF Mono', 'Fira Code', monospace;
     overflow-x: auto;
     line-height: 1.5;
+}
+
+/* === THINKING NODE INDICATOR (initial loading state) === */
+.progressive-thinking {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 8px;
+}
+
+.thinking-node-indicator {
+    position: relative;
+    width: 28px;
+    height: 28px;
+}
+
+.thinking-node-core {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%);
+    border: 2px solid #3b82f6;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    animation: thinkingPulse 1.5s ease-in-out infinite;
+}
+
+.thinking-node-core i {
+    font-size: 8px;
+    color: #2563eb;
+}
+
+.thinking-node-ring {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    border: 2px solid rgba(59, 130, 246, 0.4);
+    animation: thinkingRingPulse 1.5s ease-out infinite;
+}
+
+.thinking-node-ring.delay {
+    animation-delay: 0.5s;
+}
+
+@keyframes thinkingPulse {
+    0%, 100% {
+        transform: translate(-50%, -50%) scale(1);
+        box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.4);
+    }
+    50% {
+        transform: translate(-50%, -50%) scale(1.1);
+        box-shadow: 0 0 12px 2px rgba(59, 130, 246, 0.3);
+    }
+}
+
+@keyframes thinkingRingPulse {
+    0% {
+        transform: translate(-50%, -50%) scale(0.8);
+        opacity: 0.8;
+    }
+    100% {
+        transform: translate(-50%, -50%) scale(1.6);
+        opacity: 0;
+    }
 }
 
 /* === THINKING DOTS (End of chain) === */
