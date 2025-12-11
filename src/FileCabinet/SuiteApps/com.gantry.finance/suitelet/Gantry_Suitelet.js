@@ -193,23 +193,26 @@ define([
         });
 
         // Styling for full-width iframe below NS header (no grey bar)
-        // Use gentle hiding to avoid breaking NetSuite's internal JS (highlightElementId, etc)
+        // Use visibility:hidden (not opacity:0) so descendants can override with visibility:visible
         field.defaultValue = `
             <style>
-                /* === Hide form elements without breaking NetSuite JS === */
-                /* Keep elements in DOM flow so NS can still reference them */
+                /* === Hide form title elements without breaking iframe === */
+                /* IMPORTANT: Use visibility:hidden (not opacity:0) because:
+                   - opacity:0 on parent makes ALL descendants invisible (cannot be overridden)
+                   - visibility:hidden CAN be overridden by descendants with visibility:visible
+                   This keeps elements in DOM flow so NS can reference them (for highlightElementId) */
                 #main_form > table:first-child,
                 .uir-page-title-secondline,
                 .uir-page-title,
                 .uir-page-title-firstline,
                 #main_form > tbody > tr:first-child,
                 #main_form > table > tbody > tr:first-child {
-                    opacity: 0 !important;
+                    visibility: hidden !important;
                     pointer-events: none !important;
                     height: 0 !important;
                     min-height: 0 !important;
                     max-height: 0 !important;
-                    overflow: hidden !important;
+                    overflow: visible !important; /* Allow positioned children to escape */
                     padding: 0 !important;
                     margin: 0 !important;
                     border: none !important;
