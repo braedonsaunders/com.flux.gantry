@@ -47,6 +47,8 @@ define([
     const FAST_TIER = 1;
     const MAX_TOOL_INVOCATIONS = 5;
     const MAX_DATA_LOADS = 3;
+    const MAX_ANALYZE_ITERATIONS = 3;  // Prevent analyze loops
+    const MAX_FORMAT_ITERATIONS = 2;   // Prevent format loops
 
     // ═══════════════════════════════════════════════════════════════════════════
     // LIGHTWEIGHT PROMPTS
@@ -81,6 +83,7 @@ Rules:
 - Pick 1-3 most relevant tools
 - For entity names, include resolve_entity first
 - Prefer specific tools over run_custom_query
+- DO NOT select format_response - that's handled automatically
 
 Response format: {"tools": ["tool1", "tool2"], "reasoning": "brief explanation"}`;
 
@@ -94,7 +97,7 @@ Question context: "{question}"
 
 Response format: {"tool": "{tool_name}", "args": {...}}`;
 
-    const ANALYZE_PROMPT = `Analyze this data to answer the user's question.
+    const ANALYZE_PROMPT = `Analyze this data to answer the user's question. Respond with JSON only.
 
 QUESTION: "{question}"
 
@@ -102,15 +105,15 @@ QUESTION: "{question}"
 
 Instructions:
 - Use the data summaries and previews provided
-- If you need more rows, respond with: {"action": "load_data", "command": "LOAD_ROWS", "refId": "ref_xxx", "start": 0, "end": 19}
+- If you need more rows, respond with: {"action": "load_data", "refId": "ref_xxx", "start": 0, "end": 19}
 - If you have enough data, provide your analysis
 - Be specific with numbers and percentages
 
 Response format (if ready to answer):
-{"action": "respond", "analysis": "Your detailed analysis here", "key_findings": ["finding1", "finding2"]}
+{"analysis": "Your detailed analysis here", "key_findings": ["finding1", "finding2"]}
 
 Response format (if need more data):
-{"action": "load_data", "command": "LOAD_ROWS|LOAD_ALL", "refId": "ref_xxx", "start": 0, "end": 19}`;
+{"action": "load_data", "refId": "ref_xxx", "start": 0, "end": 19}`;
 
     const FORMAT_PROMPT = `Format this analysis as rich content blocks. Respond with JSON only.
 
@@ -134,6 +137,7 @@ Response format:
 
     // ═══════════════════════════════════════════════════════════════════════════
     // TOOL MANIFEST (Names + One-liners only)
+    // NOTE: format_response is NOT included - it's internal only
     // ═══════════════════════════════════════════════════════════════════════════
 
     function getToolManifest() {
@@ -179,8 +183,8 @@ Response format:
             get_fiscal_context: "Current fiscal period info",
             run_custom_query: "Execute custom SuiteQL query",
             run_saved_search: "Run a NetSuite saved search",
-            list_saved_searches: "List available saved searches",
-            format_response: "Format final response with rich blocks"
+            list_saved_searches: "List available saved searches"
+            // NOTE: format_response intentionally excluded - internal use only
         };
     }
 
@@ -209,9 +213,133 @@ Response format:
             analysis: null,
             formattedResponse: null,
             iteration: 0,
+            analyzeIterations: 0,    // Track analyze phase runs
+            formatIterations: 0,     // Track format phase runs
             startTime: Date.now(),
-            errors: []
+            phaseTimings: {},        // Track duration per phase
+            errors: [],
+            // Step tracking - IDs for updating vs adding
+            stepIds: {
+                intent: null,
+                select: null,
+                analyze: null,
+                format: null
+            }
         };
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // STEP HELPERS - Rich step data for frontend
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Build debug info object when debug mode is enabled
+     */
+    function buildDebugInfo(prompt, response, state, extras) {
+        if (!Utils.isDebugMode()) return undefined;
+
+        return {
+            promptLength: prompt?.length || 0,
+            promptPreview: prompt?.substring(0, 500) + (prompt?.length > 500 ? '...' : ''),
+            responseLength: response?.text?.length || 0,
+            responsePreview: response?.text?.substring(0, 500) + (response?.text?.length > 500 ? '...' : ''),
+            model: response?.model || AIProviders.getCurrentModelInfo()?.model,
+            provider: response?.provider || AIProviders.getCurrentModelInfo()?.provider,
+            tokensUsed: response?.usage || null,
+            phase: state.phase,
+            iteration: state.iteration,
+            analyzeIterations: state.analyzeIterations,
+            formatIterations: state.formatIterations,
+            dataRefCount: state.dataReferences?.length || 0,
+            errorCount: state.errors?.length || 0,
+            ...extras
+        };
+    }
+
+    /**
+     * Add or update a thinking step with rich information
+     */
+    function upsertThinkingStep(state, stepKey, data) {
+        const stepData = {
+            type: 'thinking',
+            title: data.title,
+            status: data.status || 'active',
+            context: {
+                phase: data.phase,
+                ...data.context
+            },
+            timestamp: data.timestamp || Date.now(),
+            duration: data.duration,
+            debug: data.debug
+        };
+
+        // Clean undefined values
+        Object.keys(stepData).forEach(key => {
+            if (stepData[key] === undefined) delete stepData[key];
+        });
+        if (stepData.context) {
+            Object.keys(stepData.context).forEach(key => {
+                if (stepData.context[key] === undefined) delete stepData.context[key];
+            });
+        }
+
+        if (state.stepIds[stepKey]) {
+            // Update existing step
+            ProgressStore.updateStep(state.requestId, stepData);
+        } else {
+            // Add new step
+            ProgressStore.addStep(state.requestId, stepData);
+            state.stepIds[stepKey] = true;
+        }
+    }
+
+    /**
+     * Add a tool call step with rich information
+     */
+    function addToolCallStep(state, data) {
+        const stepData = {
+            type: 'tool_call',
+            title: data.title,
+            tool: data.tool,
+            status: data.status || 'active',
+            params: data.params,
+            timestamp: Date.now()
+        };
+
+        // Add result info if complete
+        if (data.status === 'complete') {
+            stepData.result = {
+                success: data.success,
+                rowCount: data.rowCount,
+                columns: data.columns,
+                preview: data.preview,
+                error: data.error,
+                dataRef: data.dataRef
+            };
+            stepData.duration = data.duration;
+            stepData.summary = data.summary;
+        }
+
+        // Add debug info
+        if (data.debug) {
+            stepData.debug = data.debug;
+        }
+
+        // Clean undefined values
+        Object.keys(stepData).forEach(key => {
+            if (stepData[key] === undefined) delete stepData[key];
+        });
+        if (stepData.result) {
+            Object.keys(stepData.result).forEach(key => {
+                if (stepData.result[key] === undefined) delete stepData.result[key];
+            });
+        }
+
+        if (data.update) {
+            ProgressStore.updateLastStep(state.requestId, stepData);
+        } else {
+            ProgressStore.addStep(state.requestId, stepData);
+        }
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -222,13 +350,17 @@ Response format:
      * Phase 1: INTENT - Classify the question
      */
     function executeIntentPhase(state) {
+        const phaseStart = Date.now();
         const prompt = INTENT_PROMPT.replace('{question}', state.message);
 
-        ProgressStore.addStep(state.requestId, {
-            type: 'thinking',
+        // Add thinking step
+        upsertThinkingStep(state, 'intent', {
             title: 'Understanding your question',
+            phase: 'intent',
             status: 'active',
-            context: { phase: 'intent' }
+            context: {
+                question: state.message.substring(0, 100)
+            }
         });
 
         try {
@@ -240,29 +372,56 @@ Response format:
                 purpose: 'SCA:intent'
             });
 
-            const parsed = parseJsonResponse(response.text);
+            const parsed = parseJsonResponse(response?.text);
+            const duration = Date.now() - phaseStart;
+            state.phaseTimings.intent = duration;
+
             if (parsed && parsed.intent) {
                 state.intent = parsed;
                 state.phase = PHASES.SELECT;
 
-                ProgressStore.updateStep(state.requestId, {
-                    type: 'thinking',
+                // Update step with results
+                upsertThinkingStep(state, 'intent', {
                     title: 'Understanding your question',
+                    phase: 'intent',
                     status: 'complete',
-                    context: { intent: parsed.intent, phase: 'intent' }
+                    duration: duration,
+                    context: {
+                        question: state.message.substring(0, 100),
+                        intent: parsed.intent,
+                        entities: parsed.entities || [],
+                        timeScope: parsed.time_scope,
+                        needsResolution: parsed.needs_resolution
+                    },
+                    debug: buildDebugInfo(prompt, response, state, { parsedIntent: parsed })
                 });
 
-                log.debug('SCA Intent phase complete', { intent: parsed.intent });
+                log.debug('SCA Intent phase complete', { intent: parsed.intent, duration: duration });
                 return { success: true, nextPhase: PHASES.SELECT };
             } else {
-                throw new Error('Failed to parse intent response');
+                throw new Error('Failed to parse intent: ' + (response?.text?.substring(0, 100) || 'empty response'));
             }
         } catch (e) {
-            log.error('SCA Intent phase failed', { error: e.message });
-            state.errors.push({ phase: 'intent', error: e.message });
+            const duration = Date.now() - phaseStart;
+            log.error('SCA Intent phase failed', { error: e.message, duration: duration });
+            state.errors.push({ phase: 'intent', error: e.message, timestamp: Date.now() });
+
             // Default to general reporting intent
             state.intent = { intent: 'reporting', entities: [], time_scope: 'none' };
             state.phase = PHASES.SELECT;
+
+            upsertThinkingStep(state, 'intent', {
+                title: 'Understanding your question',
+                phase: 'intent',
+                status: 'complete',
+                duration: duration,
+                context: {
+                    intent: 'reporting',
+                    fallback: true,
+                    error: e.message
+                }
+            });
+
             return { success: true, nextPhase: PHASES.SELECT };
         }
     }
@@ -271,6 +430,7 @@ Response format:
      * Phase 2: SELECT - Pick tools by name
      */
     function executeSelectPhase(state) {
+        const phaseStart = Date.now();
         const entityContext = state.intent.entities && state.intent.entities.length > 0
             ? `Mentioned entities: ${state.intent.entities.join(', ')}`
             : 'No specific entities mentioned';
@@ -281,11 +441,14 @@ Response format:
             .replace('{question}', state.message)
             .replace('{entity_context}', entityContext);
 
-        ProgressStore.addStep(state.requestId, {
-            type: 'thinking',
+        upsertThinkingStep(state, 'select', {
             title: 'Selecting analysis tools',
+            phase: 'select',
             status: 'active',
-            context: { phase: 'select' }
+            context: {
+                intent: state.intent.intent,
+                availableTools: Object.keys(getToolManifest()).length
+            }
         });
 
         try {
@@ -297,29 +460,63 @@ Response format:
                 purpose: 'SCA:select'
             });
 
-            const parsed = parseJsonResponse(response.text);
+            const parsed = parseJsonResponse(response?.text);
+            const duration = Date.now() - phaseStart;
+            state.phaseTimings.select = duration;
+
             if (parsed && parsed.tools && parsed.tools.length > 0) {
-                state.selectedTools = parsed.tools.slice(0, MAX_TOOL_INVOCATIONS);
+                // Filter out format_response if LLM selected it (shouldn't happen but safety check)
+                let selectedTools = parsed.tools
+                    .filter(t => t !== 'format_response')
+                    .slice(0, MAX_TOOL_INVOCATIONS);
+
+                // Ensure we have at least one tool
+                if (selectedTools.length === 0) {
+                    selectedTools = getDefaultToolsForIntent(state.intent.intent);
+                }
+
+                state.selectedTools = selectedTools;
                 state.phase = PHASES.INVOKE;
 
-                ProgressStore.updateStep(state.requestId, {
-                    type: 'thinking',
+                upsertThinkingStep(state, 'select', {
                     title: 'Selecting analysis tools',
+                    phase: 'select',
                     status: 'complete',
-                    context: { tools: state.selectedTools, phase: 'select' }
+                    duration: duration,
+                    context: {
+                        intent: state.intent.intent,
+                        selectedTools: state.selectedTools,
+                        reasoning: parsed.reasoning
+                    },
+                    debug: buildDebugInfo(prompt, response, state, { parsedSelection: parsed })
                 });
 
-                log.debug('SCA Select phase complete', { tools: state.selectedTools });
+                log.debug('SCA Select phase complete', { tools: state.selectedTools, duration: duration });
                 return { success: true, nextPhase: PHASES.INVOKE };
             } else {
-                throw new Error('No tools selected');
+                throw new Error('No tools selected from response');
             }
         } catch (e) {
-            log.error('SCA Select phase failed', { error: e.message });
-            state.errors.push({ phase: 'select', error: e.message });
+            const duration = Date.now() - phaseStart;
+            log.error('SCA Select phase failed', { error: e.message, duration: duration });
+            state.errors.push({ phase: 'select', error: e.message, timestamp: Date.now() });
+
             // Default to a sensible tool based on intent
             state.selectedTools = getDefaultToolsForIntent(state.intent.intent);
             state.phase = PHASES.INVOKE;
+
+            upsertThinkingStep(state, 'select', {
+                title: 'Selecting analysis tools',
+                phase: 'select',
+                status: 'complete',
+                duration: duration,
+                context: {
+                    selectedTools: state.selectedTools,
+                    fallback: true,
+                    error: e.message
+                }
+            });
+
             return { success: true, nextPhase: PHASES.INVOKE };
         }
     }
@@ -337,11 +534,27 @@ Response format:
         }
 
         const toolName = state.selectedTools[invokedCount];
+
+        // Skip format_response if somehow selected (double safety)
+        if (toolName === 'format_response') {
+            state.toolInvocations.push({ tool: toolName, skipped: true, reason: 'Internal tool only' });
+            return { success: true, nextPhase: PHASES.INVOKE };
+        }
+
         const tool = Tools.getTool(toolName);
 
         if (!tool) {
             log.error('SCA Unknown tool', { tool: toolName });
             state.toolInvocations.push({ tool: toolName, error: 'Unknown tool' });
+
+            addToolCallStep(state, {
+                title: `Unknown tool: ${toolName}`,
+                tool: toolName,
+                status: 'complete',
+                success: false,
+                error: 'Tool not found'
+            });
+
             return { success: true, nextPhase: PHASES.INVOKE }; // Continue with next tool
         }
 
@@ -366,12 +579,14 @@ Response format:
             .replace('{question}', state.message)
             .replace('{resolved_entities}', resolvedContext ? `Resolved entities:\n${resolvedContext}` : '');
 
-        ProgressStore.addStep(state.requestId, {
-            type: 'tool_call',
+        // Add step as active
+        addToolCallStep(state, {
             title: Tools.getToolDisplayName(toolName, {}),
             tool: toolName,
             status: 'active'
         });
+
+        const invokeStart = Date.now();
 
         try {
             const response = AIProviders.callAI(prompt, {
@@ -382,13 +597,14 @@ Response format:
                 purpose: `SCA:invoke:${toolName}`
             });
 
-            const parsed = parseJsonResponse(response.text);
+            const parsed = parseJsonResponse(response?.text);
             const args = parsed?.args || {};
 
             // Execute the tool
-            const startTime = Date.now();
+            const toolStart = Date.now();
             const result = Tools.executeTool(toolName, args);
-            const duration = Date.now() - startTime;
+            const toolDuration = Date.now() - toolStart;
+            const totalDuration = Date.now() - invokeStart;
 
             // Store data reference if tool returned rows
             let dataRef = null;
@@ -403,50 +619,74 @@ Response format:
                 state.resolvedEntities[searchTerm] = result.entity;
             }
 
-            state.toolInvocations.push({
+            const invocation = {
                 tool: toolName,
                 args: args,
                 success: result.success,
                 rowCount: result.rowCount || (result.rows ? result.rows.length : 0),
+                columns: result.columns || (result.rows && result.rows[0] ? Object.keys(result.rows[0]) : []),
                 dataRef: dataRef?.refId,
-                duration: duration
+                duration: toolDuration,
+                timestamp: Date.now()
+            };
+            state.toolInvocations.push(invocation);
+
+            // Build preview for frontend
+            const preview = result.rows?.slice(0, 3).map(row => {
+                const previewRow = {};
+                const cols = Object.keys(row).slice(0, 4);
+                cols.forEach(col => { previewRow[col] = row[col]; });
+                return previewRow;
             });
 
-            ProgressStore.updateStep(state.requestId, {
-                type: 'tool_call',
+            // Update step with results
+            addToolCallStep(state, {
                 title: Tools.getToolDisplayName(toolName, args),
                 tool: toolName,
-                params: args,
                 status: 'complete',
+                update: true,
+                params: args,
                 success: result.success,
+                rowCount: invocation.rowCount,
+                columns: invocation.columns.slice(0, 8),
+                preview: preview,
+                dataRef: dataRef?.refId,
+                duration: totalDuration,
                 summary: result.success
-                    ? `Found ${result.rowCount || result.rows?.length || 0} results`
-                    : result.error,
-                duration: duration,
-                rowCount: result.rowCount || result.rows?.length || 0
+                    ? `Found ${invocation.rowCount} results`
+                    : (result.error || 'Failed'),
+                debug: buildDebugInfo(prompt, response, state, {
+                    toolDuration: toolDuration,
+                    totalDuration: totalDuration,
+                    argsUsed: args
+                })
             });
 
             log.debug('SCA Invoke phase - tool executed', {
                 tool: toolName,
                 success: result.success,
-                rowCount: result.rowCount || 0,
-                hasDataRef: !!dataRef
+                rowCount: invocation.rowCount,
+                hasDataRef: !!dataRef,
+                duration: totalDuration
             });
 
             return { success: true, nextPhase: PHASES.INVOKE }; // Continue with next tool
 
         } catch (e) {
-            log.error('SCA Invoke phase failed', { tool: toolName, error: e.message });
-            state.errors.push({ phase: 'invoke', tool: toolName, error: e.message });
-            state.toolInvocations.push({ tool: toolName, error: e.message });
+            const duration = Date.now() - invokeStart;
+            log.error('SCA Invoke phase failed', { tool: toolName, error: e.message, duration: duration });
+            state.errors.push({ phase: 'invoke', tool: toolName, error: e.message, timestamp: Date.now() });
+            state.toolInvocations.push({ tool: toolName, error: e.message, duration: duration });
 
-            ProgressStore.updateStep(state.requestId, {
-                type: 'tool_call',
+            addToolCallStep(state, {
                 title: Tools.getToolDisplayName(toolName, {}),
                 tool: toolName,
                 status: 'complete',
+                update: true,
                 success: false,
-                summary: e.message
+                error: e.message,
+                duration: duration,
+                summary: 'Error: ' + e.message.substring(0, 50)
             });
 
             return { success: true, nextPhase: PHASES.INVOKE }; // Continue with next tool
@@ -457,15 +697,50 @@ Response format:
      * Phase 4: ANALYZE - Analyze data with lightweight context
      */
     function executeAnalyzePhase(state) {
+        const phaseStart = Date.now();
+        state.analyzeIterations++;
+
+        // Circuit breaker: prevent infinite analyze loops
+        if (state.analyzeIterations > MAX_ANALYZE_ITERATIONS) {
+            log.audit('SCA Analyze circuit breaker triggered', {
+                iterations: state.analyzeIterations,
+                requestId: state.requestId
+            });
+
+            state.analysis = synthesizeFromDataRefs(state);
+            state.phase = PHASES.FORMAT;
+
+            upsertThinkingStep(state, 'analyze', {
+                title: 'Analyzing results',
+                phase: 'analyze',
+                status: 'complete',
+                context: {
+                    circuitBreaker: true,
+                    iterations: state.analyzeIterations
+                }
+            });
+
+            return { success: true, nextPhase: PHASES.FORMAT };
+        }
+
         // Check if we have any data to analyze
         if (state.dataReferences.length === 0 && state.toolInvocations.every(t => !t.success)) {
             // No data - provide a fallback response
             state.analysis = {
-                action: 'respond',
                 analysis: "I wasn't able to find the data needed to answer your question. Please try rephrasing or providing more specific details.",
                 key_findings: []
             };
             state.phase = PHASES.FORMAT;
+
+            upsertThinkingStep(state, 'analyze', {
+                title: 'Analyzing results',
+                phase: 'analyze',
+                status: 'complete',
+                context: {
+                    noData: true
+                }
+            });
+
             return { success: true, nextPhase: PHASES.FORMAT };
         }
 
@@ -478,11 +753,15 @@ Response format:
             .replace('{question}', state.message)
             .replace('{data_references}', dataRefStrings || 'No data available');
 
-        ProgressStore.addStep(state.requestId, {
-            type: 'thinking',
+        // Update thinking step (same step, just update status)
+        upsertThinkingStep(state, 'analyze', {
             title: 'Analyzing results',
+            phase: 'analyze',
             status: 'active',
-            context: { phase: 'analyze' }
+            context: {
+                dataRefs: state.dataReferences.length,
+                iteration: state.analyzeIterations
+            }
         });
 
         try {
@@ -494,41 +773,88 @@ Response format:
                 purpose: 'SCA:analyze'
             });
 
-            const parsed = parseJsonResponse(response.text);
+            const parsed = parseJsonResponse(response?.text);
+            const duration = Date.now() - phaseStart;
+            state.phaseTimings.analyze = (state.phaseTimings.analyze || 0) + duration;
 
-            if (parsed?.action === 'load_data') {
-                // LLM wants more data
+            // Check for load_data request
+            if (parsed?.action === 'load_data' && parsed.refId) {
                 if (state.iteration < MAX_DATA_LOADS) {
                     state.phase = PHASES.LOAD_DATA;
                     state.pendingDataLoad = parsed;
+
+                    upsertThinkingStep(state, 'analyze', {
+                        title: 'Analyzing results',
+                        phase: 'analyze',
+                        status: 'active',
+                        context: {
+                            loadingMoreData: true,
+                            refId: parsed.refId
+                        }
+                    });
+
                     return { success: true, nextPhase: PHASES.LOAD_DATA };
                 }
             }
 
-            if (parsed?.action === 'respond' && parsed.analysis) {
-                state.analysis = parsed;
+            // FLEXIBLE: Accept analysis with OR without action field
+            // LLM might return: {"analysis": "..."} or {"action": "respond", "analysis": "..."}
+            if (parsed?.analysis) {
+                state.analysis = {
+                    analysis: parsed.analysis,
+                    key_findings: parsed.key_findings || []
+                };
                 state.phase = PHASES.FORMAT;
 
-                ProgressStore.updateStep(state.requestId, {
-                    type: 'thinking',
+                upsertThinkingStep(state, 'analyze', {
                     title: 'Analyzing results',
+                    phase: 'analyze',
                     status: 'complete',
-                    context: { phase: 'analyze' }
+                    duration: duration,
+                    context: {
+                        hasAnalysis: true,
+                        findingsCount: state.analysis.key_findings.length,
+                        iteration: state.analyzeIterations
+                    },
+                    debug: buildDebugInfo(prompt, response, state, {
+                        analysisLength: parsed.analysis?.length,
+                        findingsCount: parsed.key_findings?.length
+                    })
                 });
 
-                log.debug('SCA Analyze phase complete');
+                log.debug('SCA Analyze phase complete', { duration: duration });
                 return { success: true, nextPhase: PHASES.FORMAT };
             }
 
-            throw new Error('Invalid analysis response');
+            // If we got here, response was invalid
+            throw new Error('Invalid analysis response - missing analysis field. Got: ' +
+                (response?.text?.substring(0, 100) || 'empty'));
 
         } catch (e) {
-            log.error('SCA Analyze phase failed', { error: e.message });
-            state.errors.push({ phase: 'analyze', error: e.message });
+            const duration = Date.now() - phaseStart;
+            log.error('SCA Analyze phase failed', {
+                error: e.message,
+                duration: duration,
+                iteration: state.analyzeIterations
+            });
+            state.errors.push({ phase: 'analyze', error: e.message, timestamp: Date.now() });
 
             // Synthesize a basic response from data summaries
             state.analysis = synthesizeFromDataRefs(state);
             state.phase = PHASES.FORMAT;
+
+            upsertThinkingStep(state, 'analyze', {
+                title: 'Analyzing results',
+                phase: 'analyze',
+                status: 'complete',
+                duration: duration,
+                context: {
+                    fallback: true,
+                    error: e.message.substring(0, 100),
+                    iteration: state.analyzeIterations
+                }
+            });
+
             return { success: true, nextPhase: PHASES.FORMAT };
         }
     }
@@ -544,7 +870,12 @@ Response format:
         }
 
         try {
-            const result = DataStore.executeCommand(state.requestId, cmd);
+            const result = DataStore.executeCommand(state.requestId, {
+                action: cmd.action || 'LOAD_ROWS',
+                refId: cmd.refId,
+                start: cmd.start || 0,
+                end: cmd.end || 19
+            });
 
             if (result && result.rows) {
                 // Add loaded data to the reference
@@ -574,21 +905,55 @@ Response format:
      * Phase 5: FORMAT - Create rich response blocks
      */
     function executeFormatPhase(state) {
+        const phaseStart = Date.now();
+        state.formatIterations++;
+
+        // Circuit breaker: prevent infinite format loops
+        if (state.formatIterations > MAX_FORMAT_ITERATIONS) {
+            log.audit('SCA Format circuit breaker triggered', {
+                iterations: state.formatIterations,
+                requestId: state.requestId
+            });
+
+            state.formattedResponse = {
+                title: 'Analysis Results',
+                summary: state.analysis?.analysis?.substring(0, 100) || 'Analysis complete',
+                blocks: [
+                    { type: 'text', content: state.analysis?.analysis || 'Unable to format response' }
+                ]
+            };
+            state.phase = PHASES.COMPLETE;
+
+            upsertThinkingStep(state, 'format', {
+                title: 'Formatting response',
+                phase: 'format',
+                status: 'complete',
+                context: {
+                    circuitBreaker: true,
+                    iterations: state.formatIterations
+                }
+            });
+
+            return { success: true, nextPhase: PHASES.COMPLETE };
+        }
+
         const dataSummary = state.dataReferences.map(ref => {
             const s = ref.summary;
-            return `${s.tool}: ${s.rowCount} rows, columns: ${s.columns.join(', ')}`;
+            return `${s.tool}: ${s.rowCount} rows, columns: ${(s.columns || []).join(', ')}`;
         }).join('\n');
 
         const prompt = FORMAT_PROMPT
             .replace('{analysis}', state.analysis?.analysis || 'No analysis available')
-            .replace('{findings}', (state.analysis?.key_findings || []).join('\n'))
+            .replace('{findings}', (state.analysis?.key_findings || []).join('\n') || 'No specific findings')
             .replace('{data_summary}', dataSummary || 'No data');
 
-        ProgressStore.addStep(state.requestId, {
-            type: 'thinking',
+        upsertThinkingStep(state, 'format', {
             title: 'Formatting response',
+            phase: 'format',
             status: 'active',
-            context: { phase: 'format' }
+            context: {
+                iteration: state.formatIterations
+            }
         });
 
         try {
@@ -600,41 +965,77 @@ Response format:
                 purpose: 'SCA:format'
             });
 
-            const parsed = parseJsonResponse(response.text);
+            const parsed = parseJsonResponse(response?.text);
+            const duration = Date.now() - phaseStart;
+            state.phaseTimings.format = (state.phaseTimings.format || 0) + duration;
 
-            if (parsed && parsed.blocks) {
-                state.formattedResponse = parsed;
+            // FLEXIBLE: Accept response with blocks array
+            if (parsed && (parsed.blocks || parsed.title || parsed.summary)) {
+                state.formattedResponse = {
+                    title: parsed.title || 'Analysis Results',
+                    summary: parsed.summary || state.analysis?.analysis?.substring(0, 100) || '',
+                    blocks: parsed.blocks || [{ type: 'text', content: state.analysis?.analysis || '' }]
+                };
                 state.phase = PHASES.COMPLETE;
 
                 // Enrich table blocks with actual data
                 enrichTableBlocks(state);
 
-                ProgressStore.updateStep(state.requestId, {
-                    type: 'thinking',
+                upsertThinkingStep(state, 'format', {
                     title: 'Formatting response',
+                    phase: 'format',
                     status: 'complete',
-                    context: { phase: 'format' }
+                    duration: duration,
+                    context: {
+                        blockCount: state.formattedResponse.blocks.length,
+                        blockTypes: state.formattedResponse.blocks.map(b => b.type)
+                    },
+                    debug: buildDebugInfo(prompt, response, state, {
+                        responseTitle: parsed.title,
+                        blockCount: parsed.blocks?.length
+                    })
                 });
 
-                log.debug('SCA Format phase complete', { blockCount: parsed.blocks.length });
+                log.debug('SCA Format phase complete', {
+                    blockCount: state.formattedResponse.blocks.length,
+                    duration: duration
+                });
                 return { success: true, nextPhase: PHASES.COMPLETE };
             }
 
-            throw new Error('Invalid format response');
+            throw new Error('Invalid format response - missing blocks/title/summary');
 
         } catch (e) {
-            log.error('SCA Format phase failed', { error: e.message });
-            state.errors.push({ phase: 'format', error: e.message });
+            const duration = Date.now() - phaseStart;
+            log.error('SCA Format phase failed', {
+                error: e.message,
+                duration: duration,
+                iteration: state.formatIterations
+            });
+            state.errors.push({ phase: 'format', error: e.message, timestamp: Date.now() });
 
             // Create basic formatted response
             state.formattedResponse = {
                 title: 'Analysis Results',
-                summary: state.analysis?.analysis || 'Analysis complete',
+                summary: state.analysis?.analysis?.substring(0, 100) || 'Analysis complete',
                 blocks: [
                     { type: 'text', content: state.analysis?.analysis || 'Unable to format response' }
                 ]
             };
             state.phase = PHASES.COMPLETE;
+
+            upsertThinkingStep(state, 'format', {
+                title: 'Formatting response',
+                phase: 'format',
+                status: 'complete',
+                duration: duration,
+                context: {
+                    fallback: true,
+                    error: e.message.substring(0, 100),
+                    iteration: state.formatIterations
+                }
+            });
+
             return { success: true, nextPhase: PHASES.COMPLETE };
         }
     }
@@ -660,13 +1061,24 @@ Response format:
                 }
             }
 
-            // Try to find JSON object in text
-            const jsonMatch = text.match(/\{[\s\S]*\}/);
-            if (jsonMatch) {
-                try {
-                    return JSON.parse(jsonMatch[0]);
-                } catch (e3) {
-                    // ignore
+            // Try to find JSON object in text using balanced brace matching
+            let depth = 0;
+            let startIndex = -1;
+
+            for (let i = 0; i < text.length; i++) {
+                if (text[i] === '{') {
+                    if (depth === 0) startIndex = i;
+                    depth++;
+                } else if (text[i] === '}') {
+                    depth--;
+                    if (depth === 0 && startIndex !== -1) {
+                        try {
+                            return JSON.parse(text.substring(startIndex, i + 1));
+                        } catch (e3) {
+                            // Continue searching
+                            startIndex = -1;
+                        }
+                    }
                 }
             }
         }
@@ -688,6 +1100,13 @@ Response format:
     }
 
     function synthesizeFromDataRefs(state) {
+        if (!state.dataReferences || state.dataReferences.length === 0) {
+            return {
+                analysis: 'No data was retrieved to analyze.',
+                key_findings: []
+            };
+        }
+
         const summaries = state.dataReferences.map(ref => {
             const s = ref.summary;
             const insights = s.insights ? s.insights.join('. ') : '';
@@ -695,9 +1114,8 @@ Response format:
         });
 
         return {
-            action: 'respond',
             analysis: summaries.join('\n\n') || 'Data retrieved successfully.',
-            key_findings: state.dataReferences.flatMap(ref => ref.summary.insights || [])
+            key_findings: state.dataReferences.flatMap(ref => ref.summary?.insights || [])
         };
     }
 
@@ -710,7 +1128,7 @@ Response format:
                 const dataRef = state.dataReferences[0];
                 if (dataRef && dataRef.summary.preview) {
                     const preview = dataRef.summary.preview;
-                    const cols = dataRef.summary.columns.slice(0, 5);
+                    const cols = dataRef.summary.columns?.slice(0, 5) || [];
 
                     block.headers = block.headers || cols;
                     block.rows = preview.map(p => {
@@ -752,6 +1170,9 @@ Response format:
             state.resolvedEntities = { ...sessionContext.resolvedEntities };
         }
 
+        // Mark as using streaming agent
+        state.useStreamingAgent = true;
+
         return state;
     }
 
@@ -760,7 +1181,12 @@ Response format:
      * Returns { hasMore: boolean, phase: string } or { hasMore: false, response: object }
      */
     function runStep(state) {
-        log.debug('SCA runStep', { phase: state.phase, iteration: state.iteration });
+        log.debug('SCA runStep', {
+            phase: state.phase,
+            iteration: state.iteration,
+            analyzeIter: state.analyzeIterations,
+            formatIter: state.formatIterations
+        });
 
         let result;
 
@@ -821,7 +1247,7 @@ Response format:
         const formatted = state.formattedResponse || {};
         const duration = Date.now() - state.startTime;
 
-        return {
+        const response = {
             text: state.analysis?.analysis || formatted.summary || 'Analysis complete',
             richContent: formatted.blocks || [],
             title: formatted.title,
@@ -833,12 +1259,39 @@ Response format:
                 phases: {
                     intent: state.intent,
                     toolsUsed: state.selectedTools,
+                    toolResults: state.toolInvocations.map(t => ({
+                        tool: t.tool,
+                        success: t.success,
+                        rowCount: t.rowCount
+                    })),
                     dataRefs: state.dataReferences.map(r => r.refId)
                 },
                 duration: duration,
-                errors: state.errors
+                phaseTimings: state.phaseTimings,
+                iterations: {
+                    total: state.iteration,
+                    analyze: state.analyzeIterations,
+                    format: state.formatIterations
+                },
+                errors: state.errors.length > 0 ? state.errors : undefined
             }
         };
+
+        // Add debug info if debug mode
+        if (Utils.isDebugMode()) {
+            response.debug = {
+                fullState: {
+                    phase: state.phase,
+                    intent: state.intent,
+                    selectedTools: state.selectedTools,
+                    toolInvocations: state.toolInvocations,
+                    dataRefCount: state.dataReferences.length,
+                    errors: state.errors
+                }
+            };
+        }
+
+        return response;
     }
 
     /**

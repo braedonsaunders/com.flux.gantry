@@ -2,20 +2,18 @@
  * @NApiVersion 2.1
  * @NModuleScope Public
  *
- * Lib_Advisor_Orchestrator_v2.js
- * Simplified orchestration for LLM-first advisor architecture
+ * Lib_Advisor_Orchestrator.js
+ * Main orchestration for LLM-powered financial advisor
  *
- * MAJOR CHANGES FROM V1:
- * - No regex-based entity extraction
- * - No pre-resolution step
- * - No hardcoded word lists
- * - LLM decides everything via Agent loop
- * - Supports progressive rendering via polling
+ * ARCHITECTURE:
+ * - Streaming Context Architecture (SCA) for fast, lightweight LLM calls
+ * - Legacy Agent mode available via USE_STREAMING_AGENT flag
+ * - Progressive rendering via polling
  *
  * FLOW:
  * 1. processChat() - Main entry point (synchronous, waits for completion)
  * 2. processChatAsync() - Returns request_id immediately, use polling for updates
- * 3. getStatus() - Poll for progress updates
+ * 3. getStatus() - Poll for progress updates, each poll advances one phase
  */
 define([
     'N/log',

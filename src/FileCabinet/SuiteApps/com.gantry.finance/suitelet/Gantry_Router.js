@@ -20,7 +20,7 @@ define([
     '../lib/Lib_VendorPerformance_Data',
     '../lib/Lib_CustomerValue_Data',
     '../lib/Lib_SpendVelocity_Data',
-    '../lib/advisor/Lib_Advisor_Orchestrator_v2',
+    '../lib/advisor/Lib_Advisor_Orchestrator',
     '../lib/advisor/Lib_Advisor_ProgressStore',
     '../lib/Lib_Model_Registry'
 ], function(
