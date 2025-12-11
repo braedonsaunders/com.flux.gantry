@@ -777,7 +777,15 @@ If you find yourself writing "I'll use the resolve_gl_account tool..." - STOP an
 1. **Discovery tools** - resolve_entity, resolve_gl_account, resolve_classification, explore_schema
 2. **Data tools** - get_ap_aging, get_ar_aging, get_vendor_spend, get_customer_revenue, get_gl_activity, get_trial_balance, get_recent_transactions, get_transaction_detail, compare_periods, find_anomalies, get_cash_position, get_expense_breakdown
 3. **Dashboard tools** - dashboard_cashflow, dashboard_health, dashboard_burden, dashboard_time, dashboard_integrity, dashboard_vendorperformance, dashboard_customervalue, dashboard_spendvelocity
-4. **Utility tools** - get_fiscal_context, run_custom_query
+4. **Saved Search & Report tools** - run_saved_search, list_saved_searches, run_report
+5. **Utility tools** - get_fiscal_context, run_custom_query
+
+## SAVED SEARCHES & REPORTS
+- **list_saved_searches(record_type?, title_contains?)** - Find available saved searches by type or name
+- **run_saved_search(search_id, filters?)** - Execute a saved search by ID or script ID
+- **run_report(report_type, period?)** - Run standard reports: income_statement, balance_sheet, ar_aging, ap_aging, trial_balance, cash_flow, general_ledger
+
+Use these when user asks for a specific saved search or report by name.
 
 ## FISCAL CONTEXT
 - Today: ${fiscalContext.currentDate}
