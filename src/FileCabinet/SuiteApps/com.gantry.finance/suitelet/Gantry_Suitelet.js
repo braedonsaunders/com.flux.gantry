@@ -193,34 +193,28 @@ define([
         });
 
         // Styling for full-width iframe below NS header (no grey bar)
-        // CRITICAL: Inject hiding CSS as early as possible to prevent form header flash
+        // Use gentle hiding to avoid breaking NetSuite's internal JS (highlightElementId, etc)
         field.defaultValue = `
             <style>
-                /* === ANTI-FLASH: Hide form elements BEFORE first paint === */
-                /* These rules must load before NetSuite renders to prevent FOUC */
+                /* === Hide form elements without breaking NetSuite JS === */
+                /* Keep elements in DOM flow so NS can still reference them */
                 #main_form > table:first-child,
                 .uir-page-title-secondline,
                 .uir-page-title,
                 .uir-page-title-firstline,
                 #main_form > tbody > tr:first-child,
                 #main_form > table > tbody > tr:first-child {
-                    visibility: hidden !important;
+                    opacity: 0 !important;
+                    pointer-events: none !important;
                     height: 0 !important;
+                    min-height: 0 !important;
                     max-height: 0 !important;
                     overflow: hidden !important;
                     padding: 0 !important;
                     margin: 0 !important;
                     border: none !important;
-                    opacity: 0 !important;
-                    pointer-events: none !important;
-                    position: absolute !important;
-                    clip: rect(0, 0, 0, 0) !important;
-                }
-
-                /* Double-ensure with display none (fires after visibility) */
-                #main_form > table:first-child,
-                .uir-page-title-secondline {
-                    display: none !important;
+                    line-height: 0 !important;
+                    font-size: 0 !important;
                 }
 
                 /* Iframe container - full width, positioned below NS header */
@@ -232,6 +226,9 @@ define([
                     top: 103px; /* Fallback, will be overridden by JS */
                     width: 100vw;
                     z-index: 100;
+                    /* Override inherited visibility from NetSuite's anti-flash CSS */
+                    visibility: visible !important;
+                    opacity: 1 !important;
                 }
 
                 .gantry-iframe {
@@ -239,6 +236,8 @@ define([
                     height: 100%;
                     border: none;
                     display: block;
+                    visibility: visible !important;
+                    opacity: 1 !important;
                 }
             </style>
             <div class="gantry-frame-wrapper">
