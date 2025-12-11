@@ -86,7 +86,10 @@ define([
             'last_30_days': `${dateField} >= CURRENT_DATE - 30`,
             'last_60_days': `${dateField} >= CURRENT_DATE - 60`,
             'last_90_days': `${dateField} >= CURRENT_DATE - 90`,
-            'last_365_days': `${dateField} >= CURRENT_DATE - 365`
+            'last_365_days': `${dateField} >= CURRENT_DATE - 365`,
+            'last_year': `${dateField} >= CURRENT_DATE - 365`,  // Alias for last_365_days
+            'last_2_years': `${dateField} >= CURRENT_DATE - 730`,
+            'all': '1=1'  // No date restriction
         };
         return periodFilters[period] || periodFilters['last_90_days'];
     }
@@ -624,8 +627,8 @@ Use for: "vendor spend", "who do we pay most", "top vendors", "AP by vendor"`,
                     },
                     period: {
                         type: 'string',
-                        enum: ['this_month', 'last_month', 'this_quarter', 'last_quarter', 'ytd', 'last_30_days', 'last_90_days', 'last_365_days'],
-                        description: 'Time period (default: last_90_days)'
+                        enum: ['this_month', 'last_month', 'this_quarter', 'last_quarter', 'ytd', 'last_30_days', 'last_90_days', 'last_365_days', 'last_year', 'last_2_years', 'all'],
+                        description: 'Time period (default: last_90_days). Use "all" for no date restriction.'
                     },
                     limit: {
                         type: 'number',
@@ -681,8 +684,8 @@ Use for: "customer revenue", "top customers", "sales by customer"`,
                     },
                     period: {
                         type: 'string',
-                        enum: ['this_month', 'last_month', 'this_quarter', 'last_quarter', 'ytd', 'last_30_days', 'last_90_days', 'last_365_days'],
-                        description: 'Time period (default: last_90_days)'
+                        enum: ['this_month', 'last_month', 'this_quarter', 'last_quarter', 'ytd', 'last_30_days', 'last_90_days', 'last_365_days', 'last_year', 'last_2_years', 'all'],
+                        description: 'Time period (default: last_90_days). Use "all" for no date restriction.'
                     },
                     limit: {
                         type: 'number',
@@ -752,8 +755,8 @@ NOTE: Class/department/location filters use the segment values from the GL accou
                     },
                     period: {
                         type: 'string',
-                        enum: ['this_month', 'last_month', 'this_quarter', 'last_quarter', 'ytd', 'last_30_days', 'last_90_days'],
-                        description: 'Time period (default: last_90_days)'
+                        enum: ['this_month', 'last_month', 'this_quarter', 'last_quarter', 'ytd', 'last_30_days', 'last_90_days', 'last_365_days', 'last_year', 'last_2_years', 'all'],
+                        description: 'Time period (default: last_90_days). Use "all" for no date restriction.'
                     },
                     limit: {
                         type: 'number',
@@ -1558,8 +1561,8 @@ IMPORTANT: You MUST use exact NetSuite type codes from the enum:
                     },
                     period: {
                         type: 'string',
-                        enum: ['today', 'this_week', 'this_month', 'last_30_days', 'last_90_days', 'last_year', 'all'],
-                        description: 'Time period (default: last_90_days for better coverage)'
+                        enum: ['today', 'this_week', 'this_month', 'last_30_days', 'last_90_days', 'last_365_days', 'last_year', 'last_2_years', 'all'],
+                        description: 'Time period (default: last_90_days). Use "all" for no date restriction, "last_year"/"last_365_days" for broader searches.'
                     },
                     limit: {
                         type: 'number',
@@ -1581,9 +1584,8 @@ IMPORTANT: You MUST use exact NetSuite type codes from the enum:
                 const entityFilter = args.entity_id ?
                     `AND transaction.entity = ${args.entity_id}` : '';
 
-                // Use longer default period for better results
-                const period = args.period || 'last_90_days';
-                const periodFilter = period === 'all' ? '1=1' : buildPeriodFilter(period);
+                // Use longer default period for better results - buildPeriodFilter handles 'all', 'last_year', etc.
+                const periodFilter = buildPeriodFilter(args.period || 'last_90_days');
                 const limit = args.limit || 50;
 
                 const query = `
@@ -1838,8 +1840,8 @@ Use for: "anomalies", "unusual transactions", "what caused the spike", "outliers
                     },
                     period: {
                         type: 'string',
-                        enum: ['last_30_days', 'last_90_days', 'last_365_days', 'ytd'],
-                        description: 'Period to analyze (default: last_90_days)'
+                        enum: ['last_30_days', 'last_90_days', 'last_365_days', 'last_year', 'last_2_years', 'ytd', 'all'],
+                        description: 'Period to analyze (default: last_90_days). Use "all" for no date restriction.'
                     }
                 },
                 required: ['data_type']
@@ -2040,7 +2042,7 @@ Use for: "expense breakdown", "where is money going", "expenses by category"`,
                 properties: {
                     period: {
                         type: 'string',
-                        enum: ['this_month', 'last_month', 'this_quarter', 'ytd', 'last_90_days'],
+                        enum: ['this_month', 'last_month', 'this_quarter', 'last_quarter', 'ytd', 'last_90_days', 'last_365_days', 'last_year'],
                         description: 'Time period (default: ytd)'
                     },
                     department_id: {
