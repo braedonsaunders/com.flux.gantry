@@ -3102,3 +3102,330 @@ body.dark-mode .sparkline-label {
     background-color: #0f172a !important;
     background: #0f172a !important;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   REFLECTION & STRATEGY PIVOT STEP STYLES
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Reflection Details */
+.reflection-details {
+    padding: 8px 0;
+}
+
+.reflection-assessment {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 10px;
+    flex-wrap: wrap;
+}
+
+.assessment-badge {
+    padding: 4px 10px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+.assessment-badge.badge-success {
+    background: #dcfce7;
+    color: #166534;
+}
+
+.assessment-badge.badge-warning {
+    background: #fef3c7;
+    color: #92400e;
+}
+
+.assessment-badge.badge-info {
+    background: #dbeafe;
+    color: #1e40af;
+}
+
+.assessment-badge.badge-danger {
+    background: #fee2e2;
+    color: #991b1b;
+}
+
+.confidence-badge {
+    padding: 3px 8px;
+    border-radius: 10px;
+    font-size: 10px;
+    background: #f1f5f9;
+    color: #64748b;
+}
+
+.reflection-findings,
+.reflection-failures,
+.reflection-next-strategy {
+    margin-top: 10px;
+}
+
+.section-label {
+    font-size: 10px;
+    font-weight: 600;
+    color: #64748b;
+    text-transform: uppercase;
+    margin-bottom: 6px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.section-label i {
+    font-size: 11px;
+}
+
+.finding-item {
+    padding: 6px 10px;
+    margin: 4px 0;
+    border-radius: 6px;
+    font-size: 12px;
+    background: #f8fafc;
+    border-left: 3px solid #94a3b8;
+}
+
+.finding-item.finding-high {
+    background: #fef2f2;
+    border-left-color: #ef4444;
+}
+
+.finding-item.finding-medium {
+    background: #fffbeb;
+    border-left-color: #f59e0b;
+}
+
+.finding-item.finding-low {
+    background: #f0fdf4;
+    border-left-color: #22c55e;
+}
+
+.failure-item {
+    padding: 8px 10px;
+    margin: 4px 0;
+    border-radius: 6px;
+    font-size: 12px;
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.failure-tool {
+    font-weight: 600;
+    color: #991b1b;
+}
+
+.failure-tool i {
+    margin-right: 4px;
+}
+
+.failure-reason {
+    color: #7f1d1d;
+}
+
+.failure-suggestion {
+    color: #166534;
+    font-style: italic;
+    background: #dcfce7;
+    padding: 4px 8px;
+    border-radius: 4px;
+    margin-top: 4px;
+}
+
+.failure-suggestion i {
+    margin-right: 4px;
+}
+
+.strategy-text,
+.reasoning-text {
+    background: #f8fafc;
+    padding: 8px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    color: #334155;
+    line-height: 1.5;
+}
+
+.reflection-pivot-reason {
+    margin-top: 10px;
+    padding: 8px 12px;
+    background: #fef3c7;
+    border-radius: 6px;
+    font-size: 12px;
+    color: #92400e;
+}
+
+.reflection-pivot-reason i {
+    margin-right: 6px;
+}
+
+/* Strategy Pivot Details */
+.strategy-pivot-details {
+    padding: 8px 0;
+}
+
+.strategy-new,
+.strategy-reasoning {
+    margin-bottom: 12px;
+}
+
+.strategy-description {
+    background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%);
+    padding: 10px 14px;
+    border-radius: 8px;
+    font-size: 12px;
+    color: #1e40af;
+    font-weight: 500;
+    border-left: 4px solid #3b82f6;
+}
+
+.strategy-first-tool {
+    padding: 8px 12px;
+    background: #f0fdf4;
+    border-radius: 6px;
+    font-size: 12px;
+    color: #166534;
+    margin-bottom: 8px;
+}
+
+.strategy-first-tool i {
+    margin-right: 6px;
+    color: #22c55e;
+}
+
+.strategy-first-tool code {
+    background: #dcfce7;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-family: monospace;
+    font-weight: 600;
+}
+
+.tool-args {
+    font-size: 10px;
+    color: #64748b;
+    margin-left: 4px;
+}
+
+.strategy-backups {
+    padding: 6px 12px;
+    background: #f8fafc;
+    border-radius: 6px;
+    font-size: 11px;
+    color: #64748b;
+}
+
+.strategy-backups i {
+    margin-right: 6px;
+}
+
+.strategy-backups code {
+    background: #e2e8f0;
+    padding: 2px 5px;
+    border-radius: 3px;
+    font-family: monospace;
+    font-size: 10px;
+    margin: 0 2px;
+}
+
+/* Dark mode support for reflection/strategy */
+body.dark-mode .assessment-badge.badge-success {
+    background: #064e3b;
+    color: #6ee7b7;
+}
+
+body.dark-mode .assessment-badge.badge-warning {
+    background: #78350f;
+    color: #fcd34d;
+}
+
+body.dark-mode .assessment-badge.badge-info {
+    background: #1e3a5f;
+    color: #93c5fd;
+}
+
+body.dark-mode .assessment-badge.badge-danger {
+    background: #7f1d1d;
+    color: #fca5a5;
+}
+
+body.dark-mode .confidence-badge {
+    background: #334155;
+    color: #94a3b8;
+}
+
+body.dark-mode .finding-item {
+    background: #1e293b;
+    border-left-color: #64748b;
+}
+
+body.dark-mode .finding-item.finding-high {
+    background: #2d1f1f;
+    border-left-color: #f87171;
+}
+
+body.dark-mode .finding-item.finding-medium {
+    background: #2d2815;
+    border-left-color: #fbbf24;
+}
+
+body.dark-mode .finding-item.finding-low {
+    background: #1a2e1a;
+    border-left-color: #4ade80;
+}
+
+body.dark-mode .failure-item {
+    background: #2d1f1f;
+    border-color: #7f1d1d;
+}
+
+body.dark-mode .failure-tool {
+    color: #fca5a5;
+}
+
+body.dark-mode .failure-reason {
+    color: #fecaca;
+}
+
+body.dark-mode .failure-suggestion {
+    background: #064e3b;
+    color: #6ee7b7;
+}
+
+body.dark-mode .strategy-text,
+body.dark-mode .reasoning-text {
+    background: #1e293b;
+    color: #cbd5e1;
+}
+
+body.dark-mode .reflection-pivot-reason {
+    background: #78350f;
+    color: #fcd34d;
+}
+
+body.dark-mode .strategy-description {
+    background: linear-gradient(135deg, #1e3a5f 0%, #1e40af 100%);
+    color: #93c5fd;
+    border-left-color: #60a5fa;
+}
+
+body.dark-mode .strategy-first-tool {
+    background: #1a2e1a;
+    color: #6ee7b7;
+}
+
+body.dark-mode .strategy-first-tool code {
+    background: #064e3b;
+}
+
+body.dark-mode .strategy-backups {
+    background: #1e293b;
+    color: #94a3b8;
+}
+
+body.dark-mode .strategy-backups code {
+    background: #334155;
+}

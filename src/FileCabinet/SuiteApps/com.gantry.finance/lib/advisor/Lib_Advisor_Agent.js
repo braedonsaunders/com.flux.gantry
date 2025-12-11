@@ -48,6 +48,252 @@ define([
     const MAX_TOOL_CALLS_PER_TURN = 5;  // Limit parallel tool calls
     const THINKING_TIER = 1;        // Use tier 1 for reasoning
     const QUERY_TIER = 2;           // Use tier 2 for heavy queries
+    const REFLECT_AFTER_FAILURES = 2;   // Trigger reflection after this many failures
+    const MAX_STRATEGY_PIVOTS = 3;      // Maximum strategy changes allowed
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // REFLECTION & ADAPTATION PROMPTS
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    const REFLECTION_PROMPT = `You are analyzing the results of tool calls to determine if the current approach is working.
+
+## RECENT TOOL CALLS AND RESULTS:
+{tool_results}
+
+## ORIGINAL USER QUESTION:
+{user_question}
+
+## YOUR TASK:
+Analyze what happened and provide a JSON response:
+
+{
+    "assessment": "on_track|needs_pivot|blocked|partial_success",
+    "confidence": 0.0-1.0,
+    "findings": [
+        {"insight": "what we learned", "importance": "high|medium|low"}
+    ],
+    "failures": [
+        {"tool": "tool_name", "reason": "why it failed", "suggestion": "what to try instead"}
+    ],
+    "next_strategy": "description of recommended next approach",
+    "should_pivot": true|false,
+    "pivot_reason": "why we need to change strategy (if should_pivot is true)"
+}
+
+## ANALYSIS GUIDELINES:
+- If entity not found → suggest listing available entities first
+- If query returns 0 rows → suggest expanding date range or removing filters
+- If same tool called multiple times → definitely needs pivot
+- If we have partial data → assess if it's enough to answer
+
+Respond with ONLY the JSON object, no other text.`;
+
+    const STRATEGY_PIVOT_PROMPT = `You need to develop a NEW strategy because the previous approach failed.
+
+## ORIGINAL QUESTION:
+{user_question}
+
+## WHAT WE TRIED:
+{previous_attempts}
+
+## WHY IT FAILED:
+{failure_reasons}
+
+## YOUR TASK:
+Create a new strategy. Consider:
+1. If entity wasn't found by name, try listing all available entities
+2. If a specific query failed, try a broader query first
+3. If classification failed, try different dimensions (class vs department vs location)
+4. Use explore_schema to discover what data is actually available
+
+Respond with JSON:
+{
+    "new_strategy": "description of the new approach",
+    "reasoning": "why this approach might work better",
+    "first_tool": "tool_name",
+    "first_tool_args": {},
+    "backup_tools": ["alternative tools if first doesn't work"]
+}
+
+Respond with ONLY the JSON object.`;
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // REFLECTION & ADAPTATION FUNCTIONS
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Analyze recent tool results and determine if we need to pivot strategy
+     */
+    function performReflection(agentState, requestId) {
+        const recentCalls = agentState.allToolCalls.slice(-5);
+        if (recentCalls.length === 0) return null;
+
+        // Build tool results summary for the prompt
+        const toolResultsSummary = recentCalls.map(tc => {
+            const resultSummary = tc.result ? {
+                success: tc.result.success,
+                rowCount: tc.result.rowCount || (tc.result.rows ? tc.result.rows.length : 0),
+                error: tc.result.error,
+                message: tc.result.message
+            } : { error: 'No result' };
+
+            return `Tool: ${tc.tool}\nArgs: ${JSON.stringify(tc.args)}\nResult: ${JSON.stringify(resultSummary)}`;
+        }).join('\n\n');
+
+        const prompt = REFLECTION_PROMPT
+            .replace('{tool_results}', toolResultsSummary)
+            .replace('{user_question}', agentState.message);
+
+        try {
+            const reflectionResponse = AIProviders.callAI(prompt, {
+                systemPrompt: 'You are an analytical assistant that evaluates tool call results. Respond only with valid JSON.',
+                tier: THINKING_TIER,
+                purpose: 'Reflection on tool results',
+                temperature: 0.3
+            });
+
+            if (reflectionResponse && reflectionResponse.text) {
+                try {
+                    // Extract JSON from response
+                    let jsonText = reflectionResponse.text.trim();
+                    const jsonMatch = jsonText.match(/\{[\s\S]*\}/);
+                    if (jsonMatch) jsonText = jsonMatch[0];
+
+                    const reflection = JSON.parse(jsonText);
+
+                    // Add reflection step to progress
+                    ProgressStore.addStep(requestId, {
+                        type: 'reflection',
+                        title: 'Analyzing results...',
+                        status: 'complete',
+                        reflection: {
+                            assessment: reflection.assessment,
+                            confidence: reflection.confidence,
+                            findings: reflection.findings || [],
+                            failures: reflection.failures || [],
+                            shouldPivot: reflection.should_pivot,
+                            pivotReason: reflection.pivot_reason,
+                            nextStrategy: reflection.next_strategy
+                        }
+                    });
+
+                    return reflection;
+                } catch (parseError) {
+                    log.debug('Failed to parse reflection response', { error: parseError.message });
+                }
+            }
+        } catch (e) {
+            log.debug('Reflection call failed', { error: e.message });
+        }
+
+        return null;
+    }
+
+    /**
+     * Generate a new strategy when the current approach isn't working
+     */
+    function generateStrategyPivot(agentState, reflection, requestId) {
+        // Build summary of what we tried
+        const attempts = agentState.allToolCalls.map(tc =>
+            `${tc.tool}(${JSON.stringify(tc.args)}) → ${tc.result?.success ? 'OK' : 'FAILED'}: ${summarizeToolResult(tc.result)}`
+        ).join('\n');
+
+        const failureReasons = reflection.failures ?
+            reflection.failures.map(f => `${f.tool}: ${f.reason}`).join('\n') :
+            reflection.pivot_reason || 'Multiple failures with no results';
+
+        const prompt = STRATEGY_PIVOT_PROMPT
+            .replace('{user_question}', agentState.message)
+            .replace('{previous_attempts}', attempts)
+            .replace('{failure_reasons}', failureReasons);
+
+        try {
+            const pivotResponse = AIProviders.callAI(prompt, {
+                systemPrompt: 'You are a strategic advisor helping find alternative approaches. Respond only with valid JSON.',
+                tier: THINKING_TIER,
+                purpose: 'Strategy pivot',
+                temperature: 0.4
+            });
+
+            if (pivotResponse && pivotResponse.text) {
+                try {
+                    let jsonText = pivotResponse.text.trim();
+                    const jsonMatch = jsonText.match(/\{[\s\S]*\}/);
+                    if (jsonMatch) jsonText = jsonMatch[0];
+
+                    const strategy = JSON.parse(jsonText);
+
+                    // Add strategy pivot step
+                    ProgressStore.addStep(requestId, {
+                        type: 'strategy_pivot',
+                        title: 'Changing approach...',
+                        status: 'complete',
+                        strategy: {
+                            newStrategy: strategy.new_strategy,
+                            reasoning: strategy.reasoning,
+                            firstTool: strategy.first_tool,
+                            firstToolArgs: strategy.first_tool_args,
+                            backupTools: strategy.backup_tools || []
+                        }
+                    });
+
+                    return strategy;
+                } catch (parseError) {
+                    log.debug('Failed to parse strategy pivot response', { error: parseError.message });
+                }
+            }
+        } catch (e) {
+            log.debug('Strategy pivot call failed', { error: e.message });
+        }
+
+        return null;
+    }
+
+    /**
+     * Determine if we should trigger reflection based on recent results
+     */
+    function shouldReflect(agentState) {
+        if (!agentState.allToolCalls || agentState.allToolCalls.length === 0) return false;
+
+        // Count recent failures (last 3 calls)
+        const recentCalls = agentState.allToolCalls.slice(-3);
+        const failures = recentCalls.filter(tc => {
+            if (!tc.result) return true;
+            if (tc.result.error) return true;
+            if (!tc.result.success) return true;
+            const rowCount = tc.result.rowCount || (tc.result.rows ? tc.result.rows.length : 0);
+            return rowCount === 0;
+        });
+
+        // Reflect if we have multiple failures
+        if (failures.length >= REFLECT_AFTER_FAILURES) return true;
+
+        // Reflect if we've had repeated tool calls (same signature)
+        const signatures = recentCalls.map(tc => tc.tool + '::' + JSON.stringify(tc.args));
+        const uniqueSignatures = new Set(signatures);
+        if (signatures.length > uniqueSignatures.size) return true;
+
+        return false;
+    }
+
+    /**
+     * Track a failure for reflection purposes
+     */
+    function trackFailure(agentState, toolName, args, result) {
+        if (!agentState.recentFailures) agentState.recentFailures = [];
+
+        agentState.recentFailures.push({
+            tool: toolName,
+            args: args,
+            result: result,
+            timestamp: Date.now()
+        });
+
+        // Keep only last 5 failures
+        if (agentState.recentFailures.length > 5) {
+            agentState.recentFailures = agentState.recentFailures.slice(-5);
+        }
+    }
 
     // ═══════════════════════════════════════════════════════════════════════════
     // SYSTEM PROMPT - Financial Expert with Tools
@@ -165,7 +411,14 @@ ${dashboardDescriptions}
             toolDefinitions: toolDefinitions,
             chatHistory: chatHistory,
             completed: false,
-            finalResponse: null
+            finalResponse: null,
+            // Reflection & Adaptation state
+            recentFailures: [],
+            reflectionCount: 0,
+            strategyPivotCount: 0,
+            currentStrategy: null,
+            insights: [],           // Accumulated insights from reflections
+            lastReflection: null    // Most recent reflection result
         };
 
         // NOTE: Initial thinking step is added by the orchestrator AFTER ProgressStore.create()
@@ -331,6 +584,13 @@ ${dashboardDescriptions}
                         displayName: displayName
                     });
 
+                    // Track failures for reflection
+                    const rowCount = result.rowCount || (result.rows ? result.rows.length : 0);
+                    const isFailure = !result.success || result.error || rowCount === 0;
+                    if (isFailure) {
+                        trackFailure(agentState, toolName, parsedArgs, result);
+                    }
+
                     // Add to conversation context for next iteration
                     agentState.conversationContext += `\nTool: ${toolName}\n`;
                     agentState.conversationContext += `Arguments: ${JSON.stringify(parsedArgs)}\n`;
@@ -344,6 +604,70 @@ ${dashboardDescriptions}
                     agentState.consecutiveRepeats++;
                 } else if (executedAny) {
                     agentState.consecutiveRepeats = 0;
+                }
+
+                // ═══════════════════════════════════════════════════════════════
+                // REFLECTION & ADAPTATION PHASE
+                // ═══════════════════════════════════════════════════════════════
+
+                // Check if we should trigger reflection based on recent results
+                if (shouldReflect(agentState) && agentState.reflectionCount < 3) {
+                    log.debug('Triggering reflection', {
+                        requestId: requestId,
+                        reflectionCount: agentState.reflectionCount,
+                        recentFailures: agentState.recentFailures.length
+                    });
+
+                    const reflection = performReflection(agentState, requestId);
+                    agentState.reflectionCount++;
+
+                    if (reflection) {
+                        agentState.lastReflection = reflection;
+
+                        // Store insights for future context
+                        if (reflection.findings) {
+                            agentState.insights = agentState.insights.concat(
+                                reflection.findings.map(f => f.insight)
+                            );
+                        }
+
+                        // Add reflection insights to conversation context
+                        agentState.conversationContext += `\n--- REFLECTION INSIGHTS ---\n`;
+                        agentState.conversationContext += `Assessment: ${reflection.assessment}\n`;
+                        if (reflection.findings && reflection.findings.length > 0) {
+                            agentState.conversationContext += `Findings:\n`;
+                            reflection.findings.forEach(f => {
+                                agentState.conversationContext += `- ${f.insight} (${f.importance})\n`;
+                            });
+                        }
+                        if (reflection.next_strategy) {
+                            agentState.conversationContext += `Recommended approach: ${reflection.next_strategy}\n`;
+                        }
+
+                        // Check if we need to pivot strategy
+                        if (reflection.should_pivot && agentState.strategyPivotCount < MAX_STRATEGY_PIVOTS) {
+                            log.debug('Triggering strategy pivot', {
+                                requestId: requestId,
+                                pivotCount: agentState.strategyPivotCount,
+                                reason: reflection.pivot_reason
+                            });
+
+                            const newStrategy = generateStrategyPivot(agentState, reflection, requestId);
+                            agentState.strategyPivotCount++;
+
+                            if (newStrategy) {
+                                agentState.currentStrategy = newStrategy;
+
+                                // Add strategy to conversation context
+                                agentState.conversationContext += `\n--- NEW STRATEGY ---\n`;
+                                agentState.conversationContext += `Strategy: ${newStrategy.new_strategy}\n`;
+                                agentState.conversationContext += `Reasoning: ${newStrategy.reasoning}\n`;
+                                if (newStrategy.first_tool) {
+                                    agentState.conversationContext += `Suggested first tool: ${newStrategy.first_tool}\n`;
+                                }
+                            }
+                        }
+                    }
                 }
 
                 // Save state and return (more steps needed)
