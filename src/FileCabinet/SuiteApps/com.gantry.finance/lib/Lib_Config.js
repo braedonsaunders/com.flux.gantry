@@ -6,7 +6,7 @@
  *              (cashflow, burden, health, time) stored in custom records.
  *              Automatically detects fiscal year from NetSuite accounting periods.
  */
-define(["N/record", "N/search", "N/query", "N/log", "N/runtime"], function (record, search, query, log, runtime) {
+define(["N/record", "N/search", "N/query", "N/log", "N/runtime", "./Lib_Dashboard_Registry"], function (record, search, query, log, runtime, DashboardRegistry) {
 
     const CONFIG_RECORD_TYPE = 'customrecord_gantry_config';
     const CONFIG_JSON_FIELD = 'custrecord_gantry_config_json';
@@ -369,30 +369,24 @@ define(["N/record", "N/search", "N/query", "N/log", "N/runtime"], function (reco
         
         switch (baseConfigName) {
             case 'main':
+                // Build dashboard defaults dynamically from Registry (single source of truth)
+                var allDashboards = DashboardRegistry.getAllDashboards();
+                var dashboardOrder = [];
+                var dashboardNames = {};
+                var dashboardVisibility = {};
+
+                allDashboards.forEach(function(dash) {
+                    if (dash.id !== 'settings') { // Settings is special, not in user config
+                        dashboardOrder.push(dash.id);
+                        dashboardNames[dash.id] = dash.name;
+                        dashboardVisibility[dash.id] = dash.showInNav !== false;
+                    }
+                });
+
                 return {
-                    dashboardOrder: ['advisor', 'cashflow', 'health', 'burden', 'time', 'integrity', 'vendorperformance', 'customervalue', 'spendvelocity'],
-                    dashboardNames: {
-                        advisor: 'Advisor',
-                        cashflow: 'Liquidity',
-                        health: 'P&L',
-                        burden: 'True Cost',
-                        time: 'Billable IQ',
-                        integrity: 'Sentinel',
-                        vendorperformance: 'Procurement',
-                        customervalue: 'Revenue Intelligence',
-                        spendvelocity: 'Spend Velocity'
-                    },
-                    dashboardVisibility: {
-                        advisor: true,
-                        cashflow: true,
-                        health: true,
-                        burden: true,
-                        time: true,
-                        integrity: true,
-                        vendorperformance: true,
-                        customervalue: true,
-                        spendvelocity: true
-                    },
+                    dashboardOrder: dashboardOrder,
+                    dashboardNames: dashboardNames,
+                    dashboardVisibility: dashboardVisibility,
                     compactMode: false,
                     showSparklines: true,
                     defaultDateRange: '30',
