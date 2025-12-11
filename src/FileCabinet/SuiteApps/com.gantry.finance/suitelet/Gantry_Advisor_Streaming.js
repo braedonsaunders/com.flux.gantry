@@ -78,49 +78,52 @@ You have access to tools that can:
         try {
             let result;
 
-            if (request.method === 'GET') {
-                // GET requests - status check or test
-                const action = request.parameters.action || 'test';
-                const sessionId = request.parameters.sessionId;
+            // Get action and parameters (works for both GET and POST)
+            const action = request.parameters.action || 'test';
+            const sessionId = request.parameters.sessionId;
+            const query = request.parameters.query;
 
-                if (action === 'status' && sessionId) {
-                    result = handleStatus(sessionId);
-                } else {
-                    result = { success: true, message: 'Advisor Streaming API ready', actions: ['init', 'step', 'status', 'cancel'] };
-                }
-            } else if (request.method === 'POST') {
-                // POST requests - main actions
-                let body;
+            // For POST, also check body
+            let bodyParams = {};
+            if (request.method === 'POST' && request.body) {
                 try {
-                    body = JSON.parse(request.body);
+                    bodyParams = JSON.parse(request.body);
                 } catch (e) {
-                    body = request.parameters;
+                    // Ignore parse errors, use URL params
                 }
+            }
 
-                const action = body.action || request.parameters.action;
+            // Merge body params (POST body takes precedence)
+            const finalAction = bodyParams.action || action;
+            const finalSessionId = bodyParams.sessionId || sessionId;
+            const finalQuery = bodyParams.query || query;
 
-                switch (action) {
-                    case 'init':
-                        result = handleInit(body.query || request.parameters.query);
-                        break;
+            // Handle actions (same for GET and POST)
+            switch (finalAction) {
+                case 'init':
+                    result = handleInit(finalQuery);
+                    break;
 
-                    case 'step':
-                        result = handleStep(body.sessionId || request.parameters.sessionId);
-                        break;
+                case 'step':
+                    result = handleStep(finalSessionId);
+                    break;
 
-                    case 'status':
-                        result = handleStatus(body.sessionId || request.parameters.sessionId);
-                        break;
+                case 'status':
+                    result = handleStatus(finalSessionId);
+                    break;
 
-                    case 'cancel':
-                        result = handleCancel(body.sessionId || request.parameters.sessionId);
-                        break;
+                case 'cancel':
+                    result = handleCancel(finalSessionId);
+                    break;
 
-                    default:
-                        result = { success: false, error: 'Unknown action: ' + action };
-                }
-            } else {
-                result = { success: false, error: 'Use GET or POST' };
+                case 'test':
+                default:
+                    result = {
+                        success: true,
+                        message: 'Advisor Streaming API ready',
+                        actions: ['init', 'step', 'status', 'cancel'],
+                        usage: 'Add ?action=init&query=YOUR_QUESTION to start'
+                    };
             }
 
             response.write(JSON.stringify(result));
