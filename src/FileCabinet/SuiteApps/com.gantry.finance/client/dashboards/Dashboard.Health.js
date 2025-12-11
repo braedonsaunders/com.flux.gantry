@@ -807,7 +807,6 @@
                     }
                     // Lazy load P/V/M data
                     if (tabId === '#pp-pvm' && !self.pvmLoaded) {
-                        self.pvmLoaded = true;
                         self.loadPriceVolumeMix();
                     }
                     // Initialize scenario baseline KPIs
@@ -1045,6 +1044,7 @@
             
             // Budget Tab (lazy load on tab click)
             this.budgetLoaded = false;
+            this.pvmLoaded = false;
         },
 
         renderKPIs: function(company, rangeM) {
@@ -1856,6 +1856,7 @@
                 
                 if (res.status === 'success' && res.data) {
                     this.renderPriceVolumeMix(res.data);
+                    this.pvmLoaded = true;
                 } else {
                     if (insightsEl) insightsEl.innerHTML = '<div class="alert alert-info small mb-0">' + (res.data && res.data.message ? res.data.message : 'Revenue analysis requires item-level sales data') + '</div>';
                 }
