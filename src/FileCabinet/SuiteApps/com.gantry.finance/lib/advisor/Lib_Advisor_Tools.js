@@ -4807,6 +4807,144 @@ ALWAYS use this tool for your final response instead of plain text.
         };
     }
 
+    // ═══════════════════════════════════════════════════════════════════════════
+    // LIGHTWEIGHT TOOL MANIFEST (for Streaming Context Architecture)
+    // Tool names + one-line descriptions only - no schemas, no parameters
+    // This reduces token usage from ~15,000 to ~300 for tool selection
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Get lightweight tool manifest (names + one-liners only)
+     * Used by Streaming Agent for tool selection phase
+     * @returns {object} Map of tool names to one-line descriptions
+     */
+    function getToolManifest() {
+        return {
+            // Discovery
+            resolve_entity: "Find customer/vendor/employee by name → returns ID",
+            resolve_gl_account: "Find GL account by name/number → returns ID",
+            resolve_classification: "Find class/department/location/subsidiary → returns ID",
+
+            // Customer/Revenue
+            get_customer_revenue: "Revenue by customer for a period",
+            get_top_customers: "Top N customers by revenue or transaction volume",
+
+            // Vendor/Spend
+            get_vendor_spend: "Spend by vendor for a period",
+            get_top_vendors: "Top N vendors by spend amount",
+
+            // Aging
+            get_ar_aging: "AR aging buckets by customer (current, 1-30, 31-60, etc.)",
+            get_ap_aging: "AP aging buckets by vendor",
+
+            // GL & Financial Statements
+            get_gl_activity: "GL account activity and transaction details",
+            get_trial_balance: "Trial balance for a period",
+            get_income_statement: "Income statement / P&L report",
+            get_balance_sheet: "Balance sheet at a point in time",
+
+            // Transactions
+            get_recent_transactions: "Recent transactions with optional filters",
+            get_transaction_detail: "Details of a specific transaction by ID",
+
+            // Analysis
+            compare_periods: "Compare two time periods (YoY, MoM, etc.)",
+            find_anomalies: "Find unusual transactions or patterns",
+            get_cash_position: "Current cash and bank account balances",
+            get_expense_breakdown: "Expenses by category or account",
+
+            // Dashboards
+            dashboard_cashflow: "Cash flow metrics and projections",
+            dashboard_health: "Financial health indicators",
+            dashboard_burden: "Administrative burden metrics",
+            dashboard_time: "Time-based financial trends",
+            dashboard_integrity: "Data integrity checks",
+            dashboard_vendorperformance: "Vendor performance analytics",
+            dashboard_customervalue: "Customer value and lifetime metrics",
+            dashboard_spendvelocity: "Spending velocity and trends",
+            list_dashboards: "List all available dashboards",
+
+            // Utility
+            get_fiscal_context: "Current fiscal period and date info",
+            run_custom_query: "Execute custom SuiteQL query",
+            run_saved_search: "Run a NetSuite saved search by ID",
+            list_saved_searches: "List available saved searches",
+            run_report: "Run a standard financial report",
+            list_reports: "List available report types",
+            list_capabilities: "List all advisor capabilities",
+            explore_schema: "Explore NetSuite record schema",
+            format_response: "Format final response with rich blocks"
+        };
+    }
+
+    /**
+     * Get formatted tool list for LLM prompt (names + descriptions as text)
+     * @returns {string} Formatted tool list for prompt injection
+     */
+    function getToolListForPrompt() {
+        const manifest = getToolManifest();
+        return Object.entries(manifest)
+            .map(([name, desc]) => `• ${name}: ${desc}`)
+            .join('\n');
+    }
+
+    /**
+     * Get a single tool's full definition (schema on demand)
+     * @param {string} toolName - Name of the tool
+     * @returns {object|null} Tool definition with parameters, or null
+     */
+    function getToolDefinition(toolName) {
+        const tool = ALL_TOOLS[toolName];
+        if (!tool) return null;
+
+        return {
+            name: tool.name,
+            description: tool.description,
+            parameters: tool.parameters
+        };
+    }
+
+    /**
+     * Get minimal schema for a tool (for lightweight invocation prompts)
+     * @param {string} toolName - Name of the tool
+     * @returns {string} Minimal schema as formatted text
+     */
+    function getToolSchemaText(toolName) {
+        const tool = ALL_TOOLS[toolName];
+        if (!tool) return 'Unknown tool';
+
+        const lines = [`TOOL: ${toolName}`];
+        lines.push(tool.description.split('\n')[0]); // First line of description only
+
+        if (tool.parameters && tool.parameters.properties) {
+            lines.push('\nPARAMETERS:');
+            const required = tool.parameters.required || [];
+
+            for (const [param, def] of Object.entries(tool.parameters.properties)) {
+                const req = required.includes(param) ? ' (required)' : '';
+                let typeInfo = def.type;
+
+                // Add enum values if present (abbreviated)
+                if (def.enum) {
+                    const enumStr = def.enum.slice(0, 5).join('|');
+                    typeInfo += ` [${enumStr}${def.enum.length > 5 ? '|...' : ''}]`;
+                }
+
+                lines.push(`  • ${param}: ${typeInfo}${req}`);
+
+                // Brief description
+                if (def.description) {
+                    const shortDesc = def.description.split('.')[0].substring(0, 60);
+                    lines.push(`    ${shortDesc}`);
+                }
+            }
+        } else {
+            lines.push('\nNo parameters required');
+        }
+
+        return lines.join('\n');
+    }
+
     // Public API
     return {
         // Tool execution
@@ -4815,6 +4953,12 @@ ALWAYS use this tool for your final response instead of plain text.
         getTool: getTool,
         getToolDisplayName: getToolDisplayName,
         listToolsByCategory: listToolsByCategory,
+
+        // Streaming Context Architecture (lightweight manifest)
+        getToolManifest: getToolManifest,
+        getToolListForPrompt: getToolListForPrompt,
+        getToolDefinition: getToolDefinition,
+        getToolSchemaText: getToolSchemaText,
 
         // Individual tool categories (for direct access if needed)
         DISCOVERY_TOOLS: DISCOVERY_TOOLS,

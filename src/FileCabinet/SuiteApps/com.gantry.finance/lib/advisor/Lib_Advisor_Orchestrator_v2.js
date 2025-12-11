@@ -20,6 +20,7 @@
 define([
     'N/log',
     './Lib_Advisor_Agent',
+    './Lib_Advisor_StreamingAgent',
     './Lib_Advisor_ProgressStore',
     './Lib_Advisor_AIProviders',
     './Lib_Advisor_ResponseBuilder',
@@ -29,6 +30,7 @@ define([
 ], function(
     log,
     Agent,
+    StreamingAgent,
     ProgressStore,
     AIProviders,
     ResponseBuilder,
@@ -37,6 +39,15 @@ define([
     ConfigLib
 ) {
     'use strict';
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // STREAMING CONTEXT ARCHITECTURE (SCA) MODE
+    // When enabled, uses multi-phase lightweight LLM calls instead of monolithic
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    // Set to true to enable Streaming Context Architecture (default: true)
+    // Set to false to use legacy single-call agent
+    const USE_STREAMING_AGENT = true;
 
     // ═══════════════════════════════════════════════════════════════════════════
     // MAIN ENTRY POINT - Synchronous (backward compatible)
@@ -169,49 +180,68 @@ define([
                 };
             }
 
-            // Initialize agent state for step-by-step execution
-            const agentState = Agent.initAgentState(message, history, sessionContext, requestId, {
-                debugMode: aiSettings.debugMode
-            });
+            // ═══════════════════════════════════════════════════════════════
+            // STREAMING CONTEXT ARCHITECTURE (SCA) vs LEGACY AGENT
+            // ═══════════════════════════════════════════════════════════════
 
-            // Create progress entry WITH agent state
-            ProgressStore.create(requestId, message, agentState);
+            let agentState;
 
-            // Add initial thinking step as a placeholder that will be updated
-            // by the AI planning call on first poll. This gives immediate feedback
-            // while the actual AI plan is being generated.
-            const thinkingStep = {
-                type: 'thinking',
-                title: 'Understanding your question...',
-                status: 'in_progress',
-                // Minimal context - will be replaced with actual AI plan on first poll
-                context: {
-                    question: message,
-                    status: 'Creating analysis plan...'
-                }
-            };
+            if (USE_STREAMING_AGENT) {
+                // NEW: Use Streaming Agent with multi-phase lightweight calls
+                log.debug('Using Streaming Context Architecture (SCA)', { requestId: requestId });
 
-            // Add extended debug info when debug mode is enabled
-            if (Utils.isDebugMode()) {
-                const resolvedEntities = sessionContext.resolvedEntities || {};
-                // Get tool definitions separately (not stored in agentState to save cache space)
-                const toolDefs = Tools.getToolDefinitions();
-                thinkingStep.debug = {
-                    userMessage: message,
-                    historyLength: history.length,
-                    sessionEntities: Object.keys(resolvedEntities),
-                    resolvedEntityDetails: resolvedEntities,
-                    availableTools: toolDefs.map(t => t.name)
+                agentState = StreamingAgent.initState(message, sessionContext, requestId);
+                agentState.useStreamingAgent = true; // Flag for getStatus to know which agent to use
+
+                // Create progress entry
+                ProgressStore.create(requestId, message, agentState);
+
+                // Initial step will be added by first phase execution
+
+            } else {
+                // LEGACY: Use traditional single-call agent
+                log.debug('Using Legacy Agent', { requestId: requestId });
+
+                agentState = Agent.initAgentState(message, history, sessionContext, requestId, {
+                    debugMode: aiSettings.debugMode
+                });
+
+                // Create progress entry WITH agent state
+                ProgressStore.create(requestId, message, agentState);
+
+                // Add initial thinking step as a placeholder that will be updated
+                // by the AI planning call on first poll.
+                const thinkingStep = {
+                    type: 'thinking',
+                    title: 'Understanding your question...',
+                    status: 'in_progress',
+                    context: {
+                        question: message,
+                        status: 'Creating analysis plan...'
+                    }
                 };
-                thinkingStep.title = 'Understanding your question (Debug Mode ON)';
+
+                // Add extended debug info when debug mode is enabled
+                if (Utils.isDebugMode()) {
+                    const resolvedEntities = sessionContext.resolvedEntities || {};
+                    const toolDefs = Tools.getToolDefinitions();
+                    thinkingStep.debug = {
+                        userMessage: message,
+                        historyLength: history.length,
+                        sessionEntities: Object.keys(resolvedEntities),
+                        resolvedEntityDetails: resolvedEntities,
+                        availableTools: toolDefs.map(t => t.name)
+                    };
+                    thinkingStep.title = 'Understanding your question (Debug Mode ON)';
+                }
+
+                ProgressStore.addStep(requestId, thinkingStep);
             }
 
-            ProgressStore.addStep(requestId, thinkingStep);
-
             // TRULY ASYNC: Return immediately - first LLM step runs on first poll
-            // This ensures instant response to user, with progressive updates via polling
-            log.debug('ProcessChatAsync returning immediately (truly async)', {
+            log.debug('ProcessChatAsync returning immediately', {
                 requestId: requestId,
+                mode: USE_STREAMING_AGENT ? 'SCA' : 'legacy',
                 provider: aiSettings.provider || 'default'
             });
 
@@ -289,6 +319,11 @@ define([
             };
         }
 
+        // ATOMIC: Check if already complete or locked (prevents race conditions)
+        if (ProgressStore.isCompleteOrLocked(requestId)) {
+            return ProgressStore.getPollingResponse(requestId);
+        }
+
         // If already complete or error, just return current state
         if (progressState.status === 'complete' || progressState.status === 'error') {
             return ProgressStore.getPollingResponse(requestId);
@@ -296,14 +331,55 @@ define([
 
         // Still processing - run next step
         try {
-            const stepResult = Agent.runAgentStep(requestId);
+            let stepResult;
 
-            log.debug('getStatus ran step', {
-                requestId: requestId,
-                hasMore: stepResult.hasMore,
-                hasError: !!stepResult.error,
-                iteration: progressState.agentState?.iteration || 0
-            });
+            // Check which agent to use based on state flag
+            const useStreaming = progressState.agentState?.useStreamingAgent === true;
+
+            if (useStreaming) {
+                // ═══════════════════════════════════════════════════════════
+                // STREAMING CONTEXT ARCHITECTURE (SCA)
+                // Multi-phase lightweight calls - each phase is 1-3 seconds
+                // ═══════════════════════════════════════════════════════════
+                const agentState = progressState.agentState;
+
+                stepResult = StreamingAgent.runStep(agentState);
+
+                // Save updated state
+                if (stepResult.hasMore) {
+                    ProgressStore.setAgentState(requestId, agentState);
+                } else if (stepResult.response) {
+                    // Complete with response
+                    ProgressStore.complete(requestId, {
+                        answer: stepResult.response.text,
+                        richContent: stepResult.response.richContent,
+                        sessionContext: stepResult.response.sessionContext,
+                        model: AIProviders.getCurrentModelInfo().model,
+                        provider: AIProviders.getCurrentModelInfo().provider
+                    });
+                }
+
+                log.debug('getStatus ran SCA step', {
+                    requestId: requestId,
+                    phase: agentState.phase,
+                    hasMore: stepResult.hasMore,
+                    hasResponse: !!stepResult.response
+                });
+
+            } else {
+                // ═══════════════════════════════════════════════════════════
+                // LEGACY AGENT
+                // Single-call approach (backward compatibility)
+                // ═══════════════════════════════════════════════════════════
+                stepResult = Agent.runAgentStep(requestId);
+
+                log.debug('getStatus ran legacy step', {
+                    requestId: requestId,
+                    hasMore: stepResult.hasMore,
+                    hasError: !!stepResult.error,
+                    iteration: progressState.agentState?.iteration || 0
+                });
+            }
 
             // Return updated polling response
             return ProgressStore.getPollingResponse(requestId);

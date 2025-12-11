@@ -20,10 +20,23 @@ define(['N/log', 'N/runtime', 'N/record', '../Lib_Config'], function(log, runtim
     // ═══════════════════════════════════════════════════════════════
     // CONSTANTS
     // ═══════════════════════════════════════════════════════════════
-    
+
     const DEFAULT_MAX_TOKENS = 4000;
     const GOVERNANCE_THRESHOLD_LLM = 1000;
     const GOVERNANCE_THRESHOLD_QUERY = 300;
+
+    // ═══════════════════════════════════════════════════════════════
+    // STREAMING CONTEXT ARCHITECTURE (SCA) CONSTANTS
+    // Lightweight phases use smaller token limits for faster responses
+    // ═══════════════════════════════════════════════════════════════
+
+    const SCA_TOKEN_LIMITS = {
+        'SCA:intent': 200,      // Intent classification - very short
+        'SCA:select': 300,      // Tool selection - short list
+        'SCA:invoke': 400,      // Tool invocation - minimal schema
+        'SCA:analyze': 1500,    // Analysis - moderate
+        'SCA:format': 2000      // Response formatting - needs room for blocks
+    };
     
     // ═══════════════════════════════════════════════════════════════
     // DEBUG MODE - Centralized control for all advisor modules
@@ -789,6 +802,7 @@ define(['N/log', 'N/runtime', 'N/record', '../Lib_Config'], function(log, runtim
         DEFAULT_MAX_TOKENS: DEFAULT_MAX_TOKENS,
         GOVERNANCE_THRESHOLD_LLM: GOVERNANCE_THRESHOLD_LLM,
         GOVERNANCE_THRESHOLD_QUERY: GOVERNANCE_THRESHOLD_QUERY,
+        SCA_TOKEN_LIMITS: SCA_TOKEN_LIMITS,
         
         // Query utilities
         cleanQuery: cleanQuery,

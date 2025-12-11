@@ -39,15 +39,34 @@ define([
      * @returns {number} - Maximum tokens to request
      */
     function getMaxTokensForModel(modelId, purpose) {
+        // ═══════════════════════════════════════════════════════════════
+        // STREAMING CONTEXT ARCHITECTURE (SCA) - Lightweight token limits
+        // Each phase uses minimal tokens for fast responses
+        // ═══════════════════════════════════════════════════════════════
+        if (purpose && purpose.startsWith('SCA:')) {
+            const scaLimits = Utils.SCA_TOKEN_LIMITS || {};
+            // Check for exact match first (e.g., 'SCA:intent')
+            if (scaLimits[purpose]) {
+                return scaLimits[purpose];
+            }
+            // Check for phase prefix (e.g., 'SCA:invoke:get_customer_revenue' → 'SCA:invoke')
+            const phasePrefix = purpose.split(':').slice(0, 2).join(':');
+            if (scaLimits[phasePrefix]) {
+                return scaLimits[phasePrefix];
+            }
+            // Default SCA limit - still smaller than legacy
+            return 500;
+        }
+
         // Context-specific limits for cases where we know output should be small
         const purposeLimits = {
             'classification': 200 // Simple classification
         };
-        
+
         if (purpose && purposeLimits[purpose]) {
             return purposeLimits[purpose];
         }
-        
+
         // Get model-specific max output from registry
         if (modelId) {
             try {
@@ -59,7 +78,7 @@ define([
                 log.debug('Could not get model info for max tokens', { model: modelId, error: e.message });
             }
         }
-        
+
         return DEFAULT_MAX_TOKENS;
     }
 
