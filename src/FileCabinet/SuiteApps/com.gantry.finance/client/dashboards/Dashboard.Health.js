@@ -591,7 +591,7 @@
                                             // Comprehensive accounts table
                                             '<div class="card shadow-sm flex-fill d-flex flex-column">' +
                                                 '<div class="card-header py-2"><h6 class="mb-0"><i class="fas fa-search-dollar mr-2"></i>All Account Changes (YoY)</h6></div>' +
-                                                '<div class="card-body p-0 flex-fill d-flex flex-column" style="min-height:0;"><div class="table-responsive flex-fill" style="overflow-y:auto;">' +
+                                                '<div class="card-body p-0 flex-fill d-flex flex-column" style="min-height:0;"><div class="table-responsive flex-fill" style="max-height:800px; overflow-y:auto;">' +
                                                     '<table class="table table-sm table-hover mb-0 pp-sortable" id="ppDriversAllTable">' +
                                                         '<thead class="thead-light sticky-top"><tr>' +
                                                             '<th class="sortable" data-sort="type">Type</th>' +
