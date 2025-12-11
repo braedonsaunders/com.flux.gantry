@@ -1,10 +1,34 @@
 /**
  * @NApiVersion 2.1
  * @NModuleScope Public
- * 
- * Lib_Advisor_Planning.js
+ *
+ * ══════════════════════════════════════════════════════════════════════════════
+ * DEPRECATED - This file is deprecated as of v2 architecture
+ * ══════════════════════════════════════════════════════════════════════════════
+ *
+ * This file was part of the v1 Advisor architecture which used:
+ * - Regex-based entity extraction (error-prone)
+ * - Hardcoded word lists and blacklists
+ * - Pre-resolution steps before LLM processing
+ *
+ * REPLACED BY:
+ * - Lib_Advisor_Orchestrator_v2.js - Simplified entry point
+ * - Lib_Advisor_Agent.js - LLM-driven agent loop (LLM decides everything)
+ * - Lib_Advisor_Tools.js - Pre-optimized tool definitions
+ * - Lib_Advisor_ProgressStore.js - Progressive rendering support
+ *
+ * The v2 architecture lets the LLM exclusively decide:
+ * - What entities to resolve
+ * - What tools to use
+ * - How to interpret results
+ * - When to retry with different approaches
+ *
+ * This file is kept for reference only. Do not use for new development.
+ * ══════════════════════════════════════════════════════════════════════════════
+ *
+ * Lib_Advisor_Planning.js (DEPRECATED)
  * Planning and classification for the Advisor module
- * 
+ *
  * Contains:
  * - planExecution
  * - matchConversationalPattern

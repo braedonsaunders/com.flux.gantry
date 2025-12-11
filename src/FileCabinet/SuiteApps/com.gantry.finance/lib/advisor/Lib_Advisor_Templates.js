@@ -1,10 +1,26 @@
 /**
  * @NApiVersion 2.1
  * @NModuleScope Public
- * 
+ *
+ * ══════════════════════════════════════════════════════════════════════════════
+ * NOTE: This file is not directly used by the v2 architecture
+ * ══════════════════════════════════════════════════════════════════════════════
+ *
+ * The v2 architecture (Lib_Advisor_Agent.js, Lib_Advisor_Tools.js) uses
+ * pre-optimized tool functions instead of matching query templates.
+ *
+ * However, this file remains valuable as:
+ * - Reference for validated SuiteQL queries
+ * - Documentation of SuiteQL field limitations
+ * - Template patterns for creating new tools
+ *
+ * When adding new tools to Lib_Advisor_Tools.js, these templates serve as
+ * tested query patterns that are known to work in NetSuite.
+ * ══════════════════════════════════════════════════════════════════════════════
+ *
  * Lib_Advisor_Templates.js
  * Curated SuiteQL query templates for common financial questions
- * 
+ *
  * Total: 50 templates covering:
  * - Cash & Liquidity (4)
  * - Accounts Receivable (5)
@@ -18,9 +34,9 @@
  * - Inventory (2)
  * - Projects (2)
  * - Transaction Lookup (10) - NEW
- * 
+ *
  * VALIDATED: All queries tested against SuiteQL - November 2024
- * 
+ *
  * IMPORTANT FIELD NOTES (SuiteQL limitations):
  * - transaction.amount, transaction.amountremaining: NOT EXPOSED - use foreigntotal, foreignamountunpaid
  * - transactionline.amount, transactionline.account, transactionline.amountremaining: NOT EXPOSED
