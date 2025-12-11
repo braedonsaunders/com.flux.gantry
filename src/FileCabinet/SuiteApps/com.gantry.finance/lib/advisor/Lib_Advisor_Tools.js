@@ -91,7 +91,7 @@ define([
             'last_2_years': `${dateField} >= CURRENT_DATE - 730`,
             'all': '1=1'  // No date restriction
         };
-        return periodFilters[period] || periodFilters['last_90_days'];
+        return periodFilters[period] || periodFilters['all'];
     }
 
     /**
@@ -628,7 +628,7 @@ Use for: "vendor spend", "who do we pay most", "top vendors", "AP by vendor"`,
                     period: {
                         type: 'string',
                         enum: ['this_month', 'last_month', 'this_quarter', 'last_quarter', 'ytd', 'last_30_days', 'last_90_days', 'last_365_days', 'last_year', 'last_2_years', 'all'],
-                        description: 'Time period (default: last_90_days). Use "all" for no date restriction.'
+                        description: 'Time period filter. Default: no restriction (all time). Use for narrowing results.'
                     },
                     limit: {
                         type: 'number',
@@ -639,7 +639,7 @@ Use for: "vendor spend", "who do we pay most", "top vendors", "AP by vendor"`,
             },
             execute: function(args) {
                 const vendorFilter = args.vendor_id ? `AND transaction.entity = ${args.vendor_id}` : '';
-                const periodFilter = buildPeriodFilter(args.period || 'last_90_days');
+                const periodFilter = buildPeriodFilter(args.period || 'all');
                 const limit = args.limit || 25;
 
                 const query = `
@@ -685,7 +685,7 @@ Use for: "customer revenue", "top customers", "sales by customer"`,
                     period: {
                         type: 'string',
                         enum: ['this_month', 'last_month', 'this_quarter', 'last_quarter', 'ytd', 'last_30_days', 'last_90_days', 'last_365_days', 'last_year', 'last_2_years', 'all'],
-                        description: 'Time period (default: last_90_days). Use "all" for no date restriction.'
+                        description: 'Time period filter. Default: no restriction (all time). Use for narrowing results.'
                     },
                     limit: {
                         type: 'number',
@@ -696,7 +696,7 @@ Use for: "customer revenue", "top customers", "sales by customer"`,
             },
             execute: function(args) {
                 const customerFilter = args.customer_id ? `AND transaction.entity = ${args.customer_id}` : '';
-                const periodFilter = buildPeriodFilter(args.period || 'last_90_days');
+                const periodFilter = buildPeriodFilter(args.period || 'all');
                 const limit = args.limit || 25;
 
                 const query = `
@@ -756,7 +756,7 @@ NOTE: Class/department/location filters use the segment values from the GL accou
                     period: {
                         type: 'string',
                         enum: ['this_month', 'last_month', 'this_quarter', 'last_quarter', 'ytd', 'last_30_days', 'last_90_days', 'last_365_days', 'last_year', 'last_2_years', 'all'],
-                        description: 'Time period (default: last_90_days). Use "all" for no date restriction.'
+                        description: 'Time period filter. Default: no restriction (all time). Use for narrowing results.'
                     },
                     limit: {
                         type: 'number',
@@ -774,7 +774,7 @@ NOTE: Class/department/location filters use the segment values from the GL accou
                 if (args.department_id) filters.push(`tal.department = ${args.department_id}`);
                 if (args.location_id) filters.push(`tal.location = ${args.location_id}`);
 
-                const periodFilter = buildPeriodFilter(args.period || 'last_90_days');
+                const periodFilter = buildPeriodFilter(args.period || 'all');
                 const limit = args.limit || 50;
 
                 // Query uses transactionaccountingline's own class/dept/location fields
@@ -1562,7 +1562,7 @@ IMPORTANT: You MUST use exact NetSuite type codes from the enum:
                     period: {
                         type: 'string',
                         enum: ['today', 'this_week', 'this_month', 'last_30_days', 'last_90_days', 'last_365_days', 'last_year', 'last_2_years', 'all'],
-                        description: 'Time period (default: last_90_days). Use "all" for no date restriction, "last_year"/"last_365_days" for broader searches.'
+                        description: 'Time period filter. Default: no restriction (all time). Use for narrowing results.'
                     },
                     limit: {
                         type: 'number',
@@ -1584,8 +1584,8 @@ IMPORTANT: You MUST use exact NetSuite type codes from the enum:
                 const entityFilter = args.entity_id ?
                     `AND transaction.entity = ${args.entity_id}` : '';
 
-                // Use longer default period for better results - buildPeriodFilter handles 'all', 'last_year', etc.
-                const periodFilter = buildPeriodFilter(args.period || 'last_90_days');
+                // Default to all time - let the LLM specify period if they want to narrow down
+                const periodFilter = buildPeriodFilter(args.period || 'all');
                 const limit = args.limit || 50;
 
                 const query = `
@@ -1841,13 +1841,13 @@ Use for: "anomalies", "unusual transactions", "what caused the spike", "outliers
                     period: {
                         type: 'string',
                         enum: ['last_30_days', 'last_90_days', 'last_365_days', 'last_year', 'last_2_years', 'ytd', 'all'],
-                        description: 'Period to analyze (default: last_90_days). Use "all" for no date restriction.'
+                        description: 'Period to analyze (default: last_year). Use for narrowing or expanding analysis window.'
                     }
                 },
                 required: ['data_type']
             },
             execute: function(args) {
-                const periodFilter = buildPeriodFilter(args.period || 'last_90_days');
+                const periodFilter = buildPeriodFilter(args.period || 'last_year');
                 const threshold = args.threshold || 2.0;
 
                 // For GL activity anomalies
