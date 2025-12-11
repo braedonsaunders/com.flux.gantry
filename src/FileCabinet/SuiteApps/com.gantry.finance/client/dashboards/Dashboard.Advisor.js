@@ -924,6 +924,12 @@
             if (clearBtn) {
                 clearBtn.addEventListener('click', () => self.clearChat());
             }
+
+            // Stop polling button
+            const stopBtn = document.getElementById('advisorStopPolling');
+            if (stopBtn) {
+                stopBtn.addEventListener('click', () => self.stopPolling());
+            }
         },
         
         /**
@@ -1831,22 +1837,97 @@
         },
 
         /**
+         * Stop current polling and cancel the in-flight request
+         * Prevents resume after page reload
+         */
+        stopPolling: function() {
+            if (!isProcessing) return;
+
+            console.log('[Advisor] Stopping polling...');
+
+            // Generate new polling ID to cause current loop to exit
+            currentPollingId = 'stopped-' + Date.now();
+
+            // Clear active request to prevent resume after reload
+            activeRequest = null;
+
+            // Update the progressive message to show it was stopped
+            const progressiveMsg = document.querySelector('.advisor-message.progressive-loading');
+            if (progressiveMsg) {
+                const msgId = progressiveMsg.id;
+                progressiveMsg.classList.remove('progressive-loading');
+                progressiveMsg.classList.add('was-stopped');
+
+                const stepsContainer = document.getElementById(msgId + '-steps');
+                if (stepsContainer) {
+                    // Remove thinking indicator
+                    const thinking = stepsContainer.querySelector('.progressive-thinking');
+                    if (thinking) thinking.remove();
+
+                    // Add stopped step to the chain
+                    const stoppedStep = {
+                        type: 'stopped',
+                        title: 'Stopped',
+                        content: 'Response was stopped by user',
+                        status: 'stopped'
+                    };
+
+                    const existingChain = stepsContainer.querySelector('.thought-chain');
+                    if (existingChain && existingChain._stepsData) {
+                        const allSteps = [...existingChain._stepsData, stoppedStep];
+                        const chainHtml = this.renderSteps(allSteps);
+                        const tempDiv = document.createElement('div');
+                        tempDiv.innerHTML = chainHtml;
+                        const newChain = tempDiv.firstElementChild;
+                        if (newChain) {
+                            newChain._stepsData = allSteps.map((s, i) => ({...s, _chainId: newChain.getAttribute('data-chain-id')}));
+                            existingChain.replaceWith(newChain);
+                        }
+                    } else {
+                        const chainHtml = this.renderSteps([stoppedStep]);
+                        const tempDiv = document.createElement('div');
+                        tempDiv.innerHTML = chainHtml;
+                        const newChain = tempDiv.firstElementChild;
+                        if (newChain) {
+                            newChain._stepsData = [stoppedStep].map((s, i) => ({...s, _chainId: newChain.getAttribute('data-chain-id')}));
+                            stepsContainer.appendChild(newChain);
+                        }
+                    }
+                }
+            }
+
+            // Reset processing state
+            isProcessing = false;
+            this.updateSendButton(false);
+
+            // Save session to persist the stopped state (no activeRequest)
+            this.saveSession();
+
+            console.log('[Advisor] Polling stopped');
+        },
+
+        /**
          * Sleep helper for polling
          */
         sleep: function(ms) {
             return new Promise(resolve => setTimeout(resolve, ms));
         },
-        
+
         /**
-         * Update send button state
+         * Update send button state and stop button visibility
          */
         updateSendButton: function(disabled) {
             const btn = document.getElementById('advisor-send-full');
+            const stopBtn = document.getElementById('advisorStopPolling');
             if (btn) {
                 btn.disabled = disabled;
             }
+            // Show stop button when processing, hide when not
+            if (stopBtn) {
+                stopBtn.style.display = disabled ? 'inline-flex' : 'none';
+            }
         },
-        
+
         /**
          * Retry the last query or a specific query
          */

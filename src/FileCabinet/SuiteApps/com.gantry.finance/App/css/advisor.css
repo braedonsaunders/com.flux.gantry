@@ -621,7 +621,7 @@ body.dark-mode .typing-indicator span {
     display: flex;
     flex-wrap: wrap;
     gap: 6px;
-    margin-bottom: 12px;
+    margin-bottom: 4px;
 }
 
 .tool-call {
@@ -696,6 +696,11 @@ body.dark-mode .typing-indicator span {
     border: 1px solid #fecaca;
 }
 
+.tool-call.stopped:not([open]) {
+    background: #fffbeb;
+    border: 1px solid #fde68a;
+}
+
 .tool-call-icon {
     width: 14px;
     height: 14px;
@@ -715,6 +720,10 @@ body.dark-mode .typing-indicator span {
 
 .tool-call.error .tool-call-icon {
     color: var(--danger);
+}
+
+.tool-call.stopped .tool-call-icon {
+    color: #d97706;
 }
 
 .tool-call.running .tool-call-icon {
@@ -760,6 +769,11 @@ body.dark-mode .typing-indicator span {
 .tool-call-status.status-running {
     background: var(--primary-soft);
     color: var(--primary);
+}
+
+.tool-call-status.status-stopped {
+    background: #fef3c7;
+    color: #d97706;
 }
 
 /* Hide attempt badge when collapsed */
@@ -2717,6 +2731,31 @@ body.dark-mode .message-text .md-heading {
     margin-right: 4px;
 }
 
+/* Stop button - red accent for stopping response */
+.advisor-stop-btn {
+    background: transparent;
+    border: none;
+    color: #ef4444;
+    font-size: 11px;
+    font-weight: 500;
+    padding: 4px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    opacity: 0.8;
+    transition: all 0.2s ease;
+    margin-right: 4px;
+}
+
+.advisor-stop-btn:hover {
+    opacity: 1;
+    background: rgba(239, 68, 68, 0.1);
+}
+
+.advisor-stop-btn i {
+    font-size: 9px;
+    margin-right: 4px;
+}
+
 /* --- Follow-up Suggestions --- */
 .follow-up-suggestions {
     display: flex;
@@ -3134,7 +3173,7 @@ body.dark-mode .advisor-alert.error {
 
 /* In blocks format, text should extend like other rich content */
 .advisor-message.assistant .message-bubble > .message-text {
-    margin-top: 16px;
+    margin-top: 6px;
 }
 
 /* Response text blocks - inline text within rich content flow */
