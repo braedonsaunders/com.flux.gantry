@@ -778,15 +778,31 @@ NOTE: Class/department/location filters use the segment values from the GL accou
             name: 'get_trial_balance',
             description: `Get trial balance - account balances as of now.
 Shows all accounts with their debit/credit totals.
-Use for: "trial balance", "account balances", "GL balances"`,
+
+**For INCOME STATEMENT / P&L:** Call 3 times with account_type filters:
+1. get_trial_balance({account_type: "Income"}) - Revenue
+2. get_trial_balance({account_type: "COGS"}) - Cost of Goods Sold
+3. get_trial_balance({account_type: "Expense"}) - Operating Expenses
+Then calculate: Gross Profit = Revenue - COGS, Net Income = Gross Profit - Expenses
+
+**For BALANCE SHEET:** Call 3 times:
+1. get_trial_balance({account_type: "Bank"}) + AcctRec + OthCurrAsset + FixedAsset = Assets
+2. get_trial_balance({account_type: "AcctPay"}) + OthCurrLiab + LongTermLiab = Liabilities
+3. get_trial_balance({account_type: "Equity"}) = Equity
+
+Use for: "trial balance", "account balances", "GL balances", "income statement", "P&L", "profit and loss", "balance sheet", "financial statements"`,
             parameters: {
                 type: 'object',
                 properties: {
                     account_type: {
                         type: 'string',
                         enum: ['Bank', 'AcctRec', 'OthCurrAsset', 'FixedAsset', 'AcctPay',
-                               'OthCurrLiab', 'LongTermLiab', 'Equity', 'Income', 'COGS', 'Expense'],
-                        description: 'Optional: filter by account type'
+                               'OthCurrLiab', 'LongTermLiab', 'Equity', 'Income', 'COGS', 'Expense', 'OthIncome', 'OthExpense'],
+                        description: 'Filter by account type. For income statement: use Income, COGS, Expense. For balance sheet: use asset/liability/equity types.'
+                    },
+                    subsidiary_id: {
+                        type: 'number',
+                        description: 'Optional: filter by subsidiary ID'
                     }
                 },
                 required: []
@@ -794,6 +810,8 @@ Use for: "trial balance", "account balances", "GL balances"`,
             execute: function(args) {
                 const typeFilter = args.account_type ?
                     `AND account.accttype = '${escapeSql(args.account_type)}'` : '';
+                const subFilter = args.subsidiary_id ?
+                    `AND account.subsidiary = ${args.subsidiary_id}` : '';
 
                 const query = `
                     SELECT
@@ -804,6 +822,7 @@ Use for: "trial balance", "account balances", "GL balances"`,
                     FROM account
                     WHERE account.isinactive = 'F'
                         ${typeFilter}
+                        ${subFilter}
                     ORDER BY account.acctnumber
                     FETCH FIRST 200 ROWS ONLY
                 `;
@@ -812,7 +831,661 @@ Use for: "trial balance", "account balances", "GL balances"`,
                 return formatResult(result, 'get_trial_balance');
             },
             displayName: function(args) {
-                return 'Getting trial balance...';
+                const type = args.account_type ? ` (${args.account_type})` : '';
+                return `Getting trial balance${type}...`;
+            }
+        },
+
+        // ═══════════════════════════════════════════════════════════════════
+        // FINANCIAL STATEMENTS - Pre-computed Income Statement / Balance Sheet
+        // ═══════════════════════════════════════════════════════════════════
+
+        get_income_statement: {
+            name: 'get_income_statement',
+            description: `Get a complete Income Statement / P&L (Profit and Loss) for a period.
+Returns Revenue, COGS, Gross Profit, Operating Expenses, and Net Income with proper calculations.
+ALWAYS use this for: "income statement", "P&L", "profit and loss", "show me P&L", "how much profit", "net income"`,
+            parameters: {
+                type: 'object',
+                properties: {
+                    period: {
+                        type: 'string',
+                        enum: ['ytd', 'this_month', 'last_month', 'this_quarter', 'last_quarter'],
+                        description: 'Period for the income statement (default: ytd)'
+                    },
+                    department_id: {
+                        type: 'number',
+                        description: 'Optional: filter by department ID'
+                    },
+                    class_id: {
+                        type: 'number',
+                        description: 'Optional: filter by class ID'
+                    }
+                },
+                required: []
+            },
+            execute: function(args) {
+                const period = args.period || 'ytd';
+                const deptFilter = args.department_id ?
+                    `AND tl.department = ${args.department_id}` : '';
+                const classFilter = args.class_id ?
+                    `AND tl.class = ${args.class_id}` : '';
+
+                // Get fiscal year start dynamically
+                let dateFilter = '';
+                if (period === 'ytd') {
+                    dateFilter = `AND ap.startdate >= (SELECT startdate FROM accountingperiod WHERE isyear = 'T' AND startdate <= SYSDATE ORDER BY startdate DESC FETCH FIRST 1 ROWS ONLY)`;
+                } else if (period === 'this_month') {
+                    dateFilter = `AND ap.startdate >= TRUNC(SYSDATE, 'MM')`;
+                } else if (period === 'last_month') {
+                    dateFilter = `AND ap.startdate >= ADD_MONTHS(TRUNC(SYSDATE, 'MM'), -1) AND ap.enddate < TRUNC(SYSDATE, 'MM')`;
+                } else if (period === 'this_quarter') {
+                    dateFilter = `AND ap.startdate >= TRUNC(SYSDATE, 'Q')`;
+                } else if (period === 'last_quarter') {
+                    dateFilter = `AND ap.startdate >= ADD_MONTHS(TRUNC(SYSDATE, 'Q'), -3) AND ap.enddate < TRUNC(SYSDATE, 'Q')`;
+                }
+
+                const query = `
+                    SELECT
+                        CASE
+                            WHEN acct.accttype IN ('Income', 'OthIncome') THEN 'Revenue'
+                            WHEN acct.accttype = 'COGS' THEN 'Cost of Goods Sold'
+                            WHEN acct.accttype IN ('Expense', 'OthExpense') THEN 'Operating Expenses'
+                            ELSE 'Other'
+                        END AS category,
+                        acct.accttype AS account_type,
+                        acct.acctnumber AS account_number,
+                        acct.accountsearchdisplayname AS account_name,
+                        SUM(CASE
+                            WHEN acct.accttype IN ('Income', 'OthIncome') THEN -tal.amount
+                            ELSE tal.amount
+                        END) AS amount
+                    FROM transactionaccountingline tal
+                    INNER JOIN transaction t ON tal.transaction = t.id
+                    INNER JOIN accountingperiod ap ON t.postingperiod = ap.id
+                    INNER JOIN account acct ON tal.account = acct.id
+                    LEFT JOIN transactionline tl ON tl.transaction = tal.transaction AND tl.id = tal.transactionline
+                    WHERE t.posting = 'T'
+                        AND t.voided = 'F'
+                        AND acct.accttype IN ('Income', 'OthIncome', 'COGS', 'Expense', 'OthExpense')
+                        AND ap.isyear = 'F' AND ap.isquarter = 'F'
+                        ${dateFilter}
+                        ${deptFilter}
+                        ${classFilter}
+                    GROUP BY
+                        CASE
+                            WHEN acct.accttype IN ('Income', 'OthIncome') THEN 'Revenue'
+                            WHEN acct.accttype = 'COGS' THEN 'Cost of Goods Sold'
+                            WHEN acct.accttype IN ('Expense', 'OthExpense') THEN 'Operating Expenses'
+                            ELSE 'Other'
+                        END,
+                        acct.accttype,
+                        acct.acctnumber,
+                        acct.accountsearchdisplayname
+                    ORDER BY
+                        CASE
+                            WHEN acct.accttype IN ('Income', 'OthIncome') THEN 1
+                            WHEN acct.accttype = 'COGS' THEN 2
+                            WHEN acct.accttype IN ('Expense', 'OthExpense') THEN 3
+                            ELSE 4
+                        END,
+                        acct.acctnumber
+                `;
+
+                const result = QueryExecutor.executeQuery(query);
+                const formatted = formatResult(result, 'get_income_statement');
+
+                // Calculate totals
+                if (formatted.success && formatted.rows) {
+                    let totalRevenue = 0;
+                    let totalCOGS = 0;
+                    let totalExpenses = 0;
+
+                    formatted.rows.forEach(row => {
+                        const amt = parseFloat(row.amount) || 0;
+                        if (row.category === 'Revenue') totalRevenue += amt;
+                        else if (row.category === 'Cost of Goods Sold') totalCOGS += amt;
+                        else if (row.category === 'Operating Expenses') totalExpenses += amt;
+                    });
+
+                    formatted.summary = {
+                        totalRevenue: totalRevenue,
+                        totalCOGS: totalCOGS,
+                        grossProfit: totalRevenue - totalCOGS,
+                        grossMargin: totalRevenue > 0 ? ((totalRevenue - totalCOGS) / totalRevenue * 100).toFixed(1) + '%' : '0%',
+                        totalExpenses: totalExpenses,
+                        netIncome: totalRevenue - totalCOGS - totalExpenses,
+                        netMargin: totalRevenue > 0 ? ((totalRevenue - totalCOGS - totalExpenses) / totalRevenue * 100).toFixed(1) + '%' : '0%'
+                    };
+                }
+
+                return formatted;
+            },
+            displayName: function(args) {
+                const period = args.period || 'ytd';
+                return `Building income statement (${period})...`;
+            }
+        },
+
+        get_balance_sheet: {
+            name: 'get_balance_sheet',
+            description: `Get a complete Balance Sheet showing Assets, Liabilities, and Equity.
+Returns all balance sheet accounts organized by category.
+ALWAYS use this for: "balance sheet", "assets and liabilities", "financial position", "what do we own", "net worth"`,
+            parameters: {
+                type: 'object',
+                properties: {
+                    as_of_date: {
+                        type: 'string',
+                        description: 'Optional: date for balance sheet (YYYY-MM-DD format). Default is today.'
+                    },
+                    subsidiary_id: {
+                        type: 'number',
+                        description: 'Optional: filter by subsidiary ID'
+                    }
+                },
+                required: []
+            },
+            execute: function(args) {
+                const subFilter = args.subsidiary_id ?
+                    `AND account.subsidiary = ${args.subsidiary_id}` : '';
+
+                const query = `
+                    SELECT
+                        CASE
+                            WHEN account.accttype IN ('Bank', 'AcctRec', 'OthCurrAsset') THEN 'Current Assets'
+                            WHEN account.accttype = 'FixedAsset' THEN 'Fixed Assets'
+                            WHEN account.accttype = 'OthAsset' THEN 'Other Assets'
+                            WHEN account.accttype IN ('AcctPay', 'OthCurrLiab', 'CredCard') THEN 'Current Liabilities'
+                            WHEN account.accttype = 'LongTermLiab' THEN 'Long-term Liabilities'
+                            WHEN account.accttype IN ('Equity', 'RetainedEarnings') THEN 'Equity'
+                            ELSE 'Other'
+                        END AS category,
+                        account.accttype AS account_type,
+                        account.acctnumber AS account_number,
+                        account.accountsearchdisplayname AS account_name,
+                        account.balance AS balance
+                    FROM account
+                    WHERE account.isinactive = 'F'
+                        AND account.accttype IN ('Bank', 'AcctRec', 'OthCurrAsset', 'FixedAsset', 'OthAsset',
+                                                  'AcctPay', 'OthCurrLiab', 'CredCard', 'LongTermLiab', 'Equity', 'RetainedEarnings')
+                        ${subFilter}
+                    ORDER BY
+                        CASE
+                            WHEN account.accttype IN ('Bank', 'AcctRec', 'OthCurrAsset') THEN 1
+                            WHEN account.accttype = 'FixedAsset' THEN 2
+                            WHEN account.accttype = 'OthAsset' THEN 3
+                            WHEN account.accttype IN ('AcctPay', 'OthCurrLiab', 'CredCard') THEN 4
+                            WHEN account.accttype = 'LongTermLiab' THEN 5
+                            WHEN account.accttype IN ('Equity', 'RetainedEarnings') THEN 6
+                            ELSE 7
+                        END,
+                        account.acctnumber
+                `;
+
+                const result = QueryExecutor.executeQuery(query);
+                const formatted = formatResult(result, 'get_balance_sheet');
+
+                // Calculate totals
+                if (formatted.success && formatted.rows) {
+                    let totalCurrentAssets = 0;
+                    let totalFixedAssets = 0;
+                    let totalOtherAssets = 0;
+                    let totalCurrentLiabilities = 0;
+                    let totalLongTermLiabilities = 0;
+                    let totalEquity = 0;
+
+                    formatted.rows.forEach(row => {
+                        const bal = parseFloat(row.balance) || 0;
+                        if (row.category === 'Current Assets') totalCurrentAssets += bal;
+                        else if (row.category === 'Fixed Assets') totalFixedAssets += bal;
+                        else if (row.category === 'Other Assets') totalOtherAssets += bal;
+                        else if (row.category === 'Current Liabilities') totalCurrentLiabilities += bal;
+                        else if (row.category === 'Long-term Liabilities') totalLongTermLiabilities += bal;
+                        else if (row.category === 'Equity') totalEquity += bal;
+                    });
+
+                    const totalAssets = totalCurrentAssets + totalFixedAssets + totalOtherAssets;
+                    const totalLiabilities = totalCurrentLiabilities + totalLongTermLiabilities;
+
+                    formatted.summary = {
+                        totalCurrentAssets: totalCurrentAssets,
+                        totalFixedAssets: totalFixedAssets,
+                        totalOtherAssets: totalOtherAssets,
+                        totalAssets: totalAssets,
+                        totalCurrentLiabilities: totalCurrentLiabilities,
+                        totalLongTermLiabilities: totalLongTermLiabilities,
+                        totalLiabilities: totalLiabilities,
+                        totalEquity: totalEquity,
+                        liabilitiesAndEquity: totalLiabilities + totalEquity,
+                        balanceCheck: Math.abs(totalAssets - (totalLiabilities + totalEquity)) < 0.01 ? 'Balanced' : 'Out of Balance'
+                    };
+                }
+
+                return formatted;
+            },
+            displayName: function() {
+                return 'Building balance sheet...';
+            }
+        },
+
+        get_ar_aging: {
+            name: 'get_ar_aging',
+            description: `Get Accounts Receivable aging summary showing outstanding invoices by aging bucket.
+Returns customers with their AR broken down into Current, 1-30, 31-60, 61-90, and 90+ day buckets.
+ALWAYS use this for: "AR aging", "receivables", "who owes us", "overdue invoices", "customer balances", "accounts receivable", "outstanding invoices"`,
+            parameters: {
+                type: 'object',
+                properties: {
+                    customer_id: {
+                        type: 'number',
+                        description: 'Optional: filter to specific customer ID'
+                    },
+                    include_details: {
+                        type: 'boolean',
+                        description: 'Include invoice-level detail (default: false for summary)'
+                    }
+                },
+                required: []
+            },
+            execute: function(args) {
+                const custFilter = args.customer_id ?
+                    `AND transaction.entity = ${args.customer_id}` : '';
+
+                const query = `
+                    SELECT
+                        BUILTIN.DF(transaction.entity) AS customer,
+                        transaction.entity AS customer_id,
+                        SUM(CASE WHEN CURRENT_DATE - transaction.duedate <= 0 THEN transaction.foreignamountunpaid ELSE 0 END) AS current_bucket,
+                        SUM(CASE WHEN CURRENT_DATE - transaction.duedate BETWEEN 1 AND 30 THEN transaction.foreignamountunpaid ELSE 0 END) AS days_1_30,
+                        SUM(CASE WHEN CURRENT_DATE - transaction.duedate BETWEEN 31 AND 60 THEN transaction.foreignamountunpaid ELSE 0 END) AS days_31_60,
+                        SUM(CASE WHEN CURRENT_DATE - transaction.duedate BETWEEN 61 AND 90 THEN transaction.foreignamountunpaid ELSE 0 END) AS days_61_90,
+                        SUM(CASE WHEN CURRENT_DATE - transaction.duedate > 90 THEN transaction.foreignamountunpaid ELSE 0 END) AS days_over_90,
+                        SUM(transaction.foreignamountunpaid) AS total_outstanding,
+                        COUNT(transaction.id) AS invoice_count
+                    FROM transaction
+                    WHERE transaction.type IN ('CustInvc', 'CustCred')
+                        AND transaction.foreignamountunpaid != 0
+                        AND transaction.posting = 'T'
+                        AND transaction.voided = 'F'
+                        ${custFilter}
+                    GROUP BY transaction.entity, BUILTIN.DF(transaction.entity)
+                    ORDER BY total_outstanding DESC
+                    FETCH FIRST 100 ROWS ONLY
+                `;
+
+                const result = QueryExecutor.executeQuery(query);
+                const formatted = formatResult(result, 'get_ar_aging');
+
+                // Calculate grand totals
+                if (formatted.success && formatted.rows) {
+                    let grandTotal = 0;
+                    let totalCurrent = 0;
+                    let total1_30 = 0;
+                    let total31_60 = 0;
+                    let total61_90 = 0;
+                    let totalOver90 = 0;
+
+                    formatted.rows.forEach(row => {
+                        totalCurrent += parseFloat(row.current_bucket) || 0;
+                        total1_30 += parseFloat(row.days_1_30) || 0;
+                        total31_60 += parseFloat(row.days_31_60) || 0;
+                        total61_90 += parseFloat(row.days_61_90) || 0;
+                        totalOver90 += parseFloat(row.days_over_90) || 0;
+                        grandTotal += parseFloat(row.total_outstanding) || 0;
+                    });
+
+                    formatted.summary = {
+                        grandTotal: grandTotal,
+                        totalCurrent: totalCurrent,
+                        total1_30: total1_30,
+                        total31_60: total31_60,
+                        total61_90: total61_90,
+                        totalOver90: totalOver90,
+                        totalOverdue: total1_30 + total31_60 + total61_90 + totalOver90,
+                        percentOverdue: grandTotal > 0 ?
+                            ((total1_30 + total31_60 + total61_90 + totalOver90) / grandTotal * 100).toFixed(1) + '%' : '0%'
+                    };
+                }
+
+                return formatted;
+            },
+            displayName: function(args) {
+                return args.customer_id ? 'Getting customer AR aging...' : 'Getting AR aging summary...';
+            }
+        },
+
+        get_ap_aging: {
+            name: 'get_ap_aging',
+            description: `Get Accounts Payable aging summary showing outstanding bills by aging bucket.
+Returns vendors with their AP broken down into Current, 1-30, 31-60, 61-90, and 90+ day buckets.
+ALWAYS use this for: "AP aging", "payables", "what we owe", "bills due", "vendor balances", "accounts payable", "outstanding bills"`,
+            parameters: {
+                type: 'object',
+                properties: {
+                    vendor_id: {
+                        type: 'number',
+                        description: 'Optional: filter to specific vendor ID'
+                    }
+                },
+                required: []
+            },
+            execute: function(args) {
+                const vendorFilter = args.vendor_id ?
+                    `AND transaction.entity = ${args.vendor_id}` : '';
+
+                const query = `
+                    SELECT
+                        BUILTIN.DF(transaction.entity) AS vendor,
+                        transaction.entity AS vendor_id,
+                        SUM(CASE WHEN CURRENT_DATE - transaction.duedate <= 0 THEN transaction.foreignamountunpaid ELSE 0 END) AS current_bucket,
+                        SUM(CASE WHEN CURRENT_DATE - transaction.duedate BETWEEN 1 AND 30 THEN transaction.foreignamountunpaid ELSE 0 END) AS days_1_30,
+                        SUM(CASE WHEN CURRENT_DATE - transaction.duedate BETWEEN 31 AND 60 THEN transaction.foreignamountunpaid ELSE 0 END) AS days_31_60,
+                        SUM(CASE WHEN CURRENT_DATE - transaction.duedate BETWEEN 61 AND 90 THEN transaction.foreignamountunpaid ELSE 0 END) AS days_61_90,
+                        SUM(CASE WHEN CURRENT_DATE - transaction.duedate > 90 THEN transaction.foreignamountunpaid ELSE 0 END) AS days_over_90,
+                        SUM(transaction.foreignamountunpaid) AS total_outstanding,
+                        COUNT(transaction.id) AS bill_count
+                    FROM transaction
+                    WHERE transaction.type IN ('VendBill', 'VendCred')
+                        AND transaction.foreignamountunpaid != 0
+                        AND transaction.posting = 'T'
+                        AND transaction.voided = 'F'
+                        ${vendorFilter}
+                    GROUP BY transaction.entity, BUILTIN.DF(transaction.entity)
+                    ORDER BY total_outstanding DESC
+                    FETCH FIRST 100 ROWS ONLY
+                `;
+
+                const result = QueryExecutor.executeQuery(query);
+                const formatted = formatResult(result, 'get_ap_aging');
+
+                // Calculate grand totals
+                if (formatted.success && formatted.rows) {
+                    let grandTotal = 0;
+                    let totalCurrent = 0;
+                    let total1_30 = 0;
+                    let total31_60 = 0;
+                    let total61_90 = 0;
+                    let totalOver90 = 0;
+
+                    formatted.rows.forEach(row => {
+                        totalCurrent += parseFloat(row.current_bucket) || 0;
+                        total1_30 += parseFloat(row.days_1_30) || 0;
+                        total31_60 += parseFloat(row.days_31_60) || 0;
+                        total61_90 += parseFloat(row.days_61_90) || 0;
+                        totalOver90 += parseFloat(row.days_over_90) || 0;
+                        grandTotal += parseFloat(row.total_outstanding) || 0;
+                    });
+
+                    formatted.summary = {
+                        grandTotal: grandTotal,
+                        totalCurrent: totalCurrent,
+                        total1_30: total1_30,
+                        total31_60: total31_60,
+                        total61_90: total61_90,
+                        totalOver90: totalOver90,
+                        totalOverdue: total1_30 + total31_60 + total61_90 + totalOver90,
+                        percentOverdue: grandTotal > 0 ?
+                            ((total1_30 + total31_60 + total61_90 + totalOver90) / grandTotal * 100).toFixed(1) + '%' : '0%'
+                    };
+                }
+
+                return formatted;
+            },
+            displayName: function(args) {
+                return args.vendor_id ? 'Getting vendor AP aging...' : 'Getting AP aging summary...';
+            }
+        },
+
+        get_top_customers: {
+            name: 'get_top_customers',
+            description: `Get top customers by revenue for current fiscal year.
+ALWAYS use this for: "top customers", "best customers", "biggest customers", "customer revenue", "who are our best customers"`,
+            parameters: {
+                type: 'object',
+                properties: {
+                    limit: {
+                        type: 'number',
+                        description: 'Number of customers to return (default: 10)'
+                    },
+                    period: {
+                        type: 'string',
+                        enum: ['ytd', 'this_quarter', 'this_month', 'last_12_months'],
+                        description: 'Time period (default: ytd)'
+                    },
+                    department_id: {
+                        type: 'number',
+                        description: 'Optional: filter by department ID'
+                    }
+                },
+                required: []
+            },
+            execute: function(args) {
+                const limit = args.limit || 10;
+                const period = args.period || 'ytd';
+                const deptFilter = args.department_id ?
+                    `AND tl.department = ${args.department_id}` : '';
+
+                let dateFilter = '';
+                if (period === 'ytd') {
+                    dateFilter = `AND ap.startdate >= (SELECT startdate FROM accountingperiod WHERE isyear = 'T' AND startdate <= SYSDATE ORDER BY startdate DESC FETCH FIRST 1 ROWS ONLY)`;
+                } else if (period === 'this_quarter') {
+                    dateFilter = `AND ap.startdate >= TRUNC(SYSDATE, 'Q')`;
+                } else if (period === 'this_month') {
+                    dateFilter = `AND ap.startdate >= TRUNC(SYSDATE, 'MM')`;
+                } else if (period === 'last_12_months') {
+                    dateFilter = `AND t.trandate >= ADD_MONTHS(SYSDATE, -12)`;
+                }
+
+                const query = `
+                    SELECT
+                        BUILTIN.DF(t.entity) AS customer_name,
+                        t.entity AS customer_id,
+                        COUNT(DISTINCT t.id) AS invoice_count,
+                        SUM(t.foreigntotal) AS total_revenue,
+                        SUM(t.foreignamountunpaid) AS outstanding_ar,
+                        MIN(t.trandate) AS first_invoice,
+                        MAX(t.trandate) AS last_invoice
+                    FROM transaction t
+                    INNER JOIN accountingperiod ap ON t.postingperiod = ap.id
+                    LEFT JOIN transactionline tl ON tl.transaction = t.id AND tl.mainline = 'F'
+                    WHERE t.type = 'CustInvc'
+                        AND t.posting = 'T'
+                        AND t.voided = 'F'
+                        AND ap.isyear = 'F' AND ap.isquarter = 'F'
+                        ${dateFilter}
+                        ${deptFilter}
+                    GROUP BY t.entity, BUILTIN.DF(t.entity)
+                    ORDER BY total_revenue DESC
+                    FETCH FIRST ${limit} ROWS ONLY
+                `;
+
+                const result = QueryExecutor.executeQuery(query);
+                return formatResult(result, 'get_top_customers');
+            },
+            displayName: function(args) {
+                return `Getting top ${args.limit || 10} customers...`;
+            }
+        },
+
+        get_top_vendors: {
+            name: 'get_top_vendors',
+            description: `Get top vendors by spend for current fiscal year.
+ALWAYS use this for: "top vendors", "biggest vendors", "vendor spend", "who do we pay most", "where do we spend"`,
+            parameters: {
+                type: 'object',
+                properties: {
+                    limit: {
+                        type: 'number',
+                        description: 'Number of vendors to return (default: 10)'
+                    },
+                    period: {
+                        type: 'string',
+                        enum: ['ytd', 'this_quarter', 'this_month', 'last_12_months'],
+                        description: 'Time period (default: ytd)'
+                    }
+                },
+                required: []
+            },
+            execute: function(args) {
+                const limit = args.limit || 10;
+                const period = args.period || 'ytd';
+
+                let dateFilter = '';
+                if (period === 'ytd') {
+                    dateFilter = `AND ap.startdate >= (SELECT startdate FROM accountingperiod WHERE isyear = 'T' AND startdate <= SYSDATE ORDER BY startdate DESC FETCH FIRST 1 ROWS ONLY)`;
+                } else if (period === 'this_quarter') {
+                    dateFilter = `AND ap.startdate >= TRUNC(SYSDATE, 'Q')`;
+                } else if (period === 'this_month') {
+                    dateFilter = `AND ap.startdate >= TRUNC(SYSDATE, 'MM')`;
+                } else if (period === 'last_12_months') {
+                    dateFilter = `AND t.trandate >= ADD_MONTHS(SYSDATE, -12)`;
+                }
+
+                const query = `
+                    SELECT
+                        BUILTIN.DF(t.entity) AS vendor_name,
+                        t.entity AS vendor_id,
+                        COUNT(DISTINCT t.id) AS bill_count,
+                        SUM(ABS(t.foreigntotal) * (CASE WHEN t.type = 'VendCred' THEN -1 ELSE 1 END)) AS total_spend,
+                        SUM(t.foreignamountunpaid) AS outstanding_ap,
+                        MIN(t.trandate) AS first_bill,
+                        MAX(t.trandate) AS last_bill
+                    FROM transaction t
+                    INNER JOIN accountingperiod ap ON t.postingperiod = ap.id
+                    WHERE t.type IN ('VendBill', 'VendCred')
+                        AND t.posting = 'T'
+                        AND t.voided = 'F'
+                        AND ap.isyear = 'F' AND ap.isquarter = 'F'
+                        ${dateFilter}
+                    GROUP BY t.entity, BUILTIN.DF(t.entity)
+                    ORDER BY total_spend DESC
+                    FETCH FIRST ${limit} ROWS ONLY
+                `;
+
+                const result = QueryExecutor.executeQuery(query);
+                return formatResult(result, 'get_top_vendors');
+            },
+            displayName: function(args) {
+                return `Getting top ${args.limit || 10} vendors...`;
+            }
+        },
+
+        get_revenue_by_month: {
+            name: 'get_revenue_by_month',
+            description: `Get monthly revenue trend showing revenue by month.
+ALWAYS use this for: "revenue trend", "monthly revenue", "revenue by month", "sales trend", "how is revenue trending"`,
+            parameters: {
+                type: 'object',
+                properties: {
+                    months: {
+                        type: 'number',
+                        description: 'Number of months to show (default: 12)'
+                    }
+                },
+                required: []
+            },
+            execute: function(args) {
+                const months = args.months || 12;
+
+                const query = `
+                    SELECT
+                        TO_CHAR(t.trandate, 'YYYY-MM') AS month,
+                        SUM(t.foreigntotal) AS revenue,
+                        COUNT(DISTINCT t.id) AS invoice_count,
+                        COUNT(DISTINCT t.entity) AS customer_count
+                    FROM transaction t
+                    WHERE t.type = 'CustInvc'
+                        AND t.posting = 'T'
+                        AND t.voided = 'F'
+                        AND t.trandate >= ADD_MONTHS(TRUNC(SYSDATE, 'MM'), -${months})
+                    GROUP BY TO_CHAR(t.trandate, 'YYYY-MM')
+                    ORDER BY month
+                `;
+
+                const result = QueryExecutor.executeQuery(query);
+                return formatResult(result, 'get_revenue_by_month');
+            },
+            displayName: function(args) {
+                return `Getting ${args.months || 12} months revenue trend...`;
+            }
+        },
+
+        get_expense_by_category: {
+            name: 'get_expense_by_category',
+            description: `Get expense breakdown by expense account category.
+ALWAYS use this for: "expense breakdown", "where are we spending", "expense by category", "operating expenses", "cost breakdown"`,
+            parameters: {
+                type: 'object',
+                properties: {
+                    period: {
+                        type: 'string',
+                        enum: ['ytd', 'this_quarter', 'this_month', 'last_month'],
+                        description: 'Time period (default: ytd)'
+                    },
+                    department_id: {
+                        type: 'number',
+                        description: 'Optional: filter by department ID'
+                    }
+                },
+                required: []
+            },
+            execute: function(args) {
+                const period = args.period || 'ytd';
+                const deptFilter = args.department_id ?
+                    `AND tl.department = ${args.department_id}` : '';
+
+                let dateFilter = '';
+                if (period === 'ytd') {
+                    dateFilter = `AND ap.startdate >= (SELECT startdate FROM accountingperiod WHERE isyear = 'T' AND startdate <= SYSDATE ORDER BY startdate DESC FETCH FIRST 1 ROWS ONLY)`;
+                } else if (period === 'this_quarter') {
+                    dateFilter = `AND ap.startdate >= TRUNC(SYSDATE, 'Q')`;
+                } else if (period === 'this_month') {
+                    dateFilter = `AND ap.startdate >= TRUNC(SYSDATE, 'MM')`;
+                } else if (period === 'last_month') {
+                    dateFilter = `AND ap.startdate >= ADD_MONTHS(TRUNC(SYSDATE, 'MM'), -1) AND ap.enddate < TRUNC(SYSDATE, 'MM')`;
+                }
+
+                const query = `
+                    SELECT
+                        acct.acctnumber AS account_number,
+                        acct.accountsearchdisplayname AS account_name,
+                        SUM(tal.amount) AS amount,
+                        COUNT(DISTINCT tal.transaction) AS transaction_count
+                    FROM transactionaccountingline tal
+                    INNER JOIN transaction t ON tal.transaction = t.id
+                    INNER JOIN accountingperiod ap ON t.postingperiod = ap.id
+                    INNER JOIN account acct ON tal.account = acct.id
+                    LEFT JOIN transactionline tl ON tl.transaction = tal.transaction AND tl.id = tal.transactionline
+                    WHERE t.posting = 'T'
+                        AND t.voided = 'F'
+                        AND acct.accttype IN ('Expense', 'OthExpense')
+                        AND ap.isyear = 'F' AND ap.isquarter = 'F'
+                        ${dateFilter}
+                        ${deptFilter}
+                    GROUP BY acct.acctnumber, acct.accountsearchdisplayname
+                    ORDER BY amount DESC
+                `;
+
+                const result = QueryExecutor.executeQuery(query);
+                const formatted = formatResult(result, 'get_expense_by_category');
+
+                // Calculate total
+                if (formatted.success && formatted.rows) {
+                    let totalExpenses = 0;
+                    formatted.rows.forEach(row => {
+                        totalExpenses += parseFloat(row.amount) || 0;
+                    });
+                    formatted.summary = {
+                        totalExpenses: totalExpenses,
+                        categoryCount: formatted.rows.length
+                    };
+                }
+
+                return formatted;
+            },
+            displayName: function(args) {
+                return `Getting expense breakdown (${args.period || 'ytd'})...`;
             }
         },
 
@@ -1407,8 +2080,9 @@ Use for: "cash flow", "runway", "cash projection", "liquidity", "treasury", "wor
 - Expense breakdown
 - Profitability by department
 - Revenue vs expense comparison
+- Income statement summary data
 
-Use for: "financial health", "profitability", "margins", "how are we doing", "P&L summary", "health score"`,
+PREFERRED for: "income statement", "P&L", "profit and loss", "financial health", "profitability", "margins", "how are we doing", "health score", "revenue and expenses"`,
             parameters: {
                 type: 'object',
                 properties: {
