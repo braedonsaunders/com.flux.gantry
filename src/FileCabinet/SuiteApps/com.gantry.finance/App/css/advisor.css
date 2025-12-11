@@ -4676,6 +4676,14 @@ body.dark-mode .strategy-backups code {
     font-weight: 500;
 }
 
+.expansion-panel-meta .step-tool-badge {
+    background: var(--bg-secondary, #f1f5f9);
+    padding: 2px 8px;
+    border-radius: 10px;
+    text-transform: capitalize;
+    margin-bottom: 0;
+}
+
 /* Code blocks in expansion panel */
 .expansion-panel pre {
     background: #1e293b;
@@ -5001,6 +5009,10 @@ body.dark-mode .expansion-panel-meta {
 
 body.dark-mode .expansion-panel-meta span {
     color: #94a3b8;
+}
+
+body.dark-mode .expansion-panel-meta .step-tool-badge {
+    background: #334155;
 }
 
 body.dark-mode .thinking-trail span {

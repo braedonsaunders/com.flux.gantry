@@ -2239,9 +2239,44 @@
                 <div class="expansion-panel-body">
             `;
 
-            // Add meta info
-            if (duration || model) {
+            // Add meta info (duration, model, tool badge on one row)
+            if (duration || model || step.tool) {
                 html += '<div class="expansion-panel-meta">';
+                // Add tool badge first if present
+                if (step.tool) {
+                    const toolIcons = {
+                        'resolve_entity': 'fa-search',
+                        'resolve_gl_account': 'fa-calculator',
+                        'resolve_classification': 'fa-tags',
+                        'explore_schema': 'fa-sitemap',
+                        'get_ap_aging': 'fa-clock',
+                        'get_ar_aging': 'fa-clock',
+                        'get_vendor_spend': 'fa-store',
+                        'get_customer_revenue': 'fa-users',
+                        'get_gl_activity': 'fa-book',
+                        'get_trial_balance': 'fa-balance-scale',
+                        'get_income_statement': 'fa-file-invoice-dollar',
+                        'get_balance_sheet': 'fa-balance-scale-right',
+                        'get_recent_transactions': 'fa-list',
+                        'get_transaction_detail': 'fa-file-alt',
+                        'compare_periods': 'fa-chart-line',
+                        'find_anomalies': 'fa-exclamation-triangle',
+                        'get_cash_position': 'fa-money-bill-wave',
+                        'get_expense_breakdown': 'fa-receipt',
+                        'dashboard_cashflow': 'fa-chart-area',
+                        'dashboard_health': 'fa-heartbeat',
+                        'dashboard_burden': 'fa-weight-hanging',
+                        'dashboard_time': 'fa-clock',
+                        'dashboard_integrity': 'fa-shield-alt',
+                        'dashboard_vendorperformance': 'fa-handshake',
+                        'dashboard_customervalue': 'fa-gem',
+                        'dashboard_spendvelocity': 'fa-tachometer-alt',
+                        'run_custom_query': 'fa-database'
+                    };
+                    const toolIcon = toolIcons[step.tool] || 'fa-cog';
+                    const toolLabel = step.tool.replace(/_/g, ' ');
+                    html += `<span class="step-tool-badge"><i class="fas ${toolIcon}"></i> ${this.escapeHtml(toolLabel)}</span>`;
+                }
                 if (duration) {
                     html += `<span><i class="fas fa-clock"></i> ${duration}</span>`;
                 }
@@ -2444,57 +2479,8 @@
             }
             
             // Special handling for tool_call steps (from v2 Agent)
+            // Note: duration and tool badge are shown in expansion-panel-meta (buildExpansionContent)
             if (step.type === 'tool_call') {
-                // Show metadata (duration, model info)
-                if (step.meta) {
-                    const meta = step.meta;
-                    let metaItems = [];
-                    if (meta.duration) {
-                        const seconds = (meta.duration / 1000).toFixed(1);
-                        metaItems.push(`<span class="meta-duration"><i class="fas fa-clock"></i> ${seconds}s</span>`);
-                    }
-                    if (meta.isLlmCall && meta.model) {
-                        metaItems.push(`<span class="meta-model"><i class="fas fa-brain"></i> ${this.escapeHtml(meta.model)}</span>`);
-                    }
-                    if (metaItems.length > 0) {
-                        detailContent += `<div class="step-meta">${metaItems.join(' ')}</div>`;
-                    }
-                }
-
-                // Show tool badge
-                if (step.tool) {
-                    const toolIcons = {
-                        'resolve_entity': 'fa-search',
-                        'resolve_gl_account': 'fa-calculator',
-                        'resolve_classification': 'fa-tags',
-                        'explore_schema': 'fa-sitemap',
-                        'get_ap_aging': 'fa-clock',
-                        'get_ar_aging': 'fa-clock',
-                        'get_vendor_spend': 'fa-store',
-                        'get_customer_revenue': 'fa-users',
-                        'get_gl_activity': 'fa-book',
-                        'get_trial_balance': 'fa-balance-scale',
-                        'get_recent_transactions': 'fa-list',
-                        'get_transaction_detail': 'fa-file-alt',
-                        'compare_periods': 'fa-chart-line',
-                        'find_anomalies': 'fa-exclamation-triangle',
-                        'get_cash_position': 'fa-money-bill-wave',
-                        'get_expense_breakdown': 'fa-receipt',
-                        'dashboard_cashflow': 'fa-chart-area',
-                        'dashboard_health': 'fa-heartbeat',
-                        'dashboard_burden': 'fa-weight-hanging',
-                        'dashboard_time': 'fa-clock',
-                        'dashboard_integrity': 'fa-shield-alt',
-                        'dashboard_vendorperformance': 'fa-handshake',
-                        'dashboard_customervalue': 'fa-gem',
-                        'dashboard_spendvelocity': 'fa-tachometer-alt',
-                        'run_custom_query': 'fa-database'
-                    };
-                    const toolIcon = toolIcons[step.tool] || 'fa-cog';
-                    const toolLabel = step.tool.replace(/_/g, ' ');
-                    detailContent += `<div class="step-tool-badge"><i class="fas ${toolIcon}"></i> ${this.escapeHtml(toolLabel)}</div>`;
-                }
-
                 // Show parameters
                 if (step.params && Object.keys(step.params).length > 0) {
                     const paramChips = Object.entries(step.params)
@@ -3013,8 +2999,8 @@
                 `;
             }
             
-            // Add row count if present
-            if (step.rowCount !== undefined) {
+            // Add row count if present (but not for tool_call steps which show it above via step-result-count)
+            if (step.rowCount !== undefined && step.type !== 'tool_call') {
                 detailContent += `<div class="tool-call-meta"><i class="fas fa-table"></i> ${step.rowCount} row${step.rowCount !== 1 ? 's' : ''} returned</div>`;
             }
             
