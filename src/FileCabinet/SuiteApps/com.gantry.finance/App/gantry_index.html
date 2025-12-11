@@ -274,33 +274,59 @@
                     <div class="tab-content">
                         <div class="tab-pane fade show active" id="cf-summary-pane">
                             <div class="p-4">
-                                <!-- Side by side layout for Bridge and Chart -->
-                                <div class="row mb-3 exec-summary-row">
-                                    <div class="col-lg-3">
-                                        <div class="cf-vitals-panel h-100">
-                                            <h6 class="cf-section-header mb-2">Financial Vitals</h6>
-                                            <div class="cf-vitals-grid">
-                                                <div class="vitals-item"><span class="vitals-label">Avg Burn/Wk</span><span class="vitals-value" id="cfVitalBurn">$0</span></div>
-                                                <div class="vitals-item"><span class="vitals-label">AR Coverage</span><span class="vitals-value" id="cfVitalLiquid">-</span></div>
-                                                <div class="vitals-item"><span class="vitals-label">DSO</span><span class="vitals-value" id="cfVitalDso">-</span></div>
-                                                <div class="vitals-item"><span class="vitals-label">DPO</span><span class="vitals-value" id="cfVitalDpo">-</span></div>
-                                            </div>
-                                            <div class="vitals-net-row">
-                                                <span class="vitals-label">Net Period Flow</span>
-                                                <span class="vitals-value" id="cfVitalNetFlow">$0</span>
-                                            </div>
-                                            <div class="vitals-runway" id="cfRunwayBar"></div>
+                                <!-- Overview Cards - Burden Dashboard Style -->
+                                <div class="cf-overview-cards mb-3">
+                                    <div class="cf-overview-card">
+                                        <div class="cfo-icon bg-purple-soft"><i class="fas fa-fire text-purple"></i></div>
+                                        <div class="cfo-content">
+                                            <div class="cfo-label">Avg Burn/Wk</div>
+                                            <div class="cfo-value" id="cfVitalBurn">$0</div>
                                         </div>
                                     </div>
-                                    <div class="col-lg-4">
-                                        <div class="cf-vitals-panel h-100">
-                                            <h6 class="cf-section-header mb-2">Cash Flow Bridge</h6>
+                                    <div class="cf-overview-card">
+                                        <div class="cfo-icon bg-blue-soft"><i class="fas fa-shield-alt text-blue"></i></div>
+                                        <div class="cfo-content">
+                                            <div class="cfo-label">AR Coverage</div>
+                                            <div class="cfo-value" id="cfVitalLiquid">-</div>
+                                        </div>
+                                    </div>
+                                    <div class="cf-overview-card">
+                                        <div class="cfo-icon bg-green-soft"><i class="fas fa-clock text-green"></i></div>
+                                        <div class="cfo-content">
+                                            <div class="cfo-label">DSO</div>
+                                            <div class="cfo-value" id="cfVitalDso">-</div>
+                                        </div>
+                                    </div>
+                                    <div class="cf-overview-card">
+                                        <div class="cfo-icon bg-amber-soft"><i class="fas fa-hourglass-half text-amber"></i></div>
+                                        <div class="cfo-content">
+                                            <div class="cfo-label">DPO</div>
+                                            <div class="cfo-value" id="cfVitalDpo">-</div>
+                                        </div>
+                                    </div>
+                                    <div class="cf-overview-card wide">
+                                        <div class="cfo-icon bg-gray-soft" id="cfNetFlowIcon"><i class="fas fa-exchange-alt text-muted" id="cfNetFlowIconI"></i></div>
+                                        <div class="cfo-content">
+                                            <div class="cfo-label">Net Period Flow</div>
+                                            <div class="cfo-value" id="cfVitalNetFlow">$0</div>
+                                        </div>
+                                    </div>
+                                    <div class="cf-overview-card wide runway-card">
+                                        <div class="cfo-runway-content" id="cfRunwayBar"></div>
+                                    </div>
+                                </div>
+
+                                <!-- Bridge and Chart Row -->
+                                <div class="row mb-3">
+                                    <div class="col-lg-5">
+                                        <div class="cf-panel-card h-100">
+                                            <h6 class="cf-panel-header"><i class="fas fa-project-diagram mr-2"></i>Cash Flow Bridge</h6>
                                             <div class="cf-bridge-container" id="cfCashBridge"></div>
                                         </div>
                                     </div>
-                                    <div class="col-lg-5">
-                                        <div class="cf-vitals-panel h-100">
-                                            <h6 class="cf-section-header mb-2">Cash Position Forecast</h6>
+                                    <div class="col-lg-7">
+                                        <div class="cf-panel-card h-100">
+                                            <h6 class="cf-panel-header"><i class="fas fa-chart-area mr-2"></i>Cash Position Forecast</h6>
                                             <div id="cfCashChart" class="chart-container-sm"></div>
                                         </div>
                                     </div>

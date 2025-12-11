@@ -353,9 +353,17 @@
 
             const netFlow = co.cash.totalInflows - co.cash.totalOutflows;
             const elNetFlow = el("#cfVitalNetFlow");
+            const netFlowIcon = el("#cfNetFlowIcon");
+            const netFlowIconI = el("#cfNetFlowIconI");
             if (elNetFlow) {
                 elNetFlow.textContent = (netFlow >= 0 ? "+" : "") + fmtMoney(netFlow);
-                elNetFlow.className = `font-weight-bold ${netFlow >= 0 ? "text-success" : "text-danger"}`;
+                elNetFlow.style.color = netFlow >= 0 ? "#10b981" : "#ef4444";
+            }
+            if (netFlowIcon) {
+                netFlowIcon.className = netFlow >= 0 ? "cfo-icon bg-green-soft" : "cfo-icon bg-red-soft";
+            }
+            if (netFlowIconI) {
+                netFlowIconI.className = netFlow >= 0 ? "fas fa-arrow-up text-green" : "fas fa-arrow-down text-red";
             }
 
             // Cash Position Chart

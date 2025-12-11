@@ -2369,81 +2369,117 @@ body.dark-mode .cf-group-header td {
     display: flex;
 }
 
-/* Vitals Panel - Compact Layout */
-.cf-vitals-panel {
-    background: #f8fafc;
-    border: 1px solid #e2e8f0;
-    border-radius: 8px;
-    padding: 10px 12px;
-    display: flex;
-    flex-direction: column;
-    width: 100%;
+/* ===========================================
+   OVERVIEW CARDS - Burden Dashboard Style
+   =========================================== */
+
+.cf-overview-cards {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    gap: 12px;
 }
 
-.cf-vitals-panel .cf-section-header {
+.cf-overview-card {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);
+    border: 1px solid var(--cf-border);
+    border-radius: 10px;
+    padding: 14px 16px;
+    transition: all 0.2s ease;
+}
+
+.cf-overview-card:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--cf-shadow);
+}
+
+.cf-overview-card.wide {
+    grid-column: span 1;
+}
+
+.cf-overview-card .cfo-icon {
+    width: 40px;
+    height: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 10px;
+    flex-shrink: 0;
+    font-size: 1rem;
+}
+
+.cf-overview-card .cfo-content {
+    flex: 1;
+    min-width: 0;
+}
+
+.cf-overview-card .cfo-label {
     font-size: 10px;
     font-weight: 600;
     color: #64748b;
     text-transform: uppercase;
     letter-spacing: 0.5px;
-    margin-bottom: 6px;
-    flex-shrink: 0;
+    margin-bottom: 2px;
 }
 
-.cf-vitals-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 4px 10px;
-    margin-bottom: 6px;
-    flex-shrink: 0;
+.cf-overview-card .cfo-value {
+    font-size: 18px;
+    font-weight: 700;
+    color: #1e293b;
+    line-height: 1.2;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
-.cf-vitals-grid .vitals-item {
-    display: flex;
-    flex-direction: column;
+.cf-overview-card.runway-card {
+    padding: 10px 16px;
 }
 
-.cf-vitals-grid .vitals-label {
-    font-size: 9px;
-    color: #94a3b8;
-    text-transform: uppercase;
-    letter-spacing: 0.3px;
+.cf-overview-card .cfo-runway-content {
+    width: 100%;
 }
 
-.cf-vitals-grid .vitals-value {
+/* Panel Cards for Bridge and Chart */
+.cf-panel-card {
+    background: #ffffff;
+    border: 1px solid var(--cf-border);
+    border-radius: 10px;
+    padding: 16px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+}
+
+.cf-panel-header {
     font-size: 12px;
     font-weight: 600;
-    color: #1e293b;
-}
-
-.vitals-net-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 4px 0;
-    border-top: 1px solid #e2e8f0;
-    border-bottom: 1px solid #e2e8f0;
-    margin-bottom: 6px;
-    flex-shrink: 0;
-}
-
-.vitals-net-row .vitals-label {
-    font-size: 9px;
     color: #64748b;
     text-transform: uppercase;
-    font-weight: 500;
-}
-
-.vitals-net-row .vitals-value {
-    font-size: 12px;
-    font-weight: 700;
-}
-
-.vitals-runway {
-    flex: 1;
+    letter-spacing: 0.5px;
+    margin-bottom: 12px;
     display: flex;
-    align-items: flex-end;
-    font-size: 10px;
+    align-items: center;
+}
+
+.cf-panel-header i {
+    color: #94a3b8;
+}
+
+/* Responsive grid for overview cards */
+@media (max-width: 1200px) {
+    .cf-overview-cards {
+        grid-template-columns: repeat(3, 1fr);
+    }
+}
+
+@media (max-width: 768px) {
+    .cf-overview-cards {
+        grid-template-columns: repeat(2, 1fr);
+    }
+    .cf-overview-card.wide {
+        grid-column: span 1;
+    }
 }
 
 /* Bridge Container */
