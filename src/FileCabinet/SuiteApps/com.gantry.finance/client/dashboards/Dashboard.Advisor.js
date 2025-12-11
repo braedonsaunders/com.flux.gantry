@@ -1369,7 +1369,7 @@
         },
 
         /**
-         * Append steps to a progressive message
+         * Append steps to a progressive message using Neural Flow thought-chain
          * Includes retry mechanism for race condition when DOM hasn't rendered yet
          */
         appendStepsToProgressiveMessage: function(msgId, steps, retryCount) {
@@ -1381,7 +1381,6 @@
             if (!stepsContainer) {
                 if (retryCount < MAX_RETRIES) {
                     console.log('[Advisor appendSteps] Container NOT FOUND, scheduling retry:', msgId + '-steps');
-                    // Use requestAnimationFrame + setTimeout to wait for DOM render
                     const self = this;
                     requestAnimationFrame(function() {
                         setTimeout(function() {
@@ -1402,20 +1401,56 @@
                 thinking.remove();
             }
 
-            // Add new steps
-            steps.forEach((step, idx) => {
-                const stepHtml = this.renderStep(step, idx);
-                console.log('[Advisor appendSteps] Appending step:', step.title, 'HTML length:', stepHtml.length);
-                const stepDiv = document.createElement('div');
-                stepDiv.innerHTML = stepHtml;
-                // Use firstElementChild instead of firstChild to skip whitespace text nodes
-                const stepElement = stepDiv.firstElementChild;
-                if (stepElement) {
-                    stepsContainer.appendChild(stepElement);
-                } else {
-                    console.error('[Advisor appendSteps] No element found in rendered HTML');
+            // Check if we already have a thought-chain
+            let existingChain = stepsContainer.querySelector('.thought-chain');
+
+            if (existingChain) {
+                // Update existing chain with new steps
+                const existingSteps = existingChain._stepsData || [];
+                const allSteps = [...existingSteps];
+
+                // Add new steps that don't already exist
+                steps.forEach(step => {
+                    const exists = allSteps.some(s =>
+                        s.title === step.title && s.type === step.type
+                    );
+                    if (!exists) {
+                        allSteps.push(step);
+                    } else {
+                        // Update existing step status
+                        const idx = allSteps.findIndex(s =>
+                            s.title === step.title && s.type === step.type
+                        );
+                        if (idx >= 0) {
+                            allSteps[idx] = step;
+                        }
+                    }
+                });
+
+                // Re-render the chain
+                const chainHtml = this.renderSteps(allSteps);
+                const tempDiv = document.createElement('div');
+                tempDiv.innerHTML = chainHtml;
+                const newChain = tempDiv.firstElementChild;
+
+                if (newChain) {
+                    // Store step data on the chain element for expansion
+                    newChain._stepsData = allSteps.map((s, i) => ({...s, _chainId: newChain.getAttribute('data-chain-id')}));
+                    existingChain.replaceWith(newChain);
                 }
-            });
+            } else {
+                // Create new thought-chain
+                const chainHtml = this.renderSteps(steps);
+                const tempDiv = document.createElement('div');
+                tempDiv.innerHTML = chainHtml;
+                const newChain = tempDiv.firstElementChild;
+
+                if (newChain) {
+                    // Store step data on the chain element for expansion
+                    newChain._stepsData = steps.map((s, i) => ({...s, _chainId: newChain.getAttribute('data-chain-id')}));
+                    stepsContainer.appendChild(newChain);
+                }
+            }
 
             this.scrollToBottom();
         },
@@ -1731,11 +1766,19 @@
          * Shared by both progressive and static rendering
          */
         renderAssistantContent: function(msg, bubble) {
-            // Render steps
+            // Render steps as Neural Flow thought-chain
             if (msg.steps && msg.steps.length > 0) {
                 const stepsContainer = document.createElement('div');
                 stepsContainer.className = 'message-steps';
                 stepsContainer.innerHTML = this.renderSteps(msg.steps);
+
+                // Store step data on the thought-chain for expansion
+                const thoughtChain = stepsContainer.querySelector('.thought-chain');
+                if (thoughtChain) {
+                    const chainId = thoughtChain.getAttribute('data-chain-id');
+                    thoughtChain._stepsData = msg.steps.map(s => ({...s, _chainId: chainId}));
+                }
+
                 bubble.appendChild(stepsContainer);
             }
             
@@ -1843,33 +1886,204 @@
         },
         
         /**
-         * Render steps as compact expandable pills
+         * Render steps as Neural Flow thought-chain
          */
         renderSteps: function(steps) {
             if (!steps || steps.length === 0) return '';
-            
-            let html = '<div class="message-steps">';
+
+            const chainId = 'chain-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
+            const allComplete = steps.every(s => s.status === 'complete');
+            const hasRunning = steps.some(s => s.status === 'running');
+
+            let html = `<div class="thought-chain${allComplete ? ' chain-complete' : ''}" data-chain-id="${chainId}">`;
+            html += '<div class="thought-nodes">';
+
             steps.forEach((step, idx) => {
-                html += this.renderStep(step, idx);
+                // Add connector before node (except for first)
+                if (idx > 0) {
+                    const prevStep = steps[idx - 1];
+                    const connectorClass = prevStep.status === 'complete' ? 'completed' :
+                                          (step.status === 'running' ? 'active' : '');
+                    html += `<div class="node-connector ${connectorClass} animate-in cascade-delay-${idx}" style="--flow-delay: ${idx * 0.3}s"></div>`;
+                }
+
+                html += this.renderThoughtNode(step, idx, chainId);
             });
-            html += '</div>';
-            
+
+            // Add thinking trail if there's a running step
+            if (hasRunning) {
+                html += `<div class="thinking-trail"><span></span><span></span><span></span></div>`;
+            }
+
+            html += '</div>'; // close thought-nodes
+
+            // Add expansion panel container (hidden by default)
+            html += `<div class="expansion-panel" id="${chainId}-expansion"></div>`;
+
+            html += '</div>'; // close thought-chain
+
             return html;
         },
-        
+
         /**
-         * Render a single step as compact expandable pill
+         * Render a single thought node for Neural Flow
          */
-        renderStep: function(step, idx) {
+        renderThoughtNode: function(step, idx, chainId) {
             const statusClass = step.status || 'complete';
             const icon = this.getStepIcon(step);
             const title = step.title || step.type || 'Processing';
-            const shortTitle = title.length > 40 ? title.substring(0, 40) + '...' : title;
-            
-            // Never auto-expand steps - user requested collapsed by default
-            const shouldAutoOpen = false;
+            const shortTitle = title.length > 30 ? title.substring(0, 30) + '...' : title;
 
-            // Build detail content
+            // Format duration
+            let duration = '';
+            if (step.meta && step.meta.duration) {
+                duration = (step.meta.duration / 1000).toFixed(1) + 's';
+            } else if (step.duration) {
+                duration = (step.duration / 1000).toFixed(1) + 's';
+            }
+
+            // Build tooltip status class
+            const tooltipStatusClass = statusClass === 'complete' ? 'complete' :
+                                       statusClass === 'running' ? 'running' :
+                                       statusClass === 'error' ? 'error' : 'pending';
+
+            let html = `
+                <div class="thought-node ${statusClass} animate-in cascade-delay-${idx + 1}"
+                     data-step-idx="${idx}"
+                     data-chain-id="${chainId}"
+                     onclick="GantryAdvisor.toggleExpansion('${chainId}', ${idx})">
+                    <div class="node-core">${icon}</div>
+                    <div class="node-ring"></div>
+                    ${statusClass === 'running' ? '<div class="orbital-dots"><span></span><span></span><span></span></div>' : ''}
+                    <div class="node-particles"><span></span><span></span><span></span><span></span><span></span><span></span></div>
+                    <div class="node-tooltip">
+                        <div class="tooltip-title">${icon} ${this.escapeHtml(shortTitle)}</div>
+                        <div class="tooltip-meta">
+                            ${duration ? `<span class="tooltip-duration"><i class="fas fa-clock"></i> ${duration}</span>` : ''}
+                            <span class="tooltip-status ${tooltipStatusClass}">${statusClass}</span>
+                        </div>
+                        ${statusClass === 'running' ? '<div class="tooltip-progress"><div class="tooltip-progress-bar" style="width: 60%"></div></div>' : ''}
+                    </div>
+                </div>
+            `;
+
+            return html;
+        },
+
+        /**
+         * Toggle expansion panel for a thought node
+         */
+        toggleExpansion: function(chainId, stepIdx) {
+            const chain = document.querySelector(`[data-chain-id="${chainId}"]`);
+            if (!chain) return;
+
+            const panel = document.getElementById(chainId + '-expansion');
+            if (!panel) return;
+
+            const currentIdx = panel.getAttribute('data-expanded-idx');
+
+            // If clicking same node, close it
+            if (currentIdx === String(stepIdx) && panel.classList.contains('visible')) {
+                panel.classList.remove('visible');
+                panel.setAttribute('data-expanded-idx', '');
+                return;
+            }
+
+            // Get step data from the chain's stored data
+            const steps = chain._stepsData || [];
+            const step = steps[stepIdx];
+
+            if (!step) {
+                // Try to reconstruct from the node if data not available
+                console.warn('Step data not found for expansion');
+                return;
+            }
+
+            // Build expansion content
+            const content = this.buildExpansionContent(step);
+
+            panel.innerHTML = content;
+            panel.setAttribute('data-expanded-idx', stepIdx);
+            panel.classList.add('visible');
+
+            // Highlight the selected node
+            chain.querySelectorAll('.thought-node').forEach((n, i) => {
+                n.classList.toggle('expanded', i === stepIdx);
+            });
+        },
+
+        /**
+         * Close expansion panel
+         */
+        closeExpansion: function(chainId) {
+            const panel = document.getElementById(chainId + '-expansion');
+            if (panel) {
+                panel.classList.remove('visible');
+                panel.setAttribute('data-expanded-idx', '');
+            }
+
+            const chain = document.querySelector(`[data-chain-id="${chainId}"]`);
+            if (chain) {
+                chain.querySelectorAll('.thought-node').forEach(n => n.classList.remove('expanded'));
+            }
+        },
+
+        /**
+         * Build expansion panel content for a step
+         */
+        buildExpansionContent: function(step) {
+            const icon = this.getStepIcon(step);
+            const title = step.title || step.type || 'Processing';
+            const chainId = step._chainId || '';
+
+            // Format duration
+            let duration = '';
+            if (step.meta && step.meta.duration) {
+                duration = (step.meta.duration / 1000).toFixed(1) + 's';
+            } else if (step.duration) {
+                duration = (step.duration / 1000).toFixed(1) + 's';
+            }
+
+            // Get model info
+            let model = '';
+            if (step.meta && step.meta.model) {
+                model = step.meta.model;
+            }
+
+            let html = `
+                <div class="expansion-panel-header">
+                    <div class="expansion-panel-title">${icon} ${this.escapeHtml(title)}</div>
+                    <button class="expansion-panel-close" onclick="GantryAdvisor.closeExpansion('${chainId}')">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+                <div class="expansion-panel-body">
+            `;
+
+            // Add meta info
+            if (duration || model) {
+                html += '<div class="expansion-panel-meta">';
+                if (duration) {
+                    html += `<span><i class="fas fa-clock"></i> ${duration}</span>`;
+                }
+                if (model) {
+                    html += `<span class="meta-model"><i class="fas fa-brain"></i> ${this.escapeHtml(model)}</span>`;
+                }
+                html += '</div>';
+            }
+
+            // Add step-specific content
+            html += this.buildStepDetailContent(step);
+
+            html += '</div>'; // close body
+
+            return html;
+        },
+
+        /**
+         * Build detail content for a step (used in expansion panel)
+         */
+        buildStepDetailContent: function(step) {
             let detailContent = '';
 
             // Special handling for thinking steps - show AI plan if available
@@ -2629,14 +2843,14 @@
             if (step.error) {
                 detailContent += `<div class="tool-call-error"><i class="fas fa-exclamation-circle"></i> ${this.escapeHtml(step.error)}</div>`;
             }
-            
+
             // Add LLM calls if present
             if (step.type === 'llm_calls' && step.calls) {
                 detailContent += '<div class="llm-calls-list">';
                 step.calls.forEach(call => {
                     const duration = call.duration ? (call.duration / 1000).toFixed(1) + 's' : '';
                     const callStatus = call.error ? 'error' : '';
-                    const typeIcon = call.type === 'tool_call' ? 'fa-wrench' : 
+                    const typeIcon = call.type === 'tool_call' ? 'fa-wrench' :
                                     call.type === 'text' ? 'fa-comment' : 'fa-question';
                     const tierBadge = call.tier ? `<span class="llm-tier-badge tier-${call.tier}">T${call.tier}</span>` : '';
                     detailContent += `
@@ -2652,19 +2866,18 @@
                 });
                 detailContent += '</div>';
             }
-            
-            return `
-                <details class="tool-call ${statusClass}" ${shouldAutoOpen ? 'open' : ''}>
-                    <summary class="tool-call-header">
-                        <span class="tool-call-icon">${icon}</span>
-                        <span class="tool-call-title">${this.escapeHtml(shortTitle)}</span>
-                        <span class="tool-call-status status-${statusClass}">${statusClass}</span>
-                    </summary>
-                    <div class="tool-call-body">
-                        ${detailContent || '<div class="tool-call-content">No additional details</div>'}
-                    </div>
-                </details>
-            `;
+
+            return detailContent || '<div class="step-content">No additional details</div>';
+        },
+
+        /**
+         * LEGACY: Render a single step as compact expandable pill (kept for backwards compat)
+         */
+        renderStep: function(step, idx) {
+            // This now uses the thought node format internally but returns a
+            // backwards-compatible wrapper for any code that calls renderStep directly
+            const chainId = 'legacy-' + Date.now();
+            return this.renderThoughtNode(step, idx, chainId);
         },
         
         /**
