@@ -15,11 +15,11 @@
  * @NApiVersion 2.1
  * @NModuleScope Public
  */
-define(['N/query', 'N/runtime', 'N/search', 'N/log', './Lib_Shared'], function(query, runtime, search, log, Shared) {
+define(['N/query', 'N/runtime', 'N/search', 'N/log', './Lib_Core'], function(query, runtime, search, log, Core) {
     'use strict';
 
-    // Use shared utilities
-    const runSuiteQL = Shared.runSuiteQL;
+    // Use core utilities
+    const runSuiteQL = Core.runQuery;
 
     // ==========================================
     // DEFAULT CONFIGURATION

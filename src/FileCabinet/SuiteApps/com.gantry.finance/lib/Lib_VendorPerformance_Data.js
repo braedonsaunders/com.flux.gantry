@@ -19,11 +19,11 @@
  * @NApiVersion 2.1
  * @NModuleScope Public
  */
-define(['N/query', 'N/record', 'N/search', 'N/runtime', 'N/format', 'N/log', './Lib_Shared', './advisor/Lib_Advisor_Utils'],
-function(query, record, search, runtime, format, log, Shared, Utils) {
+define(['N/query', 'N/record', 'N/search', 'N/runtime', 'N/format', 'N/log', './Lib_Core', './advisor/Lib_Advisor_Utils'],
+function(query, record, search, runtime, format, log, Core, Utils) {
     'use strict';
-    
-    const runSuiteQL = Shared.runSuiteQL;
+
+    const runSuiteQL = Core.runQuery;
     
     // ==========================================
     // CONSTANTS

@@ -27,8 +27,5 @@
         <library>
             <scriptfile>[/SuiteApps/com.gantry.finance/lib/Lib_Config.js]</scriptfile>
         </library>
-        <library>
-            <scriptfile>[/SuiteApps/com.gantry.finance/lib/Lib_Shared.js]</scriptfile>
-        </library>
     </libraries>
 </suitelet>

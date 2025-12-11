@@ -15,12 +15,12 @@
  * @NApiVersion 2.1
  * @NModuleScope Public
  */
-define(['N/query', 'N/record', 'N/search', 'N/runtime', 'N/format', './Lib_Shared', './advisor/Lib_Advisor_Utils'],
-function(query, record, search, runtime, format, Shared, Utils) {
+define(['N/query', 'N/record', 'N/search', 'N/runtime', 'N/format', './Lib_Core', './advisor/Lib_Advisor_Utils'],
+function(query, record, search, runtime, format, Core, Utils) {
     'use strict';
-    
-    // Use shared runSuiteQL
-    const runSuiteQL = Shared.runSuiteQL;
+
+    // Use core runQuery
+    const runSuiteQL = Core.runQuery;
 
     // ==========================================
     // CONSTANTS
@@ -2432,7 +2432,7 @@ function(query, record, search, runtime, format, Shared, Utils) {
     // UTILITIES
     // ==========================================
     
-    // Note: runSuiteQL is imported from Lib_Shared
+    // Note: runSuiteQL is imported from Lib_Core
     
     function getDefaultStartDate() {
         const d = new Date();

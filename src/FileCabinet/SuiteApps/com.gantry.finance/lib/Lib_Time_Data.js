@@ -1,7 +1,7 @@
 /**
  * @NApiVersion 2.1
  */
-define(["N/query", "N/log", "./Lib_Shared", "./Lib_Config"], function (query, log, Shared, ConfigLib) {
+define(["N/query", "N/log", "./Lib_Core", "./Lib_Config"], function (query, log, Core, ConfigLib) {
 
     function getData(context) {
         try {
@@ -34,8 +34,8 @@ define(["N/query", "N/log", "./Lib_Shared", "./Lib_Config"], function (query, lo
             const priorStart = new Date(priorEnd);
             priorStart.setDate(priorStart.getDate() - daysInRange + 1);
 
-            const rangeStr = { start: Shared.formatDateYMD(rangeStart), end: Shared.formatDateYMD(rangeEnd) };
-            const priorStr = { start: Shared.formatDateYMD(priorStart), end: Shared.formatDateYMD(priorEnd) };
+            const rangeStr = { start: Core.formatDateForQuery(rangeStart), end: Core.formatDateForQuery(rangeEnd) };
+            const priorStr = { start: Core.formatDateForQuery(priorStart), end: Core.formatDateForQuery(priorEnd) };
 
             // 2. Fetch Data via SuiteQL (with subsidiary filter)
             const currentStats = fetchTimeStats(rangeStr.start, rangeStr.end, config, subsidiaryId);
@@ -102,8 +102,8 @@ define(["N/query", "N/log", "./Lib_Shared", "./Lib_Config"], function (query, lo
             // Start date: first day of the month that is (periodMonths - 1) months before pEnd
             const pStart = new Date(pEnd.getFullYear(), pEnd.getMonth() - periodMonths + 1, 1);
             
-            const pStartStr = Shared.formatDateYMD(pStart);
-            const pEndStr = Shared.formatDateYMD(pEnd);
+            const pStartStr = Core.formatDateForQuery(pStart);
+            const pEndStr = Core.formatDateForQuery(pEnd);
             
             // Create unique label
             const label = pEnd.toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
@@ -208,7 +208,7 @@ define(["N/query", "N/log", "./Lib_Shared", "./Lib_Config"], function (query, lo
               ${empTypeFilter}
             GROUP BY t.employee, BUILTIN.DF(t.employee), e.title, t.department, BUILTIN.DF(t.department), t.item, BUILTIN.DF(t.item)
         `;
-        return Shared.runSuiteQL(sql);
+        return Core.runQuery(sql);
     }
 
     function buildTimeCompany(curr, prior, days, config, noBillDepts) {
@@ -453,7 +453,7 @@ define(["N/query", "N/log", "./Lib_Shared", "./Lib_Config"], function (query, lo
         `;
 
         try {
-            const results = Shared.runSuiteQL(sql);
+            const results = Core.runQuery(sql);
 
             const entries = results.map(r => ({
                 entryId: r.entry_id,
@@ -531,7 +531,7 @@ define(["N/query", "N/log", "./Lib_Shared", "./Lib_Config"], function (query, lo
         `;
 
         try {
-            const results = Shared.runSuiteQL(sql);
+            const results = Core.runQuery(sql);
 
             const entries = results.map(r => ({
                 entryId: r.entry_id,
