@@ -175,6 +175,13 @@ define([
             // Create progress entry WITH agent state
             ProgressStore.create(requestId, message, agentState);
 
+            // Add initial thinking step AFTER create (so the request exists)
+            ProgressStore.addStep(requestId, {
+                type: 'thinking',
+                title: 'Understanding your question...',
+                status: 'complete'
+            });
+
             // Run first step immediately to get things started
             const stepResult = Agent.runAgentStep(requestId);
 
