@@ -1273,9 +1273,17 @@
                     // Get status
                     const status = await API.get('advisor_status', { id: requestId });
 
+                    console.log('[Advisor Polling]', {
+                        status: status.status,
+                        stepCount: status.steps ? status.steps.length : 0,
+                        lastStepCount: lastStepCount,
+                        hasNewSteps: status.steps && status.steps.length > lastStepCount
+                    });
+
                     // Update steps progressively
                     if (status.steps && status.steps.length > lastStepCount) {
                         const newSteps = status.steps.slice(lastStepCount);
+                        console.log('[Advisor Polling] Appending new steps:', newSteps.length, newSteps.map(s => s.title));
                         this.appendStepsToProgressiveMessage(progressiveMsgId, newSteps);
                         lastStepCount = status.steps.length;
                     }
@@ -1363,16 +1371,25 @@
          * Append steps to a progressive message
          */
         appendStepsToProgressiveMessage: function(msgId, steps) {
+            console.log('[Advisor appendSteps] msgId:', msgId, 'steps:', steps.length);
             const stepsContainer = document.getElementById(msgId + '-steps');
-            if (!stepsContainer) return;
+            if (!stepsContainer) {
+                console.log('[Advisor appendSteps] Container NOT FOUND:', msgId + '-steps');
+                return;
+            }
+            console.log('[Advisor appendSteps] Container found:', stepsContainer);
 
             // Remove thinking indicator if present
             const thinking = stepsContainer.querySelector('.progressive-thinking');
-            if (thinking) thinking.remove();
+            if (thinking) {
+                console.log('[Advisor appendSteps] Removing thinking indicator');
+                thinking.remove();
+            }
 
             // Add new steps
             steps.forEach((step, idx) => {
                 const stepHtml = this.renderStep(step, idx);
+                console.log('[Advisor appendSteps] Appending step:', step.title, 'HTML length:', stepHtml.length);
                 const stepDiv = document.createElement('div');
                 stepDiv.innerHTML = stepHtml;
                 stepsContainer.appendChild(stepDiv.firstChild);

@@ -168,12 +168,8 @@ ${dashboardDescriptions}
             finalResponse: null
         };
 
-        // Add initial thinking step
-        ProgressStore.addStep(requestId, {
-            type: 'thinking',
-            title: 'Understanding your question...',
-            status: 'complete'
-        });
+        // NOTE: Initial thinking step is added by the orchestrator AFTER ProgressStore.create()
+        // This ensures the request exists before adding steps
 
         return agentState;
     }
