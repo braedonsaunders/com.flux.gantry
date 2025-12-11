@@ -78,6 +78,9 @@
         // ════════════════════════════════════════════════════════════════════════
 
         init: function() {
+            // Reset lazy-load flags for fresh data on re-entry
+            this.pvmLoaded = false;
+            this.budgetLoaded = false;
             this.setupUI();
         },
 
