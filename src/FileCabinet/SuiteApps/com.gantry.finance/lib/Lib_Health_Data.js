@@ -2212,11 +2212,101 @@ define(["N/search", "N/query", "N/log", "./Lib_Core", "./Lib_Config"], function 
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
+    // SCORE-ONLY FUNCTION - Lightweight score computation for dashboard overview
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Get health score only - minimal queries for fast app load
+     * Uses existing computeHealthScore formula: 60% revenue coverage + 40% GM ratio
+     * @returns {Object} { score: 0-100, grade: 'A'-'F', label: string, trend: string }
+     */
+    function getScoreOnly() {
+        try {
+            // Get last 3 months of P&L data (minimal query)
+            var today = new Date();
+            var endDate = new Date(today.getFullYear(), today.getMonth(), 0);
+            var startDate = new Date(endDate.getFullYear(), endDate.getMonth() - 2, 1);
+            var start = Core.formatDateForQuery(startDate);
+            var end = Core.formatDateForQuery(endDate);
+            var months = 3;
+
+            var revenue = 0, cogs = 0, opex = 0;
+
+            try {
+                var sql = "SELECT " +
+                    "SUM(CASE WHEN a.accttype IN ('Income', 'OthIncome') THEN -tl.amount ELSE 0 END) as revenue, " +
+                    "SUM(CASE WHEN a.accttype = 'COGS' THEN tl.amount ELSE 0 END) as cogs, " +
+                    "SUM(CASE WHEN a.accttype IN ('Expense', 'OthExpense') THEN tl.amount ELSE 0 END) as opex " +
+                    "FROM transactionline tl " +
+                    "JOIN transaction t ON t.id = tl.transaction " +
+                    "JOIN account a ON a.id = tl.account " +
+                    "WHERE t.trandate BETWEEN TO_DATE('" + start + "', 'YYYY-MM-DD') AND TO_DATE('" + end + "', 'YYYY-MM-DD') " +
+                    "AND t.posting = 'T' AND tl.mainline = 'F'";
+                var result = Core.runQuery(sql);
+                if (result && result.length > 0) {
+                    revenue = parseFloat(result[0].revenue) || 0;
+                    cogs = parseFloat(result[0].cogs) || 0;
+                    opex = parseFloat(result[0].opex) || 0;
+                }
+            } catch (e) {
+                log.debug('Health P&L Query Error', e.message);
+            }
+
+            var gm = revenue - cogs;
+            var gmPct = revenue > 0 ? gm / revenue : 0;
+            var avgMonthlyRevenue = revenue / months;
+            var avgMonthlyOpex = opex / months;
+
+            var targetGM = 0.35;
+            try {
+                var config = ConfigLib.getStoredConfiguration('health');
+                if (config && config.targetGrossMargin) {
+                    targetGM = config.targetGrossMargin;
+                }
+            } catch (e) {}
+
+            var breakeven = targetGM > 0 ? avgMonthlyOpex / targetGM : 0;
+            var score = computeHealthScore(avgMonthlyRevenue, breakeven, gmPct, targetGM);
+
+            var grade = 'A';
+            var label = 'Excellent';
+            if (score < 40) { grade = 'F'; label = 'Critical'; }
+            else if (score < 50) { grade = 'D'; label = 'Poor'; }
+            else if (score < 60) { grade = 'C'; label = 'Fair'; }
+            else if (score < 70) { grade = 'B'; label = 'Good'; }
+            else if (score < 85) { grade = 'A'; label = 'Very Good'; }
+            else { grade = 'A+'; label = 'Excellent'; }
+
+            var coverage = breakeven > 0 ? avgMonthlyRevenue / breakeven : 1;
+            var trend = 'stable';
+            if (coverage < 0.8) trend = 'down';
+            else if (coverage > 1.2) trend = 'up';
+
+            return {
+                score: Math.round(score),
+                grade: grade,
+                label: label,
+                trend: trend,
+                details: {
+                    avgMonthlyRevenue: Core.round2(avgMonthlyRevenue),
+                    breakeven: Core.round2(breakeven),
+                    gmPct: Core.round2(gmPct * 100),
+                    coverage: Core.round2(coverage)
+                }
+            };
+        } catch (e) {
+            log.error('Health getScoreOnly Error', e.message);
+            return { score: 50, grade: 'C', label: 'Unknown', trend: 'stable', error: e.message };
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
     // EXPORT
     // ═══════════════════════════════════════════════════════════════════════════
 
     return {
         getData: getData,
-        handleRequest: handleRequest
+        handleRequest: handleRequest,
+        getScoreOnly: getScoreOnly
     };
 });

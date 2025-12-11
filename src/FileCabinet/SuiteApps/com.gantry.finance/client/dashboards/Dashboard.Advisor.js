@@ -61,6 +61,7 @@
 
             this.loadSession();
             this.renderCategories(); // Render category buttons dynamically
+            this.fetchDashboardScores(); // Fetch and render health scores
             this.bindEvents();
             this.renderAllMessages();
 
@@ -841,7 +842,115 @@
             
             container.innerHTML = html;
         },
-        
+
+        /**
+         * Fetch dashboard health scores from unified API endpoint
+         */
+        fetchDashboardScores: function() {
+            const self = this;
+            const grid = document.getElementById('scores-grid');
+            const timestamp = document.getElementById('scores-timestamp');
+
+            if (!grid) return;
+
+            // Show loading skeleton (already in HTML)
+            GantryAPI.get('dashboard_scores')
+                .then(function(response) {
+                    if (response && response.scores) {
+                        self.renderDashboardScores(response.scores);
+                        if (timestamp && response.computedAt) {
+                            const date = new Date(response.computedAt);
+                            timestamp.textContent = 'Updated ' + self.formatRelativeTime(date);
+                        }
+                    }
+                })
+                .catch(function(error) {
+                    console.error('[Advisor] Failed to fetch dashboard scores:', error);
+                    // Show error state
+                    grid.innerHTML = '<div class="scores-error">Unable to load health scores</div>';
+                });
+        },
+
+        /**
+         * Render dashboard health score cards
+         */
+        renderDashboardScores: function(scores) {
+            const grid = document.getElementById('scores-grid');
+            if (!grid) return;
+
+            // Define display order for dashboards
+            const displayOrder = ['health', 'time', 'integrity', 'customervalue', 'vendorperformance', 'spendvelocity', 'cashflow', 'burden'];
+
+            // Icon mapping for each dashboard
+            const iconMap = {
+                health: 'fa-heartbeat',
+                time: 'fa-clock',
+                integrity: 'fa-shield-alt',
+                customervalue: 'fa-users',
+                vendorperformance: 'fa-truck',
+                spendvelocity: 'fa-tachometer-alt',
+                cashflow: 'fa-dollar-sign',
+                burden: 'fa-layer-group'
+            };
+
+            // Trend icon mapping
+            const trendIcons = {
+                up: 'fa-arrow-up',
+                down: 'fa-arrow-down',
+                stable: 'fa-minus'
+            };
+
+            let html = '';
+
+            displayOrder.forEach(function(dashboardId) {
+                const scoreData = scores[dashboardId];
+                if (!scoreData) return;
+
+                const icon = iconMap[dashboardId] || 'fa-chart-bar';
+                const trendIcon = trendIcons[scoreData.trend] || 'fa-minus';
+                const trendClass = scoreData.trend || 'stable';
+
+                html += `
+                    <div class="score-card" data-dashboard="${dashboardId}" data-grade="${scoreData.grade}" onclick="GantryApp.navigate('${dashboardId}')">
+                        <div class="score-card-inner">
+                            <div class="score-icon">
+                                <i class="fas ${icon}"></i>
+                            </div>
+                            <div class="score-name">${scoreData.name || dashboardId}</div>
+                            <div class="score-value-container">
+                                <span class="score-number">${scoreData.score}</span>
+                                <span class="score-grade">${scoreData.grade}</span>
+                            </div>
+                            <div class="score-meta">
+                                <span class="score-label">${scoreData.label || ''}</span>
+                                <span class="score-trend ${trendClass}">
+                                    <i class="fas ${trendIcon}"></i>
+                                </span>
+                            </div>
+                        </div>
+                        <div class="score-tooltip">Click to view ${scoreData.name || dashboardId} dashboard</div>
+                    </div>
+                `;
+            });
+
+            grid.innerHTML = html;
+        },
+
+        /**
+         * Format date as relative time (e.g., "5 min ago")
+         */
+        formatRelativeTime: function(date) {
+            const now = new Date();
+            const diffMs = now - date;
+            const diffMin = Math.floor(diffMs / 60000);
+            const diffHrs = Math.floor(diffMs / 3600000);
+
+            if (diffMin < 1) return 'just now';
+            if (diffMin < 60) return diffMin + ' min ago';
+            if (diffHrs < 24) return diffHrs + ' hr ago';
+            return date.toLocaleDateString();
+        },
+
         /**
          * Cleanup when leaving advisor
          * Saves session state so active requests can be resumed on return

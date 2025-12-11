@@ -119,7 +119,12 @@ define([
             if (action === 'openrouter_models') {
                 return getOpenRouterModels(context.apiKey);
             }
-            
+
+            // Dashboard Scores - unified endpoint for all health scores
+            if (action === 'dashboard_scores') {
+                return getDashboardScores();
+            }
+
             // Check for dashboard data requests
             if (DATA_LIBS[action]) {
                 return getDashboardData(action, context);
@@ -450,14 +455,71 @@ define([
             }
         };
     }
-    
+
+    /**
+     * Get all dashboard health scores in a single call
+     * Optimized for fast app load - uses lightweight score-only functions
+     * @returns {Object} { scores: {...}, computedAt: string }
+     */
+    function getDashboardScores() {
+        const startTime = Date.now();
+        const scores = {};
+        const errors = [];
+
+        // Define dashboard order and metadata
+        const dashboardMeta = {
+            health: { name: 'Financial Health', icon: 'heartbeat', color: '#4CAF50' },
+            time: { name: 'Time Utilization', icon: 'clock', color: '#2196F3' },
+            integrity: { name: 'Data Integrity', icon: 'shield', color: '#9C27B0' },
+            customervalue: { name: 'Customer Value', icon: 'users', color: '#FF9800' },
+            vendorperformance: { name: 'Vendor Performance', icon: 'truck', color: '#00BCD4' },
+            spendvelocity: { name: 'Spend Velocity', icon: 'trending-up', color: '#F44336' },
+            cashflow: { name: 'Cash Flow', icon: 'dollar-sign', color: '#4CAF50' },
+            burden: { name: 'Burden Rates', icon: 'layers', color: '#795548' }
+        };
+
+        // Call getScoreOnly for each dashboard that has the function
+        Object.keys(DATA_LIBS).forEach(function(dashboardId) {
+            if (!dashboardMeta[dashboardId]) return; // Skip if not in our list
+
+            try {
+                const lib = DATA_LIBS[dashboardId];
+                if (lib && typeof lib.getScoreOnly === 'function') {
+                    const result = lib.getScoreOnly();
+                    scores[dashboardId] = {
+                        ...result,
+                        ...dashboardMeta[dashboardId]
+                    };
+                }
+            } catch (e) {
+                errors.push({ dashboard: dashboardId, error: e.message });
+                // Provide fallback score
+                scores[dashboardId] = {
+                    score: 50,
+                    grade: 'C',
+                    label: 'Unable to calculate',
+                    trend: 'stable',
+                    error: e.message,
+                    ...dashboardMeta[dashboardId]
+                };
+            }
+        });
+
+        return {
+            scores: scores,
+            computedAt: new Date().toISOString(),
+            computeTimeMs: Date.now() - startTime,
+            errors: errors.length > 0 ? errors : undefined
+        };
+    }
+
     /**
      * Get data for a specific dashboard
      */
     function getDashboardData(dashboardId, context) {
         const dataLib = DATA_LIBS[dashboardId];
         const dashboard = DashboardRegistry.getDashboard(dashboardId);
-        
+
         if (!dataLib) {
             return { error: 'No data library for dashboard: ' + dashboardId };
         }

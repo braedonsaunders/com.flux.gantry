@@ -552,5 +552,88 @@ define(["N/query", "N/log", "./Lib_Core", "./Lib_Config"], function (query, log,
         }
     }
 
-    return { getData, handleRequest };
+    // ═══════════════════════════════════════════════════════════════════════════
+    // SCORE-ONLY FUNCTION - Lightweight score computation for dashboard overview
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Get time utilization score only - minimal queries for fast app load
+     * Score is billable % converted to 0-100 scale (target typically 70%)
+     * @returns {Object} { score: 0-100, grade: 'A'-'F', label: string, trend: string }
+     */
+    function getScoreOnly() {
+        try {
+            // Get last month's time data (single query)
+            var today = new Date();
+            var endDate = new Date(today.getFullYear(), today.getMonth(), 0);
+            var startDate = new Date(endDate.getFullYear(), endDate.getMonth(), 1);
+            var start = Core.formatDateForQuery(startDate);
+            var end = Core.formatDateForQuery(endDate);
+
+            var totalHours = 0, billableHours = 0;
+
+            try {
+                var sql = "SELECT " +
+                    "SUM(t.hours) as total_hours, " +
+                    "SUM(CASE WHEN t.customer IS NOT NULL THEN t.hours ELSE 0 END) as billable_hours " +
+                    "FROM timebill t " +
+                    "WHERE t.trandate BETWEEN TO_DATE('" + start + "', 'YYYY-MM-DD') AND TO_DATE('" + end + "', 'YYYY-MM-DD')";
+                var result = Core.runQuery(sql);
+                if (result && result.length > 0) {
+                    totalHours = parseFloat(result[0].total_hours) || 0;
+                    billableHours = parseFloat(result[0].billable_hours) || 0;
+                }
+            } catch (e) {
+                log.debug('Time Query Error', e.message);
+            }
+
+            // Calculate billable percentage
+            var billablePct = totalHours > 0 ? (billableHours / totalHours) * 100 : 0;
+
+            // Get target from config (default 70%)
+            var targetPct = 70;
+            try {
+                var config = ConfigLib.getStoredConfiguration('time');
+                if (config && config.targetBillablePercent) {
+                    targetPct = config.targetBillablePercent;
+                }
+            } catch (e) {}
+
+            // Score is how well we're meeting the target (scaled 0-100)
+            // If billable% >= target, score approaches 100
+            // Score = min(100, (billable% / target%) * 100)
+            var score = Math.min(100, (billablePct / targetPct) * 100);
+
+            var grade = 'A';
+            var label = 'Excellent';
+            if (score < 50) { grade = 'F'; label = 'Critical'; }
+            else if (score < 60) { grade = 'D'; label = 'Poor'; }
+            else if (score < 70) { grade = 'C'; label = 'Fair'; }
+            else if (score < 80) { grade = 'B'; label = 'Good'; }
+            else if (score < 90) { grade = 'A'; label = 'Very Good'; }
+            else { grade = 'A+'; label = 'Excellent'; }
+
+            var trend = 'stable';
+            if (billablePct < targetPct * 0.8) trend = 'down';
+            else if (billablePct > targetPct * 1.1) trend = 'up';
+
+            return {
+                score: Math.round(score),
+                grade: grade,
+                label: label,
+                trend: trend,
+                details: {
+                    totalHours: Core.round2(totalHours),
+                    billableHours: Core.round2(billableHours),
+                    billablePct: Core.round2(billablePct),
+                    targetPct: targetPct
+                }
+            };
+        } catch (e) {
+            log.error('Time getScoreOnly Error', e.message);
+            return { score: 50, grade: 'C', label: 'Unknown', trend: 'stable', error: e.message };
+        }
+    }
+
+    return { getData, handleRequest, getScoreOnly };
 });
