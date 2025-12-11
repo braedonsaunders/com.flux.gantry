@@ -1392,7 +1392,13 @@
                 console.log('[Advisor appendSteps] Appending step:', step.title, 'HTML length:', stepHtml.length);
                 const stepDiv = document.createElement('div');
                 stepDiv.innerHTML = stepHtml;
-                stepsContainer.appendChild(stepDiv.firstChild);
+                // Use firstElementChild instead of firstChild to skip whitespace text nodes
+                const stepElement = stepDiv.firstElementChild;
+                if (stepElement) {
+                    stepsContainer.appendChild(stepElement);
+                } else {
+                    console.error('[Advisor appendSteps] No element found in rendered HTML');
+                }
             });
 
             this.scrollToBottom();
@@ -1448,8 +1454,10 @@
             messages.push(msg);
             this.saveSession();
 
-            // Generate follow-up suggestions
-            this.generateFollowUpSuggestions(response);
+            // Generate follow-up suggestions (if method exists)
+            if (typeof this.generateFollowUpSuggestions === 'function') {
+                this.generateFollowUpSuggestions(response);
+            }
 
             this.scrollToBottom();
         },
