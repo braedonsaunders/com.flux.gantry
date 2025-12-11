@@ -1861,6 +1861,7 @@ IMPORTANT SuiteQL notes:
 
     /**
      * Get tool definitions formatted for LLM
+     * Returns flat format for NetSuite N/llm compatibility
      * @returns {Array} Array of tool definitions for LLM function calling
      */
     function getToolDefinitions() {
@@ -1868,13 +1869,11 @@ IMPORTANT SuiteQL notes:
 
         for (const toolName in ALL_TOOLS) {
             const tool = ALL_TOOLS[toolName];
+            // Use flat format compatible with NetSuite N/llm
             definitions.push({
-                type: 'function',
-                function: {
-                    name: tool.name,
-                    description: tool.description,
-                    parameters: tool.parameters
-                }
+                name: tool.name,
+                description: tool.description,
+                parameters: tool.parameters
             });
         }
 
