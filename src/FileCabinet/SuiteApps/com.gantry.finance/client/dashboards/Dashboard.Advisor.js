@@ -1910,6 +1910,22 @@
             
             // Special handling for tool_call steps (from v2 Agent)
             if (step.type === 'tool_call') {
+                // Show metadata (duration, model info)
+                if (step.meta) {
+                    const meta = step.meta;
+                    let metaItems = [];
+                    if (meta.duration) {
+                        const seconds = (meta.duration / 1000).toFixed(1);
+                        metaItems.push(`<span class="meta-duration"><i class="fas fa-clock"></i> ${seconds}s</span>`);
+                    }
+                    if (meta.isLlmCall && meta.model) {
+                        metaItems.push(`<span class="meta-model"><i class="fas fa-brain"></i> ${this.escapeHtml(meta.model)}</span>`);
+                    }
+                    if (metaItems.length > 0) {
+                        detailContent += `<div class="step-meta">${metaItems.join(' ')}</div>`;
+                    }
+                }
+
                 // Show tool badge
                 if (step.tool) {
                     const toolIcons = {
@@ -1955,13 +1971,94 @@
                     }
                 }
 
-                // Show result count
-                if (step.rowCount !== undefined) {
-                    detailContent += `<div class="step-result-count"><i class="fas fa-table"></i> ${step.rowCount} rows returned</div>`;
+                // Show resolved entity details (from resolve_entity, resolve_gl_account, etc.)
+                if (step.entity) {
+                    const e = step.entity;
+                    detailContent += `<div class="step-entity-result">
+                        <div class="entity-found"><i class="fas fa-check-circle"></i> <strong>Found:</strong> ${this.escapeHtml(e.name)}</div>
+                        <div class="entity-details">
+                            <span class="entity-type"><i class="fas fa-tag"></i> Type: ${this.escapeHtml(e.type)}</span>
+                            <span class="entity-id"><i class="fas fa-key"></i> ID: <code>${e.id}</code></span>
+                        </div>
+                    </div>`;
+                } else if (step.bestMatch) {
+                    const m = step.bestMatch;
+                    detailContent += `<div class="step-entity-result">
+                        <div class="entity-found"><i class="fas fa-check-circle"></i> <strong>Found:</strong> ${this.escapeHtml(m.name || m.account_name)}</div>
+                        <div class="entity-details">
+                            <span class="entity-id"><i class="fas fa-key"></i> ID: <code>${m.id}</code></span>
+                            ${m.account_type ? `<span class="entity-type"><i class="fas fa-tag"></i> ${this.escapeHtml(m.account_type)}</span>` : ''}
+                            ${m.dimension_type ? `<span class="entity-type"><i class="fas fa-layer-group"></i> ${this.escapeHtml(m.dimension_type)}</span>` : ''}
+                        </div>
+                    </div>`;
+                } else if (step.found === false) {
+                    detailContent += `<div class="step-entity-not-found">
+                        <i class="fas fa-times-circle"></i> Entity not found - try different search terms
+                    </div>`;
                 }
 
-                // Show summary
-                if (step.summary) {
+                // Show result count and totals
+                if (step.rowCount !== undefined && step.rowCount > 0) {
+                    detailContent += `<div class="step-result-count"><i class="fas fa-table"></i> ${step.rowCount} rows returned</div>`;
+
+                    // Show computed totals if present
+                    if (step.totalCash !== undefined) {
+                        detailContent += `<div class="step-total"><i class="fas fa-money-bill-wave"></i> Total Cash: ${this.formatCurrency(step.totalCash)}</div>`;
+                    }
+                    if (step.totalExpenses !== undefined) {
+                        detailContent += `<div class="step-total"><i class="fas fa-receipt"></i> Total Expenses: ${this.formatCurrency(step.totalExpenses)}</div>`;
+                    }
+                }
+
+                // Show data preview (first few rows)
+                if (step.preview && step.preview.length > 0) {
+                    const previewRows = step.preview.slice(0, 5);
+                    const columns = step.columns && step.columns.length > 0
+                        ? step.columns
+                        : Object.keys(previewRows[0] || {});
+
+                    if (columns.length > 0) {
+                        detailContent += '<div class="step-data-preview">';
+                        detailContent += '<div class="preview-header"><i class="fas fa-eye"></i> Data Preview</div>';
+                        detailContent += '<div class="preview-table-wrapper"><table class="preview-table"><thead><tr>';
+                        columns.slice(0, 6).forEach(col => {  // Max 6 columns
+                            detailContent += `<th>${this.escapeHtml(col)}</th>`;
+                        });
+                        if (columns.length > 6) {
+                            detailContent += '<th>...</th>';
+                        }
+                        detailContent += '</tr></thead><tbody>';
+                        previewRows.forEach(row => {
+                            detailContent += '<tr>';
+                            columns.slice(0, 6).forEach(col => {
+                                let val = row[col];
+                                // Format numbers and currency
+                                if (typeof val === 'number') {
+                                    if (col.toLowerCase().includes('amount') || col.toLowerCase().includes('total') ||
+                                        col.toLowerCase().includes('spend') || col.toLowerCase().includes('balance') ||
+                                        col.toLowerCase().includes('debit') || col.toLowerCase().includes('credit')) {
+                                        val = this.formatCurrency(val);
+                                    } else {
+                                        val = val.toLocaleString();
+                                    }
+                                }
+                                detailContent += `<td>${this.escapeHtml(String(val ?? ''))}</td>`;
+                            });
+                            if (columns.length > 6) {
+                                detailContent += '<td>...</td>';
+                            }
+                            detailContent += '</tr>';
+                        });
+                        detailContent += '</tbody></table></div>';
+                        if (step.rowCount > previewRows.length) {
+                            detailContent += `<div class="preview-more">... and ${step.rowCount - previewRows.length} more rows</div>`;
+                        }
+                        detailContent += '</div>';
+                    }
+                }
+
+                // Show summary (fallback if no rich data)
+                if (step.summary && !step.entity && !step.bestMatch && !step.preview) {
                     detailContent += `<div class="step-summary"><i class="fas fa-check-circle"></i> ${this.escapeHtml(step.summary)}</div>`;
                 }
             }

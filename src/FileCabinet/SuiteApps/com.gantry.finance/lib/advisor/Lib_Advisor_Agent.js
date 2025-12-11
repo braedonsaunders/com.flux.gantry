@@ -654,22 +654,31 @@ ${dashboardDescriptions}
                         status: 'running'
                     });
 
-                    // Execute the tool
+                    // Execute the tool with timing
+                    const toolStartTime = Date.now();
                     const result = Tools.executeTool(toolName, parsedArgs);
+                    const toolDuration = Date.now() - toolStartTime;
 
-                    // Update progress step with result
+                    // Format rich result for frontend step
+                    const stepResult = formatResultForStep(result, toolName, toolDuration);
+
+                    // Update progress step with RICH result data
                     ProgressStore.updateLastStep(requestId, {
                         status: 'complete',
-                        rowCount: result.rowCount || (result.rows ? result.rows.length : 0),
-                        success: result.success,
-                        summary: summarizeToolResult(result)
+                        ...stepResult,
+                        // Metadata
+                        meta: {
+                            duration: toolDuration,
+                            isLlmCall: false
+                        }
                     });
 
                     agentState.allToolCalls.push({
                         tool: toolName,
                         args: parsedArgs,
                         result: result,
-                        displayName: displayName
+                        displayName: displayName,
+                        duration: toolDuration
                     });
 
                     // Track failures/successes for reflection
@@ -682,10 +691,10 @@ ${dashboardDescriptions}
                         clearFailureState(agentState);
                     }
 
-                    // Add to conversation context for next iteration
-                    agentState.conversationContext += `\nTool: ${toolName}\n`;
+                    // Add to conversation context WITH ACTUAL DATA for LLM to use
+                    agentState.conversationContext += `\n--- Tool: ${toolName} ---\n`;
                     agentState.conversationContext += `Arguments: ${JSON.stringify(parsedArgs)}\n`;
-                    agentState.conversationContext += `Result: ${summarizeToolResult(result)}\n`;
+                    agentState.conversationContext += formatResultForLLM(result, toolName) + '\n';
 
                     executedAny = true;
                 }
@@ -1003,34 +1012,43 @@ ${dashboardDescriptions}
                             status: 'running'
                         });
 
-                        // Execute the tool
+                        // Execute the tool with timing
+                        const toolStartTime = Date.now();
                         const result = Tools.executeTool(toolName, parsedArgs);
+                        const toolDuration = Date.now() - toolStartTime;
 
-                        // Update progress step with result
+                        // Format rich result for frontend step
+                        const stepResult = formatResultForStep(result, toolName, toolDuration);
+
+                        // Update progress step with RICH result data
                         ProgressStore.updateLastStep(requestId, {
                             status: 'complete',
-                            rowCount: result.rowCount || (result.rows ? result.rows.length : 0),
-                            success: result.success,
-                            summary: summarizeToolResult(result)
+                            ...stepResult,
+                            meta: {
+                                duration: toolDuration,
+                                isLlmCall: false
+                            }
                         });
 
                         toolResults.push({
                             tool: toolName,
                             args: parsedArgs,
-                            result: result
+                            result: result,
+                            duration: toolDuration
                         });
 
                         allToolCalls.push({
                             tool: toolName,
                             args: parsedArgs,
                             result: result,
-                            displayName: displayName
+                            displayName: displayName,
+                            duration: toolDuration
                         });
 
-                        // Add to conversation context for next iteration
-                        conversationContext += `\nTool: ${toolName}\n`;
+                        // Add to conversation context WITH ACTUAL DATA for LLM to use
+                        conversationContext += `\n--- Tool: ${toolName} ---\n`;
                         conversationContext += `Arguments: ${JSON.stringify(parsedArgs)}\n`;
-                        conversationContext += `Result: ${summarizeToolResult(result)}\n`;
+                        conversationContext += formatResultForLLM(result, toolName) + '\n';
                     }
 
                     lastToolResults = toolResults;
@@ -1195,7 +1213,7 @@ ${dashboardDescriptions}
     }
 
     /**
-     * Summarize a tool result for progress display
+     * Summarize a tool result for progress display (short version)
      */
     function summarizeToolResult(result) {
         if (!result.success) {
@@ -1207,15 +1225,16 @@ ${dashboardDescriptions}
         }
 
         if (result.found === true && result.entity) {
-            return `Found: ${result.entity.name} (${result.entity.type})`;
+            return `Found: ${result.entity.name} (${result.entity.type}, ID: ${result.entity.id})`;
         }
 
         if (result.found === true && result.bestMatch) {
             return `Found: ${result.bestMatch.name || result.bestMatch.account_name || JSON.stringify(result.bestMatch)}`;
         }
 
-        if (result.rowCount !== undefined) {
-            return `Found ${result.rowCount} results`;
+        if (result.rowCount !== undefined || (result.rows && result.rows.length > 0)) {
+            const count = result.rowCount || result.rows.length;
+            return `Found ${count} results`;
         }
 
         if (result.data) {
@@ -1223,6 +1242,157 @@ ${dashboardDescriptions}
         }
 
         return 'Completed';
+    }
+
+    /**
+     * Format tool result WITH ACTUAL DATA for LLM context
+     * This is critical - the LLM needs to SEE the data to use it
+     */
+    function formatResultForLLM(result, toolName) {
+        const lines = [];
+
+        if (!result.success) {
+            lines.push(`Status: FAILED`);
+            lines.push(`Error: ${result.error || 'Unknown error'}`);
+            return lines.join('\n');
+        }
+
+        lines.push(`Status: SUCCESS`);
+
+        // Entity resolution - include the ID prominently
+        if (result.found === true && result.entity) {
+            lines.push(`Found Entity: ${result.entity.name}`);
+            lines.push(`Type: ${result.entity.type}`);
+            lines.push(`ID: ${result.entity.id} ← USE THIS ID IN SUBSEQUENT QUERIES`);
+            return lines.join('\n');
+        }
+
+        if (result.found === false) {
+            lines.push(`Entity not found - try a different search term or broader query`);
+            return lines.join('\n');
+        }
+
+        // Classification/Account resolution
+        if (result.found === true && result.bestMatch) {
+            lines.push(`Found: ${result.bestMatch.name || result.bestMatch.account_name}`);
+            lines.push(`ID: ${result.bestMatch.id} ← USE THIS ID IN SUBSEQUENT QUERIES`);
+            if (result.bestMatch.account_type) lines.push(`Type: ${result.bestMatch.account_type}`);
+            if (result.bestMatch.dimension_type) lines.push(`Dimension: ${result.bestMatch.dimension_type}`);
+            return lines.join('\n');
+        }
+
+        // Query results with ACTUAL DATA
+        const rows = result.rows || [];
+        const rowCount = result.rowCount || rows.length;
+
+        if (rowCount > 0) {
+            lines.push(`Row Count: ${rowCount}`);
+
+            // Include column names if available
+            if (result.columns && result.columns.length > 0) {
+                lines.push(`Columns: ${result.columns.join(', ')}`);
+            }
+
+            // Include ACTUAL DATA - first 10 rows so LLM can see and use them
+            const previewRows = rows.slice(0, 10);
+            if (previewRows.length > 0) {
+                lines.push(`\nData (first ${previewRows.length} rows):`);
+                lines.push('```json');
+                lines.push(JSON.stringify(previewRows, null, 2));
+                lines.push('```');
+
+                if (rowCount > 10) {
+                    lines.push(`... and ${rowCount - 10} more rows`);
+                }
+            }
+
+            // Include totals if present
+            if (result.totalCash !== undefined) lines.push(`\nTotal Cash: $${result.totalCash.toLocaleString()}`);
+            if (result.totalExpenses !== undefined) lines.push(`\nTotal Expenses: $${result.totalExpenses.toLocaleString()}`);
+            if (result.variance) lines.push(`\nVariance: ${JSON.stringify(result.variance)}`);
+
+            return lines.join('\n');
+        }
+
+        // Dashboard data
+        if (result.data) {
+            lines.push(`Dashboard: ${result.dashboard || toolName}`);
+            lines.push(`\nDashboard Data:`);
+            lines.push('```json');
+            // Limit dashboard data size but include meaningful content
+            const dataStr = JSON.stringify(result.data, null, 2);
+            if (dataStr.length > 3000) {
+                lines.push(dataStr.substring(0, 3000) + '\n... (truncated)');
+            } else {
+                lines.push(dataStr);
+            }
+            lines.push('```');
+            return lines.join('\n');
+        }
+
+        // Schema exploration
+        if (result.schema) {
+            lines.push(`Table: ${result.table}`);
+            lines.push(`Schema: ${JSON.stringify(result.schema, null, 2)}`);
+            return lines.join('\n');
+        }
+
+        return 'Completed (no data returned)';
+    }
+
+    /**
+     * Format tool result for frontend step display
+     * Includes preview data and metadata for rich rendering
+     */
+    function formatResultForStep(result, toolName, duration) {
+        const stepData = {
+            success: result.success,
+            summary: summarizeToolResult(result),
+            duration: duration || 0
+        };
+
+        if (!result.success) {
+            stepData.error = result.error || 'Unknown error';
+            return stepData;
+        }
+
+        // Entity resolution
+        if (result.found !== undefined) {
+            stepData.found = result.found;
+            if (result.entity) {
+                stepData.entity = result.entity;
+            }
+            if (result.bestMatch) {
+                stepData.bestMatch = result.bestMatch;
+            }
+            return stepData;
+        }
+
+        // Query results - include preview
+        const rows = result.rows || [];
+        const rowCount = result.rowCount || rows.length;
+
+        if (rowCount > 0) {
+            stepData.rowCount = rowCount;
+            stepData.columns = result.columns || [];
+            stepData.preview = rows.slice(0, 5);  // First 5 rows for frontend preview
+
+            // Include computed totals
+            if (result.totalCash !== undefined) stepData.totalCash = result.totalCash;
+            if (result.totalExpenses !== undefined) stepData.totalExpenses = result.totalExpenses;
+            if (result.variance) stepData.variance = result.variance;
+
+            return stepData;
+        }
+
+        // Dashboard data - include key metrics
+        if (result.data) {
+            stepData.dashboard = result.dashboard || toolName;
+            stepData.dashboardData = result.data;
+            return stepData;
+        }
+
+        return stepData;
     }
 
     /**
