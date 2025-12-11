@@ -177,11 +177,17 @@ define(["N/query", "N/log", "./Lib_Shared", "./Lib_Config"], function (query, lo
             log.error('Invalid laborCostField', 'laborCostField was empty after sanitization');
             return [];
         }
-        
+
         // FIXED: Validate subsidiaryId is numeric to prevent SQL injection
         const sanitizedSubsidiaryId = subsidiaryId ? String(subsidiaryId).replace(/[^0-9]/g, '') : null;
         const subsidiaryFilter = sanitizedSubsidiaryId ? ` AND e.subsidiary = ${sanitizedSubsidiaryId}` : '';
-        
+
+        // Build employee type exclusion filter
+        const excludeEmpTypes = (config.excludeEmployeeTypes || []).map(t => String(t).replace(/[^0-9]/g, '')).filter(t => t);
+        const empTypeFilter = excludeEmpTypes.length > 0
+            ? ` AND (e.employeetype IS NULL OR e.employeetype NOT IN (${excludeEmpTypes.join(',')}))`
+            : '';
+
         const sql = `
             SELECT
                 t.employee,
@@ -196,9 +202,10 @@ define(["N/query", "N/log", "./Lib_Shared", "./Lib_Config"], function (query, lo
                 SUM(CASE WHEN t.customer IS NULL THEN t.hours * NVL(e.${laborCostField}, 0) ELSE 0 END) as non_billable_cost
             FROM timebill t
             LEFT JOIN employee e ON t.employee = e.id
-            WHERE t.trandate >= TO_DATE('${start}', 'YYYY-MM-DD') 
+            WHERE t.trandate >= TO_DATE('${start}', 'YYYY-MM-DD')
               AND t.trandate <= TO_DATE('${end}', 'YYYY-MM-DD')
               ${subsidiaryFilter}
+              ${empTypeFilter}
             GROUP BY t.employee, BUILTIN.DF(t.employee), e.title, t.department, BUILTIN.DF(t.department), t.item, BUILTIN.DF(t.item)
         `;
         return Shared.runSuiteQL(sql);
@@ -374,48 +381,58 @@ define(["N/query", "N/log", "./Lib_Shared", "./Lib_Config"], function (query, lo
      */
     function handleRequest(data) {
         const subAction = data.subAction;
-        
+
+        // Load config for employee type filtering
+        const config = ConfigLib.getStoredConfiguration('time');
+
         if (subAction === 'employee_entries') {
-            return getEmployeeTimeEntries(data);
+            return getEmployeeTimeEntries(data, config);
         }
-        
+
         if (subAction === 'item_entries') {
-            return getItemTimeEntries(data);
+            return getItemTimeEntries(data, config);
         }
-        
+
         return { status: 'error', message: 'Unknown subAction: ' + subAction };
     }
 
     /**
      * Get individual time entries for an employee
      */
-    function getEmployeeTimeEntries(data) {
+    function getEmployeeTimeEntries(data, config) {
         const employeeId = data.employeeId;
         const startDate = data.startDate;
         const endDate = data.endDate;
         const subsidiaryId = data.subsidiary || null;
-        
+
         if (!employeeId) {
             return { status: 'error', message: 'employeeId is required' };
         }
-        
+
         // FIXED: Sanitize all inputs to prevent SQL injection
         const sanitizedEmployeeId = String(employeeId).replace(/[^0-9]/g, '');
         const sanitizedSubsidiaryId = subsidiaryId ? String(subsidiaryId).replace(/[^0-9]/g, '') : null;
         const sanitizedStartDate = String(startDate || '').replace(/[^0-9\-]/g, '');
         const sanitizedEndDate = String(endDate || '').replace(/[^0-9\-]/g, '');
-        
+
         if (!sanitizedEmployeeId) {
             return { status: 'error', message: 'Invalid employeeId' };
         }
-        
+
         let subsidiaryFilter = '';
         if (sanitizedSubsidiaryId) {
             subsidiaryFilter = `AND e.subsidiary = ${sanitizedSubsidiaryId}`;
         }
-        
+
+        // Build employee type exclusion filter
+        const cfg = config || {};
+        const excludeEmpTypes = (cfg.excludeEmployeeTypes || []).map(t => String(t).replace(/[^0-9]/g, '')).filter(t => t);
+        const empTypeFilter = excludeEmpTypes.length > 0
+            ? ` AND (e.employeetype IS NULL OR e.employeetype NOT IN (${excludeEmpTypes.join(',')}))`
+            : '';
+
         const sql = `
-            SELECT 
+            SELECT
                 t.id as entry_id,
                 TO_CHAR(t.trandate, 'YYYY-MM-DD') as date,
                 t.hours,
@@ -431,12 +448,13 @@ define(["N/query", "N/log", "./Lib_Shared", "./Lib_Config"], function (query, lo
               AND t.trandate >= TO_DATE('${sanitizedStartDate}', 'YYYY-MM-DD')
               AND t.trandate <= TO_DATE('${sanitizedEndDate}', 'YYYY-MM-DD')
               ${subsidiaryFilter}
+              ${empTypeFilter}
             ORDER BY t.trandate DESC
         `;
-        
+
         try {
             const results = Shared.runSuiteQL(sql);
-            
+
             const entries = results.map(r => ({
                 entryId: r.entry_id,
                 date: r.date,
@@ -448,7 +466,7 @@ define(["N/query", "N/log", "./Lib_Shared", "./Lib_Config"], function (query, lo
                 customerName: r.customer_name || '',
                 memo: r.memo || ''
             }));
-            
+
             return { status: 'success', entries: entries };
         } catch (e) {
             log.error('Employee Entries Error', e);
@@ -459,33 +477,40 @@ define(["N/query", "N/log", "./Lib_Shared", "./Lib_Config"], function (query, lo
     /**
      * Get individual time entries for a service item
      */
-    function getItemTimeEntries(data) {
+    function getItemTimeEntries(data, config) {
         const itemId = data.itemId;
         const startDate = data.startDate;
         const endDate = data.endDate;
         const subsidiaryId = data.subsidiary || null;
-        
+
         if (!itemId) {
             return { status: 'error', message: 'itemId is required' };
         }
-        
+
         // FIXED: Sanitize all inputs to prevent SQL injection
         const sanitizedItemId = String(itemId).replace(/[^0-9]/g, '');
         const sanitizedSubsidiaryId = subsidiaryId ? String(subsidiaryId).replace(/[^0-9]/g, '') : null;
         const sanitizedStartDate = String(startDate || '').replace(/[^0-9\-]/g, '');
         const sanitizedEndDate = String(endDate || '').replace(/[^0-9\-]/g, '');
-        
+
         if (!sanitizedItemId) {
             return { status: 'error', message: 'Invalid itemId' };
         }
-        
+
         let subsidiaryFilter = '';
         if (sanitizedSubsidiaryId) {
             subsidiaryFilter = `AND e.subsidiary = ${sanitizedSubsidiaryId}`;
         }
-        
+
+        // Build employee type exclusion filter
+        const cfg = config || {};
+        const excludeEmpTypes = (cfg.excludeEmployeeTypes || []).map(t => String(t).replace(/[^0-9]/g, '')).filter(t => t);
+        const empTypeFilter = excludeEmpTypes.length > 0
+            ? ` AND (e.employeetype IS NULL OR e.employeetype NOT IN (${excludeEmpTypes.join(',')}))`
+            : '';
+
         const sql = `
-            SELECT 
+            SELECT
                 t.id as entry_id,
                 TO_CHAR(t.trandate, 'YYYY-MM-DD') as date,
                 t.hours,
@@ -501,12 +526,13 @@ define(["N/query", "N/log", "./Lib_Shared", "./Lib_Config"], function (query, lo
               AND t.trandate >= TO_DATE('${sanitizedStartDate}', 'YYYY-MM-DD')
               AND t.trandate <= TO_DATE('${sanitizedEndDate}', 'YYYY-MM-DD')
               ${subsidiaryFilter}
+              ${empTypeFilter}
             ORDER BY t.trandate DESC
         `;
-        
+
         try {
             const results = Shared.runSuiteQL(sql);
-            
+
             const entries = results.map(r => ({
                 entryId: r.entry_id,
                 date: r.date,
@@ -518,7 +544,7 @@ define(["N/query", "N/log", "./Lib_Shared", "./Lib_Config"], function (query, lo
                 customerName: r.customer_name || '',
                 memo: r.memo || ''
             }));
-            
+
             return { status: 'success', entries: entries };
         } catch (e) {
             log.error('Item Entries Error', e);

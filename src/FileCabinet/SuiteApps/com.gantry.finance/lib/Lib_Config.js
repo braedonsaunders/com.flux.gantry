@@ -431,7 +431,8 @@ define(["N/record", "N/search", "N/query", "N/log", "N/runtime", "./Lib_Dashboar
                     minimumHoursForAnalysis: 10,
                     laborCostField: 'laborcost',
                     hiddenDepartments: [],
-                    hiddenEmployees: []
+                    hiddenEmployees: [],
+                    excludeEmployeeTypes: []
                 };
 
                 
