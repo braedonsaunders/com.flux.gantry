@@ -410,9 +410,77 @@
     console.log('[Gantry.App] Routes registered:', Object.keys(Router.routes));
     
     // ==========================================
+    // DEBUG: DOM/CSS VISIBILITY DIAGNOSTICS
+    // ==========================================
+    function debugLayoutVisibility() {
+        console.group('[Gantry.Debug] Layout Visibility Diagnostics');
+
+        const elements = {
+            'body': document.body,
+            '.gantry-wrapper': document.querySelector('.gantry-wrapper'),
+            '.gantry-sidebar': document.querySelector('.gantry-sidebar'),
+            '.gantry-main': document.querySelector('.gantry-main'),
+            '#gantry-view-container': document.getElementById('gantry-view-container'),
+            '#gantry-loading-screen': document.getElementById('gantry-loading-screen')
+        };
+
+        for (const [selector, el] of Object.entries(elements)) {
+            if (!el) {
+                console.warn(`  ${selector}: NOT FOUND`);
+                continue;
+            }
+
+            const style = window.getComputedStyle(el);
+            const rect = el.getBoundingClientRect();
+
+            console.log(`  ${selector}:`, {
+                exists: true,
+                display: style.display,
+                visibility: style.visibility,
+                opacity: style.opacity,
+                transform: style.transform,
+                position: style.position,
+                zIndex: style.zIndex,
+                width: rect.width,
+                height: rect.height,
+                top: rect.top,
+                left: rect.left,
+                classList: [...el.classList],
+                childCount: el.children.length
+            });
+        }
+
+        // Check if sidebar-ready class is applied
+        const sidebar = document.querySelector('.gantry-sidebar');
+        if (sidebar) {
+            console.log('  Sidebar has sidebar-ready:', sidebar.classList.contains('sidebar-ready'));
+        }
+
+        // Check view container content
+        const viewContainer = document.getElementById('gantry-view-container');
+        if (viewContainer) {
+            console.log('  View container innerHTML length:', viewContainer.innerHTML.length);
+            console.log('  View container first 200 chars:', viewContainer.innerHTML.substring(0, 200));
+        }
+
+        // Check for any elements with problematic styles
+        const wrapper = document.querySelector('.gantry-wrapper');
+        if (wrapper) {
+            const wrapperStyle = window.getComputedStyle(wrapper);
+            if (wrapperStyle.display === 'none' || wrapperStyle.visibility === 'hidden' || parseFloat(wrapperStyle.opacity) === 0) {
+                console.error('  WARNING: .gantry-wrapper is hidden!');
+            }
+        }
+
+        console.groupEnd();
+    }
+
+    // ==========================================
     // START APPLICATION
     // ==========================================
     async function startApp() {
+        console.log('[Gantry.App] startApp() called');
+
         // === FINAL SIDEBAR REVEAL SAFETY NET ===
         // Ensure sidebar is visible before showing app content
         const sidebarFinal = document.querySelector('.gantry-sidebar');
@@ -439,6 +507,7 @@
         }
 
         // Navigate to default route
+        console.log('[Gantry.App] About to navigate to:', defaultRoute);
         Router.navigate(defaultRoute);
         console.log('[Gantry.App] Started - navigated to', defaultRoute);
 
@@ -454,10 +523,21 @@
                 // Remove from DOM after animation completes
                 setTimeout(() => {
                     loadingScreen.remove();
+
+                    // Run diagnostics after everything should be visible
+                    console.log('[Gantry.App] Running post-load diagnostics...');
+                    debugLayoutVisibility();
                 }, 500);
             }, 100);
+        } else {
+            console.warn('[Gantry.App] Loading screen element not found');
+            // Run diagnostics anyway
+            debugLayoutVisibility();
         }
     }
+
+    // Expose debug function globally for manual testing
+    window.GantryDebugLayout = debugLayoutVisibility;
 
     startApp();
 
