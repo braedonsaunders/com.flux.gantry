@@ -37,29 +37,34 @@ define([
      * Build system prompt for the advisor
      */
     function getSystemPrompt() {
-        return `You are an expert financial analyst assistant integrated with NetSuite ERP.
+        return `You are a financial analyst assistant connected to a LIVE NetSuite ERP database.
 
-## CRITICAL: YOU MUST USE TOOLS
-**DO NOT describe what tools you would use - ACTUALLY CALL THEM.**
-When you need data, make a tool call. Do not explain your plan in text.
+## CRITICAL: YOU MUST USE TOOLS FOR ANY DATA QUESTIONS
+You have NO knowledge of this company's actual financial data. You MUST use tools to query the live database.
 
-## Your Capabilities
-You have access to tools that can:
-- Query GL transactions and account balances
-- Look up vendors, customers, and employees
-- Resolve account names/numbers and classifications
-- Analyze spending patterns and trends
+**For ANY question about:**
+- Vendors, spending, purchases → USE TOOLS
+- Transactions, GL activity → USE TOOLS
+- Account balances, revenue, expenses → USE TOOLS
+- Customers, employees, entities → USE TOOLS
 
-## Instructions
-1. When asked a question, think about what data you need
-2. Call the appropriate tools to get that data
-3. After getting results, either call more tools or provide your final answer
-4. Be concise and data-driven in your responses
+**DO NOT:**
+- Make up numbers or data
+- Say "I don't have access to your data"
+- Describe what tools you WOULD use - actually CALL them
 
-## IMPORTANT
-- If a tool returns "not found", try alternative searches or proceed with available data
-- Don't call the same tool with the same arguments more than twice
-- After 3-4 tool calls, synthesize what you've learned into an answer`;
+## Available Tool Categories
+- **Discovery**: resolve_classification, resolve_account, search_vendors, search_customers
+- **Data**: get_gl_activity, get_vendor_spending, get_account_balance, get_transaction_details
+- **Analysis**: get_spending_by_category, get_revenue_trends
+
+## Response Flow
+1. User asks a question about their data
+2. YOU MUST call at least one tool to get real data
+3. Analyze the results
+4. Provide answer with actual numbers from the tools
+
+REMEMBER: You are connected to a LIVE database. Use the tools!`;
     }
 
     /**
@@ -116,12 +121,17 @@ You have access to tools that can:
                     result = handleCancel(finalSessionId);
                     break;
 
+                case 'demo':
+                    // Demo mode - simulates streaming without LLM
+                    result = handleDemo(finalSessionId, finalQuery);
+                    break;
+
                 case 'test':
                 default:
                     result = {
                         success: true,
                         message: 'Advisor Streaming API ready',
-                        actions: ['init', 'step', 'status', 'cancel'],
+                        actions: ['init', 'step', 'status', 'cancel', 'demo'],
                         usage: 'Add ?action=init&query=YOUR_QUESTION to start'
                     };
             }
@@ -310,6 +320,67 @@ You have access to tools that can:
         return {
             success: true,
             message: 'Session cancelled'
+        };
+    }
+
+    /**
+     * DEMO: Simulated streaming for testing (no LLM needed)
+     * Call with action=demo to start, then keep calling with same sessionId
+     */
+    function handleDemo(sessionId, query) {
+        // Demo steps to simulate
+        const DEMO_STEPS = [
+            { type: 'thinking', title: 'Understanding your question...' },
+            { type: 'tool_call', tool: 'search_vendors', arguments: { query: 'top spending' }, status: 'pending' },
+            { type: 'tool_result', tool: 'search_vendors', result: { vendors: ['Acme Corp', 'Globex Inc', 'Initech'] } },
+            { type: 'tool_call', tool: 'get_vendor_spending', arguments: { vendor_id: '123' }, status: 'pending' },
+            { type: 'tool_result', tool: 'get_vendor_spending', result: { total: 45000, transactions: 12 } },
+            { type: 'thinking', title: 'Analyzing the results...' },
+            { type: 'answer', content: 'Based on my analysis, your top 3 vendors by spend are:\n\n1. **Acme Corp** - $45,000 (12 transactions)\n2. **Globex Inc** - $32,500 (8 transactions)\n3. **Initech** - $28,750 (15 transactions)\n\nTotal spend across these vendors: $106,250' }
+        ];
+
+        // If no sessionId, start new demo
+        if (!sessionId) {
+            const newSessionId = 'demo_' + Date.now();
+            return {
+                success: true,
+                sessionId: newSessionId,
+                state: 'demo',
+                stepIndex: 0,
+                update: DEMO_STEPS[0],
+                hasMore: true
+            };
+        }
+
+        // Parse step index from sessionId or use provided
+        let stepIndex = 0;
+        const match = sessionId.match(/demo_(\d+)_step(\d+)/);
+        if (match) {
+            stepIndex = parseInt(match[2], 10) + 1;
+        } else if (sessionId.startsWith('demo_')) {
+            stepIndex = 1;
+        }
+
+        // Check if demo is complete
+        if (stepIndex >= DEMO_STEPS.length) {
+            return {
+                success: true,
+                sessionId: sessionId,
+                state: 'complete',
+                update: DEMO_STEPS[DEMO_STEPS.length - 1],
+                hasMore: false
+            };
+        }
+
+        // Return next step
+        const newSessionId = 'demo_' + Date.now() + '_step' + stepIndex;
+        return {
+            success: true,
+            sessionId: newSessionId,
+            state: 'demo',
+            stepIndex: stepIndex,
+            update: DEMO_STEPS[stepIndex],
+            hasMore: stepIndex < DEMO_STEPS.length - 1
         };
     }
 
