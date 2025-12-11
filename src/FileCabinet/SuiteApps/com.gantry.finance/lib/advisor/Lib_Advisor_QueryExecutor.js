@@ -228,20 +228,43 @@ define([
                 break;
 
             case 'INVALID_TABLE':
-                context.suggestions.push(
-                    'Verify the table name is spelled correctly',
-                    'Check if the table is in the allowed list',
-                    'Some tables require specific joins'
-                );
+                // Check if user tried to use a transaction type as a table name
+                const txnTypes = ['vendbill', 'custinvc', 'custpymt', 'vendpymt', 'check', 'journal', 'salesord', 'purchord', 'exprept', 'deposit', 'cashsale', 'itemrcpt', 'itemship'];
+                const lowerSql = sql ? sql.toLowerCase() : '';
+                const usedTxnType = txnTypes.find(t => lowerSql.includes('from ' + t) || lowerSql.includes('join ' + t));
+
+                if (usedTxnType) {
+                    context.suggestions.push(
+                        `CRITICAL: "${usedTxnType}" is a transaction TYPE, not a table!`,
+                        'Query the "transaction" table with a type filter instead',
+                        `Example: SELECT * FROM transaction WHERE type = '${usedTxnType.charAt(0).toUpperCase() + usedTxnType.slice(1)}'`
+                    );
+                } else {
+                    context.suggestions.push(
+                        'Verify the table name is spelled correctly',
+                        'Check if the table is in the allowed list',
+                        'Note: VendBill, CustInvc, etc. are TYPE values in "transaction" table, NOT table names'
+                    );
+                }
                 break;
 
             case 'SYNTAX_ERROR':
-                context.suggestions.push(
-                    'Check for missing commas between columns',
-                    'Verify JOIN syntax is complete',
-                    'Check parentheses are balanced',
-                    'Ensure string literals use single quotes'
-                );
+                // Check for common SuiteQL-specific syntax issues
+                if (sql && /\bLIMIT\s+\d+/i.test(sql)) {
+                    context.suggestions.push(
+                        'CRITICAL: SuiteQL does NOT support LIMIT syntax!',
+                        'Use: FETCH FIRST N ROWS ONLY (at end of query)',
+                        'Example: SELECT * FROM customer FETCH FIRST 100 ROWS ONLY'
+                    );
+                } else {
+                    context.suggestions.push(
+                        'Check for missing commas between columns',
+                        'Verify JOIN syntax is complete',
+                        'Check parentheses are balanced',
+                        'Ensure string literals use single quotes',
+                        'Remember: Use FETCH FIRST N ROWS ONLY (not LIMIT)'
+                    );
+                }
                 break;
 
             case 'AMBIGUOUS_COLUMN':

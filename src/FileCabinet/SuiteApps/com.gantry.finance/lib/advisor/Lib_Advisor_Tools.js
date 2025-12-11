@@ -376,9 +376,17 @@ Examples: "Hotels", "West Coast", "Engineering", "US subsidiary"`,
 
         explore_schema: {
             name: 'explore_schema',
-            description: `Get available fields and relationships for a NetSuite table.
+            description: `Get available fields and relationships for a NetSuite SuiteQL table.
 Use this to understand what data is available before writing custom queries.
-Only use when specific data tools don't provide what you need.`,
+
+IMPORTANT: Tables are NOT the same as transaction types!
+- VendBill, CustInvc, etc. are TYPE VALUES in the 'transaction' table, NOT table names
+- To query vendor bills: SELECT * FROM transaction WHERE type = 'VendBill'
+- The 'transaction' table contains ALL transaction types
+
+Available tables: transaction (all txn types), transactionline (line items),
+transactionaccountingline (GL entries), customer, vendor, employee, item, account,
+classification, department, location, subsidiary, accountingperiod, project`,
             parameters: {
                 type: 'object',
                 properties: {
@@ -388,7 +396,7 @@ Only use when specific data tools don't provide what you need.`,
                                'customer', 'vendor', 'employee', 'item', 'account',
                                'classification', 'department', 'location', 'subsidiary',
                                'accountingperiod', 'project'],
-                        description: 'Table name to explore'
+                        description: 'SuiteQL table name (NOT transaction type - use transaction table with type filter)'
                     }
                 },
                 required: ['table']
@@ -1615,9 +1623,8 @@ IMPORTANT: You MUST use exact NetSuite type codes from the enum:
                         );
                     }
 
-                    if (mappedType && mappedType !== args.transaction_type) {
-                        formatted.mappedType = mappedType;
-                        formatted.note = `Searched for type "${mappedType}" (mapped from "${args.transaction_type}")`;
+                    if (args.transaction_type) {
+                        formatted.note = `Searched for transaction type "${args.transaction_type}" - verify this is the correct NetSuite type code`;
                     }
                 }
 
@@ -2667,12 +2674,22 @@ Use to understand what "YTD", "this quarter", etc. mean for this organization.`,
 USE SPARINGLY - prefer specific data tools when available.
 Only use for complex queries that combine multiple data sources.
 
-IMPORTANT SuiteQL notes:
+CRITICAL SuiteQL SYNTAX (NOT standard SQL!):
+- Row limits: Use "FETCH FIRST N ROWS ONLY" at END of query (NOT "LIMIT N")
+  Example: SELECT * FROM customer FETCH FIRST 100 ROWS ONLY
+- String comparison: Use single quotes ('value'), NOT double quotes
+- Boolean fields: Use 'T' for true, 'F' for false (e.g., posting = 'T')
+- Date comparison: Use TO_DATE('2024-01-01', 'YYYY-MM-DD')
+
+IMPORTANT field notes:
 - Use transaction.foreigntotal, NOT transaction.amount (not exposed)
 - Use transaction.foreignamountunpaid for unpaid amounts
 - Use transactionaccountingline for GL-level debit/credit data
-- Always include posting = 'T' AND voided = 'F' filters
-- Use BUILTIN.DF() to get display names for foreign key fields`,
+- Always include posting = 'T' AND voided = 'F' filters on transaction table
+- Use BUILTIN.DF() to get display names for foreign key fields
+
+TABLE vs TYPE: VendBill, CustInvc etc are TYPE values in 'transaction' table, NOT table names.
+Query vendor bills: SELECT * FROM transaction WHERE type = 'VendBill'`,
             parameters: {
                 type: 'object',
                 properties: {
