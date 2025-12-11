@@ -788,31 +788,31 @@ The user wants to work with THIS data. Consider:
         // Define dashboard keywords with weights
         const dashboardKeywords = {
             cashflow: {
-                name: 'Cash Flow Dashboard',
-                keywords: ['cash', 'cashflow', 'liquidity', 'runway', 'burn', 'projection', 
+                name: 'Liquidity',
+                keywords: ['cash', 'cashflow', 'liquidity', 'runway', 'burn', 'projection',
                            'forecast', 'bank balance', 'cash position', 'cash flow',
                            '30 days', '60 days', '90 days', 'days of cash', 'will our cash',
                            'future cash', 'projected cash'],
                 strongMatches: ['projection', 'runway', 'burn rate', 'forecast', 'will our cash', 'future cash']
             },
             health: {
-                name: 'Financial Health Dashboard',
+                name: 'P&L',
                 keywords: ['health', 'score', 'margin', 'margins', 'profitability', 'profit margin',
                            'gross margin', 'net margin', 'financial health', 'how healthy',
-                           'ratios', 'current ratio', 'quick ratio'],
-                strongMatches: ['health score', 'financial health', 'how healthy']
+                           'ratios', 'current ratio', 'quick ratio', 'p&l', 'pnl', 'profit and loss'],
+                strongMatches: ['health score', 'financial health', 'how healthy', 'p&l', 'pnl']
             },
             burden: {
-                name: 'Burden Rate Dashboard',
+                name: 'True Cost',
                 keywords: ['burden', 'overhead', 'labor cost', 'burden rate', 'allocation',
-                           'indirect cost', 'labor burden'],
-                strongMatches: ['burden rate', 'overhead rate', 'labor burden']
+                           'indirect cost', 'labor burden', 'true cost'],
+                strongMatches: ['burden rate', 'overhead rate', 'labor burden', 'true cost']
             },
             time: {
-                name: 'Time Tracking Dashboard',
-                keywords: ['time', 'utilization', 'billable', 'hours', 'timesheet', 
-                           'time entry', 'time tracking', 'billable hours', 'utilization rate'],
-                strongMatches: ['utilization rate', 'billable hours', 'time tracking']
+                name: 'Billable IQ',
+                keywords: ['time', 'utilization', 'billable', 'hours', 'timesheet',
+                           'time entry', 'time tracking', 'billable hours', 'utilization rate', 'billable iq'],
+                strongMatches: ['utilization rate', 'billable hours', 'time tracking', 'billable iq']
             }
         };
         
