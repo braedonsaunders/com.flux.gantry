@@ -3193,6 +3193,7 @@ body.dark-mode .callout-error {
 }
 
 /* Metrics row - horizontal layout for multiple metric cards */
+/* MAX 3 PER ROW - metrics wrap to new row after 3 items */
 .metrics-row {
     display: flex;
     flex-wrap: wrap;
@@ -3202,9 +3203,25 @@ body.dark-mode .callout-error {
 }
 
 .metrics-row .metric-card {
-    flex: 1;
+    flex: 1 1 calc(33.333% - 8px); /* 3 per row with gap */
     min-width: 140px;
-    max-width: 280px;
+    max-width: calc(33.333% - 8px);
+}
+
+/* On smaller screens, 2 per row */
+@media (max-width: 768px) {
+    .metrics-row .metric-card {
+        flex: 1 1 calc(50% - 6px);
+        max-width: calc(50% - 6px);
+    }
+}
+
+/* On very small screens, 1 per row */
+@media (max-width: 480px) {
+    .metrics-row .metric-card {
+        flex: 1 1 100%;
+        max-width: 100%;
+    }
 }
 
 /* Block group - container for nested blocks */

@@ -106,11 +106,38 @@
      * Main table renderer - routes to appropriate variant
      */
     renderTable(item) {
-            const { columns, rows } = item;
-            
+            // Normalize: accept both 'columns' and 'headers' (format_response uses 'headers')
+            let columns = item.columns || item.headers;
+            let rows = item.rows;
+
+            // If columns don't exist but rows do, try to infer columns from first row
+            if (!columns && rows && rows.length > 0 && typeof rows[0] === 'object' && !Array.isArray(rows[0])) {
+                columns = Object.keys(rows[0]);
+            }
+
             if (!columns || !rows || rows.length === 0) {
                 return '<div class="advisor-table-empty">No data available</div>';
             }
+
+            // If rows are arrays (from format_response), convert to objects
+            // format_response creates: { headers: ["A", "B"], rows: [["val1", "val2"]] }
+            // We need: { columns: ["A", "B"], rows: [{a: "val1", b: "val2"}] }
+            if (rows.length > 0 && Array.isArray(rows[0])) {
+                rows = rows.map(row => {
+                    if (Array.isArray(row)) {
+                        const obj = {};
+                        columns.forEach((col, i) => {
+                            const key = typeof col === 'string' ? col.toLowerCase().replace(/\s+/g, '_') : col;
+                            obj[key] = row[i] !== undefined ? row[i] : '';
+                        });
+                        return obj;
+                    }
+                    return row;
+                });
+            }
+
+            // Update item for downstream functions
+            item = { ...item, columns: columns, rows: rows };
             
             const tableId = 'advisor-table-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
             
