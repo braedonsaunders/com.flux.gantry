@@ -50,6 +50,8 @@ define([
     const QUERY_TIER = 2;           // Use tier 2 for heavy queries
     const REFLECT_AFTER_FAILURES = 2;   // Trigger reflection after this many failures
     const MAX_STRATEGY_PIVOTS = 3;      // Maximum strategy changes allowed
+    const MAX_SAME_ERROR_RETRIES = 2;   // Circuit breaker: max retries for same error
+    const MAX_TOTAL_ERRORS = 5;         // Hard limit on total errors before giving up
 
     // ═══════════════════════════════════════════════════════════════════════════
     // PLANNING PHASE PROMPT
@@ -332,20 +334,26 @@ Respond with ONLY the JSON object.`;
         const recentCalls = agentState.allToolCalls.slice(-5);
         if (recentCalls.length === 0) return null;
 
-        // Build tool results summary for the prompt
+        // Build tool results summary for the prompt (with null checks)
         const toolResultsSummary = recentCalls.map(tc => {
             const resultSummary = tc.result ? {
                 success: tc.result.success,
                 rowCount: tc.result.rowCount || (tc.result.rows ? tc.result.rows.length : 0),
+                found: tc.result.found,
                 error: tc.result.error,
-                message: tc.result.message
-            } : { error: 'No result' };
+                message: tc.result.message,
+                entityId: tc.result.entity ? tc.result.entity.id : null
+            } : { error: 'No result returned' };
 
             return `Tool: ${tc.tool}\nArgs: ${JSON.stringify(tc.args)}\nResult: ${JSON.stringify(resultSummary)}`;
         }).join('\n\n');
 
+        // Inject FACTUAL tool summary to prevent LLM hallucination
+        // This tells the LLM exactly what happened - not what it thinks happened
+        const factualSummary = buildFactualToolSummary(agentState.allToolCalls);
+
         const prompt = REFLECTION_PROMPT
-            .replace('{tool_results}', toolResultsSummary)
+            .replace('{tool_results}', factualSummary + '\n\nDetailed Results:\n' + toolResultsSummary)
             .replace('{user_question}', agentState.message);
 
         try {
@@ -544,6 +552,135 @@ Respond with ONLY the JSON object.`;
         agentState.recentFailures = [];
         // Reset reflection count partially - allow 1 more reflection if truly needed
         agentState.reflectionCount = Math.max(0, agentState.reflectionCount - 1);
+        // Reset circuit breaker on success
+        agentState.consecutiveSameError = 0;
+        agentState.lastErrorMessage = null;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // CIRCUIT BREAKER - Prevent infinite error loops
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Track an error for circuit breaker purposes
+     * Returns true if circuit breaker should trip (stop retrying)
+     */
+    function trackError(agentState, errorMessage) {
+        const normalizedError = (errorMessage || 'Unknown error').toLowerCase().trim();
+
+        // Track total errors
+        agentState.totalErrorCount = (agentState.totalErrorCount || 0) + 1;
+        agentState.errorHistory = agentState.errorHistory || [];
+        agentState.errorHistory.push({
+            message: normalizedError,
+            timestamp: Date.now()
+        });
+
+        // Check for same consecutive error
+        if (agentState.lastErrorMessage === normalizedError) {
+            agentState.consecutiveSameError = (agentState.consecutiveSameError || 0) + 1;
+        } else {
+            agentState.consecutiveSameError = 1;
+            agentState.lastErrorMessage = normalizedError;
+        }
+
+        log.debug('Circuit breaker tracking error', {
+            error: normalizedError.substring(0, 100),
+            consecutiveSame: agentState.consecutiveSameError,
+            totalErrors: agentState.totalErrorCount,
+            maxSame: MAX_SAME_ERROR_RETRIES,
+            maxTotal: MAX_TOTAL_ERRORS
+        });
+
+        // Trip circuit breaker if limits exceeded
+        return shouldTripCircuitBreaker(agentState);
+    }
+
+    /**
+     * Check if circuit breaker should trip
+     */
+    function shouldTripCircuitBreaker(agentState) {
+        // Trip if same error repeated too many times
+        if ((agentState.consecutiveSameError || 0) >= MAX_SAME_ERROR_RETRIES) {
+            log.audit('Circuit breaker tripped: same error repeated', {
+                error: agentState.lastErrorMessage,
+                count: agentState.consecutiveSameError,
+                limit: MAX_SAME_ERROR_RETRIES
+            });
+            return true;
+        }
+
+        // Trip if total errors exceeded
+        if ((agentState.totalErrorCount || 0) >= MAX_TOTAL_ERRORS) {
+            log.audit('Circuit breaker tripped: total errors exceeded', {
+                total: agentState.totalErrorCount,
+                limit: MAX_TOTAL_ERRORS
+            });
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * Build a factual tool result summary for injection into reflection prompt
+     * This prevents LLM from hallucinating about tool results
+     */
+    function buildFactualToolSummary(toolCalls) {
+        if (!toolCalls || toolCalls.length === 0) return '';
+
+        const facts = toolCalls.slice(-5).map(tc => {
+            const result = tc.result;
+            if (!result) return `${tc.tool}: NO RESULT (tool did not return)`;
+
+            if (result.error) {
+                return `${tc.tool}: ERROR - "${result.error}"`;
+            }
+
+            if (result.found === true && result.entity) {
+                return `${tc.tool}: FOUND entity "${result.entity.name}" (ID: ${result.entity.id}, type: ${result.entity.type})`;
+            }
+
+            if (result.found === false) {
+                return `${tc.tool}: NOT FOUND - no matching entity`;
+            }
+
+            if (result.success && result.rowCount > 0) {
+                return `${tc.tool}: SUCCESS - returned ${result.rowCount} rows of data`;
+            }
+
+            if (result.success && result.rowCount === 0) {
+                return `${tc.tool}: SUCCESS but 0 rows - query matched nothing`;
+            }
+
+            if (result.success) {
+                return `${tc.tool}: SUCCESS`;
+            }
+
+            return `${tc.tool}: ${result.success === false ? 'FAILED' : 'UNKNOWN'}`;
+        });
+
+        return '\n--- FACTUAL TOOL RESULTS (use these facts, do not contradict) ---\n' +
+               facts.join('\n') +
+               '\n--- END FACTS ---\n';
+    }
+
+    /**
+     * Check if a tool signature has already been tried (for enforcing actual pivots)
+     */
+    function hasTriedToolSignature(agentState, toolName, args) {
+        const signature = toolName + '::' + JSON.stringify(args || {});
+        return !!(agentState.triedToolSignatures && agentState.triedToolSignatures[signature]);
+    }
+
+    /**
+     * Mark a tool signature as tried
+     */
+    function markToolSignatureTried(agentState, toolName, args) {
+        const signature = toolName + '::' + JSON.stringify(args || {});
+        agentState.triedToolSignatures = agentState.triedToolSignatures || {};
+        agentState.triedToolSignatures[signature] = (agentState.triedToolSignatures[signature] || 0) + 1;
+        return agentState.triedToolSignatures[signature];
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -701,8 +838,11 @@ Respond with ONLY the JSON object.`;
     function reassessPlan(agentState, requestId) {
         if (!agentState.plan) return null;
 
-        // Build execution summary
+        // Build execution summary (with null checks for tc.result)
         const executionSummary = agentState.allToolCalls.map(tc => {
+            if (!tc.result) {
+                return `${tc.tool}: FAILED (no result)`;
+            }
             const status = tc.result.success ? 'SUCCESS' : 'FAILED';
             const dataInfo = tc.result.rowCount ? `(${tc.result.rowCount} rows)` :
                             tc.result.found === true ? '(found)' :
@@ -790,8 +930,11 @@ Respond with ONLY the JSON object.`;
         // Only verify if we have a plan (goal to check against)
         if (!agentState.plan) return { is_complete: true, recommendation: 'proceed' };
 
-        // Build data summary from tool calls
+        // Build data summary from tool calls (with null checks for tc.result)
         const dataSummary = agentState.allToolCalls.map(tc => {
+            if (!tc.result) {
+                return `${tc.tool}: FAILED (no result)`;
+            }
             const status = tc.result.success ? 'SUCCESS' : 'FAILED';
             const dataInfo = tc.result.rowCount ? `${tc.result.rowCount} rows` :
                             tc.result.found === true ? 'found' :
@@ -800,8 +943,8 @@ Respond with ONLY the JSON object.`;
             return `${tc.tool}: ${status} (${dataInfo})`;
         }).join('\n');
 
-        // Summarize what data we got
-        const successfulCalls = agentState.allToolCalls.filter(tc => tc.result.success && (tc.result.rowCount > 0 || tc.result.found));
+        // Summarize what data we got (with null check for tc.result)
+        const successfulCalls = agentState.allToolCalls.filter(tc => tc.result && tc.result.success && (tc.result.rowCount > 0 || tc.result.found));
         const dataGathered = successfulCalls.map(tc => tc.tool).join(', ');
 
         const prompt = SELF_VERIFICATION_PROMPT
@@ -1049,7 +1192,13 @@ format_response({
             // Planning state
             plan: null,             // The initial plan
             planReassessmentCount: 0,
-            needsPlanReassessment: false
+            needsPlanReassessment: false,
+            // Circuit breaker state
+            errorHistory: [],       // Track error messages for pattern detection
+            totalErrorCount: 0,     // Total errors encountered
+            consecutiveSameError: 0, // Count of same consecutive error
+            lastErrorMessage: null,  // Last error message for comparison
+            triedToolSignatures: {} // Track tried tool+args for actual pivoting
         };
 
         // NOTE: Initial thinking step is added by the orchestrator AFTER ProgressStore.create()
@@ -1115,6 +1264,46 @@ format_response({
 
             ProgressStore.fail(requestId, 'Could not complete analysis after maximum attempts');
             return { hasMore: false, error: 'Max iterations reached' };
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════════
+        // CIRCUIT BREAKER CHECK - Stop if too many errors
+        // ═══════════════════════════════════════════════════════════════════════════
+        if (shouldTripCircuitBreaker(agentState)) {
+            log.audit('Agent stopped by circuit breaker', {
+                requestId: requestId,
+                totalErrors: agentState.totalErrorCount,
+                consecutiveSame: agentState.consecutiveSameError,
+                lastError: agentState.lastErrorMessage
+            });
+
+            // Try to synthesize from what we have before giving up
+            if (agentState.allToolCalls && agentState.allToolCalls.length > 0) {
+                const successfulCalls = agentState.allToolCalls.filter(tc => tc.result && tc.result.success);
+                if (successfulCalls.length > 0) {
+                    const toolResults = successfulCalls.map(tc => ({
+                        tool: tc.tool,
+                        result: tc.result
+                    }));
+                    const response = synthesizeFromToolResults(toolResults, agentState.message, agentState.startTime);
+
+                    ProgressStore.complete(requestId, {
+                        answer: response.text + '\n\n*Note: Some operations failed but I was able to provide partial results.*',
+                        richContent: response.richContent,
+                        sessionContext: agentState.sessionContext
+                    });
+
+                    agentState.completed = true;
+                    agentState.finalResponse = response;
+                    ProgressStore.setAgentState(requestId, agentState);
+
+                    return { hasMore: false, response: response };
+                }
+            }
+
+            const errorMsg = `Analysis stopped after ${agentState.totalErrorCount} errors. Last error: ${agentState.lastErrorMessage || 'Unknown'}`;
+            ProgressStore.fail(requestId, errorMsg);
+            return { hasMore: false, error: errorMsg };
         }
 
         agentState.iteration++;
@@ -1346,15 +1535,21 @@ format_response({
                         duration: toolDuration
                     });
 
-                    // Track failures/successes for reflection
+                    // Track failures/successes for reflection and circuit breaker
                     const toolCallRecord = { tool: toolName, args: parsedArgs, result: result };
                     if (isToolCallFailure(toolCallRecord)) {
                         trackFailure(agentState, toolName, parsedArgs, result);
+                        // Also track for circuit breaker
+                        const errorMsg = result.error || (result.found === false ? 'Entity not found' : 'Tool call failed');
+                        trackError(agentState, errorMsg);
                     } else if (hasUsefulData(toolCallRecord)) {
                         // SUCCESS with data - clear failure state!
                         // The agent got what it needed, no need to reflect
                         clearFailureState(agentState);
                     }
+
+                    // Track tool signature for enforcing actual pivots
+                    markToolSignatureTried(agentState, toolName, parsedArgs);
 
                     // Add to conversation context WITH ACTUAL DATA for LLM to use
                     agentState.conversationContext += `\n--- Tool: ${toolName} ---\n`;
@@ -1544,8 +1739,11 @@ format_response({
                 return { hasMore: false, error: 'Configuration error: ' + e.message };
             }
 
-            // Non-fatal error - add retry step and continue
-            if (agentState.iteration < MAX_ITERATIONS - 1) {
+            // Track error for circuit breaker
+            const shouldStop = trackError(agentState, e.message);
+
+            // Non-fatal error - add retry step and continue (unless circuit breaker tripped)
+            if (!shouldStop && agentState.iteration < MAX_ITERATIONS - 1) {
                 ProgressStore.addStep(requestId, {
                     type: 'retry',
                     title: 'Retrying: ' + (e.message || 'Unknown error').substring(0, 50),
@@ -1557,8 +1755,12 @@ format_response({
                 return { hasMore: true, step: { type: 'retry', error: e.message } };
             }
 
-            ProgressStore.fail(requestId, e.message);
-            return { hasMore: false, error: e.message };
+            // Circuit breaker tripped or max iterations - fail
+            const failMsg = shouldStop
+                ? `Stopped after repeated errors (${agentState.totalErrorCount} total): ${e.message}`
+                : e.message;
+            ProgressStore.fail(requestId, failMsg);
+            return { hasMore: false, error: failMsg };
         }
     }
 
