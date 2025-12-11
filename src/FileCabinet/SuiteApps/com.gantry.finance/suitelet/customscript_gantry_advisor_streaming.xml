@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<suitelet scriptid="customscript_gantry_advisor_streaming">
+    <name>Gantry Advisor Streaming</name>
+    <scriptfile>[/SuiteApps/com.gantry.finance/suitelet/Gantry_Advisor_Streaming.js]</scriptfile>
+    <notifyowner>F</notifyowner>
+    <description>Frontend-Orchestrated Agent Loop for real streaming. Multiple fast requests instead of one slow one.</description>
+    <scriptdeployments>
+        <scriptdeployment scriptid="customdeploy_gantry_advisor_streaming">
+            <title>Gantry Advisor Streaming</title>
+            <isdeployed>T</isdeployed>
+            <status>RELEASED</status>
+            <allroles>T</allroles>
+            <loglevel>DEBUG</loglevel>
+        </scriptdeployment>
+    </scriptdeployments>
+</suitelet>
