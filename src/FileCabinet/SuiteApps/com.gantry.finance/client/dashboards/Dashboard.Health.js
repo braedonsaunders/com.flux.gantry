@@ -1045,6 +1045,7 @@
             
             // Budget Tab (lazy load on tab click)
             this.budgetLoaded = false;
+            this.pvmLoaded = false;
         },
 
         renderKPIs: function(company, rangeM) {
