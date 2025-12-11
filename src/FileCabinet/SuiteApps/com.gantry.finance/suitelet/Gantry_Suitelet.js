@@ -229,9 +229,10 @@ define([
                     top: 103px; /* Fallback, will be overridden by JS */
                     width: 100vw;
                     z-index: 100;
-                    /* Override inherited visibility from NetSuite's anti-flash CSS */
+                    /* Override inherited styles from NetSuite's anti-flash CSS */
                     visibility: visible !important;
                     opacity: 1 !important;
+                    pointer-events: auto !important;
                 }
 
                 .gantry-iframe {
@@ -241,6 +242,7 @@ define([
                     display: block;
                     visibility: visible !important;
                     opacity: 1 !important;
+                    pointer-events: auto !important;
                 }
             </style>
             <div class="gantry-frame-wrapper">
