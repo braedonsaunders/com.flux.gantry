@@ -1495,6 +1495,19 @@
             if (stepsContainer) {
                 const thinking = stepsContainer.querySelector('.progressive-thinking');
                 if (thinking) thinking.remove();
+
+                // Re-render the thought chain without pending indicator
+                const existingChain = stepsContainer.querySelector('.thought-chain');
+                if (existingChain && existingChain._stepsData) {
+                    const chainHtml = this.renderSteps(existingChain._stepsData, false);
+                    const tempDiv = document.createElement('div');
+                    tempDiv.innerHTML = chainHtml;
+                    const newChain = tempDiv.firstElementChild;
+                    if (newChain) {
+                        newChain._stepsData = existingChain._stepsData.map((s, i) => ({...s, _chainId: newChain.getAttribute('data-chain-id')}));
+                        existingChain.replaceWith(newChain);
+                    }
+                }
             }
 
             // Add text content
@@ -1966,7 +1979,7 @@
                 html += `
                     <div class="thinking-node-indicator inline">
                         <div class="thinking-node-core">
-                            <i class="fas fa-circle-notch fa-spin"></i>
+                            <i class="fas fa-brain"></i>
                         </div>
                         <div class="thinking-node-ring"></div>
                     </div>
