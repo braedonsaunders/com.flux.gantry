@@ -415,6 +415,14 @@
     function debugLayoutVisibility() {
         console.group('[Gantry.Debug] Layout Visibility Diagnostics');
 
+        // Log viewport and document dimensions first
+        console.log('  VIEWPORT:', {
+            innerWidth: window.innerWidth,
+            innerHeight: window.innerHeight,
+            documentWidth: document.documentElement.scrollWidth,
+            documentHeight: document.documentElement.scrollHeight
+        });
+
         const elements = {
             'body': document.body,
             '.gantry-wrapper': document.querySelector('.gantry-wrapper'),
@@ -433,21 +441,13 @@
             const style = window.getComputedStyle(el);
             const rect = el.getBoundingClientRect();
 
-            console.log(`  ${selector}:`, {
-                exists: true,
-                display: style.display,
-                visibility: style.visibility,
-                opacity: style.opacity,
-                transform: style.transform,
-                position: style.position,
-                zIndex: style.zIndex,
-                width: rect.width,
-                height: rect.height,
-                top: rect.top,
-                left: rect.left,
-                classList: [...el.classList],
-                childCount: el.children.length
-            });
+            // Log dimensions prominently
+            console.log(`  ${selector}: ${rect.width.toFixed(0)}x${rect.height.toFixed(0)} @ (${rect.left.toFixed(0)},${rect.top.toFixed(0)}) | display:${style.display} visibility:${style.visibility} opacity:${style.opacity}`);
+
+            // Log transform separately if not 'none'
+            if (style.transform !== 'none') {
+                console.log(`    ^ transform: ${style.transform}`);
+            }
         }
 
         // Check if sidebar-ready class is applied
@@ -470,6 +470,33 @@
             if (wrapperStyle.display === 'none' || wrapperStyle.visibility === 'hidden' || parseFloat(wrapperStyle.opacity) === 0) {
                 console.error('  WARNING: .gantry-wrapper is hidden!');
             }
+        }
+
+        // Check parent frame (if in iframe)
+        try {
+            if (window.parent && window.parent !== window) {
+                console.log('  PARENT FRAME DETECTED - checking iframe container...');
+                const parentDoc = window.parent.document;
+                const iframeWrapper = parentDoc.querySelector('.gantry-frame-wrapper');
+                const iframe = parentDoc.querySelector('.gantry-iframe');
+
+                if (iframeWrapper) {
+                    const wrapperRect = iframeWrapper.getBoundingClientRect();
+                    const wrapperStyle = window.parent.getComputedStyle(iframeWrapper);
+                    console.log(`  .gantry-frame-wrapper (PARENT): ${wrapperRect.width.toFixed(0)}x${wrapperRect.height.toFixed(0)} @ top:${wrapperStyle.top} | display:${wrapperStyle.display} visibility:${wrapperStyle.visibility}`);
+                } else {
+                    console.warn('  .gantry-frame-wrapper: NOT FOUND in parent');
+                }
+
+                if (iframe) {
+                    const iframeRect = iframe.getBoundingClientRect();
+                    console.log(`  .gantry-iframe (PARENT): ${iframeRect.width.toFixed(0)}x${iframeRect.height.toFixed(0)}`);
+                } else {
+                    console.warn('  .gantry-iframe: NOT FOUND in parent');
+                }
+            }
+        } catch (e) {
+            console.log('  Cannot access parent frame (cross-origin):', e.message);
         }
 
         console.groupEnd();
