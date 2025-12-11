@@ -26,6 +26,7 @@
         queryHistory: []      // Recent query history
     };  // Persists entity resolutions and context across messages
     let activeRequest = null;  // Tracks in-flight request for resume on navigation
+    let currentPollingId = null;  // Unique ID for current polling loop to detect stale loops
 
     /**
      * Advisor Controller
@@ -1271,6 +1272,10 @@
                 let consecutiveErrors = 0;
                 const MAX_CONSECUTIVE_ERRORS = 5;
 
+                // Set unique polling ID to detect if another loop takes over
+                const myPollingId = 'poll-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
+                currentPollingId = myPollingId;
+
                 // Store active request for resume on navigation
                 activeRequest = {
                     requestId: requestId,
@@ -1284,9 +1289,9 @@
 
                 // Poll for updates
                 while (true) {
-                    // Check if polling was aborted (user navigated away and back)
-                    if (!activeRequest || activeRequest.requestId !== requestId) {
-                        console.log('[Advisor Polling] Polling aborted - request no longer active');
+                    // Check if this polling loop has been superseded by another (e.g., resumed after navigation)
+                    if (currentPollingId !== myPollingId) {
+                        console.log('[Advisor Polling] Polling loop superseded by newer instance, exiting');
                         return;
                     }
 
@@ -1391,6 +1396,10 @@
 
             console.log('[Advisor] Resuming active request:', savedRequest.requestId);
 
+            // Set new polling ID - this will cause any old polling loop to exit
+            const myPollingId = 'resume-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
+            currentPollingId = myPollingId;
+
             isProcessing = true;
             this.updateSendButton(true);
 
@@ -1412,9 +1421,9 @@
             try {
                 // Resume polling
                 while (true) {
-                    // Check if polling was aborted
-                    if (!activeRequest || activeRequest.requestId !== requestId) {
-                        console.log('[Advisor Polling] Resume polling aborted - request no longer active');
+                    // Check if this polling loop has been superseded
+                    if (currentPollingId !== myPollingId) {
+                        console.log('[Advisor Resume Polling] Polling loop superseded, exiting');
                         return;
                     }
 
