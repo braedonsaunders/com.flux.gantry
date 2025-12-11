@@ -30,13 +30,16 @@ define(['N/cache', 'N/log'], function(cache, log) {
     const MAX_CACHE_SIZE_BYTES = MAX_CACHE_SIZE_KB * 1024;
 
     // Get or create the cache
+    // CRITICAL: Must use PUBLIC scope so cache is shared across HTTP requests
+    // PRIVATE scope is tied to execution context and won't persist between
+    // the async request and subsequent polling requests
     let progressCache = null;
 
     function getCache() {
         if (!progressCache) {
             progressCache = cache.getCache({
                 name: CACHE_NAME,
-                scope: cache.Scope.PRIVATE
+                scope: cache.Scope.PUBLIC  // Changed from PRIVATE - must be PUBLIC for cross-request access
             });
         }
         return progressCache;
