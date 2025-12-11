@@ -4844,6 +4844,7 @@
                 if (a.status === 'good') statusIcon = '<span class="badge badge-success badge-pill">On Track</span>';
                 else if (a.status === 'warning') statusIcon = '<span class="badge badge-warning badge-pill">Watch</span>';
                 else if (a.status === 'critical') statusIcon = '<span class="badge badge-danger badge-pill">Over</span>';
+                else if (a.status === 'no-budget') statusIcon = '<span class="badge badge-secondary badge-pill">No Budget</span>';
                 else statusIcon = '<span class="badge badge-secondary badge-pill">—</span>';
                 
                 var varClass = '';
@@ -4854,13 +4855,15 @@
                     varClass = a.variance >= 0 ? 'text-success' : 'text-danger';
                 }
                 
-                // Calculate progress bar
+                // Calculate progress bar - handle $0 budget gracefully
+                var hasBudget = Math.abs(a.budget) > 0;
                 var budget = Math.abs(a.budget) || 1;
                 var actual = Math.abs(a.actual) || 0;
-                var pctUsed = (actual / budget * 100);
+                var pctUsed = hasBudget ? (actual / budget * 100) : 0;
                 var barColor = pctUsed <= 90 ? '#10b981' : (pctUsed <= 100 ? '#f59e0b' : '#ef4444');
-                var barWidth = Math.min(100, pctUsed);
-                
+                var barWidth = hasBudget ? Math.min(100, pctUsed) : 0;
+                var pctDisplay = hasBudget ? pctUsed.toFixed(0) + '%' : '—';
+
                 html += '<tr class="clickable-row" onclick="HealthController.showAccountFlyout(' + a.accountId + ', \'' + escapeHtml(a.accountName).replace(/'/g, "\\'") + '\')">' +
                     '<td><span class="font-weight-medium">' + escapeHtml(a.accountName) + '</span></td>' +
                     '<td class="text-right text-muted">' + fmtMoney(a.budget) + '</td>' +
@@ -4871,7 +4874,7 @@
                             '<div class="progress flex-grow-1" style="height:6px;background:#e5e7eb;border-radius:3px;">' +
                                 '<div class="progress-bar" style="width:' + barWidth + '%;background:' + barColor + ';border-radius:3px;"></div>' +
                             '</div>' +
-                            '<span class="ml-2 small" style="min-width:40px;">' + pctUsed.toFixed(0) + '%</span>' +
+                            '<span class="ml-2 small" style="min-width:40px;">' + pctDisplay + '</span>' +
                         '</div>' +
                     '</td>' +
                     '<td class="text-center">' + statusIcon + '</td>' +
