@@ -2958,6 +2958,7 @@ define(["N/query", "N/search", "N/log", "N/runtime", "./Lib_Shared", "./Lib_Conf
         // Filter settings
         const includeBillable = timeFilters.includeBillable !== false;
         const includeNonBillable = !!timeFilters.includeNonBillable;
+        const billableDefinition = timeFilters.billableDefinition || 'customer';
         const categoryDeptIds = timeFilters.departmentIds || (timeFilters.departmentId ? [timeFilters.departmentId] : []);
         const categoryDeptSet = new Set(categoryDeptIds.map(id => String(id)));
         const serviceItems = timeFilters.serviceItems || [];

@@ -4465,6 +4465,7 @@
                 // Use UI value if checkbox exists, otherwise use saved config
                 includeBillable: el('#timeIncludeBillable') ? el('#timeIncludeBillable').checked : (savedFilters.includeBillable !== false),
                 includeNonBillable: el('#timeIncludeNonBillable') ? el('#timeIncludeNonBillable').checked : (savedFilters.includeNonBillable || false),
+                billableDefinition: el('#timeBillableDefinition')?.value || savedFilters.billableDefinition || 'customer',
                 costMethod: el('#timeCostMethod')?.value || savedFilters.costMethod || 'employee_rate',
                 customRate: parseFloat(el('#timeCustomRate')?.value) || savedFilters.customRate || 50
             };
@@ -8651,6 +8652,7 @@
                 categoryData.timeFilters = {
                     includeBillable: el('#timeIncludeBillable')?.checked !== false,
                     includeNonBillable: el('#timeIncludeNonBillable')?.checked || false,
+                    billableDefinition: el('#timeBillableDefinition')?.value || 'customer',
                     departmentIds: departmentIds,
                     excludeEmpTypes: excludeEmpTypes,
                     serviceItems: serviceItems,
@@ -9480,7 +9482,17 @@
                             '</div>' +
                         '</div>' +
                     '</div>' +
-                    
+
+                    // Billable Definition - How to determine billable vs non-billable
+                    '<div class="form-group px-2">' +
+                        '<label class="small font-weight-bold">Billable Definition</label>' +
+                        '<select class="form-control form-control-sm" id="timeBillableDefinition" onchange="BurdenController.updateTimeCategoryPreview()">' +
+                            '<option value="customer"' + ((timeFilters.billableDefinition || 'customer') === 'customer' ? ' selected' : '') + '>Customer Assignment (has customer = billable)</option>' +
+                            '<option value="flag"' + (timeFilters.billableDefinition === 'flag' ? ' selected' : '') + '>IsBillable Flag (isbillable = T/F)</option>' +
+                        '</select>' +
+                        '<small class="text-muted mt-1 d-block">How to determine if time is billable or non-billable</small>' +
+                    '</div>' +
+
                     // Department Filter - Multiselect
                     '<div class="form-group px-2">' +
                         '<label class="small font-weight-bold d-flex justify-content-between">' +
@@ -10823,6 +10835,7 @@
                 categoryData.timeFilters = {
                     includeBillable: el('#timeIncludeBillable') ? el('#timeIncludeBillable').checked : (savedFilters.includeBillable !== false),
                     includeNonBillable: el('#timeIncludeNonBillable') ? el('#timeIncludeNonBillable').checked : (savedFilters.includeNonBillable || false),
+                    billableDefinition: el('#timeBillableDefinition')?.value || savedFilters.billableDefinition || 'customer',
                     departmentIds: departmentIds,
                     excludeEmpTypes: excludeEmpTypes,
                     serviceItems: serviceItems,
