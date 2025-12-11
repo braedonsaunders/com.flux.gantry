@@ -1203,12 +1203,15 @@ define(["N/query", "N/search", "N/log", "N/runtime", "./Lib_Shared", "./Lib_Conf
               AND t.trandate <= TO_DATE('${end}', 'YYYY-MM-DD')`;
         
         // Time status filter
+        // Business logic: isbillable flag is irrelevant - only customer assignment matters
+        //   - Billable = has customer (t.customer IS NOT NULL)
+        //   - Non-Billable = no customer (t.customer IS NULL)
         const statusConditions = [];
         if (timeFilters.includeBillable !== false) {
-            statusConditions.push("(t.isbillable = 'T')");
+            statusConditions.push("(t.customer IS NOT NULL)");
         }
         if (timeFilters.includeNonBillable) {
-            statusConditions.push("(t.isbillable = 'F')");
+            statusConditions.push("(t.customer IS NULL)");
         }
         if (statusConditions.length > 0) {
             whereClause += ` AND (${statusConditions.join(' OR ')})`;
@@ -2973,7 +2976,10 @@ define(["N/query", "N/search", "N/log", "N/runtime", "./Lib_Shared", "./Lib_Conf
         months.forEach(m => {
             (batchData[m] || []).forEach(r => {
                 // Apply billable filter
-                const isBillable = r.isbillable === 'T';
+                // Business logic: isbillable flag is irrelevant - only customer assignment matters
+                //   - Billable = has customer (r.customer != null)
+                //   - Non-Billable = no customer (r.customer == null)
+                const isBillable = r.customer != null;
                 if (isBillable && !includeBillable) return;
                 if (!isBillable && !includeNonBillable) return;
                 
@@ -4091,12 +4097,15 @@ define(["N/query", "N/search", "N/log", "N/runtime", "./Lib_Shared", "./Lib_Conf
               AND t.trandate <= TO_DATE('${endDate}', 'YYYY-MM-DD')`;
         
         // Time status filter
+        // Business logic: isbillable flag is irrelevant - only customer assignment matters
+        //   - Billable = has customer (t.customer IS NOT NULL)
+        //   - Non-Billable = no customer (t.customer IS NULL)
         const statusConditions = [];
         if (filters.includeBillable) {
-            statusConditions.push("(t.isbillable = 'T')");
+            statusConditions.push("(t.customer IS NOT NULL)");
         }
         if (filters.includeNonBillable) {
-            statusConditions.push("(t.isbillable = 'F')");
+            statusConditions.push("(t.customer IS NULL)");
         }
         if (statusConditions.length > 0) {
             whereClause += ` AND (${statusConditions.join(' OR ')})`;
@@ -4772,17 +4781,20 @@ define(["N/query", "N/search", "N/log", "N/runtime", "./Lib_Shared", "./Lib_Conf
               AND t.trandate <= TO_DATE('${endDate}', 'YYYY-MM-DD')`;
         
         // Time status filter (same as main calc)
+        // Business logic: isbillable flag is irrelevant - only customer assignment matters
+        //   - Billable = has customer (t.customer IS NOT NULL)
+        //   - Non-Billable = no customer (t.customer IS NULL)
         const statusConditions = [];
         if (timeFilters.includeBillable !== false) {
-            statusConditions.push("(t.isbillable = 'T')");
+            statusConditions.push("(t.customer IS NOT NULL)");
         }
         if (timeFilters.includeNonBillable) {
-            statusConditions.push("(t.isbillable = 'F')");
+            statusConditions.push("(t.customer IS NULL)");
         }
         if (statusConditions.length > 0) {
             whereClause += ` AND (${statusConditions.join(' OR ')})`;
         }
-        
+
         // Department filter for drilldown
         if (departmentId && departmentId !== 'Overall') {
             whereClause += ` AND t.department = ${departmentId}`;
