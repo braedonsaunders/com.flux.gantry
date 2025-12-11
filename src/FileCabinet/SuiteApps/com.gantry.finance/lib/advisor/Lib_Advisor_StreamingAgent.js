@@ -1069,17 +1069,18 @@ Response format:
                 }
 
                 const summary = ref.summary || {};
-                const toolDisplayName = summary.toolDisplayName || summary.tool || 'Results';
+                const toolDisplayName = getToolDisplayName(summary.tool) || 'Results';
 
                 // Build table block with REAL data
+                const displayColumns = data.columns.slice(0, 8); // Limit columns for display
                 const tableBlock = {
                     type: 'table',
                     title: toolDisplayName,
                     dataRef: ref.refId,
                     totalRows: data.totalRows,
-                    headers: data.columns.slice(0, 8), // Limit columns for display
+                    headers: displayColumns,
                     rows: data.rows.slice(0, 10).map(row => {
-                        return data.columns.slice(0, 8).map(col => formatCellValue(row[col]));
+                        return displayColumns.map(col => formatCellValue(row[col], col));
                     }),
                     // Include summary stats for context
                     summary: {
@@ -1200,24 +1201,80 @@ Response format:
                         // Load actual row data if available
                         const data = DataStore.loadRows(state.requestId, dataRef.refId, p.rank - 1, p.rank - 1);
                         if (data && data.rows && data.rows[0]) {
-                            return block.headers.map(h => formatCellValue(data.rows[0][h]));
+                            return block.headers.map(h => formatCellValue(data.rows[0][h], h));
                         }
-                        return [p.rank, p.name || '', p.value ? formatCellValue(p.value) : ''];
+                        // Fallback to preview data
+                        return [p.rank, p.name || '', p.value ? formatCellValue(p.value, 'amount') : ''];
                     });
                 }
             }
         });
     }
 
-    function formatCellValue(val) {
+    /**
+     * Format cell value based on column type
+     * Only formats monetary columns as currency, leaves IDs and counts as plain numbers
+     */
+    function formatCellValue(val, columnName) {
         if (val === null || val === undefined) return '';
         if (typeof val === 'number') {
-            if (Math.abs(val) >= 1000) {
+            // Check if this is a monetary column
+            const isMonetary = columnName ? isMonetaryColumn(columnName) : false;
+            if (isMonetary) {
                 return '$' + val.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
             }
-            return val.toString();
+            // For non-monetary numbers, just format with commas if large
+            return val.toLocaleString('en-US');
         }
         return String(val);
+    }
+
+    /**
+     * Check if a column contains monetary values based on its name
+     */
+    function isMonetaryColumn(col) {
+        if (!col) return false;
+        const lower = col.toLowerCase();
+        // Patterns that are explicitly NOT monetary (even if they contain monetary words)
+        const nonMonetaryPatterns = ['_id', 'id_', 'customer_id', 'vendor_id', 'employee_id',
+            'account_id', 'internal_id', 'count', 'number', 'qty', 'quantity', 'rank', 'invoice_count'];
+        if (nonMonetaryPatterns.some(p => lower.includes(p) || lower === p.replace('_', ''))) {
+            return false;
+        }
+        // Patterns that indicate monetary values
+        const monetaryPatterns = [
+            'amount', 'total', 'balance', 'spend', 'revenue', 'cost',
+            'price', 'debit', 'credit', 'payment', 'bucket', 'outstanding',
+            'current_bucket', 'days_1_30', 'days_31_60', 'days_61_90', 'days_over_90',
+            'cash', 'expense', 'income', 'profit', 'loss', 'fee', 'charge'
+        ];
+        return monetaryPatterns.some(p => lower.includes(p));
+    }
+
+    /**
+     * Get a user-friendly display name for a tool
+     */
+    function getToolDisplayName(toolName) {
+        if (!toolName) return null;
+        const displayNames = {
+            'get_ar_aging': 'AR Aging Summary',
+            'get_ap_aging': 'AP Aging Summary',
+            'get_top_customers': 'Top Customers',
+            'get_top_vendors': 'Top Vendors',
+            'get_customer_revenue': 'Customer Revenue',
+            'get_vendor_spend': 'Vendor Spend',
+            'get_gl_activity': 'GL Activity',
+            'get_trial_balance': 'Trial Balance',
+            'get_income_statement': 'Income Statement',
+            'get_balance_sheet': 'Balance Sheet',
+            'get_cash_position': 'Cash Position',
+            'get_recent_transactions': 'Recent Transactions',
+            'resolve_entity': 'Entity Lookup',
+            'resolve_gl_account': 'Account Lookup',
+            'resolve_classification': 'Classification Lookup',
+            'run_custom_query': 'Custom Query'
+        };
+        return displayNames[toolName] || toolName.replace(/^get_/, '').replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
