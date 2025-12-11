@@ -1836,10 +1836,68 @@
             
             // Never auto-expand steps - user requested collapsed by default
             const shouldAutoOpen = false;
-            
+
             // Build detail content
             let detailContent = '';
-            
+
+            // Special handling for thinking steps - show debug info if available
+            if (step.type === 'thinking') {
+                if (step.debug) {
+                    const debug = step.debug;
+                    detailContent += '<div class="thinking-debug-details">';
+
+                    // User message
+                    if (debug.userMessage) {
+                        detailContent += `<div class="debug-section">
+                            <div class="debug-label"><i class="fas fa-comment"></i> User Message:</div>
+                            <div class="debug-value">${this.escapeHtml(debug.userMessage)}</div>
+                        </div>`;
+                    }
+
+                    // History length
+                    if (debug.historyLength !== undefined) {
+                        detailContent += `<div class="debug-item">
+                            <i class="fas fa-history"></i> History: ${debug.historyLength} messages
+                        </div>`;
+                    }
+
+                    // Session entities
+                    if (debug.sessionEntities && debug.sessionEntities.length > 0) {
+                        detailContent += `<div class="debug-section">
+                            <div class="debug-label"><i class="fas fa-database"></i> Known Entities:</div>
+                            <div class="debug-chips">${debug.sessionEntities.map(e =>
+                                `<span class="debug-chip">${this.escapeHtml(e)}</span>`
+                            ).join('')}</div>
+                        </div>`;
+                    }
+
+                    // System prompt preview
+                    if (debug.systemPromptPreview) {
+                        detailContent += `<div class="debug-section">
+                            <div class="debug-label"><i class="fas fa-cog"></i> System Prompt Preview:</div>
+                            <pre class="debug-code">${this.escapeHtml(debug.systemPromptPreview)}</pre>
+                        </div>`;
+                    }
+
+                    // Available tools
+                    if (debug.availableTools && debug.availableTools.length > 0) {
+                        const toolsPreview = debug.availableTools.slice(0, 10).join(', ');
+                        const more = debug.availableTools.length > 10 ? ` +${debug.availableTools.length - 10} more` : '';
+                        detailContent += `<div class="debug-section">
+                            <div class="debug-label"><i class="fas fa-tools"></i> Available Tools (${debug.availableTools.length}):</div>
+                            <div class="debug-value">${this.escapeHtml(toolsPreview)}${more}</div>
+                        </div>`;
+                    }
+
+                    detailContent += '</div>';
+                } else {
+                    // No debug info - show basic message
+                    detailContent += `<div class="thinking-basic">
+                        <i class="fas fa-brain"></i> Analyzing your question and determining which tools to use...
+                    </div>`;
+                }
+            }
+
             // Special handling for planning steps - show rich details
             if (step.type === 'planning' && step.plan) {
                 const plan = step.plan;
@@ -2654,6 +2712,25 @@
             }
             if (item.type === 'error') {
                 return `<div class="advisor-alert error"><i class="fas fa-times-circle"></i> ${this.escapeHtml(item.message || item.text || item.content)}</div>`;
+            }
+            if (item.type === 'heading') {
+                const level = item.level || 2;
+                const tag = `h${Math.min(Math.max(level, 1), 6)}`;
+                return `<${tag} class="rich-heading">${this.escapeHtml(item.content || item.text || '')}</${tag}>`;
+            }
+            if (item.type === 'list') {
+                let html = '<div class="rich-list">';
+                if (item.title) {
+                    html += `<div class="list-title">${this.escapeHtml(item.title)}</div>`;
+                }
+                html += '<ul class="rich-list-items">';
+                if (item.items && Array.isArray(item.items)) {
+                    item.items.forEach(li => {
+                        html += `<li>${this.escapeHtml(String(li))}</li>`;
+                    });
+                }
+                html += '</ul></div>';
+                return html;
             }
             return '';
         },

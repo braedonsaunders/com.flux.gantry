@@ -176,11 +176,26 @@ define([
             ProgressStore.create(requestId, message, agentState);
 
             // Add initial thinking step AFTER create (so the request exists)
-            ProgressStore.addStep(requestId, {
+            // Include debug info if debug mode is enabled
+            const thinkingStep = {
                 type: 'thinking',
                 title: 'Understanding your question...',
                 status: 'complete'
-            });
+            };
+
+            // Add debug info when debug mode is enabled
+            if (Utils.isDebugMode()) {
+                thinkingStep.debug = {
+                    userMessage: message,
+                    historyLength: history.length,
+                    sessionEntities: Object.keys(sessionContext.resolvedEntities || {}),
+                    systemPromptPreview: agentState.systemPrompt.substring(0, 500) + '...',
+                    availableTools: agentState.toolDefinitions.map(t => t.name)
+                };
+                thinkingStep.title = 'Understanding your question (Debug Mode ON)';
+            }
+
+            ProgressStore.addStep(requestId, thinkingStep);
 
             // Run first step immediately to get things started
             const stepResult = Agent.runAgentStep(requestId);

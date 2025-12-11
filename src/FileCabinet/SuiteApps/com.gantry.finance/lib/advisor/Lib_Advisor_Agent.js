@@ -439,7 +439,38 @@ ${dashboardDescriptions}
 - Be concise with specific numbers
 - Format currency as $X,XXX
 - Cite your data source
-- Use tables for comparative data`;
+- Use tables for comparative data
+
+## CRITICAL: ANALYSIS REQUIREMENTS
+When you receive data from tools, you MUST:
+1. **ANALYZE the data** - don't just repeat it back. Look for patterns, trends, outliers.
+2. **PROVIDE INSIGHTS** - explain what the data means for the business.
+3. **COMPARE AND CONTEXTUALIZE** - how does this compare to benchmarks, previous periods, expectations?
+4. **HIGHLIGHT KEY FINDINGS** - what are the top 3-5 takeaways?
+5. **USE THE format_response TOOL** - Structure your final response using the format_response tool for rich content.
+
+## USING format_response TOOL
+When providing your final answer, ALWAYS use the format_response tool to structure your response. This tool allows you to create rich content blocks:
+- **text**: Narrative analysis and insights
+- **table**: Structured data with headers and rows
+- **metrics**: Key numbers with labels and optional comparison
+- **chart**: Data visualizations (bar, line, pie)
+- **list**: Bullet points for key takeaways
+
+Example usage:
+\`\`\`
+format_response({
+    blocks: [
+        { type: "text", content: "Based on my analysis of your AR aging..." },
+        { type: "metrics", items: [
+            { label: "Total AR", value: "$125,000", change: "+5%", trend: "up" },
+            { label: "Overdue", value: "$32,000", change: "-12%", trend: "down" }
+        ]},
+        { type: "table", title: "Top 5 Overdue Customers", headers: ["Customer", "Amount", "Days"], rows: [...] },
+        { type: "list", title: "Key Insights", items: ["Insight 1", "Insight 2"] }
+    ]
+})
+\`\`\``;
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -672,6 +703,29 @@ ${dashboardDescriptions}
                             isLlmCall: false
                         }
                     });
+
+                    // ═══════════════════════════════════════════════════════════════
+                    // SPECIAL: format_response tool triggers completion
+                    // ═══════════════════════════════════════════════════════════════
+                    if (toolName === 'format_response' && result.success && result.isFormatResponse) {
+                        log.debug('format_response tool called - completing with rich content', {
+                            requestId: requestId,
+                            blockCount: result.blockCount
+                        });
+
+                        // Complete the request with the formatted rich content
+                        ProgressStore.complete(requestId, {
+                            answer: result.summary || result.title || 'Response formatted',
+                            richContent: result.richContent,
+                            sessionContext: agentState.sessionContext
+                        });
+
+                        return {
+                            hasMore: false,
+                            done: true,
+                            richContent: result.richContent
+                        };
+                    }
 
                     agentState.allToolCalls.push({
                         tool: toolName,
@@ -1030,6 +1084,25 @@ ${dashboardDescriptions}
                             }
                         });
 
+                        // SPECIAL: format_response tool triggers completion
+                        if (toolName === 'format_response' && result.success && result.isFormatResponse) {
+                            log.debug('format_response tool called in sync mode - completing', {
+                                requestId: requestId,
+                                blockCount: result.blockCount
+                            });
+
+                            return {
+                                text: '',
+                                richContent: result.richContent,
+                                blocksFormat: true,
+                                steps: ProgressStore.getSteps(requestId),
+                                duration: Date.now() - startTime,
+                                sessionContext: sessionContext,
+                                llmCalls: llmCalls,
+                                allToolCalls: allToolCalls
+                            };
+                        }
+
                         toolResults.push({
                             tool: toolName,
                             args: parsedArgs,
@@ -1247,6 +1320,10 @@ ${dashboardDescriptions}
     /**
      * Format tool result WITH ACTUAL DATA for LLM context
      * This is critical - the LLM needs to SEE the data to use it
+     *
+     * IMPORTANT: No truncation! The LLM needs ALL data to analyze properly.
+     * The LLM is smart enough to handle large datasets and will provide better
+     * analysis when it can see the full picture.
      */
     function formatResultForLLM(result, toolName) {
         const lines = [];
@@ -1281,7 +1358,7 @@ ${dashboardDescriptions}
             return lines.join('\n');
         }
 
-        // Query results with ACTUAL DATA
+        // Query results with ALL DATA - no truncation!
         const rows = result.rows || [];
         const rowCount = result.rowCount || rows.length;
 
@@ -1293,18 +1370,11 @@ ${dashboardDescriptions}
                 lines.push(`Columns: ${result.columns.join(', ')}`);
             }
 
-            // Include ACTUAL DATA - first 10 rows so LLM can see and use them
-            const previewRows = rows.slice(0, 10);
-            if (previewRows.length > 0) {
-                lines.push(`\nData (first ${previewRows.length} rows):`);
-                lines.push('```json');
-                lines.push(JSON.stringify(previewRows, null, 2));
-                lines.push('```');
-
-                if (rowCount > 10) {
-                    lines.push(`... and ${rowCount - 10} more rows`);
-                }
-            }
+            // Include ALL data - LLM needs full dataset to analyze properly
+            lines.push(`\nComplete Data (${rowCount} rows):`);
+            lines.push('```json');
+            lines.push(JSON.stringify(rows, null, 2));
+            lines.push('```');
 
             // Include totals if present
             if (result.totalCash !== undefined) lines.push(`\nTotal Cash: $${result.totalCash.toLocaleString()}`);
@@ -1314,18 +1384,12 @@ ${dashboardDescriptions}
             return lines.join('\n');
         }
 
-        // Dashboard data
+        // Dashboard data - include full data
         if (result.data) {
             lines.push(`Dashboard: ${result.dashboard || toolName}`);
             lines.push(`\nDashboard Data:`);
             lines.push('```json');
-            // Limit dashboard data size but include meaningful content
-            const dataStr = JSON.stringify(result.data, null, 2);
-            if (dataStr.length > 3000) {
-                lines.push(dataStr.substring(0, 3000) + '\n... (truncated)');
-            } else {
-                lines.push(dataStr);
-            }
+            lines.push(JSON.stringify(result.data, null, 2));
             lines.push('```');
             return lines.join('\n');
         }
