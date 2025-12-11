@@ -521,19 +521,125 @@ classification, department, location, subsidiary, accountingperiod, project`,
             name: 'get_ap_aging',
             description: `Get accounts payable aging summary by bucket (Current, 1-30, 31-60, 61-90, 90+).
 Shows what we owe to vendors, broken down by how overdue.
-Use for: "AP aging", "what do we owe", "overdue bills", "vendor balances"`,
+Use for: "AP aging", "what do we owe", "overdue bills", "vendor balances"
+
+Supports batch vendor lookups via vendor_ids array for efficient multi-vendor queries.
+Can filter by minimum outstanding amount, specific aging buckets, and subsidiary.`,
             parameters: {
                 type: 'object',
                 properties: {
                     vendor_id: {
                         type: 'number',
-                        description: 'Optional: filter to specific vendor ID'
+                        description: 'Filter to specific vendor ID (use vendor_ids for multiple)'
+                    },
+                    vendor_ids: {
+                        type: 'array',
+                        items: { type: 'number' },
+                        description: 'Array of vendor IDs for batch lookup (more efficient than multiple calls)'
+                    },
+                    min_outstanding: {
+                        type: 'number',
+                        description: 'Minimum total outstanding amount to include (e.g., 10000 for $10K+)'
+                    },
+                    min_overdue: {
+                        type: 'number',
+                        description: 'Minimum overdue amount (amounts past due date)'
+                    },
+                    aging_bucket: {
+                        type: 'string',
+                        enum: ['current', '1_30', '31_60', '61_90', 'over_90', 'over_60', 'over_30'],
+                        description: 'Filter to vendors with amounts in specific aging bucket'
+                    },
+                    subsidiary_id: {
+                        type: 'number',
+                        description: 'Filter by subsidiary ID'
+                    },
+                    include_details: {
+                        type: 'boolean',
+                        description: 'Include bill-level detail instead of vendor summary'
+                    },
+                    limit: {
+                        type: 'number',
+                        description: 'Maximum vendors to return (default: 50)'
+                    },
+                    sort_by: {
+                        type: 'string',
+                        enum: ['total_outstanding', 'overdue_amount', 'vendor_name', 'days_over_90'],
+                        description: 'Sort results by field (default: total_outstanding)'
                     }
                 },
                 required: []
             },
             execute: function(args) {
-                const vendorFilter = args.vendor_id ? `AND transaction.entity = ${args.vendor_id}` : '';
+                // Handle single vendor_id or batch vendor_ids
+                let vendorFilter = '';
+                if (args.vendor_ids && args.vendor_ids.length > 0) {
+                    vendorFilter = `AND transaction.entity IN (${args.vendor_ids.join(',')})`;
+                } else if (args.vendor_id) {
+                    vendorFilter = `AND transaction.entity = ${args.vendor_id}`;
+                }
+
+                const subsidiaryFilter = args.subsidiary_id ? `AND transaction.subsidiary = ${args.subsidiary_id}` : '';
+                const limit = args.limit || 50;
+
+                // Determine sort order
+                let orderBy = 'total_unpaid DESC';
+                if (args.sort_by === 'overdue_amount') orderBy = '(days_1_30 + days_31_60 + days_61_90 + days_over_90) DESC';
+                else if (args.sort_by === 'vendor_name') orderBy = 'vendor_name ASC';
+                else if (args.sort_by === 'days_over_90') orderBy = 'days_over_90 DESC';
+
+                // Build HAVING clause for filters
+                const havingClauses = [];
+                if (args.min_outstanding) havingClauses.push(`SUM(transaction.foreignamountunpaid) >= ${args.min_outstanding}`);
+                if (args.min_overdue) havingClauses.push(`SUM(CASE WHEN CURRENT_DATE - transaction.duedate > 0 THEN transaction.foreignamountunpaid ELSE 0 END) >= ${args.min_overdue}`);
+
+                // Aging bucket filters
+                if (args.aging_bucket === 'over_60') {
+                    havingClauses.push(`(SUM(CASE WHEN CURRENT_DATE - transaction.duedate BETWEEN 61 AND 90 THEN transaction.foreignamountunpaid ELSE 0 END) + SUM(CASE WHEN CURRENT_DATE - transaction.duedate > 90 THEN transaction.foreignamountunpaid ELSE 0 END)) > 0`);
+                } else if (args.aging_bucket === 'over_90') {
+                    havingClauses.push(`SUM(CASE WHEN CURRENT_DATE - transaction.duedate > 90 THEN transaction.foreignamountunpaid ELSE 0 END) > 0`);
+                } else if (args.aging_bucket === 'over_30') {
+                    havingClauses.push(`(SUM(CASE WHEN CURRENT_DATE - transaction.duedate BETWEEN 31 AND 60 THEN transaction.foreignamountunpaid ELSE 0 END) + SUM(CASE WHEN CURRENT_DATE - transaction.duedate BETWEEN 61 AND 90 THEN transaction.foreignamountunpaid ELSE 0 END) + SUM(CASE WHEN CURRENT_DATE - transaction.duedate > 90 THEN transaction.foreignamountunpaid ELSE 0 END)) > 0`);
+                } else if (args.aging_bucket === '61_90') {
+                    havingClauses.push(`SUM(CASE WHEN CURRENT_DATE - transaction.duedate BETWEEN 61 AND 90 THEN transaction.foreignamountunpaid ELSE 0 END) > 0`);
+                } else if (args.aging_bucket === '31_60') {
+                    havingClauses.push(`SUM(CASE WHEN CURRENT_DATE - transaction.duedate BETWEEN 31 AND 60 THEN transaction.foreignamountunpaid ELSE 0 END) > 0`);
+                } else if (args.aging_bucket === '1_30') {
+                    havingClauses.push(`SUM(CASE WHEN CURRENT_DATE - transaction.duedate BETWEEN 1 AND 30 THEN transaction.foreignamountunpaid ELSE 0 END) > 0`);
+                } else if (args.aging_bucket === 'current') {
+                    havingClauses.push(`SUM(CASE WHEN CURRENT_DATE - transaction.duedate <= 0 THEN transaction.foreignamountunpaid ELSE 0 END) > 0`);
+                }
+
+                const havingClause = havingClauses.length > 0 ? `HAVING ${havingClauses.join(' AND ')}` : '';
+
+                // Detail query if requested
+                if (args.include_details) {
+                    const detailQuery = `
+                        SELECT
+                            vendor.id AS vendor_id,
+                            vendor.companyname AS vendor_name,
+                            transaction.id AS bill_id,
+                            transaction.tranid AS bill_number,
+                            transaction.trandate AS bill_date,
+                            transaction.duedate AS due_date,
+                            transaction.foreigntotal AS bill_amount,
+                            transaction.foreignamountunpaid AS amount_due,
+                            CURRENT_DATE - transaction.duedate AS days_overdue,
+                            transaction.memo
+                        FROM transaction
+                        INNER JOIN vendor ON transaction.entity = vendor.id
+                        WHERE transaction.type = 'VendBill'
+                            AND transaction.foreignamountunpaid != 0
+                            AND transaction.posting = 'T'
+                            AND transaction.voided = 'F'
+                            ${vendorFilter}
+                            ${subsidiaryFilter}
+                        ORDER BY vendor.companyname, transaction.duedate
+                        FETCH FIRST ${limit * 10} ROWS ONLY
+                    `;
+                    const result = QueryExecutor.executeQuery(detailQuery);
+                    return formatResult(result, 'get_ap_aging');
+                }
 
                 const query = `
                     SELECT
@@ -544,7 +650,8 @@ Use for: "AP aging", "what do we owe", "overdue bills", "vendor balances"`,
                         SUM(CASE WHEN CURRENT_DATE - transaction.duedate BETWEEN 1 AND 30 THEN transaction.foreignamountunpaid ELSE 0 END) AS days_1_30,
                         SUM(CASE WHEN CURRENT_DATE - transaction.duedate BETWEEN 31 AND 60 THEN transaction.foreignamountunpaid ELSE 0 END) AS days_31_60,
                         SUM(CASE WHEN CURRENT_DATE - transaction.duedate BETWEEN 61 AND 90 THEN transaction.foreignamountunpaid ELSE 0 END) AS days_61_90,
-                        SUM(CASE WHEN CURRENT_DATE - transaction.duedate > 90 THEN transaction.foreignamountunpaid ELSE 0 END) AS days_over_90
+                        SUM(CASE WHEN CURRENT_DATE - transaction.duedate > 90 THEN transaction.foreignamountunpaid ELSE 0 END) AS days_over_90,
+                        COUNT(transaction.id) AS bill_count
                     FROM transaction
                     INNER JOIN vendor ON transaction.entity = vendor.id
                     WHERE transaction.type = 'VendBill'
@@ -552,15 +659,20 @@ Use for: "AP aging", "what do we owe", "overdue bills", "vendor balances"`,
                         AND transaction.posting = 'T'
                         AND transaction.voided = 'F'
                         ${vendorFilter}
+                        ${subsidiaryFilter}
                     GROUP BY vendor.id, vendor.companyname
-                    ORDER BY total_unpaid DESC
-                    FETCH FIRST 50 ROWS ONLY
+                    ${havingClause}
+                    ORDER BY ${orderBy}
+                    FETCH FIRST ${limit} ROWS ONLY
                 `;
 
                 const result = QueryExecutor.executeQuery(query);
                 return formatResult(result, 'get_ap_aging');
             },
             displayName: function(args) {
+                if (args.vendor_ids && args.vendor_ids.length > 0) {
+                    return `Getting AP aging for ${args.vendor_ids.length} vendors...`;
+                }
                 return args.vendor_id ? 'Getting vendor AP details...' : 'Getting AP aging summary...';
             }
         },
@@ -569,19 +681,131 @@ Use for: "AP aging", "what do we owe", "overdue bills", "vendor balances"`,
             name: 'get_ar_aging',
             description: `Get accounts receivable aging summary by bucket (Current, 1-30, 31-60, 61-90, 90+).
 Shows what customers owe us, broken down by how overdue.
-Use for: "AR aging", "what are we owed", "overdue invoices", "customer balances"`,
+Use for: "AR aging", "what are we owed", "overdue invoices", "customer balances"
+
+Supports batch customer lookups via customer_ids array for efficient multi-customer queries.
+Can filter by minimum outstanding amount, specific aging buckets, subsidiary, and sales rep.`,
             parameters: {
                 type: 'object',
                 properties: {
                     customer_id: {
                         type: 'number',
-                        description: 'Optional: filter to specific customer ID'
+                        description: 'Filter to specific customer ID (use customer_ids for multiple)'
+                    },
+                    customer_ids: {
+                        type: 'array',
+                        items: { type: 'number' },
+                        description: 'Array of customer IDs for batch lookup (more efficient than multiple calls)'
+                    },
+                    min_outstanding: {
+                        type: 'number',
+                        description: 'Minimum total outstanding amount to include (e.g., 10000 for $10K+)'
+                    },
+                    min_overdue: {
+                        type: 'number',
+                        description: 'Minimum overdue amount (amounts past due date)'
+                    },
+                    aging_bucket: {
+                        type: 'string',
+                        enum: ['current', '1_30', '31_60', '61_90', 'over_90', 'over_60', 'over_30'],
+                        description: 'Filter to customers with amounts in specific aging bucket'
+                    },
+                    subsidiary_id: {
+                        type: 'number',
+                        description: 'Filter by subsidiary ID'
+                    },
+                    sales_rep_id: {
+                        type: 'number',
+                        description: 'Filter by sales rep ID'
+                    },
+                    include_details: {
+                        type: 'boolean',
+                        description: 'Include invoice-level detail instead of customer summary'
+                    },
+                    limit: {
+                        type: 'number',
+                        description: 'Maximum customers to return (default: 50)'
+                    },
+                    sort_by: {
+                        type: 'string',
+                        enum: ['total_outstanding', 'overdue_amount', 'customer_name', 'days_over_90'],
+                        description: 'Sort results by field (default: total_outstanding)'
                     }
                 },
                 required: []
             },
             execute: function(args) {
-                const customerFilter = args.customer_id ? `AND transaction.entity = ${args.customer_id}` : '';
+                // Handle single customer_id or batch customer_ids
+                let customerFilter = '';
+                if (args.customer_ids && args.customer_ids.length > 0) {
+                    customerFilter = `AND transaction.entity IN (${args.customer_ids.join(',')})`;
+                } else if (args.customer_id) {
+                    customerFilter = `AND transaction.entity = ${args.customer_id}`;
+                }
+
+                const subsidiaryFilter = args.subsidiary_id ? `AND transaction.subsidiary = ${args.subsidiary_id}` : '';
+                const salesRepFilter = args.sales_rep_id ? `AND transaction.salesrep = ${args.sales_rep_id}` : '';
+                const limit = args.limit || 50;
+
+                // Determine sort order
+                let orderBy = 'total_unpaid DESC';
+                if (args.sort_by === 'overdue_amount') orderBy = '(days_1_30 + days_31_60 + days_61_90 + days_over_90) DESC';
+                else if (args.sort_by === 'customer_name') orderBy = 'customer_name ASC';
+                else if (args.sort_by === 'days_over_90') orderBy = 'days_over_90 DESC';
+
+                // Build HAVING clause for filters
+                const havingClauses = [];
+                if (args.min_outstanding) havingClauses.push(`SUM(transaction.foreignamountunpaid) >= ${args.min_outstanding}`);
+                if (args.min_overdue) havingClauses.push(`SUM(CASE WHEN CURRENT_DATE - transaction.duedate > 0 THEN transaction.foreignamountunpaid ELSE 0 END) >= ${args.min_overdue}`);
+
+                // Aging bucket filters
+                if (args.aging_bucket === 'over_60') {
+                    havingClauses.push(`(SUM(CASE WHEN CURRENT_DATE - transaction.duedate BETWEEN 61 AND 90 THEN transaction.foreignamountunpaid ELSE 0 END) + SUM(CASE WHEN CURRENT_DATE - transaction.duedate > 90 THEN transaction.foreignamountunpaid ELSE 0 END)) > 0`);
+                } else if (args.aging_bucket === 'over_90') {
+                    havingClauses.push(`SUM(CASE WHEN CURRENT_DATE - transaction.duedate > 90 THEN transaction.foreignamountunpaid ELSE 0 END) > 0`);
+                } else if (args.aging_bucket === 'over_30') {
+                    havingClauses.push(`(SUM(CASE WHEN CURRENT_DATE - transaction.duedate BETWEEN 31 AND 60 THEN transaction.foreignamountunpaid ELSE 0 END) + SUM(CASE WHEN CURRENT_DATE - transaction.duedate BETWEEN 61 AND 90 THEN transaction.foreignamountunpaid ELSE 0 END) + SUM(CASE WHEN CURRENT_DATE - transaction.duedate > 90 THEN transaction.foreignamountunpaid ELSE 0 END)) > 0`);
+                } else if (args.aging_bucket === '61_90') {
+                    havingClauses.push(`SUM(CASE WHEN CURRENT_DATE - transaction.duedate BETWEEN 61 AND 90 THEN transaction.foreignamountunpaid ELSE 0 END) > 0`);
+                } else if (args.aging_bucket === '31_60') {
+                    havingClauses.push(`SUM(CASE WHEN CURRENT_DATE - transaction.duedate BETWEEN 31 AND 60 THEN transaction.foreignamountunpaid ELSE 0 END) > 0`);
+                } else if (args.aging_bucket === '1_30') {
+                    havingClauses.push(`SUM(CASE WHEN CURRENT_DATE - transaction.duedate BETWEEN 1 AND 30 THEN transaction.foreignamountunpaid ELSE 0 END) > 0`);
+                } else if (args.aging_bucket === 'current') {
+                    havingClauses.push(`SUM(CASE WHEN CURRENT_DATE - transaction.duedate <= 0 THEN transaction.foreignamountunpaid ELSE 0 END) > 0`);
+                }
+
+                const havingClause = havingClauses.length > 0 ? `HAVING ${havingClauses.join(' AND ')}` : '';
+
+                // Detail query if requested
+                if (args.include_details) {
+                    const detailQuery = `
+                        SELECT
+                            customer.id AS customer_id,
+                            customer.companyname AS customer_name,
+                            transaction.id AS invoice_id,
+                            transaction.tranid AS invoice_number,
+                            transaction.trandate AS invoice_date,
+                            transaction.duedate AS due_date,
+                            transaction.foreigntotal AS invoice_amount,
+                            transaction.foreignamountunpaid AS amount_due,
+                            CURRENT_DATE - transaction.duedate AS days_overdue,
+                            transaction.memo
+                        FROM transaction
+                        INNER JOIN customer ON transaction.entity = customer.id
+                        WHERE transaction.type = 'CustInvc'
+                            AND transaction.foreignamountunpaid != 0
+                            AND transaction.posting = 'T'
+                            AND transaction.voided = 'F'
+                            ${customerFilter}
+                            ${subsidiaryFilter}
+                            ${salesRepFilter}
+                        ORDER BY customer.companyname, transaction.duedate
+                        FETCH FIRST ${limit * 10} ROWS ONLY
+                    `;
+                    const result = QueryExecutor.executeQuery(detailQuery);
+                    return formatResult(result, 'get_ar_aging');
+                }
 
                 const query = `
                     SELECT
@@ -592,7 +816,8 @@ Use for: "AR aging", "what are we owed", "overdue invoices", "customer balances"
                         SUM(CASE WHEN CURRENT_DATE - transaction.duedate BETWEEN 1 AND 30 THEN transaction.foreignamountunpaid ELSE 0 END) AS days_1_30,
                         SUM(CASE WHEN CURRENT_DATE - transaction.duedate BETWEEN 31 AND 60 THEN transaction.foreignamountunpaid ELSE 0 END) AS days_31_60,
                         SUM(CASE WHEN CURRENT_DATE - transaction.duedate BETWEEN 61 AND 90 THEN transaction.foreignamountunpaid ELSE 0 END) AS days_61_90,
-                        SUM(CASE WHEN CURRENT_DATE - transaction.duedate > 90 THEN transaction.foreignamountunpaid ELSE 0 END) AS days_over_90
+                        SUM(CASE WHEN CURRENT_DATE - transaction.duedate > 90 THEN transaction.foreignamountunpaid ELSE 0 END) AS days_over_90,
+                        COUNT(transaction.id) AS invoice_count
                     FROM transaction
                     INNER JOIN customer ON transaction.entity = customer.id
                     WHERE transaction.type = 'CustInvc'
@@ -600,15 +825,21 @@ Use for: "AR aging", "what are we owed", "overdue invoices", "customer balances"
                         AND transaction.posting = 'T'
                         AND transaction.voided = 'F'
                         ${customerFilter}
+                        ${subsidiaryFilter}
+                        ${salesRepFilter}
                     GROUP BY customer.id, customer.companyname
-                    ORDER BY total_unpaid DESC
-                    FETCH FIRST 50 ROWS ONLY
+                    ${havingClause}
+                    ORDER BY ${orderBy}
+                    FETCH FIRST ${limit} ROWS ONLY
                 `;
 
                 const result = QueryExecutor.executeQuery(query);
                 return formatResult(result, 'get_ar_aging');
             },
             displayName: function(args) {
+                if (args.customer_ids && args.customer_ids.length > 0) {
+                    return `Getting AR aging for ${args.customer_ids.length} customers...`;
+                }
                 return args.customer_id ? 'Getting customer AR details...' : 'Getting AR aging summary...';
             }
         },
@@ -617,48 +848,141 @@ Use for: "AR aging", "what are we owed", "overdue invoices", "customer balances"
             name: 'get_vendor_spend',
             description: `Get vendor spending analysis.
 Shows total spend by vendor for a given period.
-Use for: "vendor spend", "who do we pay most", "top vendors", "AP by vendor"`,
+Use for: "vendor spend", "who do we pay most", "top vendors", "AP by vendor"
+
+Supports batch vendor lookups, spend thresholds, and dimensional filtering.
+Can filter by minimum/maximum spend, class, department, and subsidiary.`,
             parameters: {
                 type: 'object',
                 properties: {
                     vendor_id: {
                         type: 'number',
-                        description: 'Optional: filter to specific vendor ID'
+                        description: 'Filter to specific vendor ID (use vendor_ids for multiple)'
+                    },
+                    vendor_ids: {
+                        type: 'array',
+                        items: { type: 'number' },
+                        description: 'Array of vendor IDs for batch lookup'
                     },
                     period: {
                         type: 'string',
                         enum: ['this_month', 'last_month', 'this_quarter', 'last_quarter', 'ytd', 'last_30_days', 'last_90_days', 'last_365_days', 'last_year', 'last_2_years', 'all'],
-                        description: 'Time period filter. Default: no restriction (all time). Use for narrowing results.'
+                        description: 'Time period filter (default: all)'
+                    },
+                    min_spend: {
+                        type: 'number',
+                        description: 'Minimum total spend threshold (e.g., 100000 for $100K+)'
+                    },
+                    max_spend: {
+                        type: 'number',
+                        description: 'Maximum total spend cap'
+                    },
+                    class_id: {
+                        type: 'number',
+                        description: 'Filter by class ID'
+                    },
+                    department_id: {
+                        type: 'number',
+                        description: 'Filter by department ID'
+                    },
+                    subsidiary_id: {
+                        type: 'number',
+                        description: 'Filter by subsidiary ID'
+                    },
+                    include_ap_aging: {
+                        type: 'boolean',
+                        description: 'Include current AP aging data for each vendor'
                     },
                     limit: {
                         type: 'number',
                         description: 'Max vendors to return (default: 25)'
+                    },
+                    sort_by: {
+                        type: 'string',
+                        enum: ['total_spend', 'transaction_count', 'vendor_name', 'recent_activity'],
+                        description: 'Sort results by field (default: total_spend)'
                     }
                 },
                 required: []
             },
             execute: function(args) {
-                const vendorFilter = args.vendor_id ? `AND transaction.entity = ${args.vendor_id}` : '';
+                // Handle single vendor_id or batch vendor_ids
+                let vendorFilter = '';
+                if (args.vendor_ids && args.vendor_ids.length > 0) {
+                    vendorFilter = `AND transaction.entity IN (${args.vendor_ids.join(',')})`;
+                } else if (args.vendor_id) {
+                    vendorFilter = `AND transaction.entity = ${args.vendor_id}`;
+                }
+
                 const periodFilter = buildPeriodFilter(args.period || 'all');
+                const subsidiaryFilter = args.subsidiary_id ? `AND transaction.subsidiary = ${args.subsidiary_id}` : '';
                 const limit = args.limit || 25;
 
+                // Class/department filters require joining transactionline
+                const hasLineFilters = args.class_id || args.department_id;
+                const lineJoin = hasLineFilters ? 'LEFT JOIN transactionline tl ON tl.transaction = transaction.id AND tl.mainline = \'F\'' : '';
+                const classFilter = args.class_id ? `AND tl.class = ${args.class_id}` : '';
+                const deptFilter = args.department_id ? `AND tl.department = ${args.department_id}` : '';
+
+                // Determine sort order
+                let orderBy = 'total_spend DESC';
+                if (args.sort_by === 'transaction_count') orderBy = 'transaction_count DESC';
+                else if (args.sort_by === 'vendor_name') orderBy = 'vendor_name ASC';
+                else if (args.sort_by === 'recent_activity') orderBy = 'last_transaction DESC';
+
+                // Build HAVING clause for spend thresholds
+                const havingClauses = [];
+                if (args.min_spend) havingClauses.push(`SUM(ABS(transaction.foreigntotal)) >= ${args.min_spend}`);
+                if (args.max_spend) havingClauses.push(`SUM(ABS(transaction.foreigntotal)) <= ${args.max_spend}`);
+                const havingClause = havingClauses.length > 0 ? `HAVING ${havingClauses.join(' AND ')}` : '';
+
+                // Base query with optional AP aging
+                let selectFields = `
+                    vendor.id AS vendor_id,
+                    vendor.companyname AS vendor_name,
+                    COUNT(DISTINCT transaction.id) AS transaction_count,
+                    SUM(ABS(transaction.foreigntotal)) AS total_spend,
+                    MIN(transaction.trandate) AS first_transaction,
+                    MAX(transaction.trandate) AS last_transaction`;
+
+                // Add AP aging subquery if requested
+                let apAgingJoin = '';
+                if (args.include_ap_aging) {
+                    selectFields += `,
+                    ap_aging.total_outstanding,
+                    ap_aging.overdue_amount`;
+                    apAgingJoin = `
+                    LEFT JOIN (
+                        SELECT
+                            t.entity,
+                            SUM(t.foreignamountunpaid) AS total_outstanding,
+                            SUM(CASE WHEN CURRENT_DATE - t.duedate > 0 THEN t.foreignamountunpaid ELSE 0 END) AS overdue_amount
+                        FROM transaction t
+                        WHERE t.type = 'VendBill'
+                            AND t.foreignamountunpaid != 0
+                            AND t.posting = 'T'
+                            AND t.voided = 'F'
+                        GROUP BY t.entity
+                    ) ap_aging ON ap_aging.entity = vendor.id`;
+                }
+
                 const query = `
-                    SELECT
-                        vendor.id AS vendor_id,
-                        vendor.companyname AS vendor_name,
-                        COUNT(DISTINCT transaction.id) AS transaction_count,
-                        SUM(ABS(transaction.foreigntotal)) AS total_spend,
-                        MIN(transaction.trandate) AS first_transaction,
-                        MAX(transaction.trandate) AS last_transaction
+                    SELECT ${selectFields}
                     FROM transaction
                     INNER JOIN vendor ON transaction.entity = vendor.id
+                    ${lineJoin}
+                    ${apAgingJoin}
                     WHERE transaction.type IN ('VendBill', 'VendCred')
                         AND transaction.posting = 'T'
                         AND transaction.voided = 'F'
                         AND ${periodFilter}
                         ${vendorFilter}
-                    GROUP BY vendor.id, vendor.companyname
-                    ORDER BY total_spend DESC
+                        ${subsidiaryFilter}
+                        ${classFilter}
+                        ${deptFilter}
+                    GROUP BY vendor.id, vendor.companyname${args.include_ap_aging ? ', ap_aging.total_outstanding, ap_aging.overdue_amount' : ''}
+                    ${havingClause}
+                    ORDER BY ${orderBy}
                     FETCH FIRST ${limit} ROWS ONLY
                 `;
 
@@ -666,7 +990,10 @@ Use for: "vendor spend", "who do we pay most", "top vendors", "AP by vendor"`,
                 return formatResult(result, 'get_vendor_spend');
             },
             displayName: function(args) {
-                return 'Analyzing vendor spending...';
+                if (args.vendor_ids && args.vendor_ids.length > 0) {
+                    return `Analyzing spend for ${args.vendor_ids.length} vendors...`;
+                }
+                return args.vendor_id ? 'Getting vendor spend details...' : 'Analyzing vendor spending...';
             }
         },
 
@@ -674,48 +1001,147 @@ Use for: "vendor spend", "who do we pay most", "top vendors", "AP by vendor"`,
             name: 'get_customer_revenue',
             description: `Get customer revenue analysis.
 Shows total revenue by customer for a given period.
-Use for: "customer revenue", "top customers", "sales by customer"`,
+Use for: "customer revenue", "top customers", "sales by customer"
+
+Supports batch customer lookups, revenue thresholds, and dimensional filtering.
+Can filter by minimum/maximum revenue, class, department, subsidiary, and sales rep.`,
             parameters: {
                 type: 'object',
                 properties: {
                     customer_id: {
                         type: 'number',
-                        description: 'Optional: filter to specific customer ID'
+                        description: 'Filter to specific customer ID (use customer_ids for multiple)'
+                    },
+                    customer_ids: {
+                        type: 'array',
+                        items: { type: 'number' },
+                        description: 'Array of customer IDs for batch lookup'
                     },
                     period: {
                         type: 'string',
                         enum: ['this_month', 'last_month', 'this_quarter', 'last_quarter', 'ytd', 'last_30_days', 'last_90_days', 'last_365_days', 'last_year', 'last_2_years', 'all'],
-                        description: 'Time period filter. Default: no restriction (all time). Use for narrowing results.'
+                        description: 'Time period filter (default: all)'
+                    },
+                    min_revenue: {
+                        type: 'number',
+                        description: 'Minimum total revenue threshold (e.g., 100000 for $100K+)'
+                    },
+                    max_revenue: {
+                        type: 'number',
+                        description: 'Maximum total revenue cap'
+                    },
+                    class_id: {
+                        type: 'number',
+                        description: 'Filter by class ID'
+                    },
+                    department_id: {
+                        type: 'number',
+                        description: 'Filter by department ID'
+                    },
+                    subsidiary_id: {
+                        type: 'number',
+                        description: 'Filter by subsidiary ID'
+                    },
+                    sales_rep_id: {
+                        type: 'number',
+                        description: 'Filter by sales rep ID'
+                    },
+                    include_ar_aging: {
+                        type: 'boolean',
+                        description: 'Include current AR aging data for each customer'
                     },
                     limit: {
                         type: 'number',
                         description: 'Max customers to return (default: 25)'
+                    },
+                    sort_by: {
+                        type: 'string',
+                        enum: ['total_revenue', 'transaction_count', 'customer_name', 'recent_activity'],
+                        description: 'Sort results by field (default: total_revenue)'
                     }
                 },
                 required: []
             },
             execute: function(args) {
-                const customerFilter = args.customer_id ? `AND transaction.entity = ${args.customer_id}` : '';
+                // Handle single customer_id or batch customer_ids
+                let customerFilter = '';
+                if (args.customer_ids && args.customer_ids.length > 0) {
+                    customerFilter = `AND transaction.entity IN (${args.customer_ids.join(',')})`;
+                } else if (args.customer_id) {
+                    customerFilter = `AND transaction.entity = ${args.customer_id}`;
+                }
+
                 const periodFilter = buildPeriodFilter(args.period || 'all');
+                const subsidiaryFilter = args.subsidiary_id ? `AND transaction.subsidiary = ${args.subsidiary_id}` : '';
+                const salesRepFilter = args.sales_rep_id ? `AND transaction.salesrep = ${args.sales_rep_id}` : '';
                 const limit = args.limit || 25;
 
+                // Class/department filters require joining transactionline
+                const hasLineFilters = args.class_id || args.department_id;
+                const lineJoin = hasLineFilters ? 'LEFT JOIN transactionline tl ON tl.transaction = transaction.id AND tl.mainline = \'F\'' : '';
+                const classFilter = args.class_id ? `AND tl.class = ${args.class_id}` : '';
+                const deptFilter = args.department_id ? `AND tl.department = ${args.department_id}` : '';
+
+                // Determine sort order
+                let orderBy = 'total_revenue DESC';
+                if (args.sort_by === 'transaction_count') orderBy = 'transaction_count DESC';
+                else if (args.sort_by === 'customer_name') orderBy = 'customer_name ASC';
+                else if (args.sort_by === 'recent_activity') orderBy = 'last_transaction DESC';
+
+                // Build HAVING clause for revenue thresholds
+                const havingClauses = [];
+                if (args.min_revenue) havingClauses.push(`SUM(transaction.foreigntotal) >= ${args.min_revenue}`);
+                if (args.max_revenue) havingClauses.push(`SUM(transaction.foreigntotal) <= ${args.max_revenue}`);
+                const havingClause = havingClauses.length > 0 ? `HAVING ${havingClauses.join(' AND ')}` : '';
+
+                // Base query with optional AR aging
+                let selectFields = `
+                    customer.id AS customer_id,
+                    customer.companyname AS customer_name,
+                    COUNT(DISTINCT transaction.id) AS transaction_count,
+                    SUM(transaction.foreigntotal) AS total_revenue,
+                    MIN(transaction.trandate) AS first_transaction,
+                    MAX(transaction.trandate) AS last_transaction`;
+
+                // Add AR aging subquery if requested
+                let arAgingJoin = '';
+                if (args.include_ar_aging) {
+                    selectFields += `,
+                    ar_aging.total_outstanding,
+                    ar_aging.overdue_amount`;
+                    arAgingJoin = `
+                    LEFT JOIN (
+                        SELECT
+                            t.entity,
+                            SUM(t.foreignamountunpaid) AS total_outstanding,
+                            SUM(CASE WHEN CURRENT_DATE - t.duedate > 0 THEN t.foreignamountunpaid ELSE 0 END) AS overdue_amount
+                        FROM transaction t
+                        WHERE t.type = 'CustInvc'
+                            AND t.foreignamountunpaid != 0
+                            AND t.posting = 'T'
+                            AND t.voided = 'F'
+                        GROUP BY t.entity
+                    ) ar_aging ON ar_aging.entity = customer.id`;
+                }
+
                 const query = `
-                    SELECT
-                        customer.id AS customer_id,
-                        customer.companyname AS customer_name,
-                        COUNT(DISTINCT transaction.id) AS transaction_count,
-                        SUM(transaction.foreigntotal) AS total_revenue,
-                        MIN(transaction.trandate) AS first_transaction,
-                        MAX(transaction.trandate) AS last_transaction
+                    SELECT ${selectFields}
                     FROM transaction
                     INNER JOIN customer ON transaction.entity = customer.id
+                    ${lineJoin}
+                    ${arAgingJoin}
                     WHERE transaction.type IN ('CustInvc', 'CashSale', 'CustCred')
                         AND transaction.posting = 'T'
                         AND transaction.voided = 'F'
                         AND ${periodFilter}
                         ${customerFilter}
-                    GROUP BY customer.id, customer.companyname
-                    ORDER BY total_revenue DESC
+                        ${subsidiaryFilter}
+                        ${salesRepFilter}
+                        ${classFilter}
+                        ${deptFilter}
+                    GROUP BY customer.id, customer.companyname${args.include_ar_aging ? ', ar_aging.total_outstanding, ar_aging.overdue_amount' : ''}
+                    ${havingClause}
+                    ORDER BY ${orderBy}
                     FETCH FIRST ${limit} ROWS ONLY
                 `;
 
@@ -723,7 +1149,10 @@ Use for: "customer revenue", "top customers", "sales by customer"`,
                 return formatResult(result, 'get_customer_revenue');
             },
             displayName: function(args) {
-                return 'Analyzing customer revenue...';
+                if (args.customer_ids && args.customer_ids.length > 0) {
+                    return `Analyzing revenue for ${args.customer_ids.length} customers...`;
+                }
+                return args.customer_id ? 'Getting customer revenue details...' : 'Analyzing customer revenue...';
             }
         },
 
@@ -733,6 +1162,7 @@ Use for: "customer revenue", "top customers", "sales by customer"`,
 Shows transactions and their GL impact filtered by account, class, location, and/or period.
 Use for: "GL activity", "account activity", "what hit this account", "GL variance", "class expenses"
 
+Supports filtering by amount ranges, transaction type, entity, and multiple dimensions.
 NOTE: Class/department/location filters use the segment values from the GL accounting lines directly.`,
             parameters: {
                 type: 'object',
@@ -740,6 +1170,11 @@ NOTE: Class/department/location filters use the segment values from the GL accou
                     account_id: {
                         type: 'number',
                         description: 'GL account ID to filter by'
+                    },
+                    account_ids: {
+                        type: 'array',
+                        items: { type: 'number' },
+                        description: 'Array of GL account IDs for batch lookup'
                     },
                     class_id: {
                         type: 'number',
@@ -753,32 +1188,171 @@ NOTE: Class/department/location filters use the segment values from the GL accou
                         type: 'number',
                         description: 'Location ID to filter by (uses GL line segment)'
                     },
+                    subsidiary_id: {
+                        type: 'number',
+                        description: 'Filter by subsidiary ID'
+                    },
+                    entity_id: {
+                        type: 'number',
+                        description: 'Filter by customer or vendor ID'
+                    },
+                    transaction_type: {
+                        type: 'string',
+                        enum: ['VendBill', 'VendPymt', 'CustInvc', 'CustPymt', 'Journal', 'Check', 'Deposit', 'ExpRept'],
+                        description: 'Filter by transaction type'
+                    },
+                    min_amount: {
+                        type: 'number',
+                        description: 'Minimum absolute amount to include'
+                    },
+                    max_amount: {
+                        type: 'number',
+                        description: 'Maximum absolute amount to include'
+                    },
+                    memo_contains: {
+                        type: 'string',
+                        description: 'Filter by memo text (case-insensitive search)'
+                    },
                     period: {
                         type: 'string',
                         enum: ['this_month', 'last_month', 'this_quarter', 'last_quarter', 'ytd', 'last_30_days', 'last_90_days', 'last_365_days', 'last_year', 'last_2_years', 'all'],
-                        description: 'Time period filter. Default: no restriction (all time). Use for narrowing results.'
+                        description: 'Time period filter (default: all)'
                     },
                     limit: {
                         type: 'number',
                         description: 'Max transactions to return (default: 50)'
+                    },
+                    sort_by: {
+                        type: 'string',
+                        enum: ['date', 'amount', 'account', 'entity'],
+                        description: 'Sort results by field (default: date desc)'
+                    },
+                    group_by: {
+                        type: 'string',
+                        enum: ['none', 'account', 'period', 'class', 'department'],
+                        description: 'Group results (default: none - individual transactions)'
                     }
                 },
                 required: []
             },
             execute: function(args) {
                 // Build filters - using transactionaccountingline's own segment fields
-                // This avoids the duplicate row problem from joining to transactionline
                 const filters = [];
-                if (args.account_id) filters.push(`tal.account = ${args.account_id}`);
+
+                // Account filter (single or batch)
+                if (args.account_ids && args.account_ids.length > 0) {
+                    filters.push(`tal.account IN (${args.account_ids.join(',')})`);
+                } else if (args.account_id) {
+                    filters.push(`tal.account = ${args.account_id}`);
+                }
+
                 if (args.class_id) filters.push(`tal.class = ${args.class_id}`);
                 if (args.department_id) filters.push(`tal.department = ${args.department_id}`);
                 if (args.location_id) filters.push(`tal.location = ${args.location_id}`);
+                if (args.subsidiary_id) filters.push(`transaction.subsidiary = ${args.subsidiary_id}`);
+                if (args.entity_id) filters.push(`transaction.entity = ${args.entity_id}`);
+                if (args.transaction_type) filters.push(`transaction.type = '${escapeSql(args.transaction_type)}'`);
+                if (args.memo_contains) filters.push(`LOWER(transaction.memo) LIKE '%${escapeSql(args.memo_contains.toLowerCase())}%'`);
+
+                // Amount filters
+                if (args.min_amount) filters.push(`ABS(COALESCE(tal.debit, 0) - COALESCE(tal.credit, 0)) >= ${args.min_amount}`);
+                if (args.max_amount) filters.push(`ABS(COALESCE(tal.debit, 0) - COALESCE(tal.credit, 0)) <= ${args.max_amount}`);
 
                 const periodFilter = buildPeriodFilter(args.period || 'all');
                 const limit = args.limit || 50;
 
-                // Query uses transactionaccountingline's own class/dept/location fields
-                // This avoids the duplicate row problem from the previous LEFT JOIN
+                // Determine sort order
+                let orderBy = 'transaction.trandate DESC, ABS(COALESCE(tal.debit, 0) - COALESCE(tal.credit, 0)) DESC';
+                if (args.sort_by === 'amount') orderBy = 'ABS(COALESCE(tal.debit, 0) - COALESCE(tal.credit, 0)) DESC';
+                else if (args.sort_by === 'account') orderBy = 'account.acctnumber ASC, transaction.trandate DESC';
+                else if (args.sort_by === 'entity') orderBy = 'BUILTIN.DF(transaction.entity), transaction.trandate DESC';
+
+                // Handle group_by option
+                if (args.group_by && args.group_by !== 'none') {
+                    let groupQuery;
+                    if (args.group_by === 'account') {
+                        groupQuery = `
+                            SELECT
+                                account.acctnumber AS account_number,
+                                account.accountsearchdisplayname AS account_name,
+                                COUNT(DISTINCT transaction.id) AS transaction_count,
+                                SUM(COALESCE(tal.debit, 0)) AS total_debit,
+                                SUM(COALESCE(tal.credit, 0)) AS total_credit,
+                                SUM(COALESCE(tal.debit, 0) - COALESCE(tal.credit, 0)) AS net_amount
+                            FROM transactionaccountingline tal
+                            INNER JOIN transaction ON tal.transaction = transaction.id
+                            INNER JOIN account ON tal.account = account.id
+                            WHERE transaction.posting = 'T'
+                                AND transaction.voided = 'F'
+                                AND ${periodFilter}
+                                ${filters.length > 0 ? 'AND ' + filters.join(' AND ') : ''}
+                            GROUP BY account.acctnumber, account.accountsearchdisplayname
+                            ORDER BY ABS(SUM(COALESCE(tal.debit, 0) - COALESCE(tal.credit, 0))) DESC
+                            FETCH FIRST ${limit} ROWS ONLY
+                        `;
+                    } else if (args.group_by === 'period') {
+                        groupQuery = `
+                            SELECT
+                                TO_CHAR(transaction.trandate, 'YYYY-MM') AS period,
+                                COUNT(DISTINCT transaction.id) AS transaction_count,
+                                SUM(COALESCE(tal.debit, 0)) AS total_debit,
+                                SUM(COALESCE(tal.credit, 0)) AS total_credit,
+                                SUM(COALESCE(tal.debit, 0) - COALESCE(tal.credit, 0)) AS net_amount
+                            FROM transactionaccountingline tal
+                            INNER JOIN transaction ON tal.transaction = transaction.id
+                            INNER JOIN account ON tal.account = account.id
+                            WHERE transaction.posting = 'T'
+                                AND transaction.voided = 'F'
+                                AND ${periodFilter}
+                                ${filters.length > 0 ? 'AND ' + filters.join(' AND ') : ''}
+                            GROUP BY TO_CHAR(transaction.trandate, 'YYYY-MM')
+                            ORDER BY period DESC
+                            FETCH FIRST ${limit} ROWS ONLY
+                        `;
+                    } else if (args.group_by === 'class') {
+                        groupQuery = `
+                            SELECT
+                                BUILTIN.DF(tal.class) AS class_name,
+                                COUNT(DISTINCT transaction.id) AS transaction_count,
+                                SUM(COALESCE(tal.debit, 0)) AS total_debit,
+                                SUM(COALESCE(tal.credit, 0)) AS total_credit,
+                                SUM(COALESCE(tal.debit, 0) - COALESCE(tal.credit, 0)) AS net_amount
+                            FROM transactionaccountingline tal
+                            INNER JOIN transaction ON tal.transaction = transaction.id
+                            INNER JOIN account ON tal.account = account.id
+                            WHERE transaction.posting = 'T'
+                                AND transaction.voided = 'F'
+                                AND ${periodFilter}
+                                ${filters.length > 0 ? 'AND ' + filters.join(' AND ') : ''}
+                            GROUP BY tal.class, BUILTIN.DF(tal.class)
+                            ORDER BY ABS(SUM(COALESCE(tal.debit, 0) - COALESCE(tal.credit, 0))) DESC
+                            FETCH FIRST ${limit} ROWS ONLY
+                        `;
+                    } else if (args.group_by === 'department') {
+                        groupQuery = `
+                            SELECT
+                                BUILTIN.DF(tal.department) AS department_name,
+                                COUNT(DISTINCT transaction.id) AS transaction_count,
+                                SUM(COALESCE(tal.debit, 0)) AS total_debit,
+                                SUM(COALESCE(tal.credit, 0)) AS total_credit,
+                                SUM(COALESCE(tal.debit, 0) - COALESCE(tal.credit, 0)) AS net_amount
+                            FROM transactionaccountingline tal
+                            INNER JOIN transaction ON tal.transaction = transaction.id
+                            INNER JOIN account ON tal.account = account.id
+                            WHERE transaction.posting = 'T'
+                                AND transaction.voided = 'F'
+                                AND ${periodFilter}
+                                ${filters.length > 0 ? 'AND ' + filters.join(' AND ') : ''}
+                            GROUP BY tal.department, BUILTIN.DF(tal.department)
+                            ORDER BY ABS(SUM(COALESCE(tal.debit, 0) - COALESCE(tal.credit, 0))) DESC
+                            FETCH FIRST ${limit} ROWS ONLY
+                        `;
+                    }
+                    const result = QueryExecutor.executeQuery(groupQuery);
+                    return formatResult(result, 'get_gl_activity');
+                }
+
+                // Default: individual transactions
                 const query = `
                     SELECT
                         transaction.id AS transaction_id,
@@ -786,6 +1360,7 @@ NOTE: Class/department/location filters use the segment values from the GL accou
                         transaction.type AS transaction_type,
                         transaction.trandate,
                         transaction.memo,
+                        BUILTIN.DF(transaction.entity) AS entity_name,
                         account.acctnumber AS account_number,
                         account.accountsearchdisplayname AS account_name,
                         BUILTIN.DF(tal.class) AS class_name,
@@ -801,7 +1376,7 @@ NOTE: Class/department/location filters use the segment values from the GL accou
                         AND transaction.voided = 'F'
                         AND ${periodFilter}
                         ${filters.length > 0 ? 'AND ' + filters.join(' AND ') : ''}
-                    ORDER BY transaction.trandate DESC, ABS(COALESCE(tal.debit, 0) - COALESCE(tal.credit, 0)) DESC
+                    ORDER BY ${orderBy}
                     FETCH FIRST ${limit} ROWS ONLY
                 `;
 
@@ -809,6 +1384,9 @@ NOTE: Class/department/location filters use the segment values from the GL accou
                 return formatResult(result, 'get_gl_activity');
             },
             displayName: function(args) {
+                if (args.group_by && args.group_by !== 'none') {
+                    return `Getting GL activity by ${args.group_by}...`;
+                }
                 return 'Pulling GL activity...';
             }
         },
@@ -1279,7 +1857,9 @@ ALWAYS use this for: "AP aging", "payables", "what we owe", "bills due", "vendor
         get_top_customers: {
             name: 'get_top_customers',
             description: `Get top customers by revenue for current fiscal year.
-ALWAYS use this for: "top customers", "best customers", "biggest customers", "customer revenue", "who are our best customers"`,
+ALWAYS use this for: "top customers", "best customers", "biggest customers", "customer revenue", "who are our best customers"
+
+Supports filtering by minimum revenue, subsidiary, class, and can include AR aging data.`,
             parameters: {
                 type: 'object',
                 properties: {
@@ -1292,9 +1872,34 @@ ALWAYS use this for: "top customers", "best customers", "biggest customers", "cu
                         enum: ['ytd', 'this_quarter', 'this_month', 'last_12_months'],
                         description: 'Time period (default: ytd)'
                     },
+                    min_revenue: {
+                        type: 'number',
+                        description: 'Minimum revenue threshold (e.g., 100000 for $100K+)'
+                    },
                     department_id: {
                         type: 'number',
-                        description: 'Optional: filter by department ID'
+                        description: 'Filter by department ID'
+                    },
+                    class_id: {
+                        type: 'number',
+                        description: 'Filter by class ID'
+                    },
+                    subsidiary_id: {
+                        type: 'number',
+                        description: 'Filter by subsidiary ID'
+                    },
+                    sales_rep_id: {
+                        type: 'number',
+                        description: 'Filter by sales rep ID'
+                    },
+                    include_ar_aging: {
+                        type: 'boolean',
+                        description: 'Include AR aging summary for each customer'
+                    },
+                    sort_by: {
+                        type: 'string',
+                        enum: ['revenue', 'invoice_count', 'outstanding_ar', 'customer_name'],
+                        description: 'Sort results by field (default: revenue)'
                     }
                 },
                 required: []
@@ -1302,8 +1907,21 @@ ALWAYS use this for: "top customers", "best customers", "biggest customers", "cu
             execute: function(args) {
                 const limit = args.limit || 10;
                 const period = args.period || 'ytd';
-                const deptFilter = args.department_id ?
-                    `AND tl.department = ${args.department_id}` : '';
+
+                // Build filters
+                const deptFilter = args.department_id ? `AND tl.department = ${args.department_id}` : '';
+                const classFilter = args.class_id ? `AND tl.class = ${args.class_id}` : '';
+                const subsidiaryFilter = args.subsidiary_id ? `AND t.subsidiary = ${args.subsidiary_id}` : '';
+                const salesRepFilter = args.sales_rep_id ? `AND t.salesrep = ${args.sales_rep_id}` : '';
+
+                // Build HAVING clause for min_revenue
+                const havingClause = args.min_revenue ? `HAVING SUM(t.foreigntotal) >= ${args.min_revenue}` : '';
+
+                // Determine sort order
+                let orderBy = 'total_revenue DESC';
+                if (args.sort_by === 'invoice_count') orderBy = 'invoice_count DESC';
+                else if (args.sort_by === 'outstanding_ar') orderBy = 'outstanding_ar DESC';
+                else if (args.sort_by === 'customer_name') orderBy = 'customer_name ASC';
 
                 let dateFilter = '';
                 if (period === 'ytd') {
@@ -1316,6 +1934,28 @@ ALWAYS use this for: "top customers", "best customers", "biggest customers", "cu
                     dateFilter = `AND t.trandate >= ADD_MONTHS(SYSDATE, -12)`;
                 }
 
+                // Optional AR aging join
+                let arAgingSelect = '';
+                let arAgingJoin = '';
+                let arAgingGroupBy = '';
+                if (args.include_ar_aging) {
+                    arAgingSelect = `, ar.current_bucket, ar.days_1_30, ar.days_31_60, ar.days_61_90, ar.days_over_90`;
+                    arAgingJoin = `
+                    LEFT JOIN (
+                        SELECT
+                            entity,
+                            SUM(CASE WHEN CURRENT_DATE - duedate <= 0 THEN foreignamountunpaid ELSE 0 END) AS current_bucket,
+                            SUM(CASE WHEN CURRENT_DATE - duedate BETWEEN 1 AND 30 THEN foreignamountunpaid ELSE 0 END) AS days_1_30,
+                            SUM(CASE WHEN CURRENT_DATE - duedate BETWEEN 31 AND 60 THEN foreignamountunpaid ELSE 0 END) AS days_31_60,
+                            SUM(CASE WHEN CURRENT_DATE - duedate BETWEEN 61 AND 90 THEN foreignamountunpaid ELSE 0 END) AS days_61_90,
+                            SUM(CASE WHEN CURRENT_DATE - duedate > 90 THEN foreignamountunpaid ELSE 0 END) AS days_over_90
+                        FROM transaction
+                        WHERE type = 'CustInvc' AND foreignamountunpaid != 0 AND posting = 'T' AND voided = 'F'
+                        GROUP BY entity
+                    ) ar ON ar.entity = t.entity`;
+                    arAgingGroupBy = ', ar.current_bucket, ar.days_1_30, ar.days_31_60, ar.days_61_90, ar.days_over_90';
+                }
+
                 const query = `
                     SELECT
                         BUILTIN.DF(t.entity) AS customer_name,
@@ -1325,17 +1965,23 @@ ALWAYS use this for: "top customers", "best customers", "biggest customers", "cu
                         SUM(t.foreignamountunpaid) AS outstanding_ar,
                         MIN(t.trandate) AS first_invoice,
                         MAX(t.trandate) AS last_invoice
+                        ${arAgingSelect}
                     FROM transaction t
                     INNER JOIN accountingperiod ap ON t.postingperiod = ap.id
                     LEFT JOIN transactionline tl ON tl.transaction = t.id AND tl.mainline = 'F'
+                    ${arAgingJoin}
                     WHERE t.type = 'CustInvc'
                         AND t.posting = 'T'
                         AND t.voided = 'F'
                         AND ap.isyear = 'F' AND ap.isquarter = 'F'
                         ${dateFilter}
                         ${deptFilter}
-                    GROUP BY t.entity, BUILTIN.DF(t.entity)
-                    ORDER BY total_revenue DESC
+                        ${classFilter}
+                        ${subsidiaryFilter}
+                        ${salesRepFilter}
+                    GROUP BY t.entity, BUILTIN.DF(t.entity)${arAgingGroupBy}
+                    ${havingClause}
+                    ORDER BY ${orderBy}
                     FETCH FIRST ${limit} ROWS ONLY
                 `;
 
@@ -1350,7 +1996,9 @@ ALWAYS use this for: "top customers", "best customers", "biggest customers", "cu
         get_top_vendors: {
             name: 'get_top_vendors',
             description: `Get top vendors by spend for current fiscal year.
-ALWAYS use this for: "top vendors", "biggest vendors", "vendor spend", "who do we pay most", "where do we spend"`,
+ALWAYS use this for: "top vendors", "biggest vendors", "vendor spend", "who do we pay most", "where do we spend"
+
+Supports filtering by minimum spend, subsidiary, class, department, and can include AP aging data.`,
             parameters: {
                 type: 'object',
                 properties: {
@@ -1362,6 +2010,31 @@ ALWAYS use this for: "top vendors", "biggest vendors", "vendor spend", "who do w
                         type: 'string',
                         enum: ['ytd', 'this_quarter', 'this_month', 'last_12_months'],
                         description: 'Time period (default: ytd)'
+                    },
+                    min_spend: {
+                        type: 'number',
+                        description: 'Minimum spend threshold (e.g., 100000 for $100K+)'
+                    },
+                    department_id: {
+                        type: 'number',
+                        description: 'Filter by department ID'
+                    },
+                    class_id: {
+                        type: 'number',
+                        description: 'Filter by class ID'
+                    },
+                    subsidiary_id: {
+                        type: 'number',
+                        description: 'Filter by subsidiary ID'
+                    },
+                    include_ap_aging: {
+                        type: 'boolean',
+                        description: 'Include AP aging summary for each vendor'
+                    },
+                    sort_by: {
+                        type: 'string',
+                        enum: ['spend', 'bill_count', 'outstanding_ap', 'vendor_name'],
+                        description: 'Sort results by field (default: spend)'
                     }
                 },
                 required: []
@@ -1369,6 +2042,20 @@ ALWAYS use this for: "top vendors", "biggest vendors", "vendor spend", "who do w
             execute: function(args) {
                 const limit = args.limit || 10;
                 const period = args.period || 'ytd';
+
+                // Build filters
+                const deptFilter = args.department_id ? `AND tl.department = ${args.department_id}` : '';
+                const classFilter = args.class_id ? `AND tl.class = ${args.class_id}` : '';
+                const subsidiaryFilter = args.subsidiary_id ? `AND t.subsidiary = ${args.subsidiary_id}` : '';
+
+                // Build HAVING clause for min_spend
+                const havingClause = args.min_spend ? `HAVING SUM(ABS(t.foreigntotal) * (CASE WHEN t.type = 'VendCred' THEN -1 ELSE 1 END)) >= ${args.min_spend}` : '';
+
+                // Determine sort order
+                let orderBy = 'total_spend DESC';
+                if (args.sort_by === 'bill_count') orderBy = 'bill_count DESC';
+                else if (args.sort_by === 'outstanding_ap') orderBy = 'outstanding_ap DESC';
+                else if (args.sort_by === 'vendor_name') orderBy = 'vendor_name ASC';
 
                 let dateFilter = '';
                 if (period === 'ytd') {
@@ -1381,6 +2068,31 @@ ALWAYS use this for: "top vendors", "biggest vendors", "vendor spend", "who do w
                     dateFilter = `AND t.trandate >= ADD_MONTHS(SYSDATE, -12)`;
                 }
 
+                // Optional AP aging join
+                let apAgingSelect = '';
+                let apAgingJoin = '';
+                let apAgingGroupBy = '';
+                const hasLineFilters = args.department_id || args.class_id;
+                const lineJoin = hasLineFilters ? 'LEFT JOIN transactionline tl ON tl.transaction = t.id AND tl.mainline = \'F\'' : '';
+
+                if (args.include_ap_aging) {
+                    apAgingSelect = `, ap_aging.current_bucket, ap_aging.days_1_30, ap_aging.days_31_60, ap_aging.days_61_90, ap_aging.days_over_90`;
+                    apAgingJoin = `
+                    LEFT JOIN (
+                        SELECT
+                            entity,
+                            SUM(CASE WHEN CURRENT_DATE - duedate <= 0 THEN foreignamountunpaid ELSE 0 END) AS current_bucket,
+                            SUM(CASE WHEN CURRENT_DATE - duedate BETWEEN 1 AND 30 THEN foreignamountunpaid ELSE 0 END) AS days_1_30,
+                            SUM(CASE WHEN CURRENT_DATE - duedate BETWEEN 31 AND 60 THEN foreignamountunpaid ELSE 0 END) AS days_31_60,
+                            SUM(CASE WHEN CURRENT_DATE - duedate BETWEEN 61 AND 90 THEN foreignamountunpaid ELSE 0 END) AS days_61_90,
+                            SUM(CASE WHEN CURRENT_DATE - duedate > 90 THEN foreignamountunpaid ELSE 0 END) AS days_over_90
+                        FROM transaction
+                        WHERE type = 'VendBill' AND foreignamountunpaid != 0 AND posting = 'T' AND voided = 'F'
+                        GROUP BY entity
+                    ) ap_aging ON ap_aging.entity = t.entity`;
+                    apAgingGroupBy = ', ap_aging.current_bucket, ap_aging.days_1_30, ap_aging.days_31_60, ap_aging.days_61_90, ap_aging.days_over_90';
+                }
+
                 const query = `
                     SELECT
                         BUILTIN.DF(t.entity) AS vendor_name,
@@ -1390,15 +2102,22 @@ ALWAYS use this for: "top vendors", "biggest vendors", "vendor spend", "who do w
                         SUM(t.foreignamountunpaid) AS outstanding_ap,
                         MIN(t.trandate) AS first_bill,
                         MAX(t.trandate) AS last_bill
+                        ${apAgingSelect}
                     FROM transaction t
                     INNER JOIN accountingperiod ap ON t.postingperiod = ap.id
+                    ${lineJoin}
+                    ${apAgingJoin}
                     WHERE t.type IN ('VendBill', 'VendCred')
                         AND t.posting = 'T'
                         AND t.voided = 'F'
                         AND ap.isyear = 'F' AND ap.isquarter = 'F'
                         ${dateFilter}
-                    GROUP BY t.entity, BUILTIN.DF(t.entity)
-                    ORDER BY total_spend DESC
+                        ${deptFilter}
+                        ${classFilter}
+                        ${subsidiaryFilter}
+                    GROUP BY t.entity, BUILTIN.DF(t.entity)${apAgingGroupBy}
+                    ${havingClause}
+                    ORDER BY ${orderBy}
                     FETCH FIRST ${limit} ROWS ONLY
                 `;
 
@@ -1533,6 +2252,8 @@ ALWAYS use this for: "expense breakdown", "where are we spending", "expense by c
             description: `Get recent transactions, optionally filtered by type or entity.
 Use for: "recent transactions", "latest invoices", "recent bills", "show transactions"
 
+Supports filtering by amount range, status, memo text, and multiple dimensions.
+
 IMPORTANT: You MUST use exact NetSuite type codes from the enum:
 - VendBill = Vendor Bills (use for "bills from vendor")
 - VendPymt = Vendor Payments
@@ -1553,43 +2274,117 @@ IMPORTANT: You MUST use exact NetSuite type codes from the enum:
                     transaction_type: {
                         type: 'string',
                         enum: ['VendBill', 'VendPymt', 'VendCred', 'CustInvc', 'CustPymt', 'CustCred', 'CashSale', 'Journal', 'Check', 'Deposit', 'ExpRept', 'PurchOrd', 'SalesOrd'],
-                        description: 'REQUIRED: NetSuite transaction type code. Must be exact value from enum.'
+                        description: 'NetSuite transaction type code. Must be exact value from enum.'
                     },
                     entity_id: {
                         type: 'number',
                         description: 'Filter by customer/vendor ID'
                     },
+                    entity_ids: {
+                        type: 'array',
+                        items: { type: 'number' },
+                        description: 'Array of entity IDs for batch lookup'
+                    },
                     period: {
                         type: 'string',
                         enum: ['today', 'this_week', 'this_month', 'last_30_days', 'last_90_days', 'last_365_days', 'last_year', 'last_2_years', 'all'],
-                        description: 'Time period filter. Default: no restriction (all time). Use for narrowing results.'
+                        description: 'Time period filter (default: all)'
+                    },
+                    min_amount: {
+                        type: 'number',
+                        description: 'Minimum transaction amount'
+                    },
+                    max_amount: {
+                        type: 'number',
+                        description: 'Maximum transaction amount'
+                    },
+                    status: {
+                        type: 'string',
+                        enum: ['open', 'paid', 'partially_paid'],
+                        description: 'Filter by payment status'
+                    },
+                    subsidiary_id: {
+                        type: 'number',
+                        description: 'Filter by subsidiary ID'
+                    },
+                    class_id: {
+                        type: 'number',
+                        description: 'Filter by class ID'
+                    },
+                    department_id: {
+                        type: 'number',
+                        description: 'Filter by department ID'
+                    },
+                    memo_contains: {
+                        type: 'string',
+                        description: 'Filter by memo text (case-insensitive search)'
+                    },
+                    created_by: {
+                        type: 'number',
+                        description: 'Filter by employee who created the transaction'
                     },
                     limit: {
                         type: 'number',
                         description: 'Max transactions to return (default: 50)'
+                    },
+                    sort_by: {
+                        type: 'string',
+                        enum: ['date', 'amount', 'entity', 'type'],
+                        description: 'Sort results by field (default: date desc)'
                     }
                 },
                 required: []
             },
             execute: function(args) {
-                // Transaction type is used directly - enum enforces exact NetSuite codes
+                // Transaction type filter
                 const transactionType = args.transaction_type;
-
-                if (transactionType) {
-                    log.debug('get_recent_transactions using type', { type: transactionType });
-                }
-
                 const typeFilter = transactionType ?
                     `AND transaction.type = '${escapeSql(transactionType)}'` : '';
-                const entityFilter = args.entity_id ?
-                    `AND transaction.entity = ${args.entity_id}` : '';
 
-                // Default to all time - let the LLM specify period if they want to narrow down
+                // Entity filter (single or batch)
+                let entityFilter = '';
+                if (args.entity_ids && args.entity_ids.length > 0) {
+                    entityFilter = `AND transaction.entity IN (${args.entity_ids.join(',')})`;
+                } else if (args.entity_id) {
+                    entityFilter = `AND transaction.entity = ${args.entity_id}`;
+                }
+
+                // Additional filters
+                const subsidiaryFilter = args.subsidiary_id ? `AND transaction.subsidiary = ${args.subsidiary_id}` : '';
+                const memoFilter = args.memo_contains ? `AND LOWER(transaction.memo) LIKE '%${escapeSql(args.memo_contains.toLowerCase())}%'` : '';
+                const createdByFilter = args.created_by ? `AND transaction.createdby = ${args.created_by}` : '';
+
+                // Amount filters
+                const minAmountFilter = args.min_amount ? `AND ABS(transaction.foreigntotal) >= ${args.min_amount}` : '';
+                const maxAmountFilter = args.max_amount ? `AND ABS(transaction.foreigntotal) <= ${args.max_amount}` : '';
+
+                // Status filter
+                let statusFilter = '';
+                if (args.status === 'open') {
+                    statusFilter = 'AND transaction.foreignamountunpaid = transaction.foreigntotal';
+                } else if (args.status === 'paid') {
+                    statusFilter = 'AND transaction.foreignamountunpaid = 0';
+                } else if (args.status === 'partially_paid') {
+                    statusFilter = 'AND transaction.foreignamountunpaid > 0 AND transaction.foreignamountunpaid < transaction.foreigntotal';
+                }
+
+                // Class/department filters require line join
+                const hasLineFilters = args.class_id || args.department_id;
+                const lineJoin = hasLineFilters ? 'LEFT JOIN transactionline tl ON tl.transaction = transaction.id AND tl.mainline = \'F\'' : '';
+                const classFilter = args.class_id ? `AND tl.class = ${args.class_id}` : '';
+                const deptFilter = args.department_id ? `AND tl.department = ${args.department_id}` : '';
+
                 const periodFilter = buildPeriodFilter(args.period || 'all');
                 const limit = args.limit || 50;
 
+                // Determine sort order
+                let orderBy = 'transaction.trandate DESC, transaction.id DESC';
+                if (args.sort_by === 'amount') orderBy = 'ABS(transaction.foreigntotal) DESC';
+                else if (args.sort_by === 'entity') orderBy = 'BUILTIN.DF(transaction.entity), transaction.trandate DESC';
+                else if (args.sort_by === 'type') orderBy = 'transaction.type, transaction.trandate DESC';
+
                 const query = `
-                    SELECT
+                    SELECT ${hasLineFilters ? 'DISTINCT' : ''}
                         transaction.id,
                         transaction.tranid AS document_number,
                         transaction.type AS transaction_type,
@@ -1600,12 +2395,21 @@ IMPORTANT: You MUST use exact NetSuite type codes from the enum:
                         transaction.status,
                         transaction.memo
                     FROM transaction
+                    ${lineJoin}
                     WHERE transaction.posting = 'T'
                         AND transaction.voided = 'F'
                         AND ${periodFilter}
                         ${typeFilter}
                         ${entityFilter}
-                    ORDER BY transaction.trandate DESC, transaction.id DESC
+                        ${subsidiaryFilter}
+                        ${memoFilter}
+                        ${createdByFilter}
+                        ${minAmountFilter}
+                        ${maxAmountFilter}
+                        ${statusFilter}
+                        ${classFilter}
+                        ${deptFilter}
+                    ORDER BY ${orderBy}
                     FETCH FIRST ${limit} ROWS ONLY
                 `;
 
@@ -1633,6 +2437,9 @@ IMPORTANT: You MUST use exact NetSuite type codes from the enum:
                 return formatted;
             },
             displayName: function(args) {
+                if (args.entity_ids && args.entity_ids.length > 0) {
+                    return `Getting transactions for ${args.entity_ids.length} entities...`;
+                }
                 return 'Getting recent transactions...';
             }
         },
@@ -1999,36 +2806,107 @@ Use for: "anomalies", "unusual transactions", "what caused the spike", "outliers
         get_cash_position: {
             name: 'get_cash_position',
             description: `Get current cash position across all bank accounts.
-Use for: "cash balance", "how much cash", "bank balances", "cash on hand"`,
+Use for: "cash balance", "how much cash", "bank balances", "cash on hand"
+
+Supports filtering by subsidiary, currency, and including credit card balances.`,
             parameters: {
                 type: 'object',
-                properties: {},
+                properties: {
+                    subsidiary_id: {
+                        type: 'number',
+                        description: 'Filter by subsidiary ID'
+                    },
+                    currency: {
+                        type: 'string',
+                        description: 'Filter by currency code (e.g., USD, CAD, EUR)'
+                    },
+                    include_credit_cards: {
+                        type: 'boolean',
+                        description: 'Include credit card account balances (default: false)'
+                    },
+                    min_balance: {
+                        type: 'number',
+                        description: 'Minimum account balance to include'
+                    },
+                    include_inactive: {
+                        type: 'boolean',
+                        description: 'Include inactive accounts (default: false)'
+                    },
+                    sort_by: {
+                        type: 'string',
+                        enum: ['balance', 'name', 'subsidiary'],
+                        description: 'Sort results by field (default: balance desc)'
+                    }
+                },
                 required: []
             },
             execute: function(args) {
+                // Build account type filter
+                let acctTypeFilter = `account.accttype = 'Bank'`;
+                if (args.include_credit_cards) {
+                    acctTypeFilter = `account.accttype IN ('Bank', 'CredCard')`;
+                }
+
+                // Build filters
+                const subsidiaryFilter = args.subsidiary_id ? `AND account.subsidiary = ${args.subsidiary_id}` : '';
+                const currencyFilter = args.currency ? `AND account.currency = (SELECT id FROM currency WHERE symbol = '${escapeSql(args.currency)}')` : '';
+                const minBalanceFilter = args.min_balance ? `AND account.balance >= ${args.min_balance}` : '';
+                const inactiveFilter = args.include_inactive ? '' : `AND account.isinactive = 'F'`;
+
+                // Determine sort order
+                let orderBy = 'account.balance DESC';
+                if (args.sort_by === 'name') orderBy = 'account.accountsearchdisplayname ASC';
+                else if (args.sort_by === 'subsidiary') orderBy = 'BUILTIN.DF(account.subsidiary), account.balance DESC';
+
                 const query = `
                     SELECT
                         account.id AS account_id,
                         account.accountsearchdisplayname AS account_name,
+                        account.accttype AS account_type,
                         BUILTIN.DF(account.subsidiary) AS subsidiary,
+                        BUILTIN.DF(account.currency) AS currency,
                         account.balance AS balance
                     FROM account
-                    WHERE account.accttype = 'Bank'
-                        AND account.isinactive = 'F'
-                    ORDER BY account.balance DESC
+                    WHERE ${acctTypeFilter}
+                        ${inactiveFilter}
+                        ${subsidiaryFilter}
+                        ${currencyFilter}
+                        ${minBalanceFilter}
+                    ORDER BY ${orderBy}
                 `;
 
                 const result = QueryExecutor.executeQuery(query);
                 const formatted = formatResult(result, 'get_cash_position');
 
-                // Calculate total
+                // Calculate totals by type
                 if (formatted.success && formatted.rows) {
-                    formatted.totalCash = formatted.rows.reduce((sum, row) => sum + (row.balance || 0), 0);
+                    let totalBank = 0;
+                    let totalCreditCards = 0;
+
+                    formatted.rows.forEach(row => {
+                        if (row.account_type === 'Bank') {
+                            totalBank += row.balance || 0;
+                        } else if (row.account_type === 'CredCard') {
+                            totalCreditCards += row.balance || 0;
+                        }
+                    });
+
+                    formatted.summary = {
+                        totalBankBalance: totalBank,
+                        totalCreditCardBalance: totalCreditCards,
+                        netCashPosition: totalBank + totalCreditCards,
+                        accountCount: formatted.rows.length
+                    };
+                    // Keep backward compat
+                    formatted.totalCash = totalBank + totalCreditCards;
                 }
 
                 return formatted;
             },
             displayName: function(args) {
+                if (args.subsidiary_id) {
+                    return 'Getting subsidiary cash position...';
+                }
                 return 'Getting cash position...';
             }
         },
