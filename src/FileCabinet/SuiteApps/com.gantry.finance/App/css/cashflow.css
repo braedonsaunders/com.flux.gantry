@@ -2488,24 +2488,24 @@ body.dark-mode .cf-group-header td {
 
 .cf-vitals-hero {
     background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
-    border-radius: 16px;
-    padding: 20px;
+    border-radius: 8px;
+    padding: 10px;
     border: 1px solid #e2e8f0;
 }
 
 .cf-vitals-grid {
     display: grid;
     grid-template-columns: repeat(5, 1fr);
-    gap: 16px;
+    gap: 10px;
 }
 
 .cf-vital-card {
     background: #ffffff;
-    border-radius: 12px;
-    padding: 16px;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04), 0 4px 12px rgba(0, 0, 0, 0.03);
+    border-radius: 6px;
+    padding: 8px 10px;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
     border: 1px solid #e2e8f0;
-    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    transition: all 0.2s ease;
     display: flex;
     flex-direction: column;
     position: relative;
@@ -2518,14 +2518,13 @@ body.dark-mode .cf-group-header td {
     top: 0;
     left: 0;
     right: 0;
-    height: 3px;
+    height: 2px;
     background: linear-gradient(90deg, transparent, transparent);
-    transition: background 0.3s ease;
 }
 
 .cf-vital-card:hover {
-    transform: translateY(-4px);
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08), 0 2px 8px rgba(0, 0, 0, 0.04);
+    transform: translateY(-1px);
+    box-shadow: 0 3px 8px rgba(0, 0, 0, 0.06);
     border-color: #cbd5e1;
 }
 
@@ -2539,19 +2538,19 @@ body.dark-mode .cf-group-header td {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    margin-bottom: 12px;
+    margin-bottom: 6px;
 }
 
 .cf-vital-icon-ring {
-    width: 42px;
-    height: 42px;
-    border-radius: 12px;
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 16px;
+    font-size: 12px;
     color: #ffffff;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
 }
 
 .bg-purple-gradient { background: linear-gradient(135deg, #a855f7 0%, #7c3aed 100%); }
@@ -2563,14 +2562,14 @@ body.dark-mode .cf-group-header td {
 .bg-red-gradient { background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); }
 
 .cf-vital-badge {
-    font-size: 9px;
-    font-weight: 700;
+    font-size: 8px;
+    font-weight: 600;
     text-transform: uppercase;
-    letter-spacing: 0.5px;
+    letter-spacing: 0.3px;
     color: #64748b;
     background: #f1f5f9;
-    padding: 3px 8px;
-    border-radius: 6px;
+    padding: 2px 5px;
+    border-radius: 4px;
 }
 
 .cf-vital-body {
@@ -2580,34 +2579,33 @@ body.dark-mode .cf-group-header td {
 }
 
 .cf-vital-label {
-    font-size: 11px;
+    font-size: 9px;
     font-weight: 600;
     color: #64748b;
     text-transform: uppercase;
-    letter-spacing: 0.3px;
-    margin-bottom: 4px;
+    letter-spacing: 0.2px;
+    margin-bottom: 2px;
 }
 
 .cf-vital-value {
-    font-size: 24px;
-    font-weight: 800;
+    font-size: 16px;
+    font-weight: 700;
     color: #0f172a;
-    line-height: 1.1;
-    margin-bottom: 4px;
+    line-height: 1.2;
 }
 
 .cf-vital-hint {
-    font-size: 10px;
+    font-size: 9px;
     color: #94a3b8;
-    margin-top: auto;
+    margin-top: 2px;
 }
 
 /* Dual metric card (DSO/DPO) */
 .cf-vital-dual {
     display: flex;
     align-items: center;
-    gap: 12px;
-    margin-bottom: 4px;
+    gap: 8px;
+    margin-bottom: 2px;
 }
 
 .cf-vital-metric {
@@ -2617,23 +2615,23 @@ body.dark-mode .cf-group-header td {
 
 .cf-vital-metric-label {
     display: block;
-    font-size: 10px;
+    font-size: 9px;
     font-weight: 600;
     color: #94a3b8;
     text-transform: uppercase;
-    letter-spacing: 0.3px;
-    margin-bottom: 2px;
+    letter-spacing: 0.2px;
+    margin-bottom: 1px;
 }
 
 .cf-vital-metric-value {
-    font-size: 22px;
-    font-weight: 800;
-    line-height: 1.1;
+    font-size: 15px;
+    font-weight: 700;
+    line-height: 1.2;
 }
 
 .cf-vital-divider {
     width: 1px;
-    height: 36px;
+    height: 24px;
     background: linear-gradient(180deg, transparent, #e2e8f0, transparent);
 }
 
