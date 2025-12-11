@@ -279,6 +279,9 @@ define([
      * Get status of an async request and advance the agent if still processing.
      * Each call to getStatus() runs ONE step of the agent loop for progressive rendering.
      *
+     * IMPORTANT: Uses processing lock to prevent concurrent polls from executing steps
+     * simultaneously. This prevents race conditions where multiple polls read stale state.
+     *
      * @param {string} requestId - Request ID from processChatAsync
      * @returns {Object} Progress state with current steps
      */
@@ -327,19 +330,38 @@ define([
             return ProgressStore.getPollingResponse(requestId);
         }
 
+        // ═══════════════════════════════════════════════════════════════════════
+        // PROCESSING LOCK: Prevent concurrent step execution
+        // If another poll is already processing, just return current state
+        // ═══════════════════════════════════════════════════════════════════════
+        if (!ProgressStore.acquireProcessingLock(requestId)) {
+            log.debug('getStatus - another poll is processing, returning current state', {
+                requestId: requestId
+            });
+            return ProgressStore.getPollingResponse(requestId);
+        }
+
         // Still processing - run next step
+        // NOTE: We have the processing lock, so only ONE poll executes this block at a time
         try {
+            // Re-check status after acquiring lock (might have completed while waiting)
+            const freshState = ProgressStore.get(requestId);
+            if (!freshState || freshState.status === 'complete' || freshState.status === 'error') {
+                ProgressStore.releaseProcessingLock(requestId);
+                return ProgressStore.getPollingResponse(requestId);
+            }
+
             let stepResult;
 
             // Check which agent to use based on state flag
-            const useStreaming = progressState.agentState?.useStreamingAgent === true;
+            const useStreaming = freshState.agentState?.useStreamingAgent === true;
 
             if (useStreaming) {
                 // ═══════════════════════════════════════════════════════════
                 // STREAMING CONTEXT ARCHITECTURE (SCA)
                 // Multi-phase lightweight calls - each phase is 1-3 seconds
                 // ═══════════════════════════════════════════════════════════
-                const agentState = progressState.agentState;
+                const agentState = freshState.agentState;
 
                 stepResult = StreamingAgent.runStep(agentState);
 
@@ -379,7 +401,8 @@ define([
                 });
             }
 
-            // Return updated polling response
+            // Release processing lock and return updated polling response
+            ProgressStore.releaseProcessingLock(requestId);
             return ProgressStore.getPollingResponse(requestId);
 
         } catch (e) {
@@ -408,6 +431,9 @@ define([
 
             // Store failure state so subsequent polls don't retry
             ProgressStore.fail(requestId, e.message);
+
+            // Release processing lock before returning
+            ProgressStore.releaseProcessingLock(requestId);
             return ProgressStore.getPollingResponse(requestId);
         }
     }
