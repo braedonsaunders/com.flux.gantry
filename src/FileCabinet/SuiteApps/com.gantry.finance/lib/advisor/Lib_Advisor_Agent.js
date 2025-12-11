@@ -335,6 +335,7 @@ Respond with ONLY the JSON object.`;
         if (recentCalls.length === 0) return null;
 
         // Build tool results summary for the prompt (with null checks)
+        // CRITICAL: Include suggestions so reflection knows what to try next!
         const toolResultsSummary = recentCalls.map(tc => {
             const resultSummary = tc.result ? {
                 success: tc.result.success,
@@ -342,7 +343,10 @@ Respond with ONLY the JSON object.`;
                 found: tc.result.found,
                 error: tc.result.error,
                 message: tc.result.message,
-                entityId: tc.result.entity ? tc.result.entity.id : null
+                entityId: tc.result.entity ? tc.result.entity.id : null,
+                // CRITICAL: Include suggestions and notes for 0-row results!
+                suggestions: tc.result.suggestions || null,
+                note: tc.result.note || null
             } : { error: 'No result returned' };
 
             return `Tool: ${tc.tool}\nArgs: ${JSON.stringify(tc.args)}\nResult: ${JSON.stringify(resultSummary)}`;
@@ -650,7 +654,15 @@ Respond with ONLY the JSON object.`;
             }
 
             if (result.success && result.rowCount === 0) {
-                return `${tc.tool}: SUCCESS but 0 rows - query matched nothing`;
+                let msg = `${tc.tool}: SUCCESS but 0 rows - query matched nothing`;
+                // CRITICAL: Include suggestions so reflection knows what to try next!
+                if (result.suggestions && result.suggestions.length > 0) {
+                    msg += `\n  SUGGESTIONS: ${result.suggestions.join('; ')}`;
+                }
+                if (result.note) {
+                    msg += `\n  NOTE: ${result.note}`;
+                }
+                return msg;
             }
 
             if (result.success) {
@@ -2007,6 +2019,24 @@ format_response({
             if (result.totalCash !== undefined) lines.push(`\nTotal Cash: $${result.totalCash.toLocaleString()}`);
             if (result.totalExpenses !== undefined) lines.push(`\nTotal Expenses: $${result.totalExpenses.toLocaleString()}`);
             if (result.variance) lines.push(`\nVariance: ${JSON.stringify(result.variance)}`);
+
+            return lines.join('\n');
+        }
+
+        // CRITICAL: When rowCount is 0, include suggestions so LLM knows what to try next!
+        if (result.rowCount === 0 || (result.rows && result.rows.length === 0)) {
+            lines.push(`Row Count: 0 - No matching data found`);
+
+            // Include note if present (e.g., "Searched for transaction type VendBill")
+            if (result.note) {
+                lines.push(`Note: ${result.note}`);
+            }
+
+            // CRITICAL: Include suggestions so LLM knows alternative approaches!
+            if (result.suggestions && result.suggestions.length > 0) {
+                lines.push(`\nSUGGESTIONS FOR NEXT STEPS:`);
+                result.suggestions.forEach(s => lines.push(`- ${s}`));
+            }
 
             return lines.join('\n');
         }
