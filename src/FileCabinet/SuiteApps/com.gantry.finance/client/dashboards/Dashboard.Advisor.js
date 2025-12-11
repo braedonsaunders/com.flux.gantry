@@ -2143,10 +2143,14 @@
                 // Show dashboard ID badge
                 if (step.dashboardId) {
                     const dashboardNames = {
-                        'cashflow': 'Cash Flow',
-                        'health': 'Business Health', 
-                        'burden': 'Burden Analysis',
-                        'time': 'Time Analysis'
+                        'cashflow': 'Liquidity',
+                        'health': 'P&L',
+                        'burden': 'True Cost',
+                        'time': 'Billable IQ',
+                        'integrity': 'Sentinel',
+                        'vendorperformance': 'Procurement',
+                        'customervalue': 'Revenue Intelligence',
+                        'spendvelocity': 'Spend Velocity'
                     };
                     const displayName = dashboardNames[step.dashboardId] || step.dashboardId;
                     detailContent += `<div class="dashboard-badge"><i class="fas fa-chart-pie"></i> ${this.escapeHtml(displayName)}</div>`;
