@@ -568,15 +568,24 @@
 
             // Header Stats
             el("#CF_RangeLabel").textContent = `As of ${meta.asOfDate} • ${meta.range.days} Day Outlook`;
-            el("#CF_StartingCash").textContent = fmtMoney(co.cash.startingCash);
-            el("#CF_ProjectedEndCash").textContent = fmtMoney(co.cash.projectedEnd);
-            el("#CF_TotalInflows").textContent = fmtMoney(co.cash.totalInflows);
-            el("#CF_TotalOutflows").textContent = fmtMoney(co.cash.totalOutflows);
+
+            // Reset all KPI values to ensure consistent styling after skeleton
+            const startingCashEl = el("#CF_StartingCash");
+            if (startingCashEl) { startingCashEl.textContent = fmtMoney(co.cash.startingCash); startingCashEl.className = 'kpi-value'; }
+
+            const projectedEndEl = el("#CF_ProjectedEndCash");
+            if (projectedEndEl) { projectedEndEl.textContent = fmtMoney(co.cash.projectedEnd); projectedEndEl.className = 'kpi-value'; }
+
+            const inflowsEl = el("#CF_TotalInflows");
+            if (inflowsEl) { inflowsEl.textContent = fmtMoney(co.cash.totalInflows); inflowsEl.className = 'kpi-value'; }
+
+            const outflowsEl = el("#CF_TotalOutflows");
+            if (outflowsEl) { outflowsEl.textContent = fmtMoney(co.cash.totalOutflows); outflowsEl.className = 'kpi-value'; }
             
             // Update labels with timeframe
             const weeks = meta.activeConfig.horizonWeeks || 8;
-            if (el("#CF_InflowsLabel")) el("#CF_InflowsLabel").textContent = `Forecast Inflows (${weeks}wk)`;
-            if (el("#CF_OutflowsLabel")) el("#CF_OutflowsLabel").textContent = `Forecast Outflows (${weeks}wk)`;
+            if (el("#CF_InflowsLabel")) el("#CF_InflowsLabel").textContent = `Inflows (${weeks}wk)`;
+            if (el("#CF_OutflowsLabel")) el("#CF_OutflowsLabel").textContent = `Outflows (${weeks}wk)`;
             
             // Find and display lowest cash point
             let lowestCash = co.cash.startingCash || 0;

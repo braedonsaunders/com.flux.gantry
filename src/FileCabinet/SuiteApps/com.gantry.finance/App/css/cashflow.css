@@ -2494,9 +2494,13 @@ body.dark-mode .cf-group-header td {
 }
 
 .cf-vitals-grid {
-    display: grid;
-    grid-template-columns: repeat(5, 1fr);
+    display: flex;
     gap: 8px;
+}
+
+.cf-vitals-grid > .cf-vital-card {
+    flex: 1 1 0;
+    min-width: 0;
 }
 
 .cf-vital-card {
@@ -2585,6 +2589,9 @@ body.dark-mode .cf-group-header td {
     text-transform: uppercase;
     letter-spacing: 0.2px;
     margin-bottom: 1px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .cf-vital-value {
@@ -2592,12 +2599,18 @@ body.dark-mode .cf-group-header td {
     font-weight: 700;
     color: #0f172a;
     line-height: 1.1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .cf-vital-hint {
     font-size: 8px;
     color: #94a3b8;
     margin-top: 1px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 /* Inline metric display (DSO/DPO) */
@@ -2662,41 +2675,32 @@ body.dark-mode .cf-group-header td {
 .cf-vital-icon-ring.positive { background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%); }
 .cf-vital-icon-ring.negative { background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); }
 
-/* Responsive grid for vitals */
-@media (max-width: 1400px) {
-    .cf-vitals-grid {
-        grid-template-columns: repeat(3, 1fr);
-    }
-    .cf-vital-runway {
-        grid-column: span 2;
-    }
-}
-
+/* Responsive flexbox for vitals */
 @media (max-width: 992px) {
     .cf-vitals-grid {
-        grid-template-columns: repeat(2, 1fr);
+        flex-wrap: wrap;
     }
-    .cf-vital-runway {
-        grid-column: span 2;
+    .cf-vitals-grid > .cf-vital-card {
+        flex: 1 1 calc(33% - 8px);
+        min-width: 120px;
     }
 }
 
 @media (max-width: 576px) {
     .cf-vitals-hero {
-        padding: 12px;
+        padding: 6px;
     }
     .cf-vitals-grid {
-        grid-template-columns: 1fr;
-        gap: 12px;
+        gap: 6px;
     }
-    .cf-vital-runway {
-        grid-column: span 1;
+    .cf-vitals-grid > .cf-vital-card {
+        flex: 1 1 calc(50% - 6px);
     }
     .cf-vital-value {
-        font-size: 20px;
+        font-size: 12px;
     }
     .cf-vital-metric-value {
-        font-size: 18px;
+        font-size: 11px;
     }
 }
 
