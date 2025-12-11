@@ -1165,8 +1165,15 @@
         hideCategoryQueries: function() {
             const categoriesEl = document.getElementById('query-categories');
             const panelEl = document.getElementById('query-panel');
-            
-            if (categoriesEl) categoriesEl.style.display = 'grid';
+
+            if (categoriesEl) {
+                categoriesEl.style.display = 'grid';
+                // Trigger animation by removing and re-adding the class
+                categoriesEl.classList.remove('animate-in');
+                // Force reflow to restart animation
+                void categoriesEl.offsetWidth;
+                categoriesEl.classList.add('animate-in');
+            }
             if (panelEl) panelEl.style.display = 'none';
         },
         
