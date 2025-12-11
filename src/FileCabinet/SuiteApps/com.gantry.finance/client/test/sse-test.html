@@ -149,6 +149,19 @@
             background: #fff7ed;
             border-left: 3px solid #f97316;
         }
+        .event.llm_token {
+            background: #fdf4ff;
+            border-left: 3px solid #d946ef;
+            font-size: 12px;
+        }
+        .event.llm_start, .event.llm_complete {
+            background: #faf5ff;
+            border-left: 3px solid #a855f7;
+        }
+        .event.llm_error {
+            background: #fef2f2;
+            border-left: 3px solid #ef4444;
+        }
         .event-header {
             display: flex;
             justify-content: space-between;
@@ -229,7 +242,7 @@
     <div class="controls">
         <button id="btnSimple" onclick="startStream('simple')">Test Simple (5 steps, 5s)</button>
         <button id="btnAdvisor" onclick="startStream('advisor')">Test Advisor Flow</button>
-        <button id="btnQuery" onclick="startStream('query')">Test with Queries</button>
+        <button id="btnLLM" onclick="startStream('llm')" style="background: #8b5cf6;">Test LLM Streaming</button>
         <button id="btnInstant" onclick="startStream('instant')">Test Instant (control)</button>
         <button id="btnStop" class="danger" onclick="stopStream()" disabled>Stop Stream</button>
         <button onclick="clearEvents()">Clear Log</button>

@@ -7,19 +7,33 @@
  *
  * EXPERIMENTAL: Test streaming/chunked responses from NetSuite
  *
- * Tests multiple approaches:
- * 1. Plain text with newlines (safest)
- * 2. JSON Lines format (NDJSON)
- * 3. SSE format (may not work if headers rejected)
+ * This tests whether NetSuite flushes response.write() calls immediately
+ * or buffers them until the script completes.
+ *
+ * MODES:
+ * - instant: Write all at once (control test)
+ * - simple: Write with delays (test HTTP streaming)
+ * - advisor: Simulate advisor flow
+ * - llm: Test actual LLM streaming with llm.generateTextStreamed()
  */
 define([
     'N/log',
-    'N/query'
-], function(log, query) {
+    'N/llm'
+], function(log, llm) {
     'use strict';
 
     /**
-     * Write a chunk of data
+     * Simulate a delay (blocking)
+     */
+    function simulateWork(ms) {
+        const start = Date.now();
+        while (Date.now() - start < ms) {
+            // Busy wait - this is intentional for testing streaming
+        }
+    }
+
+    /**
+     * Write a chunk of data in the specified format
      */
     function writeChunk(response, data, format) {
         let output;
@@ -29,21 +43,11 @@ define([
         } else if (format === 'ndjson') {
             output = JSON.stringify(data) + '\n';
         } else {
-            // Plain text with delimiter
+            // Plain text with delimiter (default, safest)
             output = '---CHUNK---' + JSON.stringify(data) + '---END---\n';
         }
 
         response.write(output);
-    }
-
-    /**
-     * Simulate a delay (blocking)
-     */
-    function simulateWork(ms) {
-        const start = Date.now();
-        while (Date.now() - start < ms) {
-            // Busy wait
-        }
     }
 
     /**
@@ -53,75 +57,111 @@ define([
         const request = context.request;
         const response = context.response;
 
+        // Handle non-GET gracefully
         if (request.method !== 'GET') {
-            response.write(JSON.stringify({ error: 'Use GET' }));
+            response.write(JSON.stringify({ error: 'Use GET method' }));
             return;
         }
 
         const mode = request.parameters.mode || 'simple';
-        const format = request.parameters.format || 'ndjson'; // ndjson, sse, plain
+        const format = request.parameters.format || 'plain'; // plain is safest default
 
-        log.debug('Streaming Test Starting', { mode: mode, format: format });
+        log.debug('SSE Test Starting', { mode: mode, format: format });
 
-        // Try to set appropriate content type based on format
+        // Set content type - use only safe, known-working types
+        // NetSuite is picky about headers, so we use only basic ones
         try {
             if (format === 'sse') {
-                // This might fail in NetSuite
+                // SSE content type - may not work
                 response.setHeader({
                     name: 'Content-Type',
-                    value: 'text/event-stream; charset=utf-8'
-                });
-            } else if (format === 'ndjson') {
-                response.setHeader({
-                    name: 'Content-Type',
-                    value: 'application/x-ndjson'
+                    value: 'text/event-stream'
                 });
             } else {
+                // Plain text works reliably
                 response.setHeader({
                     name: 'Content-Type',
-                    value: 'text/plain; charset=utf-8'
+                    value: 'text/plain'
                 });
             }
         } catch (headerErr) {
-            log.error('Header error', headerErr.message);
-            // Continue anyway with default content type
+            // If header fails, continue with default - NetSuite will use text/html
+            log.error('Header Error', headerErr.message);
         }
 
-        // Don't try Connection header - NetSuite doesn't allow it
-        // Don't try Cache-Control in setHeader - use different approach if needed
-
+        // Wrap everything in try-catch to prevent 500 errors
         try {
-            if (mode === 'simple') {
+            // Write initial chunk immediately
+            writeChunk(response, {
+                type: 'start',
+                message: 'Stream starting...',
+                mode: mode,
+                format: format,
+                timestamp: Date.now()
+            }, format);
+
+            if (mode === 'instant') {
+                // Control test - write everything at once, no delays
+                runInstantTest(response, format);
+            } else if (mode === 'simple') {
+                // Main test - write with delays to test streaming
                 runSimpleTest(response, format);
             } else if (mode === 'advisor') {
+                // Simulate advisor flow
                 runAdvisorSimulation(response, format);
-            } else if (mode === 'query') {
-                runQueryTest(response, format);
-            } else if (mode === 'instant') {
-                // Control test - write everything at once
-                runInstantTest(response, format);
+            } else if (mode === 'llm') {
+                // Test actual LLM streaming with llm.generateTextStreamed()
+                runLLMStreamingTest(response, format);
+            } else {
+                writeChunk(response, {
+                    type: 'error',
+                    message: 'Unknown mode: ' + mode
+                }, format);
             }
 
             // Send completion
             writeChunk(response, {
                 type: 'complete',
-                message: 'Stream finished',
+                message: 'Stream finished successfully',
                 timestamp: Date.now()
             }, format);
 
-            log.debug('Streaming Test Complete', { mode: mode });
+            log.debug('SSE Test Complete', { mode: mode });
 
         } catch (e) {
-            log.error('Streaming Test Error', { message: e.message, stack: e.stack });
+            log.error('SSE Test Error', { message: e.message, stack: e.stack });
+            try {
+                writeChunk(response, {
+                    type: 'error',
+                    message: 'Error: ' + e.message
+                }, format);
+            } catch (writeErr) {
+                // Last resort - plain text error
+                response.write('ERROR: ' + e.message);
+            }
+        }
+    }
+
+    /**
+     * Control test - write everything instantly (no delays)
+     * This should return immediately with all data
+     */
+    function runInstantTest(response, format) {
+        for (let i = 1; i <= 5; i++) {
             writeChunk(response, {
-                type: 'error',
-                message: e.message
+                type: 'step',
+                step: i,
+                total: 5,
+                message: 'Instant step ' + i,
+                timestamp: Date.now()
             }, format);
         }
     }
 
     /**
      * Simple test - numbered events with delays
+     * This is the KEY test: do chunks arrive during the 5 seconds,
+     * or does everything arrive at once after 5 seconds?
      */
     function runSimpleTest(response, format) {
         for (let i = 1; i <= 5; i++) {
@@ -133,26 +173,13 @@ define([
                 timestamp: Date.now()
             }, format);
 
-            // 1 second between events
+            // 1 second delay between events
             simulateWork(1000);
         }
     }
 
     /**
-     * Control test - write everything instantly (no delays)
-     */
-    function runInstantTest(response, format) {
-        for (let i = 1; i <= 10; i++) {
-            writeChunk(response, {
-                type: 'step',
-                step: i,
-                timestamp: Date.now()
-            }, format);
-        }
-    }
-
-    /**
-     * Simulate advisor flow
+     * Simulate advisor flow with thinking, tool calls, and answer
      */
     function runAdvisorSimulation(response, format) {
         writeChunk(response, {
@@ -213,67 +240,68 @@ define([
     }
 
     /**
-     * Test with real database queries
+     * Test actual LLM streaming with llm.generateTextStreamed()
+     * This is the ultimate test: can we stream LLM tokens to the user in real-time?
      */
-    function runQueryTest(response, format) {
+    function runLLMStreamingTest(response, format) {
         writeChunk(response, {
-            type: 'start',
-            message: 'Starting database query test...',
-            timestamp: Date.now()
-        }, format);
-
-        // Query 1: Accounts
-        writeChunk(response, {
-            type: 'query_start',
-            query: 'accounts',
+            type: 'llm_start',
+            message: 'Starting LLM streaming test...',
             timestamp: Date.now()
         }, format);
 
         try {
-            const results = query.runSuiteQL({
-                query: "SELECT id, acctnumber, acctname FROM account WHERE isinactive = 'F' FETCH FIRST 10 ROWS ONLY"
-            }).asMappedResults();
+            // Use llm.generateTextStreamed() to get an iterator of tokens
+            const streamedResponse = llm.generateTextStreamed({
+                prompt: 'Count from 1 to 10 slowly, with one number per line and a brief pause between each. Make it dramatic.',
+                modelFamily: llm.ModelFamily.CLAUDE,
+                modelParameters: {
+                    maxTokens: 500
+                }
+            });
+
+            let tokenCount = 0;
+            let fullText = '';
+
+            // Iterate over the streamed tokens
+            for (const chunk of streamedResponse) {
+                tokenCount++;
+
+                // chunk.text contains the partial text from this chunk
+                if (chunk.text) {
+                    fullText += chunk.text;
+
+                    // Write each token to the HTTP response
+                    writeChunk(response, {
+                        type: 'llm_token',
+                        tokenNum: tokenCount,
+                        text: chunk.text,
+                        timestamp: Date.now()
+                    }, format);
+                }
+
+                // Also check for any other properties on the chunk
+                if (chunk.finishReason) {
+                    writeChunk(response, {
+                        type: 'llm_finish',
+                        reason: chunk.finishReason,
+                        timestamp: Date.now()
+                    }, format);
+                }
+            }
 
             writeChunk(response, {
-                type: 'query_result',
-                query: 'accounts',
-                rowCount: results.length,
+                type: 'llm_complete',
+                totalTokens: tokenCount,
+                fullText: fullText,
                 timestamp: Date.now()
             }, format);
+
         } catch (e) {
             writeChunk(response, {
-                type: 'query_error',
-                query: 'accounts',
-                error: e.message,
-                timestamp: Date.now()
-            }, format);
-        }
-
-        simulateWork(500);
-
-        // Query 2: Transactions
-        writeChunk(response, {
-            type: 'query_start',
-            query: 'transactions',
-            timestamp: Date.now()
-        }, format);
-
-        try {
-            const txnResults = query.runSuiteQL({
-                query: "SELECT id, tranid, type FROM transaction FETCH FIRST 5 ROWS ONLY"
-            }).asMappedResults();
-
-            writeChunk(response, {
-                type: 'query_result',
-                query: 'transactions',
-                rowCount: txnResults.length,
-                timestamp: Date.now()
-            }, format);
-        } catch (e) {
-            writeChunk(response, {
-                type: 'query_error',
-                query: 'transactions',
-                error: e.message,
+                type: 'llm_error',
+                message: e.message,
+                name: e.name,
                 timestamp: Date.now()
             }, format);
         }
