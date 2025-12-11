@@ -25,8 +25,8 @@
 define([
     'N/log',
     'N/llm',
-    '../lib/Lib_Advisor_Session',
-    '../lib/Lib_Advisor_Tools'
+    '../lib/advisor/Lib_Advisor_Session',
+    '../lib/advisor/Lib_Advisor_Tools'
 ], function(log, llm, Session, Tools) {
     'use strict';
 
