@@ -2323,28 +2323,162 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Core", "./Lib_Config"
     };
   }
 
-  return { 
+  // ═══════════════════════════════════════════════════════════════════════════
+  // SCORE-ONLY FUNCTION - Lightweight score computation for dashboard overview
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Get cashflow health score only - minimal queries for fast app load
+   * Score is based on: runway weeks, AR aging quality, burn rate trend
+   * @returns {Object} { score: 0-100, grade: 'A'-'F', label: string, trend: string }
+   */
+  function getScoreOnly() {
+    try {
+      var score = 100;
+      var deductions = { runway: 0, arAging: 0, apAging: 0 };
+
+      // 1. Get bank balance (single query)
+      var bank = computeBankBalance();
+      var currentCash = bank.balance || 0;
+
+      // 2. Get AR aging buckets (single query)
+      var arBuckets = { current: 0, overdue30: 0, overdue60: 0, overdue90: 0 };
+      var arTotal = 0;
+      try {
+        var arSql = "SELECT " +
+          "SUM(CASE WHEN TRUNC(SYSDATE) - TRUNC(t.duedate) <= 0 THEN t.foreignamountunpaid ELSE 0 END) as current_amt, " +
+          "SUM(CASE WHEN TRUNC(SYSDATE) - TRUNC(t.duedate) BETWEEN 1 AND 30 THEN t.foreignamountunpaid ELSE 0 END) as overdue_30, " +
+          "SUM(CASE WHEN TRUNC(SYSDATE) - TRUNC(t.duedate) BETWEEN 31 AND 60 THEN t.foreignamountunpaid ELSE 0 END) as overdue_60, " +
+          "SUM(CASE WHEN TRUNC(SYSDATE) - TRUNC(t.duedate) > 60 THEN t.foreignamountunpaid ELSE 0 END) as overdue_90, " +
+          "SUM(t.foreignamountunpaid) as total " +
+          "FROM transaction t " +
+          "WHERE t.type = 'CustInvc' AND t.status != 'paidInFull' AND t.mainline = 'T' AND t.foreignamountunpaid > 0";
+        var arResult = query.runSuiteQL({ query: arSql }).asMappedResults();
+        if (arResult && arResult.length > 0) {
+          arBuckets.current = parseFloat(arResult[0].current_amt) || 0;
+          arBuckets.overdue30 = parseFloat(arResult[0].overdue_30) || 0;
+          arBuckets.overdue60 = parseFloat(arResult[0].overdue_60) || 0;
+          arBuckets.overdue90 = parseFloat(arResult[0].overdue_90) || 0;
+          arTotal = parseFloat(arResult[0].total) || 0;
+        }
+      } catch (e) {
+        debugLog('AR Aging Query Error', e.message);
+      }
+
+      // 3. Get AP total and monthly burn (single query)
+      var apTotal = 0;
+      var monthlyBurn = 0;
+      try {
+        var apSql = "SELECT " +
+          "SUM(CASE WHEN t.type = 'VendBill' AND t.status != 'paidInFull' AND t.mainline = 'T' THEN ABS(t.foreignamountunpaid) ELSE 0 END) as ap_total, " +
+          "SUM(CASE WHEN t.type IN ('VendBill', 'Check') AND t.trandate >= ADD_MONTHS(TRUNC(SYSDATE), -1) AND t.mainline = 'T' THEN ABS(t.foreigntotal) ELSE 0 END) as monthly_outflow " +
+          "FROM transaction t " +
+          "WHERE t.type IN ('VendBill', 'Check')";
+        var apResult = query.runSuiteQL({ query: apSql }).asMappedResults();
+        if (apResult && apResult.length > 0) {
+          apTotal = parseFloat(apResult[0].ap_total) || 0;
+          monthlyBurn = parseFloat(apResult[0].monthly_outflow) || 0;
+        }
+      } catch (e) {
+        debugLog('AP Query Error', e.message);
+      }
+
+      // 4. Calculate runway (weeks)
+      var weeklyBurn = monthlyBurn / 4.33;
+      var weeksRunway = weeklyBurn > 0 ? currentCash / weeklyBurn : 999;
+
+      // DEDUCTIONS
+
+      // Runway deductions (max -40)
+      if (weeksRunway < 4) {
+        deductions.runway = 40; // Critical
+      } else if (weeksRunway < 8) {
+        deductions.runway = 30; // Warning
+      } else if (weeksRunway < 12) {
+        deductions.runway = 15; // Watch
+      } else if (weeksRunway < 20) {
+        deductions.runway = 5; // OK
+      }
+
+      // AR Aging deductions (max -30)
+      if (arTotal > 0) {
+        var pct60Plus = ((arBuckets.overdue60 + arBuckets.overdue90) / arTotal) * 100;
+        var pct90Plus = (arBuckets.overdue90 / arTotal) * 100;
+        if (pct90Plus > 20) deductions.arAging = 30;
+        else if (pct90Plus > 10) deductions.arAging = 20;
+        else if (pct60Plus > 30) deductions.arAging = 15;
+        else if (pct60Plus > 15) deductions.arAging = 10;
+        else if (pct60Plus > 5) deductions.arAging = 5;
+      }
+
+      // AP concentration deductions (max -15)
+      if (currentCash > 0 && apTotal > currentCash * 0.8) {
+        deductions.apAging = 15; // AP exceeds 80% of cash
+      } else if (currentCash > 0 && apTotal > currentCash * 0.5) {
+        deductions.apAging = 8;
+      }
+
+      // Calculate final score
+      var totalDeductions = deductions.runway + deductions.arAging + deductions.apAging;
+      score = Math.max(0, Math.min(100, 100 - totalDeductions));
+
+      // Determine grade
+      var grade = 'A';
+      var label = 'Excellent';
+      if (score < 50) { grade = 'F'; label = 'Critical'; }
+      else if (score < 60) { grade = 'D'; label = 'Poor'; }
+      else if (score < 70) { grade = 'C'; label = 'Fair'; }
+      else if (score < 80) { grade = 'B'; label = 'Good'; }
+      else if (score < 90) { grade = 'A'; label = 'Very Good'; }
+      else { grade = 'A+'; label = 'Excellent'; }
+
+      // Determine trend based on runway
+      var trend = 'stable';
+      if (weeksRunway < 8) trend = 'down';
+      else if (weeksRunway > 20) trend = 'up';
+
+      return {
+        score: Math.round(score),
+        grade: grade,
+        label: label,
+        trend: trend,
+        details: {
+          currentCash: Core.round2(currentCash),
+          weeksRunway: Core.round2(Math.min(weeksRunway, 999)),
+          arTotal: Core.round2(arTotal),
+          apTotal: Core.round2(apTotal),
+          deductions: deductions
+        }
+      };
+    } catch (e) {
+      log.error('Cashflow getScoreOnly Error', e.message);
+      return { score: 50, grade: 'C', label: 'Unknown', trend: 'stable', error: e.message };
+    }
+  }
+
+  return {
     getData,
     getWeekTransactions,
     getEntityHistory,
     getAgingBucketDetail,
-    
+    getScoreOnly,
+
     /**
      * Handle POST requests with subActions for lazy-loaded flyout data
      */
     handleRequest: function(context) {
       const subAction = context.subAction;
-      
+
       switch (subAction) {
         case 'week_transactions':
           return getWeekTransactions(context);
-          
+
         case 'entity_history':
           return getEntityHistory(context);
-          
+
         case 'aging_bucket_detail':
           return getAgingBucketDetail(context);
-          
+
         default:
           // No subAction - return main dashboard data
           return getData(context);
