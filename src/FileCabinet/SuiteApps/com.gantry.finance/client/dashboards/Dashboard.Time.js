@@ -4217,6 +4217,7 @@
         configData: null,
         allDepartments: [],
         allEmployees: [],
+        allEmployeeTypes: [],
 
         async loadConfig() {
             try {
@@ -4231,6 +4232,10 @@
                 this.allEmployees = res.employees || [];
                 this.subsidiaries = res.subsidiaries || [];
                 this.renderSubsidiaryDropdown();
+
+                // Fetch employee types from burden API (already exists there)
+                this.loadEmployeeTypes();
+
                 this.renderConfigTab();
                 // Load data after config (which has subsidiaries)
                 this.loadData();
@@ -4241,6 +4246,46 @@
                     retryAction: "TimeController.init()"
                 });
             }
+        },
+
+        async loadEmployeeTypes() {
+            try {
+                const res = await API.post('burden', { subAction: 'get_employee_types' });
+                if (res && res.employeeTypes) {
+                    this.allEmployeeTypes = res.employeeTypes;
+                    this.renderEmployeeTypesUI();
+                }
+            } catch(e) {
+                console.error("Failed to load employee types", e);
+            }
+        },
+
+        renderEmployeeTypesUI() {
+            const container = el("#timeEmpTypesContainer");
+            if (!container) return;
+
+            const excludedTypes = (this.configData.excludeEmployeeTypes || []).map(t => String(t));
+            const empTypes = this.allEmployeeTypes || [];
+
+            if (empTypes.length === 0) {
+                container.innerHTML = '<p class="text-muted mb-0 small">No employee types found</p>';
+                return;
+            }
+
+            container.innerHTML = empTypes.map(t => {
+                const isExcluded = excludedTypes.includes(String(t.id));
+                return `
+                    <div class="custom-control custom-checkbox mb-1">
+                        <input type="checkbox" class="custom-control-input time-emptype-exclude"
+                            id="timeEmpType_${t.id}" data-emptype-id="${t.id}" ${isExcluded ? 'checked' : ''}>
+                        <label class="custom-control-label small" for="timeEmpType_${t.id}">${escapeHtml(t.name)}</label>
+                    </div>
+                `;
+            }).join('');
+
+            // Update badge
+            const badge = el("#timeEmpTypeExcludeCount");
+            if (badge) badge.textContent = excludedTypes.length + ' excluded';
         },
 
         renderConfigError(message) {
@@ -4341,9 +4386,24 @@
                                 <div class="card-body">
                                     <div class="form-group mb-0">
                                         <label class="cf-label">Labor Cost Field</label>
-                                        <input type="text" class="form-control form-control-sm" id="cfgTimeLaborField" 
+                                        <input type="text" class="form-control form-control-sm" id="cfgTimeLaborField"
                                             value="${cfg.laborCostField || 'laborcost'}">
                                         <small class="text-muted">NetSuite field ID for labor cost</small>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="col-md-6 mb-4">
+                            <div class="card h-100">
+                                <div class="card-header bg-light py-2 d-flex justify-content-between align-items-center">
+                                    <h6 class="mb-0"><i class="fas fa-user-tag mr-2"></i>Exclude Employee Types</h6>
+                                    <span class="badge badge-secondary" id="timeEmpTypeExcludeCount">0 excluded</span>
+                                </div>
+                                <div class="card-body">
+                                    <p class="small text-muted mb-2">Checked employee types are <strong>excluded from all analysis</strong>. Their time entries will not appear in any dashboard data.</p>
+                                    <div class="border rounded p-2 bg-light" style="max-height: 150px; overflow-y: auto;" id="timeEmpTypesContainer">
+                                        <p class="text-muted mb-0 small"><i class="fas fa-spinner fa-spin mr-1"></i>Loading employee types...</p>
                                     </div>
                                 </div>
                             </div>
@@ -4433,6 +4493,12 @@
                 });
             }
 
+            // Collect excluded employee types
+            const excludeEmpTypes = [];
+            document.querySelectorAll('.time-emptype-exclude').forEach(cb => {
+                if (cb.checked) excludeEmpTypes.push(cb.dataset.emptypeId);
+            });
+
             const configToSave = {
                 targetBillablePercent: parseInt(el("#cfgTimeTargetBillable")?.value) || 70,
                 nonBillableCostSpikeThreshold: parseFloat(el("#cfgTimeNonBillSpike")?.value) || 1000,
@@ -4440,7 +4506,8 @@
                 laborCostField: el("#cfgTimeLaborField")?.value || 'laborcost',
                 hiddenDepartments: hiddenDepts,
                 noBillableDepartments: noBillDepts,
-                hiddenEmployees: hiddenEmps
+                hiddenEmployees: hiddenEmps,
+                excludeEmployeeTypes: excludeEmpTypes
             };
 
             try {
