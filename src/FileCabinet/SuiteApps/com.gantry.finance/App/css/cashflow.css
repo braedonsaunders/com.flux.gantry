@@ -66,63 +66,63 @@
 }
 
 /* ===========================================
-   ENHANCED AGING BUCKETS - Card Style
+   ENHANCED AGING BUCKETS - Compact Style
    =========================================== */
 
 .cf-bucket-card {
-    background: var(--cf-light);
+    background: #fff;
     border: 1px solid var(--cf-border);
-    border-radius: var(--cf-radius-md);
-    padding: 12px 16px;
-    margin-bottom: 8px;
+    border-radius: var(--cf-radius-sm);
+    padding: 10px 14px;
+    margin-bottom: 6px;
     transition: var(--cf-transition);
     cursor: pointer;
 }
 
 .cf-bucket-card:hover {
-    background: #fff;
-    border-color: var(--cf-primary);
+    background: var(--cf-light);
+    border-color: #cbd5e1;
     box-shadow: var(--cf-shadow);
-    transform: translateX(4px);
 }
 
 .cf-bucket-card .bucket-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 8px;
+    margin-bottom: 4px;
 }
 
 .cf-bucket-card .bucket-label {
-    font-weight: 600;
-    font-size: 12px;
-    color: var(--cf-dark);
+    font-weight: 500;
+    font-size: 11px;
+    color: var(--cf-gray);
 }
 
 .cf-bucket-card .bucket-amount {
-    font-weight: 700;
-    font-size: 14px;
+    font-weight: 600;
+    font-size: 13px;
+    color: var(--cf-dark);
 }
 
 .cf-bucket-card .bucket-bar {
-    height: 6px;
+    height: 4px;
     background: var(--cf-border);
-    border-radius: 3px;
+    border-radius: 2px;
     overflow: hidden;
-    margin-bottom: 6px;
+    margin-bottom: 4px;
 }
 
 .cf-bucket-card .bucket-bar-fill {
     height: 100%;
-    border-radius: 3px;
+    border-radius: 2px;
     transition: width 0.3s ease;
 }
 
 .cf-bucket-card .bucket-meta {
     display: flex;
     justify-content: space-between;
-    font-size: 11px;
-    color: var(--cf-gray);
+    font-size: 10px;
+    color: #94a3b8;
 }
 
 .cf-bucket-card .bucket-chevron {
@@ -134,14 +134,371 @@
     opacity: 1;
 }
 
-/* Risk severity colors */
-.cf-bucket-card.risk-low .bucket-label { color: var(--cf-success); }
-.cf-bucket-card.risk-medium .bucket-label { color: var(--cf-warning); }
-.cf-bucket-card.risk-high .bucket-label { color: var(--cf-danger); }
+/* Simplified risk colors - just text, no background */
+.cf-bucket-card.risk-high .bucket-amount { color: var(--cf-danger); }
+.cf-bucket-card.risk-medium .bucket-amount { color: var(--cf-warning); }
 
-.cf-bucket-card.risk-low .bucket-bar-fill { background: var(--cf-success); }
+.cf-bucket-card.risk-low .bucket-bar-fill { background: var(--cf-primary); }
 .cf-bucket-card.risk-medium .bucket-bar-fill { background: var(--cf-warning); }
 .cf-bucket-card.risk-high .bucket-bar-fill { background: var(--cf-danger); }
+
+/* Compact AR/AP section headers */
+.cf-arap-header {
+    padding: 12px 16px;
+    background: #fff;
+    border-bottom: 1px solid var(--cf-border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.cf-arap-header .header-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--cf-dark);
+}
+
+.cf-arap-header .header-metrics {
+    display: flex;
+    gap: 16px;
+    font-size: 11px;
+}
+
+.cf-arap-header .metric {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+}
+
+.cf-arap-header .metric-label {
+    color: #94a3b8;
+    text-transform: uppercase;
+    font-size: 9px;
+    letter-spacing: 0.5px;
+}
+
+.cf-arap-header .metric-value {
+    font-weight: 600;
+    font-size: 13px;
+}
+
+.cf-arap-card {
+    border: 1px solid var(--cf-border);
+    border-radius: var(--cf-radius-md);
+    overflow: hidden;
+    background: #fff;
+}
+
+.cf-arap-card .card-body {
+    padding: 12px 16px;
+}
+
+/* ===========================================
+   WEEKLY TIMELINE - Enhanced Table
+   =========================================== */
+
+.cf-timeline-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+}
+
+.cf-timeline-table thead {
+    background: linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%);
+    position: sticky;
+    top: 0;
+    z-index: 10;
+}
+
+.cf-timeline-table th {
+    padding: 12px 14px;
+    text-align: left;
+    font-weight: 600;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--cf-gray);
+    border-bottom: 2px solid var(--cf-border);
+}
+
+.cf-timeline-table th.text-right {
+    text-align: right;
+}
+
+.cf-timeline-table td {
+    padding: 14px;
+    border-bottom: 1px solid #f1f5f9;
+    vertical-align: middle;
+}
+
+.cf-timeline-table tbody tr {
+    transition: var(--cf-transition);
+    cursor: pointer;
+}
+
+.cf-timeline-table tbody tr:hover {
+    background: linear-gradient(90deg, #f8fafc 0%, #fff 100%);
+}
+
+.cf-timeline-table tbody tr.cf-row-selected {
+    background: linear-gradient(90deg, #eff6ff 0%, #f0f9ff 100%);
+    border-left: 3px solid var(--cf-primary);
+}
+
+.cf-timeline-table tbody tr.cf-row-negative {
+    background: linear-gradient(90deg, #fef2f2 0%, #fff 100%);
+}
+
+.cf-timeline-table tbody tr.cf-row-negative:hover {
+    background: linear-gradient(90deg, #fee2e2 0%, #fff 100%);
+}
+
+.cf-timeline-table .week-cell {
+    font-weight: 600;
+    color: var(--cf-dark);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.cf-timeline-table .week-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    border-radius: 6px;
+    background: var(--cf-light);
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--cf-gray);
+}
+
+.cf-timeline-table .amount-cell {
+    text-align: right;
+    font-weight: 500;
+}
+
+.cf-timeline-table .amount-cell.positive {
+    color: var(--cf-success);
+}
+
+.cf-timeline-table .amount-cell.negative {
+    color: var(--cf-danger);
+}
+
+.cf-timeline-table .ap-capacity-cell {
+    text-align: right;
+}
+
+.cf-timeline-table .capacity-bar {
+    height: 4px;
+    background: var(--cf-border);
+    border-radius: 2px;
+    margin-top: 4px;
+    overflow: hidden;
+}
+
+.cf-timeline-table .capacity-fill {
+    height: 100%;
+    border-radius: 2px;
+    transition: width 0.3s;
+}
+
+.cf-timeline-table .capacity-fill.safe { background: var(--cf-success); }
+.cf-timeline-table .capacity-fill.warning { background: var(--cf-warning); }
+.cf-timeline-table .capacity-fill.danger { background: var(--cf-danger); }
+
+.cf-timeline-table .category-cell {
+    text-align: right;
+    color: var(--cf-gray);
+    font-size: 11px;
+}
+
+.cf-timeline-table .net-cell {
+    text-align: right;
+    font-weight: 700;
+    font-size: 13px;
+}
+
+.cf-timeline-table .end-cash-cell {
+    text-align: right;
+    font-weight: 700;
+    font-size: 14px;
+    padding-right: 20px;
+}
+
+.cf-timeline-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 16px 20px;
+    background: #fff;
+    border-bottom: 1px solid var(--cf-border);
+}
+
+.cf-timeline-header .header-title {
+    font-weight: 600;
+    color: var(--cf-dark);
+}
+
+.cf-timeline-header .header-hint {
+    font-size: 12px;
+    color: #94a3b8;
+}
+
+/* ===========================================
+   CATEGORY ANALYSIS - Tab Navigation
+   =========================================== */
+
+.cf-category-tabs {
+    display: flex;
+    border-bottom: 1px solid var(--cf-border);
+    background: #fff;
+    padding: 0 20px;
+    overflow-x: auto;
+    scrollbar-width: none;
+}
+
+.cf-category-tabs::-webkit-scrollbar {
+    display: none;
+}
+
+.cf-category-tab {
+    padding: 12px 16px;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--cf-gray);
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    transition: var(--cf-transition);
+    white-space: nowrap;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.cf-category-tab:hover {
+    color: var(--cf-dark);
+}
+
+.cf-category-tab.active {
+    color: var(--cf-primary);
+    border-bottom-color: var(--cf-primary);
+}
+
+.cf-category-tab .tab-amount {
+    font-weight: 600;
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 10px;
+    background: var(--cf-light);
+}
+
+.cf-category-tab.active .tab-amount {
+    background: rgba(59, 130, 246, 0.1);
+    color: var(--cf-primary);
+}
+
+.cf-category-more-btn {
+    padding: 12px 16px;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--cf-gray);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    position: relative;
+}
+
+.cf-category-more-btn:hover {
+    color: var(--cf-dark);
+}
+
+.cf-category-more-dropdown {
+    position: absolute;
+    top: 100%;
+    right: 0;
+    background: #fff;
+    border: 1px solid var(--cf-border);
+    border-radius: var(--cf-radius-md);
+    box-shadow: var(--cf-shadow-lg);
+    min-width: 200px;
+    max-height: 300px;
+    overflow-y: auto;
+    z-index: 100;
+    display: none;
+}
+
+.cf-category-more-dropdown.open {
+    display: block;
+}
+
+.cf-category-more-item {
+    padding: 10px 16px;
+    font-size: 12px;
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid #f1f5f9;
+}
+
+.cf-category-more-item:hover {
+    background: var(--cf-light);
+}
+
+.cf-category-more-item:last-child {
+    border-bottom: none;
+}
+
+/* Category KPI Row */
+.cf-category-kpi-row {
+    display: flex;
+    gap: 16px;
+    padding: 16px 20px;
+    background: linear-gradient(180deg, #f8fafc 0%, #fff 100%);
+    border-bottom: 1px solid var(--cf-border);
+}
+
+.cf-category-kpi {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 16px;
+    background: #fff;
+    border: 1px solid var(--cf-border);
+    border-radius: var(--cf-radius-md);
+}
+
+.cf-category-kpi .kpi-icon {
+    width: 36px;
+    height: 36px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+}
+
+.cf-category-kpi .kpi-content {
+    flex: 1;
+}
+
+.cf-category-kpi .kpi-label {
+    font-size: 10px;
+    color: #94a3b8;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.cf-category-kpi .kpi-value {
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--cf-dark);
+}
 
 /* ===========================================
    CATEGORY ANALYSIS - Enhanced Table & Header

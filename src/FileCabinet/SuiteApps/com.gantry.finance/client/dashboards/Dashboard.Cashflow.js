@@ -417,39 +417,36 @@
             const pctCurrent = arData.pctCurrent || 0;
             const dso = arData.avgDaysToPay || arData.avgDaysUsed || 0;
 
-            // Determine health color based on pctCurrent
-            let healthColor = 'text-success';
-            let healthIcon = 'fa-check-circle';
-            if (pctCurrent < 50) {
-                healthColor = 'text-danger';
-                healthIcon = 'fa-exclamation-circle';
-            } else if (pctCurrent < 75) {
-                healthColor = 'text-warning';
-                healthIcon = 'fa-exclamation-triangle';
+            // Update header - compact style
+            const headerEl = el("#cfArHeader");
+            if (headerEl) {
+                headerEl.innerHTML = `
+                    <div class="cf-arap-header">
+                        <div class="header-title">
+                            <i class="fas fa-arrow-down text-success mr-2"></i>Accounts Receivable
+                        </div>
+                        <div class="header-metrics">
+                            <div class="metric">
+                                <span class="metric-label">Outstanding</span>
+                                <span class="metric-value" style="color:#3b82f6;">${fmtMoney(outstanding)}</span>
+                            </div>
+                            <div class="metric">
+                                <span class="metric-label">Current</span>
+                                <span class="metric-value">${pctCurrent.toFixed(0)}%</span>
+                            </div>
+                            <div class="metric">
+                                <span class="metric-label">DSO</span>
+                                <span class="metric-value">${dso}d</span>
+                            </div>
+                            <a href="/app/reporting/reportrunner.nl?reporttype=REGISTER&accttype=AcctRec" target="_blank" class="btn btn-sm btn-link py-0 px-1" title="Open AR Register">
+                                <i class="fas fa-external-link-alt fa-xs"></i>
+                            </a>
+                        </div>
+                    </div>`;
+                headerEl.className = '';
             }
 
-            // Update header metrics
-            const metricsEl = el("#cfArMetrics");
-            if (metricsEl) {
-                metricsEl.innerHTML = `
-                    <div class="text-right mr-4">
-                        <div class="small text-muted">Total Outstanding</div>
-                        <div class="font-weight-bold text-primary">${fmtMoney(outstanding)}</div>
-                    </div>
-                    <div class="text-right mr-4">
-                        <div class="small text-muted"><i class="fas ${healthIcon} ${healthColor} mr-1"></i>Current</div>
-                        <div class="font-weight-bold ${healthColor}">${pctCurrent.toFixed(0)}%</div>
-                    </div>
-                    <div class="text-right mr-3">
-                        <div class="small text-muted"><i class="fas fa-calendar-alt text-info mr-1"></i>DSO</div>
-                        <div class="font-weight-bold text-info">${dso} Days</div>
-                    </div>
-                    <a href="/app/reporting/reportrunner.nl?reporttype=REGISTER&accttype=AcctRec" target="_blank" class="btn btn-sm btn-outline-primary py-0 px-2" title="Open AR Register in NetSuite">
-                        <i class="fas fa-external-link-alt fa-xs"></i>
-                    </a>`;
-            }
-
-            // Render buckets with enhanced card-based design
+            // Render compact buckets
             let html = '';
             const total = outstanding > 0 ? outstanding : 1;
 
@@ -458,30 +455,26 @@
                 const isOverdue = b.label !== 'Current' && b.amount > 0;
                 const hasItems = b.amount > 0;
 
-                // Determine risk level for styling
-                let riskClass = 'risk-low';
+                let riskClass = '';
                 if (b.label.includes('60') || b.label.includes('90+')) {
                     riskClass = 'risk-high';
-                } else if (b.label.includes('30')) {
+                } else if (b.label.includes('30') && isOverdue) {
                     riskClass = 'risk-medium';
                 }
 
-                // Use card-based bucket style for AR
-                const barColor = isOverdue ? '#ef4444' : '#3b82f6';
-
                 html += `
-                <div class="cf-bucket-card ${hasItems ? riskClass : ''}"
-                     ${hasItems ? `onclick="CashflowController.showBucketFlyout('${b.label}', 'ar')"` : 'style="cursor:default; opacity:0.6;"'}>
+                <div class="cf-bucket-card ${riskClass}"
+                     ${hasItems ? `onclick="CashflowController.showBucketFlyout('${b.label}', 'ar')"` : 'style="cursor:default; opacity:0.5;"'}>
                     <div class="bucket-header">
-                        <span class="bucket-label">${isOverdue ? '<i class="fas fa-exclamation-triangle mr-1" style="font-size:10px;"></i>' : ''}${b.label}</span>
-                        <span class="bucket-amount" style="color:${isOverdue ? '#ef4444' : '#3b82f6'};">${fmtMoney(b.amount)}</span>
+                        <span class="bucket-label">${b.label}</span>
+                        <span class="bucket-amount">${fmtMoney(b.amount)}</span>
                     </div>
                     <div class="bucket-bar">
-                        <div class="bucket-bar-fill" style="width:${pct.toFixed(1)}%; background:${barColor};"></div>
+                        <div class="bucket-bar-fill" style="width:${pct.toFixed(1)}%;"></div>
                     </div>
                     <div class="bucket-meta">
-                        <span>${pct.toFixed(1)}% of total</span>
-                        <span class="bucket-chevron"><i class="fas fa-chevron-right"></i> Details</span>
+                        <span>${pct.toFixed(1)}%</span>
+                        ${hasItems ? '<span class="bucket-chevron"><i class="fas fa-chevron-right"></i></span>' : ''}
                     </div>
                 </div>`;
             });
@@ -498,39 +491,36 @@
             const pctCurrent = apData.pctCurrent || 0;
             const dpo = apData.avgDaysToPay || apData.avgDaysUsed || 0;
 
-            // For AP, higher current % is generally better (fewer overdue)
-            let healthColor = 'text-success';
-            let healthIcon = 'fa-check-circle';
-            if (pctCurrent < 50) {
-                healthColor = 'text-danger';
-                healthIcon = 'fa-exclamation-circle';
-            } else if (pctCurrent < 75) {
-                healthColor = 'text-warning';
-                healthIcon = 'fa-exclamation-triangle';
+            // Update header - compact style (matching AR)
+            const headerEl = el("#cfApHeader");
+            if (headerEl) {
+                headerEl.innerHTML = `
+                    <div class="cf-arap-header">
+                        <div class="header-title">
+                            <i class="fas fa-arrow-up text-danger mr-2"></i>Accounts Payable
+                        </div>
+                        <div class="header-metrics">
+                            <div class="metric">
+                                <span class="metric-label">Outstanding</span>
+                                <span class="metric-value" style="color:#ef4444;">${fmtMoney(outstanding)}</span>
+                            </div>
+                            <div class="metric">
+                                <span class="metric-label">Current</span>
+                                <span class="metric-value">${pctCurrent.toFixed(0)}%</span>
+                            </div>
+                            <div class="metric">
+                                <span class="metric-label">DPO</span>
+                                <span class="metric-value">${dpo}d</span>
+                            </div>
+                            <a href="/app/reporting/reportrunner.nl?reporttype=REGISTER&accttype=AcctPay" target="_blank" class="btn btn-sm btn-link py-0 px-1" title="Open AP Register">
+                                <i class="fas fa-external-link-alt fa-xs"></i>
+                            </a>
+                        </div>
+                    </div>`;
+                headerEl.className = '';
             }
 
-            // Update header metrics
-            const metricsEl = el("#cfApMetrics");
-            if (metricsEl) {
-                metricsEl.innerHTML = `
-                    <div class="text-right mr-4">
-                        <div class="small text-muted">Total Outstanding</div>
-                        <div class="font-weight-bold text-danger">${fmtMoney(outstanding)}</div>
-                    </div>
-                    <div class="text-right mr-4">
-                        <div class="small text-muted"><i class="fas ${healthIcon} ${healthColor} mr-1"></i>Current</div>
-                        <div class="font-weight-bold ${healthColor}">${pctCurrent.toFixed(0)}%</div>
-                    </div>
-                    <div class="text-right mr-3">
-                        <div class="small text-muted"><i class="fas fa-calendar-alt text-purple mr-1"></i>DPO</div>
-                        <div class="font-weight-bold text-purple">${dpo} Days</div>
-                    </div>
-                    <a href="/app/reporting/reportrunner.nl?reporttype=REGISTER&accttype=AcctPay" target="_blank" class="btn btn-sm btn-outline-danger py-0 px-2" title="Open AP Register in NetSuite">
-                        <i class="fas fa-external-link-alt fa-xs"></i>
-                    </a>`;
-            }
-
-            // Render buckets with enhanced card-based design
+            // Render compact buckets (matching AR style)
             let html = '';
             const total = outstanding > 0 ? outstanding : 1;
 
@@ -539,30 +529,26 @@
                 const isOverdue = b.label !== 'Current' && b.amount > 0;
                 const hasItems = b.amount > 0;
 
-                // Determine risk level for styling
-                let riskClass = 'risk-low';
+                let riskClass = '';
                 if (b.label.includes('60') || b.label.includes('90+')) {
                     riskClass = 'risk-high';
-                } else if (b.label.includes('30')) {
+                } else if (b.label.includes('30') && isOverdue) {
                     riskClass = 'risk-medium';
                 }
 
-                // Use card-based bucket style for AP
-                const barColor = isOverdue ? '#f59e0b' : '#ef4444';
-
                 html += `
-                <div class="cf-bucket-card ${hasItems ? riskClass : ''}"
-                     ${hasItems ? `onclick="CashflowController.showBucketFlyout('${b.label}', 'ap')"` : 'style="cursor:default; opacity:0.6;"'}>
+                <div class="cf-bucket-card ${riskClass}"
+                     ${hasItems ? `onclick="CashflowController.showBucketFlyout('${b.label}', 'ap')"` : 'style="cursor:default; opacity:0.5;"'}>
                     <div class="bucket-header">
-                        <span class="bucket-label">${isOverdue ? '<i class="fas fa-clock mr-1" style="font-size:10px;"></i>' : ''}${b.label}</span>
-                        <span class="bucket-amount" style="color:${isOverdue ? '#f59e0b' : '#ef4444'};">${fmtMoney(b.amount)}</span>
+                        <span class="bucket-label">${b.label}</span>
+                        <span class="bucket-amount">${fmtMoney(b.amount)}</span>
                     </div>
                     <div class="bucket-bar">
-                        <div class="bucket-bar-fill" style="width:${pct.toFixed(1)}%; background:${barColor};"></div>
+                        <div class="bucket-bar-fill" style="width:${pct.toFixed(1)}%;"></div>
                     </div>
                     <div class="bucket-meta">
-                        <span>${pct.toFixed(1)}% of total</span>
-                        <span class="bucket-chevron"><i class="fas fa-chevron-right"></i> Details</span>
+                        <span>${pct.toFixed(1)}%</span>
+                        ${hasItems ? '<span class="bucket-chevron"><i class="fas fa-chevron-right"></i></span>' : ''}
                     </div>
                 </div>`;
             });
@@ -592,34 +578,41 @@
         renderWeeklyTable(weeks, cats, config, arDays, apDays) {
             const thead = el("#cfWeeklyHeader");
             const tbody = el("#cfWeeklyBody");
+            const tableEl = thead ? thead.closest('table') : null;
             if (!thead || !tbody) return;
+
+            // Apply enhanced table class
+            if (tableEl) tableEl.className = 'cf-timeline-table';
 
             const groups = config.groups || [];
             const isGroupMode = this.viewMode === 'groups' && groups.length > 0;
 
-            // Build header based on view mode
-            thead.innerHTML = `<th>Week</th><th class='text-right'>Inflow (AR)</th><th class='text-right'>AP Out</th>`;
-            
+            // Build enhanced header
+            thead.innerHTML = `
+                <th>Week</th>
+                <th class="text-right">AR Inflow</th>
+                <th class="text-right">AP Capacity</th>`;
+
             if (isGroupMode) {
-                // Group mode - show group columns
                 groups.forEach(g => {
-                    thead.innerHTML += `<th class="text-right text-muted small">${g.name}</th>`;
+                    thead.innerHTML += `<th class="text-right">${g.name}</th>`;
                 });
             } else {
-                // Category mode - show category columns
                 const catKeys = Object.keys(cats || {});
                 catKeys.forEach(k => {
                     const confCat = config.categories.find(c => c.id === k);
-                    thead.innerHTML += `<th class="text-right text-muted small">${confCat ? confCat.name : k}</th>`;
+                    thead.innerHTML += `<th class="text-right">${confCat ? confCat.name : k}</th>`;
                 });
             }
-            thead.innerHTML += "<th class='text-right'>Net</th><th class='text-right'>End Cash</th>";
+            thead.innerHTML += `<th class="text-right">Net Change</th><th class="text-right">End Cash</th>`;
             tbody.innerHTML = "";
 
             const colKeys = isGroupMode ? groups.map(g => g.id) : Object.keys(cats || {});
-            
+
             if (!weeks.length) {
-                tbody.innerHTML = `<tr><td colspan="${5 + colKeys.length}" class="text-center p-4 text-muted">No data available</td></tr>`;
+                tbody.innerHTML = `<tr><td colspan="${5 + colKeys.length}" class="text-center p-4 text-muted">
+                    <i class="fas fa-calendar-times mb-2" style="font-size:24px;opacity:0.3;"></i><br>No forecast data available
+                </td></tr>`;
                 return;
             }
 
@@ -627,23 +620,31 @@
                 const safeCap = w.safeApCapacity || 0;
                 const isOverCap = w.outflows.ap > safeCap;
                 const capPct = safeCap > 0 ? Math.min(100, (w.outflows.ap / safeCap) * 100) : (w.outflows.ap > 0 ? 100 : 0);
-                const barColor = isOverCap ? "bg-danger" : "bg-success";
+                const capClass = capPct > 90 ? 'danger' : (capPct > 70 ? 'warning' : 'safe');
 
-                const apCell = `
-                    <div class="d-flex flex-column align-items-end">
-                        <span class="${isOverCap ? "text-danger font-weight-bold" : ""}">${fmtMoney(w.outflows.ap)}</span>
-                        <div class="progress w-100 mt-1" style="height: 3px; background-color: #e9ecef; width: 80px !important;">
-                            <div class="progress-bar ${barColor}" style="width: ${capPct}%"></div>
-                        </div>
-                        <span class="text-muted" style="font-size:9px;">Safe: ${fmtMoney(safeCap)}</span>
+                // Week cell with badge
+                const weekNum = idx + 1;
+                const weekCell = `
+                    <div class="week-cell">
+                        <span class="week-badge">${weekNum}</span>
+                        <span>${w.weekStart}</span>
                     </div>`;
 
-                let html = `<td class="font-weight-medium">${w.weekStart}</td>
-                            <td class="text-right text-success font-weight-bold">${fmtMoney(w.inflows.ar)}</td>
-                            <td class="text-right">${apCell}</td>`;
-                
+                // AR Inflow cell
+                const arCell = `<div class="amount-cell positive">${fmtMoney(w.inflows.ar)}</div>`;
+
+                // AP Capacity cell with mini progress bar
+                const apCell = `
+                    <div class="ap-capacity-cell">
+                        <span class="${isOverCap ? 'text-danger font-weight-bold' : ''}">${fmtMoney(w.outflows.ap)}</span>
+                        <div class="capacity-bar">
+                            <div class="capacity-fill ${capClass}" style="width:${capPct}%;"></div>
+                        </div>
+                    </div>`;
+
+                let html = `<td>${weekCell}</td><td>${arCell}</td><td>${apCell}</td>`;
+
                 if (isGroupMode) {
-                    // Group mode - aggregate categories within each group
                     groups.forEach(g => {
                         let groupTotal = 0;
                         (g.categoryIds || []).forEach(catId => {
@@ -651,30 +652,33 @@
                                 groupTotal += cats[catId].weeklyAmounts[w.weekStart] || 0;
                             }
                         });
-                        html += `<td class="text-right text-muted">${groupTotal > 0 ? fmtMoney(groupTotal) : "-"}</td>`;
+                        html += `<td class="category-cell">${groupTotal > 0 ? fmtMoney(groupTotal) : '—'}</td>`;
                     });
                 } else {
-                    // Category mode
                     Object.keys(cats || {}).forEach(k => {
                         const val = cats[k].weeklyAmounts ? cats[k].weeklyAmounts[w.weekStart] || 0 : 0;
-                        html += `<td class="text-right text-muted">${val > 0 ? fmtMoney(val) : "-"}</td>`;
+                        html += `<td class="category-cell">${val > 0 ? fmtMoney(val) : '—'}</td>`;
                     });
                 }
 
-                html += `<td class="text-right font-weight-bold ${w.netChange >= 0 ? "text-success" : "text-danger"}">${fmtMoney(w.netChange)}</td>
-                         <td class="text-right font-weight-bold ${w.endingCash < 0 ? "text-danger" : "text-dark"}">${fmtMoney(w.endingCash)}</td>`;
+                // Net change cell
+                const netClass = w.netChange >= 0 ? 'positive' : 'negative';
+                html += `<td class="net-cell ${netClass}">${w.netChange >= 0 ? '+' : ''}${fmtMoney(w.netChange)}</td>`;
+
+                // End cash cell
+                const endCashClass = w.endingCash < 0 ? 'negative' : '';
+                html += `<td class="end-cash-cell ${endCashClass}">${fmtMoney(w.endingCash)}</td>`;
 
                 const tr = document.createElement("tr");
-                tr.className = "cf-week-row cf-clickable-row" + (w.endingCash < 0 ? " cf-row-negative" : "");
+                tr.className = w.endingCash < 0 ? 'cf-row-negative' : '';
                 tr.innerHTML = html;
-                
-                // Single click opens flyout with week details
+
                 tr.onclick = () => {
                     tbody.querySelectorAll(".cf-row-selected").forEach(r => r.classList.remove("cf-row-selected"));
                     tr.classList.add("cf-row-selected");
                     this.showWeekFlyout(w.weekStart, w, cats);
                 };
-                
+
                 tbody.appendChild(tr);
             });
         },
@@ -683,30 +687,104 @@
         // renderList REMOVED - all week details are now in the flyout
 
         populateCategoryDetails(cats, config) {
-            const sel = el("#cfDetailCatSelect");
-            if (!sel) return;
-            sel.innerHTML = "";
+            const pane = el("#cf-details-pane");
+            if (!pane) return;
             const keys = Object.keys(cats || {});
-            if (keys.length === 0) return;
+            if (keys.length === 0) {
+                pane.innerHTML = '<div class="cf-empty-state"><i class="fas fa-chart-pie"></i><div class="empty-title">No Categories</div><div class="empty-text">Configure categories to see analysis</div></div>';
+                return;
+            }
 
             // Store config for later reference
             this.categoryAnalysis.config = config;
             this.categoryAnalysis.allCategories = cats;
 
-            keys.forEach(k => {
+            // Build dynamic tabs - show first N tabs, rest in dropdown
+            const maxVisibleTabs = 6;
+            const visibleCats = keys.slice(0, maxVisibleTabs);
+            const overflowCats = keys.slice(maxVisibleTabs);
+
+            let tabsHtml = '<div class="cf-category-tabs" id="cfCategoryTabs">';
+            visibleCats.forEach((k, idx) => {
                 const conf = config.categories.find(c => c.id === k);
-                sel.innerHTML += `<option value="${k}">${conf ? conf.name : k}</option>`;
+                const name = conf ? conf.name : k;
+                const catData = cats[k];
+                const total = catData ? catData.total : 0;
+                const isActive = idx === 0 ? 'active' : '';
+                tabsHtml += `
+                    <div class="cf-category-tab ${isActive}" data-cat-id="${k}" onclick="CashflowController.selectCategoryTab('${k}')">
+                        <span>${escapeHtml(name)}</span>
+                        <span class="tab-amount">${fmtMoney(total)}</span>
+                    </div>`;
             });
 
-            sel.onchange = () => {
-                this.detailPage = 1;
-                this.categoryAnalysis.search = '';
-                this.categoryAnalysis.currentCategory = sel.value;
-                this.renderDetailTable(cats[sel.value]);
-            };
+            // "More" dropdown for overflow
+            if (overflowCats.length > 0) {
+                tabsHtml += `
+                    <div class="cf-category-more-btn" onclick="CashflowController.toggleCategoryMoreMenu(event)">
+                        More (${overflowCats.length}) <i class="fas fa-chevron-down" style="font-size:10px;"></i>
+                        <div class="cf-category-more-dropdown" id="cfCategoryMoreDropdown">`;
+                overflowCats.forEach(k => {
+                    const conf = config.categories.find(c => c.id === k);
+                    const name = conf ? conf.name : k;
+                    const catData = cats[k];
+                    const total = catData ? catData.total : 0;
+                    tabsHtml += `
+                        <div class="cf-category-more-item" onclick="CashflowController.selectCategoryTab('${k}')">
+                            <span>${escapeHtml(name)}</span>
+                            <span style="color:#64748b;">${fmtMoney(total)}</span>
+                        </div>`;
+                });
+                tabsHtml += '</div></div>';
+            }
+            tabsHtml += '</div>';
+
+            // KPI row container and content container
+            tabsHtml += '<div id="cfCategoryKpiRow"></div>';
+            tabsHtml += '<div id="cfCategoryContent" class="p-4"></div>';
+
+            pane.innerHTML = tabsHtml;
+
+            // Hide the old select dropdown if it exists
+            const oldSel = el("#cfDetailCatSelect");
+            if (oldSel) oldSel.style.display = 'none';
 
             this.categoryAnalysis.currentCategory = keys[0];
             this.renderDetailTable(cats[keys[0]]);
+        },
+
+        selectCategoryTab(catId) {
+            // Close dropdown if open
+            const dropdown = el('#cfCategoryMoreDropdown');
+            if (dropdown) dropdown.classList.remove('open');
+
+            // Update active tab
+            document.querySelectorAll('.cf-category-tab').forEach(tab => {
+                tab.classList.toggle('active', tab.dataset.catId === catId);
+            });
+
+            this.detailPage = 1;
+            this.categoryAnalysis.search = '';
+            this.categoryAnalysis.currentCategory = catId;
+            this.renderDetailTable(this.categoryAnalysis.allCategories[catId]);
+        },
+
+        toggleCategoryMoreMenu(event) {
+            event.stopPropagation();
+            const dropdown = el('#cfCategoryMoreDropdown');
+            if (dropdown) {
+                dropdown.classList.toggle('open');
+                // Close on outside click
+                const closeHandler = (e) => {
+                    if (!e.target.closest('.cf-category-more-btn')) {
+                        dropdown.classList.remove('open');
+                        document.removeEventListener('click', closeHandler);
+                    }
+                };
+                if (dropdown.classList.contains('open')) {
+                    setTimeout(() => document.addEventListener('click', closeHandler), 0);
+                }
+            }
         },
 
         // Handle category analysis search
@@ -771,8 +849,11 @@
         renderDetailTable(catData) {
             this.currentDetailCatData = catData;
             let detailData = (catData && catData.breakdown) ? [...catData.breakdown] : [];
-            const pane = el("#cf-details-pane");
-            if (!pane) return;
+
+            // Target containers for dynamic tab layout
+            const kpiRow = el("#cfCategoryKpiRow");
+            const content = el("#cfCategoryContent");
+            if (!kpiRow || !content) return;
 
             // Get category configuration
             const config = this.categoryAnalysis.config || {};
@@ -793,10 +874,49 @@
                 'Calculated Formula': '#6366f1'
             };
             const methodColor = methodColors[catMethod] || '#64748b';
-
-            // Build enhanced header card
-            const typeClass = catType === 'inflow' ? 'inflow' : 'outflow';
             const totalColor = catType === 'inflow' ? '#10b981' : '#ef4444';
+            const typeClass = catType === 'inflow' ? 'inflow' : 'outflow';
+
+            // Render KPI row header
+            const total = catData ? catData.total : 0;
+            const itemCount = detailData.length;
+            const meta = catData && catData.meta ? catData.meta : {};
+
+            kpiRow.innerHTML = `
+                <div class="cf-category-kpi-row">
+                    <div class="cf-category-kpi">
+                        <div class="kpi-icon" style="background:${catType === 'inflow' ? 'rgba(16,185,129,0.12)' : 'rgba(239,68,68,0.12)'};">
+                            <i class="fas ${catType === 'inflow' ? 'fa-arrow-down' : 'fa-arrow-up'}" style="color:${totalColor};"></i>
+                        </div>
+                        <div class="kpi-content">
+                            <div class="kpi-label">Total Forecast</div>
+                            <div class="kpi-value" style="color:${totalColor};">${fmtMoney(total)}</div>
+                        </div>
+                    </div>
+                    <div class="cf-category-kpi">
+                        <div class="kpi-icon" style="background:rgba(139,92,246,0.12);">
+                            <i class="fas fa-cogs" style="color:#8b5cf6;"></i>
+                        </div>
+                        <div class="kpi-content">
+                            <div class="kpi-label">Method</div>
+                            <div class="kpi-value" style="font-size:14px; color:${methodColor};">${catMethod}</div>
+                        </div>
+                    </div>
+                    <div class="cf-category-kpi">
+                        <div class="kpi-icon" style="background:rgba(59,130,246,0.12);">
+                            <i class="fas fa-list" style="color:#3b82f6;"></i>
+                        </div>
+                        <div class="kpi-content">
+                            <div class="kpi-label">Source Items</div>
+                            <div class="kpi-value">${itemCount}</div>
+                        </div>
+                    </div>
+                    <div class="cf-category-kpi" style="flex:0.5;">
+                        <button class="cf-btn cf-btn-secondary" onclick="CashflowController.exportCategoryCSV()" style="width:100%;">
+                            <i class="fas fa-download"></i> Export
+                        </button>
+                    </div>
+                </div>`;
 
             // Apply search filter
             const searchTerm = (this.categoryAnalysis.search || '').toLowerCase();
@@ -848,26 +968,8 @@
                 return `<span class="sort-indicator">${isSorted ? arrow : '↕'}</span>`;
             };
 
-            // Build the enhanced HTML
+            // Build the enhanced HTML - search bar + table
             let html = `
-                <!-- Category Header Card -->
-                <div class="cf-category-header-card">
-                    <div class="category-top">
-                        <div class="category-name">
-                            <span class="cf-type-badge ${typeClass}">${catType === 'inflow' ? 'Inflow' : 'Outflow'}</span>
-                            ${escapeHtml(catName)}
-                        </div>
-                        <div class="category-total" style="color:${totalColor};">${fmtMoney(catData ? catData.total : 0)}</div>
-                    </div>
-                    <div class="category-meta">
-                        <span><i class="fas fa-cogs"></i>Method: <span style="color:${methodColor}; font-weight:600;">${catMethod}</span></span>
-                        <span><i class="fas fa-list"></i>${totalItems} items</span>
-                        <button class="btn btn-sm btn-outline-success ml-auto" onclick="CashflowController.exportCategoryCSV()">
-                            <i class="fas fa-download mr-1"></i>Export CSV
-                        </button>
-                    </div>
-                </div>
-
                 <!-- Search & Filter Bar -->
                 <div class="cf-search-bar">
                     <div class="cf-search-input">
@@ -1058,28 +1160,8 @@
 
             html += logicHtml;
 
-            // Update the pane content - keep the selector but replace the rest
-            const selector = el("#cfDetailCatSelect");
-            const selectorHtml = selector ? selector.outerHTML : '';
-            pane.innerHTML = `
-                <div class="p-4">
-                    <div class="d-flex justify-content-between align-items-center mb-3">
-                        ${selectorHtml}
-                    </div>
-                    ${html}
-                </div>`;
-
-            // Re-attach event handler to selector
-            const newSelector = el("#cfDetailCatSelect");
-            if (newSelector && this.categoryAnalysis.allCategories) {
-                newSelector.value = catKey;
-                newSelector.onchange = () => {
-                    this.detailPage = 1;
-                    this.categoryAnalysis.search = '';
-                    this.categoryAnalysis.currentCategory = newSelector.value;
-                    this.renderDetailTable(this.categoryAnalysis.allCategories[newSelector.value]);
-                };
-            }
+            // Update content container (tabs and KPI row are already rendered)
+            content.innerHTML = html;
         },
 
         rerenderDetailTable() {
@@ -1950,8 +2032,8 @@
         },
 
         showEmptyState() {
-            // Instead of showing empty state, auto-select Bank Accounts
-            this.showFixed("BANK");
+            // Show nice landing page with KPI-style stats
+            this.showConfigLanding();
         },
 
         renderList() {
@@ -2077,332 +2159,285 @@
             this.idx = -1;
             this.fixedType = type;
             this.editingGroupIdx = -1;
+            this.configFlyout.type = 'system';
+            this.configFlyout.systemType = type;
             this.renderList();
-            const container = el('#cfConfigContainer');
-            
+            this.openConfigFlyout();
+            this.renderSystemConfigFlyout(type);
+        },
+
+        renderSystemConfigFlyout(type) {
+            const body = el('#cfConfigFlyoutBody');
+            if (!body) return;
+
+            // Update flyout title
+            const titleEl = el('#cfConfigFlyoutTitle');
+            const deleteBtn = el('#cfConfigFlyoutDelete');
+            if (deleteBtn) deleteBtn.style.display = 'none';
+
+            // Hide tabs for system configs
+            const tabsEl = el('#cfConfigFlyoutTabs');
+            if (tabsEl) tabsEl.style.display = 'none';
+
             if (type === 'BANK') {
-                const selectedIds = this.data.bankAccountIds || [];
-                const bankList = this.bankAccounts || [];
-                
-                // Sort bank accounts: selected first, then alphabetically
-                const sortedBanks = [...bankList].sort((a, b) => {
-                    const aSel = selectedIds.includes(a.id);
-                    const bSel = selectedIds.includes(b.id);
-                    if (aSel && !bSel) return -1;
-                    if (!aSel && bSel) return 1;
-                    return a.name.localeCompare(b.name);
-                });
-                
-                const bankOptions = sortedBanks.map(b => 
-                    `<option value="${b.id}" ${selectedIds.includes(b.id) ? 'selected' : ''}>${b.acctNumber || ''} ${b.name} (${fmtMoney(b.balance || 0)})</option>`
-                ).join('');
-                
-                container.innerHTML = `
-                    <div class="d-flex align-items-center mb-3 pb-2 border-bottom">
-                        <div class="icon-box bg-gray-soft text-dark mr-3"><i class="fas fa-university"></i></div>
-                        <div>
-                            <h5 class="m-0 font-weight-bold">Bank Accounts</h5>
-                            <small class="text-muted">Select accounts for cash position tracking</small>
-                        </div>
-                    </div>
-
-                    <div class="card border mb-3">
-                        <div class="card-header bg-light py-2">
-                            <small class="font-weight-bold text-dark"><i class="fas fa-piggy-bank mr-1 text-primary"></i>Starting Cash Accounts</small>
-                        </div>
-                        <div class="card-body p-3">
-                            <p class="small text-muted mb-2">Select the bank accounts that should be included when calculating your starting cash position. The sum of these account balances will be used as your "Current Cash" figure.</p>
-                            <input type="text" class="form-control form-control-sm mb-2" placeholder="Search accounts..." onkeyup="const term=this.value.toLowerCase(); document.getElementById('cfBankAccountIds').querySelectorAll('option').forEach(o => o.style.display = o.text.toLowerCase().includes(term) ? 'block' : 'none')">
-                            <select id="cfBankAccountIds" class="form-control" multiple style="height: 200px;">
-                                ${bankOptions}
-                            </select>
-                            <small class="text-muted d-block mt-2">Hold Ctrl/Cmd to select multiple accounts. Selected accounts appear at top.</small>
-                        </div>
-                    </div>
-
-                    <div class="alert alert-info border py-2 px-3 mb-3">
-                        <small><i class="fas fa-info-circle mr-1"></i>If no accounts are selected, the system will use the sum of all active Bank type accounts.</small>
-                    </div>
-
-                    <button class="btn btn-primary shadow-sm" onclick="ConfigController.saveBankAccounts()">
-                        <i class="fas fa-save mr-1"></i>Save Bank Accounts
-                    </button>
-                `;
+                if (titleEl) titleEl.innerHTML = '<i class="fas fa-university mr-2"></i>Bank Accounts';
+                this.renderBankConfigForm(body);
             } else if (type === 'AP') {
-                const f = this.data.apFilters || {};
-                const ps = this.data.predictionSettings || {};
-                const overduePush = ps.overduePushDays || { light: 7, medium: 14, heavy: 28 };
-                const defaultDays = ps.defaultDaysToPay || 45;
-                const historyDays = ps.paymentHistoryDays || 365;
-                
-                container.innerHTML = `
-                    <div class="d-flex align-items-center mb-3 pb-2 border-bottom">
-                        <div class="icon-box bg-red-soft text-red mr-3"><i class="fas fa-file-invoice-dollar"></i></div>
-                        <div>
-                            <h5 class="m-0 font-weight-bold">Accounts Payable</h5>
-                            <small class="text-muted">Payment prediction & cash optimization</small>
-                        </div>
-                    </div>
-
-                    <!-- Algorithm Flow -->
-                    <div class="card border mb-3">
-                        <div class="card-header bg-dark text-white py-2">
-                            <small class="font-weight-bold"><i class="fas fa-project-diagram mr-2"></i>Payment Date Prediction</small>
-                        </div>
-                        <div class="card-body p-3">
-                            <div class="d-flex align-items-center justify-content-between text-center" style="gap: 6px;">
-                                <div class="flex-fill p-2 rounded bg-secondary text-white">
-                                    <i class="fas fa-calendar-check mb-1"></i>
-                                    <div style="font-size: 10px;" class="font-weight-bold">Expected Date</div>
-                                    <div class="badge badge-light mt-1" style="font-size: 8px;">Override Field</div>
-                                </div>
-                                <i class="fas fa-chevron-right text-muted small"></i>
-                                <div class="flex-fill p-2 rounded bg-info text-white">
-                                    <i class="fas fa-chart-line mb-1"></i>
-                                    <div style="font-size: 10px;" class="font-weight-bold">Vendor History</div>
-                                    <div class="badge badge-light mt-1" style="font-size: 8px;">${historyDays}d window</div>
-                                </div>
-                                <i class="fas fa-chevron-right text-muted small"></i>
-                                <div class="flex-fill p-2 rounded bg-primary text-white">
-                                    <i class="fas fa-clock mb-1"></i>
-                                    <div style="font-size: 10px;" class="font-weight-bold">Default Terms</div>
-                                    <div class="badge badge-light mt-1" style="font-size: 8px;">${defaultDays} days</div>
-                                </div>
-                                <i class="fas fa-chevron-right text-muted small"></i>
-                                <div class="flex-fill p-2 rounded bg-success text-white">
-                                    <i class="fas fa-calendar-day mb-1"></i>
-                                    <div style="font-size: 10px;" class="font-weight-bold">Biz Day Adj</div>
-                                    <div class="badge badge-light mt-1" style="font-size: 8px;">Skip wkends</div>
-                                </div>
-                            </div>
-                            <div class="mt-2 small text-muted">
-                                <i class="fas fa-info-circle mr-1"></i>Overdue bills pushed forward: <code>${overduePush.light}d</code> (&lt;30 late), <code>${overduePush.medium}d</code> (&gt;30 late)
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Capacity & Filtering -->
-                    <div class="row">
-                        <div class="col-md-6">
-                            <div class="card border mb-3">
-                                <div class="card-header bg-light py-2">
-                                    <small class="font-weight-bold text-dark"><i class="fas fa-tachometer-alt mr-1 text-primary"></i>Capacity Controls</small>
-                                </div>
-                                <div class="card-body p-3">
-                                    <div class="form-group mb-2">
-                                        <label class="cf-label mb-1">Weekly Cash Cap</label>
-                                        <div class="input-group input-group-sm">
-                                            <div class="input-group-prepend"><span class="input-group-text">$</span></div>
-                                            <input type="number" class="form-control" id="cfGlobalApCap" value="${f.weeklyCap||0}">
-                                        </div>
-                                        <small class="text-muted">0 = unlimited</small>
-                                    </div>
-                                    <div class="custom-control custom-switch">
-                                        <input type="checkbox" class="custom-control-input" id="cfGlobalApRestrictSafe" ${f.restrictToSafe?'checked':''}>
-                                        <label class="custom-control-label small" for="cfGlobalApRestrictSafe">Restrict to Safe Capacity</label>
-                                    </div>
-                                    <small class="text-muted d-block mt-1">Safe = Cash + AR - Minimum Reserve</small>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="col-md-6">
-                            <div class="card border mb-3">
-                                <div class="card-header bg-light py-2">
-                                    <small class="font-weight-bold text-dark"><i class="fas fa-filter mr-1 text-warning"></i>Vendor Filtering</small>
-                                </div>
-                                <div class="card-body p-3">
-                                    <div class="form-group mb-2">
-                                        <label class="cf-label mb-1"><i class="fas fa-ban text-danger mr-1"></i>Excluded Categories</label>
-                                        <input type="text" class="form-control form-control-sm" id="cfGlobalApExclude" placeholder="e.g. 7, 9" value="${(f.excludeVendorCategories||[]).join(', ')}">
-                                    </div>
-                                    <div class="form-group mb-0">
-                                        <label class="cf-label mb-1"><i class="fas fa-star text-warning mr-1"></i>Priority Categories</label>
-                                        <input type="text" class="form-control form-control-sm" id="cfGlobalApPriority" placeholder="e.g. 5, 3" value="${(f.priorityVendorCategories||[]).join(', ')}">
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Preservation & Overflow -->
-                    <div class="row">
-                        <div class="col-md-6">
-                            <div class="card border mb-3" style="border-left: 3px solid #ffc107 !important;">
-                                <div class="card-body p-3">
-                                    <div class="d-flex justify-content-between align-items-center mb-2">
-                                        <small class="font-weight-bold"><i class="fas fa-piggy-bank mr-1 text-warning"></i>Cash Preservation Mode</small>
-                                        <div class="custom-control custom-switch mb-0">
-                                            <input type="checkbox" class="custom-control-input" id="cfGlobalApPreserve" ${f.preservationMode?'checked':''}>
-                                            <label class="custom-control-label" for="cfGlobalApPreserve"></label>
-                                        </div>
-                                    </div>
-                                    <small class="text-muted">Prioritizes: 1) Priority vendors 2) Oldest bills 3) Defers excess</small>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="col-md-6">
-                            <div class="card border mb-3">
-                                <div class="card-body p-3">
-                                    <div class="d-flex justify-content-between align-items-center mb-2">
-                                        <small class="font-weight-bold"><i class="fas fa-layer-group mr-1 text-secondary"></i>Auto-Defer Overflow</small>
-                                        <div class="custom-control custom-switch mb-0">
-                                            <input type="checkbox" class="custom-control-input" id="cfGlobalApDefer" ${f.deferIfNegative?'checked':''}>
-                                            <label class="custom-control-label" for="cfGlobalApDefer"></label>
-                                        </div>
-                                    </div>
-                                    <small class="text-muted">Push excess bills to next week when cap exceeded</small>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <button class="btn btn-primary shadow-sm" onclick="ConfigController.save()">
-                        <i class="fas fa-save mr-1"></i>Save Configuration
-                    </button>
-                `;
+                if (titleEl) titleEl.innerHTML = '<i class="fas fa-arrow-up text-danger mr-2"></i>Accounts Payable';
+                this.renderAPConfigForm(body);
             } else if (type === 'AR') {
-                const ps = this.data.predictionSettings || {};
-                const volThresh = ps.volatilityThresholds || { stable: 5, volatile: 15 };
-                const overduePush = ps.overduePushDays || { light: 7, medium: 14, heavy: 28 };
-                const defaultDays = ps.defaultDaysToPay || 45;
-                const historyDays = ps.paymentHistoryDays || 365;
-                
-                container.innerHTML = `
-                    <div class="d-flex align-items-center mb-3 pb-2 border-bottom">
-                        <div class="icon-box bg-green-soft text-green mr-3"><i class="fas fa-hand-holding-usd"></i></div>
-                        <div>
-                            <h5 class="m-0 font-weight-bold">Accounts Receivable</h5>
-                            <small class="text-muted">Collection prediction engine</small>
-                        </div>
+                if (titleEl) titleEl.innerHTML = '<i class="fas fa-arrow-down text-success mr-2"></i>Accounts Receivable';
+                this.renderARConfigForm(body);
+            }
+        },
+
+        renderBankConfigForm(body) {
+            const selectedIds = this.data.bankAccountIds || [];
+            const bankList = this.bankAccounts || [];
+
+            // Sort bank accounts: selected first, then alphabetically
+            const sortedBanks = [...bankList].sort((a, b) => {
+                const aSel = selectedIds.includes(a.id);
+                const bSel = selectedIds.includes(b.id);
+                if (aSel && !bSel) return -1;
+                if (!aSel && bSel) return 1;
+                return a.name.localeCompare(b.name);
+            });
+
+            const bankOptions = sortedBanks.map(b =>
+                `<option value="${b.id}" ${selectedIds.includes(b.id) ? 'selected' : ''}>${b.acctNumber || ''} ${b.name} (${fmtMoney(b.balance || 0)})</option>`
+            ).join('');
+
+            body.innerHTML = `
+                <div class="cf-config-flyout-form">
+                    <div class="cf-form-section">
+                        <div class="cf-form-section-header">Starting Cash Accounts</div>
+                        <p class="small text-muted mb-3">Select the bank accounts that should be included when calculating your starting cash position. The sum of these account balances will be used as your "Current Cash" figure.</p>
+                        <input type="text" class="cf-form-input mb-2" placeholder="Search accounts..."
+                            onkeyup="const term=this.value.toLowerCase(); document.getElementById('cfBankAccountIds').querySelectorAll('option').forEach(o => o.style.display = o.text.toLowerCase().includes(term) ? 'block' : 'none')">
+                        <select id="cfBankAccountIds" class="cf-form-select" multiple style="height: 250px; width: 100%;">
+                            ${bankOptions}
+                        </select>
+                        <div class="cf-form-help mt-2">Hold Ctrl/Cmd to select multiple accounts. Selected accounts appear at top.</div>
                     </div>
 
+                    <div class="cf-method-info">
+                        <div class="cf-method-info-title"><i class="fas fa-info-circle mr-1"></i>Note</div>
+                        <div class="cf-method-info-text">If no accounts are selected, the system will use the sum of all active Bank type accounts.</div>
+                    </div>
+                </div>
+                <div class="cf-config-flyout-footer">
+                    <div></div>
+                    <button class="cf-btn cf-btn-primary" onclick="ConfigController.saveBankAccounts()">
+                        <i class="fas fa-save"></i> Save Bank Accounts
+                    </button>
+                </div>`;
+        },
+
+        renderAPConfigForm(body) {
+            const f = this.data.apFilters || {};
+            const ps = this.data.predictionSettings || {};
+            const overduePush = ps.overduePushDays || { light: 7, medium: 14, heavy: 28 };
+            const defaultDays = ps.defaultDaysToPay || 45;
+            const historyDays = ps.paymentHistoryDays || 365;
+
+            body.innerHTML = `
+                <div class="cf-config-flyout-form">
                     <!-- Algorithm Flow -->
-                    <div class="card border mb-3">
-                        <div class="card-header bg-dark text-white py-2">
-                            <small class="font-weight-bold"><i class="fas fa-brain mr-2"></i>Collection Date Prediction</small>
+                    <div class="cf-form-section">
+                        <div class="cf-form-section-header">Payment Date Prediction</div>
+                        <div class="d-flex align-items-center justify-content-between text-center mb-3" style="gap: 6px;">
+                            <div class="flex-fill p-2 rounded" style="background:rgba(100,116,139,0.15);">
+                                <i class="fas fa-calendar-check mb-1" style="color:#64748b;"></i>
+                                <div style="font-size: 10px;" class="font-weight-bold">Expected Date</div>
+                            </div>
+                            <i class="fas fa-chevron-right text-muted small"></i>
+                            <div class="flex-fill p-2 rounded" style="background:rgba(59,130,246,0.15);">
+                                <i class="fas fa-chart-line mb-1" style="color:#3b82f6;"></i>
+                                <div style="font-size: 10px;" class="font-weight-bold">Vendor History</div>
+                            </div>
+                            <i class="fas fa-chevron-right text-muted small"></i>
+                            <div class="flex-fill p-2 rounded" style="background:rgba(139,92,246,0.15);">
+                                <i class="fas fa-clock mb-1" style="color:#8b5cf6;"></i>
+                                <div style="font-size: 10px;" class="font-weight-bold">Default Terms</div>
+                            </div>
+                            <i class="fas fa-chevron-right text-muted small"></i>
+                            <div class="flex-fill p-2 rounded" style="background:rgba(16,185,129,0.15);">
+                                <i class="fas fa-calendar-day mb-1" style="color:#10b981;"></i>
+                                <div style="font-size: 10px;" class="font-weight-bold">Biz Day Adj</div>
+                            </div>
                         </div>
-                        <div class="card-body p-3">
-                            <div class="d-flex align-items-center justify-content-between text-center" style="gap: 6px;">
-                                <div class="flex-fill p-2 rounded bg-success text-white">
-                                    <i class="fas fa-calendar-check mb-1"></i>
-                                    <div style="font-size: 10px;" class="font-weight-bold">Manual Override</div>
-                                    <div class="badge badge-light mt-1" style="font-size: 8px;">Expected Date</div>
+                        <div class="cf-form-help">
+                            <i class="fas fa-info-circle mr-1"></i>Overdue bills pushed: <strong>${overduePush.light}d</strong> (&lt;30 late), <strong>${overduePush.medium}d</strong> (&gt;30 late)
+                        </div>
+                    </div>
+
+                    <!-- Capacity Controls -->
+                    <div class="cf-form-section">
+                        <div class="cf-form-section-header">Capacity Controls</div>
+                        <div class="cf-form-row">
+                            <div class="cf-form-group">
+                                <label class="cf-form-label">Weekly Cash Cap</label>
+                                <input type="number" class="cf-form-input" id="cfGlobalApCap" value="${f.weeklyCap||0}">
+                                <div class="cf-form-help">0 = unlimited</div>
+                            </div>
+                            <div class="cf-form-group">
+                                <label class="cf-form-label">Restrict to Safe Capacity</label>
+                                <div class="custom-control custom-switch mt-2">
+                                    <input type="checkbox" class="custom-control-input" id="cfGlobalApRestrictSafe" ${f.restrictToSafe?'checked':''}>
+                                    <label class="custom-control-label" for="cfGlobalApRestrictSafe">Enable</label>
                                 </div>
-                                <i class="fas fa-chevron-right text-muted small"></i>
-                                <div class="flex-fill p-2 rounded bg-primary text-white">
-                                    <i class="fas fa-user-clock mb-1"></i>
-                                    <div style="font-size: 10px;" class="font-weight-bold">Customer History</div>
-                                    <div class="badge badge-light mt-1" style="font-size: 8px;">Avg + 0.5σ</div>
-                                </div>
-                                <i class="fas fa-chevron-right text-muted small"></i>
-                                <div class="flex-fill p-2 rounded bg-info text-white">
-                                    <i class="fas fa-file-contract mb-1"></i>
-                                    <div style="font-size: 10px;" class="font-weight-bold">Invoice Terms</div>
-                                    <div class="badge badge-light mt-1" style="font-size: 8px;">Net 30, 60...</div>
-                                </div>
-                                <i class="fas fa-chevron-right text-muted small"></i>
-                                <div class="flex-fill p-2 rounded bg-secondary text-white">
-                                    <i class="fas fa-globe mb-1"></i>
-                                    <div style="font-size: 10px;" class="font-weight-bold">Global Fallback</div>
-                                    <div class="badge badge-light mt-1" style="font-size: 8px;">${defaultDays} days</div>
-                                </div>
+                                <div class="cf-form-help">Safe = Cash + AR - Reserve</div>
                             </div>
                         </div>
                     </div>
 
-                    <!-- Volatility & Overdue -->
-                    <div class="row">
-                        <div class="col-md-6">
-                            <div class="card border mb-3">
-                                <div class="card-header bg-light py-2">
-                                    <small class="font-weight-bold text-dark"><i class="fas fa-chart-area mr-1 text-info"></i>Customer Volatility</small>
-                                </div>
-                                <div class="card-body p-2">
-                                    <table class="table table-sm mb-0" style="font-size: 11px;">
-                                        <tbody>
-                                            <tr>
-                                                <td><span class="badge badge-success">Stable</span></td>
-                                                <td>σ &lt; ${volThresh.stable}d</td>
-                                                <td class="text-muted">No buffer</td>
-                                            </tr>
-                                            <tr>
-                                                <td><span class="badge badge-warning">Average</span></td>
-                                                <td>${volThresh.stable}-${volThresh.volatile}d</td>
-                                                <td class="text-muted">Small buffer</td>
-                                            </tr>
-                                            <tr>
-                                                <td><span class="badge badge-danger">Volatile</span></td>
-                                                <td>σ &gt; ${volThresh.volatile}d</td>
-                                                <td class="text-muted">+0.5σ buffer</td>
-                                            </tr>
-                                        </tbody>
-                                    </table>
-                                </div>
+                    <!-- Vendor Filtering -->
+                    <div class="cf-form-section">
+                        <div class="cf-form-section-header">Vendor Filtering</div>
+                        <div class="cf-form-row">
+                            <div class="cf-form-group">
+                                <label class="cf-form-label"><i class="fas fa-ban text-danger mr-1"></i>Excluded Categories</label>
+                                <input type="text" class="cf-form-input" id="cfGlobalApExclude" placeholder="e.g. 7, 9" value="${(f.excludeVendorCategories||[]).join(', ')}">
+                            </div>
+                            <div class="cf-form-group">
+                                <label class="cf-form-label"><i class="fas fa-star text-warning mr-1"></i>Priority Categories</label>
+                                <input type="text" class="cf-form-input" id="cfGlobalApPriority" placeholder="e.g. 5, 3" value="${(f.priorityVendorCategories||[]).join(', ')}">
                             </div>
                         </div>
-                        <div class="col-md-6">
-                            <div class="card border mb-3">
-                                <div class="card-header bg-light py-2">
-                                    <small class="font-weight-bold text-dark"><i class="fas fa-history mr-1 text-danger"></i>Overdue Handling</small>
+                    </div>
+
+                    <!-- Advanced Options -->
+                    <div class="cf-form-section">
+                        <div class="cf-form-section-header">Advanced Options</div>
+                        <div class="cf-form-row">
+                            <div class="cf-form-group">
+                                <label class="cf-form-label"><i class="fas fa-piggy-bank text-warning mr-1"></i>Cash Preservation</label>
+                                <div class="custom-control custom-switch mt-2">
+                                    <input type="checkbox" class="custom-control-input" id="cfGlobalApPreserve" ${f.preservationMode?'checked':''}>
+                                    <label class="custom-control-label" for="cfGlobalApPreserve">Enable</label>
                                 </div>
-                                <div class="card-body p-2">
-                                    <table class="table table-sm mb-0" style="font-size: 11px;">
-                                        <tbody>
-                                            <tr>
-                                                <td><span class="badge badge-success">0-30d</span></td>
-                                                <td>+${overduePush.light} days</td>
-                                                <td class="text-muted">Likely soon</td>
-                                            </tr>
-                                            <tr>
-                                                <td><span class="badge badge-warning">31-60d</span></td>
-                                                <td>+${overduePush.medium} days</td>
-                                                <td class="text-muted">Needs follow-up</td>
-                                            </tr>
-                                            <tr>
-                                                <td><span class="badge badge-danger">60d+</span></td>
-                                                <td>+${overduePush.heavy} days</td>
-                                                <td class="text-muted">Conservative</td>
-                                            </tr>
-                                        </tbody>
-                                    </table>
+                                <div class="cf-form-help">Prioritize vendors, oldest bills, defer excess</div>
+                            </div>
+                            <div class="cf-form-group">
+                                <label class="cf-form-label"><i class="fas fa-layer-group text-muted mr-1"></i>Auto-Defer Overflow</label>
+                                <div class="custom-control custom-switch mt-2">
+                                    <input type="checkbox" class="custom-control-input" id="cfGlobalApDefer" ${f.deferIfNegative?'checked':''}>
+                                    <label class="custom-control-label" for="cfGlobalApDefer">Enable</label>
                                 </div>
+                                <div class="cf-form-help">Push excess bills to next week</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="cf-config-flyout-footer">
+                    <div></div>
+                    <button class="cf-btn cf-btn-primary" onclick="ConfigController.save()">
+                        <i class="fas fa-save"></i> Save Configuration
+                    </button>
+                </div>`;
+        },
+
+        renderARConfigForm(body) {
+            const ps = this.data.predictionSettings || {};
+            const volThresh = ps.volatilityThresholds || { stable: 5, volatile: 15 };
+            const overduePush = ps.overduePushDays || { light: 7, medium: 14, heavy: 28 };
+            const defaultDays = ps.defaultDaysToPay || 45;
+            const historyDays = ps.paymentHistoryDays || 365;
+
+            body.innerHTML = `
+                <div class="cf-config-flyout-form">
+                    <!-- Algorithm Flow -->
+                    <div class="cf-form-section">
+                        <div class="cf-form-section-header">Collection Date Prediction</div>
+                        <div class="d-flex align-items-center justify-content-between text-center mb-3" style="gap: 6px;">
+                            <div class="flex-fill p-2 rounded" style="background:rgba(16,185,129,0.15);">
+                                <i class="fas fa-calendar-check mb-1" style="color:#10b981;"></i>
+                                <div style="font-size: 10px;" class="font-weight-bold">Manual Override</div>
+                            </div>
+                            <i class="fas fa-chevron-right text-muted small"></i>
+                            <div class="flex-fill p-2 rounded" style="background:rgba(59,130,246,0.15);">
+                                <i class="fas fa-user-clock mb-1" style="color:#3b82f6;"></i>
+                                <div style="font-size: 10px;" class="font-weight-bold">Customer History</div>
+                            </div>
+                            <i class="fas fa-chevron-right text-muted small"></i>
+                            <div class="flex-fill p-2 rounded" style="background:rgba(14,165,233,0.15);">
+                                <i class="fas fa-file-contract mb-1" style="color:#0ea5e9;"></i>
+                                <div style="font-size: 10px;" class="font-weight-bold">Invoice Terms</div>
+                            </div>
+                            <i class="fas fa-chevron-right text-muted small"></i>
+                            <div class="flex-fill p-2 rounded" style="background:rgba(100,116,139,0.15);">
+                                <i class="fas fa-globe mb-1" style="color:#64748b;"></i>
+                                <div style="font-size: 10px;" class="font-weight-bold">Fallback: ${defaultDays}d</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Customer Volatility -->
+                    <div class="cf-form-section">
+                        <div class="cf-form-section-header">Customer Payment Volatility</div>
+                        <div class="cf-form-row">
+                            <div class="d-flex justify-content-between align-items-center p-2 rounded mb-2" style="background:rgba(16,185,129,0.1); border:1px solid rgba(16,185,129,0.3);">
+                                <div><span class="badge" style="background:#10b981; color:#fff;">Stable</span> σ &lt; ${volThresh.stable}d</div>
+                                <span class="text-muted small">No buffer added</span>
+                            </div>
+                            <div class="d-flex justify-content-between align-items-center p-2 rounded mb-2" style="background:rgba(245,158,11,0.1); border:1px solid rgba(245,158,11,0.3);">
+                                <div><span class="badge" style="background:#f59e0b; color:#fff;">Average</span> ${volThresh.stable}-${volThresh.volatile}d</div>
+                                <span class="text-muted small">Small buffer</span>
+                            </div>
+                            <div class="d-flex justify-content-between align-items-center p-2 rounded" style="background:rgba(239,68,68,0.1); border:1px solid rgba(239,68,68,0.3);">
+                                <div><span class="badge" style="background:#ef4444; color:#fff;">Volatile</span> σ &gt; ${volThresh.volatile}d</div>
+                                <span class="text-muted small">+0.5σ buffer</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Overdue Handling -->
+                    <div class="cf-form-section">
+                        <div class="cf-form-section-header">Overdue Invoice Handling</div>
+                        <div class="cf-form-row">
+                            <div class="d-flex justify-content-between align-items-center p-2 rounded mb-2" style="background:rgba(16,185,129,0.1); border:1px solid rgba(16,185,129,0.3);">
+                                <div><strong>0-30 days late</strong></div>
+                                <span>+${overduePush.light} days <span class="text-muted small">(likely soon)</span></span>
+                            </div>
+                            <div class="d-flex justify-content-between align-items-center p-2 rounded mb-2" style="background:rgba(245,158,11,0.1); border:1px solid rgba(245,158,11,0.3);">
+                                <div><strong>31-60 days late</strong></div>
+                                <span>+${overduePush.medium} days <span class="text-muted small">(needs follow-up)</span></span>
+                            </div>
+                            <div class="d-flex justify-content-between align-items-center p-2 rounded" style="background:rgba(239,68,68,0.1); border:1px solid rgba(239,68,68,0.3);">
+                                <div><strong>60+ days late</strong></div>
+                                <span>+${overduePush.heavy} days <span class="text-muted small">(conservative)</span></span>
                             </div>
                         </div>
                     </div>
 
                     <!-- Data Sources -->
-                    <div class="card border mb-3" style="border-left: 3px solid #28a745 !important;">
-                        <div class="card-body p-3">
-                            <div class="row">
-                                <div class="col-6 col-md-3 text-center border-right">
-                                    <i class="fas fa-clock text-primary mb-1"></i>
-                                    <div class="small font-weight-bold">${historyDays}d</div>
-                                    <div style="font-size: 10px;" class="text-muted">History Window</div>
-                                </div>
-                                <div class="col-6 col-md-3 text-center border-right">
-                                    <i class="fas fa-calculator text-info mb-1"></i>
-                                    <div class="small font-weight-bold">Mean + σ</div>
-                                    <div style="font-size: 10px;" class="text-muted">Statistical Model</div>
-                                </div>
-                                <div class="col-6 col-md-3 text-center border-right">
-                                    <i class="fas fa-calendar-alt text-warning mb-1"></i>
-                                    <div class="small font-weight-bold">Mon-Fri</div>
-                                    <div style="font-size: 10px;" class="text-muted">Business Days</div>
-                                </div>
-                                <div class="col-6 col-md-3 text-center">
-                                    <i class="fas fa-shield-alt text-danger mb-1"></i>
-                                    <div class="small font-weight-bold">Due Date</div>
-                                    <div style="font-size: 10px;" class="text-muted">Floor Limit</div>
-                                </div>
+                    <div class="cf-form-section">
+                        <div class="cf-form-section-header">Prediction Engine Settings</div>
+                        <div class="d-flex justify-content-between text-center gap-3">
+                            <div class="flex-fill p-3 rounded" style="background:#f8fafc; border:1px solid #e2e8f0;">
+                                <i class="fas fa-clock text-primary d-block mb-1"></i>
+                                <div class="font-weight-bold">${historyDays}d</div>
+                                <div style="font-size: 10px;" class="text-muted">History Window</div>
+                            </div>
+                            <div class="flex-fill p-3 rounded" style="background:#f8fafc; border:1px solid #e2e8f0;">
+                                <i class="fas fa-calculator text-info d-block mb-1"></i>
+                                <div class="font-weight-bold">Mean + σ</div>
+                                <div style="font-size: 10px;" class="text-muted">Statistical Model</div>
+                            </div>
+                            <div class="flex-fill p-3 rounded" style="background:#f8fafc; border:1px solid #e2e8f0;">
+                                <i class="fas fa-calendar-alt text-warning d-block mb-1"></i>
+                                <div class="font-weight-bold">Mon-Fri</div>
+                                <div style="font-size: 10px;" class="text-muted">Business Days</div>
                             </div>
                         </div>
                     </div>
 
-                    <div class="alert alert-success border py-2 px-3 mb-0">
-                        <small><i class="fas fa-magic mr-1"></i><strong>Fully Automated</strong> — No configuration required. The system learns from your historical payment data.</small>
+                    <div class="cf-method-info" style="background:linear-gradient(135deg, rgba(16,185,129,0.1) 0%, #f8fafc 100%); border-color:#86efac;">
+                        <div class="cf-method-info-title" style="color:#10b981;"><i class="fas fa-magic mr-1"></i>Fully Automated</div>
+                        <div class="cf-method-info-text">No configuration required. The system learns from your historical payment data and automatically adjusts predictions.</div>
                     </div>
-                `;
-            }
+                </div>`;
         },
         
         edit(i) {
@@ -2732,25 +2767,73 @@
             const grpCount = this.data && this.data.groups ? this.data.groups.length : 0;
             const bankCount = this.data && this.data.bankAccountIds ? this.data.bankAccountIds.length : 0;
 
+            // Count inflows vs outflows
+            let inflowCount = 0, outflowCount = 0;
+            if (this.data && this.data.categories) {
+                this.data.categories.forEach(c => {
+                    if (c.type === 'inflow') inflowCount++;
+                    else outflowCount++;
+                });
+            }
+
             container.innerHTML = `
                 <div class="cf-config-landing">
                     <div class="landing-icon">
-                        <i class="fas fa-cogs"></i>
+                        <i class="fas fa-sliders-h"></i>
                     </div>
                     <div class="landing-title">Cashflow Configuration</div>
                     <div class="landing-text">Select an item from the sidebar to view or edit its settings</div>
-                    <div class="landing-stats">
-                        <div class="landing-stat">
-                            <div class="landing-stat-value">${bankCount}</div>
-                            <div class="landing-stat-label">Bank Accounts</div>
+
+                    <div class="cf-category-kpi-row" style="max-width:700px; margin:24px auto 0;">
+                        <div class="cf-category-kpi" onclick="ConfigController.showFixed('BANK')" style="cursor:pointer;">
+                            <div class="kpi-icon" style="background:rgba(59,130,246,0.12);">
+                                <i class="fas fa-university" style="color:#3b82f6;"></i>
+                            </div>
+                            <div class="kpi-content">
+                                <div class="kpi-label">Bank Accounts</div>
+                                <div class="kpi-value">${bankCount}</div>
+                            </div>
+                            <i class="fas fa-chevron-right text-muted" style="font-size:12px;"></i>
                         </div>
-                        <div class="landing-stat">
-                            <div class="landing-stat-value">${catCount}</div>
-                            <div class="landing-stat-label">Categories</div>
+                        <div class="cf-category-kpi" style="cursor:default;">
+                            <div class="kpi-icon" style="background:rgba(139,92,246,0.12);">
+                                <i class="fas fa-layer-group" style="color:#8b5cf6;"></i>
+                            </div>
+                            <div class="kpi-content">
+                                <div class="kpi-label">Categories</div>
+                                <div class="kpi-value">${catCount}</div>
+                            </div>
+                            <div style="font-size:10px; color:#94a3b8;">
+                                <span class="text-success">${inflowCount} in</span> /
+                                <span class="text-danger">${outflowCount} out</span>
+                            </div>
                         </div>
-                        <div class="landing-stat">
-                            <div class="landing-stat-value">${grpCount}</div>
-                            <div class="landing-stat-label">Groups</div>
+                        <div class="cf-category-kpi" style="cursor:default;">
+                            <div class="kpi-icon" style="background:rgba(16,185,129,0.12);">
+                                <i class="fas fa-object-group" style="color:#10b981;"></i>
+                            </div>
+                            <div class="kpi-content">
+                                <div class="kpi-label">Groups</div>
+                                <div class="kpi-value">${grpCount}</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div style="margin-top:32px; padding-top:24px; border-top:1px solid #e2e8f0;">
+                        <div style="font-size:12px; color:#64748b; margin-bottom:12px;">Quick Actions</div>
+                        <div style="display:flex; gap:12px; justify-content:center;">
+                            <button class="cf-btn cf-btn-secondary" onclick="ConfigController.showFixed('BANK')">
+                                <i class="fas fa-university"></i> Bank Accounts
+                            </button>
+                            <button class="cf-btn cf-btn-secondary" onclick="ConfigController.showFixed('AR')">
+                                <i class="fas fa-arrow-down text-success"></i> AR Settings
+                            </button>
+                            <button class="cf-btn cf-btn-secondary" onclick="ConfigController.showFixed('AP')">
+                                <i class="fas fa-arrow-up text-danger"></i> AP Settings
+                            </button>
+                            <button class="cf-btn cf-btn-primary" onclick="ConfigController.add()">
+                                <i class="fas fa-plus"></i> New Category
+                            </button>
                         </div>
                     </div>
                 </div>`;
