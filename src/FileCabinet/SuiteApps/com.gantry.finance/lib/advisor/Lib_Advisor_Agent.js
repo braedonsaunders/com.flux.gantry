@@ -222,24 +222,42 @@ Analyze what happened and provide a JSON response:
     ],
     "next_strategy": "description of recommended next approach",
     "should_pivot": true|false,
-    "pivot_reason": "why we need to change strategy (if should_pivot is true)"
+    "pivot_reason": "why we need to change strategy (if should_pivot is true)",
+    "alternative_tools": ["list of tools to try if pivoting"]
 }
 
 ## CRITICAL ANALYSIS GUIDELINES:
 - **SUCCESS = rowCount > 0** → assessment should be "on_track", should_pivot = FALSE
 - If any tool returned rows of data, that is SUCCESS - use that data to answer!
-- Only suggest pivot when ALL recent calls truly failed (error or found=false)
-- 0 rows is NOT always a failure - it might mean "no matching data" which is a valid answer
+
+## HANDLING 0 ROWS RETURNED:
+When a tool returns rowCount = 0, consider:
+
+1. **Was the tool appropriate for the question?**
+   - For vendor transactions: Try get_vendor_spend, get_ap_aging, or run_custom_query
+   - For customer transactions: Try get_customer_revenue, get_ar_aging
+   - For entity-specific data with 0 rows: TRY ALTERNATIVE TOOLS FIRST before concluding "no data"
+
+2. **Were the filters too restrictive?**
+   - Try removing transaction_type filter
+   - Try expanding the time period (period: "all" or "last_year")
+   - Try the query without entity_id to verify data exists at all
+
+3. **Alternative tools for common scenarios:**
+   - Vendor bills → get_vendor_spend, get_ap_aging, run_custom_query with VendBill
+   - Customer invoices → get_customer_revenue, get_ar_aging
+   - General transactions → get_gl_activity, get_recent_transactions without type filter
 
 ## WHEN TO PIVOT (should_pivot = true):
-- Entity genuinely not found (found=false)
+- Got 0 rows but HAVEN'T tried alternative tools yet
+- Same tool called 2+ times with same 0-row result
 - Error occurred
-- Same tool called multiple times with no progress
+- Entity genuinely not found (found=false)
 
 ## WHEN NOT TO PIVOT (should_pivot = false):
 - Tool returned rows of data (rowCount > 0)
+- Already tried multiple alternative approaches with 0 rows each (accept "no data" as answer)
 - Tool found an entity (found=true)
-- We have enough information to answer the question
 
 Respond with ONLY the JSON object, no other text.`;
 

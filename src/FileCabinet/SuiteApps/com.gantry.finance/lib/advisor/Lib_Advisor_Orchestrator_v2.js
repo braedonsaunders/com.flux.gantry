@@ -176,21 +176,56 @@ define([
             ProgressStore.create(requestId, message, agentState);
 
             // Add initial thinking step AFTER create (so the request exists)
-            // Include debug info if debug mode is enabled
+            // Extract key information about what the agent understands
+            const resolvedEntities = sessionContext.resolvedEntities || {};
+            const entityList = Object.entries(resolvedEntities).map(([key, entity]) =>
+                `${entity.name} (${entity.type}, ID: ${entity.id})`
+            );
+
+            // Analyze the question to determine likely approach
+            const messageLower = message.toLowerCase();
+            const likelyTools = [];
+            if (messageLower.includes('bill') || messageLower.includes('vendor') || messageLower.includes('ap')) {
+                likelyTools.push('get_recent_transactions', 'get_vendor_spend', 'get_ap_aging');
+            }
+            if (messageLower.includes('invoice') || messageLower.includes('customer') || messageLower.includes('ar')) {
+                likelyTools.push('get_recent_transactions', 'get_customer_revenue', 'get_ar_aging');
+            }
+            if (messageLower.includes('cash') || messageLower.includes('bank')) {
+                likelyTools.push('get_cash_position', 'dashboard_cashflow');
+            }
+            if (messageLower.includes('expense') || messageLower.includes('spend')) {
+                likelyTools.push('get_expense_breakdown', 'get_vendor_spend');
+            }
+            if (messageLower.includes('report') || messageLower.includes('saved search')) {
+                likelyTools.push('run_report', 'run_saved_search', 'list_saved_searches');
+            }
+            if (likelyTools.length === 0) {
+                likelyTools.push('get_recent_transactions', 'get_gl_activity');
+            }
+
             const thinkingStep = {
                 type: 'thinking',
                 title: 'Understanding your question...',
-                status: 'complete'
+                status: 'complete',
+                // Always include useful context (not just in debug mode)
+                context: {
+                    question: message,
+                    recognizedEntities: entityList.length > 0 ? entityList : ['No entities recognized yet'],
+                    likelyApproach: likelyTools.slice(0, 3),
+                    conversationContext: history.length > 0 ? `${history.length} previous messages` : 'New conversation'
+                }
             };
 
-            // Add debug info when debug mode is enabled
+            // Add extended debug info when debug mode is enabled
             if (Utils.isDebugMode()) {
                 thinkingStep.debug = {
                     userMessage: message,
                     historyLength: history.length,
-                    sessionEntities: Object.keys(sessionContext.resolvedEntities || {}),
-                    systemPromptPreview: agentState.systemPrompt.substring(0, 500) + '...',
-                    availableTools: agentState.toolDefinitions.map(t => t.name)
+                    sessionEntities: Object.keys(resolvedEntities),
+                    resolvedEntityDetails: resolvedEntities,
+                    availableTools: agentState.toolDefinitions.map(t => t.name),
+                    allLikelyTools: likelyTools
                 };
                 thinkingStep.title = 'Understanding your question (Debug Mode ON)';
             }
