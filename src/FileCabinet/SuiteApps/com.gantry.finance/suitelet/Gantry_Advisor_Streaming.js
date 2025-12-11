@@ -121,12 +121,17 @@ REMEMBER: You are connected to a LIVE database. Use the tools!`;
                     result = handleCancel(finalSessionId);
                     break;
 
+                case 'demo':
+                    // Demo mode - simulates streaming without LLM
+                    result = handleDemo(finalSessionId, finalQuery);
+                    break;
+
                 case 'test':
                 default:
                     result = {
                         success: true,
                         message: 'Advisor Streaming API ready',
-                        actions: ['init', 'step', 'status', 'cancel'],
+                        actions: ['init', 'step', 'status', 'cancel', 'demo'],
                         usage: 'Add ?action=init&query=YOUR_QUESTION to start'
                     };
             }
@@ -315,6 +320,67 @@ REMEMBER: You are connected to a LIVE database. Use the tools!`;
         return {
             success: true,
             message: 'Session cancelled'
+        };
+    }
+
+    /**
+     * DEMO: Simulated streaming for testing (no LLM needed)
+     * Call with action=demo to start, then keep calling with same sessionId
+     */
+    function handleDemo(sessionId, query) {
+        // Demo steps to simulate
+        const DEMO_STEPS = [
+            { type: 'thinking', title: 'Understanding your question...' },
+            { type: 'tool_call', tool: 'search_vendors', arguments: { query: 'top spending' }, status: 'pending' },
+            { type: 'tool_result', tool: 'search_vendors', result: { vendors: ['Acme Corp', 'Globex Inc', 'Initech'] } },
+            { type: 'tool_call', tool: 'get_vendor_spending', arguments: { vendor_id: '123' }, status: 'pending' },
+            { type: 'tool_result', tool: 'get_vendor_spending', result: { total: 45000, transactions: 12 } },
+            { type: 'thinking', title: 'Analyzing the results...' },
+            { type: 'answer', content: 'Based on my analysis, your top 3 vendors by spend are:\n\n1. **Acme Corp** - $45,000 (12 transactions)\n2. **Globex Inc** - $32,500 (8 transactions)\n3. **Initech** - $28,750 (15 transactions)\n\nTotal spend across these vendors: $106,250' }
+        ];
+
+        // If no sessionId, start new demo
+        if (!sessionId) {
+            const newSessionId = 'demo_' + Date.now();
+            return {
+                success: true,
+                sessionId: newSessionId,
+                state: 'demo',
+                stepIndex: 0,
+                update: DEMO_STEPS[0],
+                hasMore: true
+            };
+        }
+
+        // Parse step index from sessionId or use provided
+        let stepIndex = 0;
+        const match = sessionId.match(/demo_(\d+)_step(\d+)/);
+        if (match) {
+            stepIndex = parseInt(match[2], 10) + 1;
+        } else if (sessionId.startsWith('demo_')) {
+            stepIndex = 1;
+        }
+
+        // Check if demo is complete
+        if (stepIndex >= DEMO_STEPS.length) {
+            return {
+                success: true,
+                sessionId: sessionId,
+                state: 'complete',
+                update: DEMO_STEPS[DEMO_STEPS.length - 1],
+                hasMore: false
+            };
+        }
+
+        // Return next step
+        const newSessionId = 'demo_' + Date.now() + '_step' + stepIndex;
+        return {
+            success: true,
+            sessionId: newSessionId,
+            state: 'demo',
+            stepIndex: stepIndex,
+            update: DEMO_STEPS[stepIndex],
+            hasMore: stepIndex < DEMO_STEPS.length - 1
         };
     }
 
