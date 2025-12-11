@@ -13,36 +13,34 @@
  *
  * Uses N/cache for temporary storage (auto-expires after TTL)
  *
- * CACHE ARCHITECTURE (to avoid 500KB limit):
- * - {requestId}        : Main state (status, steps, metadata) - kept small
- * - {requestId}_agent  : Agent state (conversation context, tool signatures)
- * - {requestId}_tools  : Tool call results (can overflow to _tools_1, _tools_2, etc.)
- * - {requestId}_ctx    : Conversation context overflow
+ * SIMPLIFIED CACHE ARCHITECTURE:
+ * - Single key per request: {requestId}
+ * - Contains: status, steps, agentState (all in one entry)
+ * - Avoids multi-key complexity and reduces eviction risk
+ * - toolDefinitions are NOT stored (regenerated each step to save ~100KB)
+ * - allToolCalls stores summaries only (not full results)
+ *
+ * IMPORTANT: NetSuite cache can evict entries at ANY time regardless of TTL.
+ * This is documented behavior. Design for resilience.
  */
 define(['N/cache', 'N/log'], function(cache, log) {
     'use strict';
 
     // Cache configuration
     const CACHE_NAME = 'ADVISOR_PROGRESS';
-    const DEFAULT_TTL = 900; // 15 minutes - increased for complex queries
-    const REFRESH_TTL_ON_ACCESS = true; // Re-save on access to extend TTL
+    const DEFAULT_TTL = 900; // 15 minutes
     const MAX_CACHE_SIZE_KB = 450; // Leave buffer below 500KB limit
     const MAX_CACHE_SIZE_BYTES = MAX_CACHE_SIZE_KB * 1024;
 
-    // Get or create the cache
-    // CRITICAL: Must use PUBLIC scope so cache is shared across HTTP requests
-    // PRIVATE scope is tied to execution context and won't persist between
-    // the async request and subsequent polling requests
-    let progressCache = null;
-
+    /**
+     * Get the cache - always get fresh reference
+     * Uses PUBLIC scope to share across all scripts in the account
+     */
     function getCache() {
-        if (!progressCache) {
-            progressCache = cache.getCache({
-                name: CACHE_NAME,
-                scope: cache.Scope.PUBLIC  // Changed from PRIVATE - must be PUBLIC for cross-request access
-            });
-        }
-        return progressCache;
+        return cache.getCache({
+            name: CACHE_NAME,
+            scope: cache.Scope.PUBLIC
+        });
     }
 
     /**
@@ -76,6 +74,7 @@ define(['N/cache', 'N/log'], function(cache, log) {
                 value: json,
                 ttl: ttl || DEFAULT_TTL
             });
+
             return true;
         } catch (e) {
             log.error('ProgressStore.safePut failed', { key: key, error: e.message });
@@ -91,7 +90,9 @@ define(['N/cache', 'N/log'], function(cache, log) {
     function safeGet(key) {
         try {
             const raw = getCache().get({ key: key });
-            if (!raw) return null;
+            if (!raw) {
+                return null;
+            }
             return JSON.parse(raw);
         } catch (e) {
             log.error('ProgressStore.safeGet failed', { key: key, error: e.message });
@@ -107,7 +108,7 @@ define(['N/cache', 'N/log'], function(cache, log) {
         try {
             getCache().remove({ key: key });
         } catch (e) {
-            // Ignore
+            // Ignore removal errors
         }
     }
 
@@ -122,11 +123,38 @@ define(['N/cache', 'N/log'], function(cache, log) {
     }
 
     /**
+     * Trim agent state for storage - removes large data that can be regenerated
+     * @param {object} agentState - Full agent state
+     * @returns {object} Trimmed agent state safe for storage
+     */
+    function trimAgentStateForStorage(agentState) {
+        if (!agentState) return null;
+
+        return {
+            ...agentState,
+            // Don't store toolDefinitions - regenerated each step (~100KB savings)
+            toolDefinitions: null,
+            // Keep tool calls minimal - store summaries only
+            allToolCalls: (agentState.allToolCalls || []).map(tc => ({
+                tool: tc.tool,
+                args: tc.args,
+                displayName: tc.displayName,
+                duration: tc.duration,
+                // Store summary instead of full result (saves significant space)
+                resultSummary: tc.result ? {
+                    success: tc.result.success,
+                    rowCount: tc.result.rowCount || 0,
+                    found: tc.result.found,
+                    entityId: tc.result.entity?.id,
+                    error: tc.result.error
+                } : (tc.resultSummary || null)
+            }))
+        };
+    }
+
+    /**
      * Create a new progress tracking entry with agent state for step-by-step execution
-     * Uses separate cache keys to avoid 500KB limit:
-     * - Main key: status, steps, metadata (small)
-     * - Agent key: agent state without toolDefinitions (medium)
-     * - Tools key: tool call results (can be large)
+     * SINGLE KEY ARCHITECTURE: Everything stored in one cache entry to reduce eviction risk
      *
      * @param {string} requestId - Unique request ID
      * @param {string} message - Original user message
@@ -134,8 +162,8 @@ define(['N/cache', 'N/log'], function(cache, log) {
      * @returns {object} Initial progress state
      */
     function create(requestId, message, agentState) {
-        // Main state - kept small for fast polling
-        const mainState = {
+        // Combined state - everything in one entry
+        const state = {
             requestId: requestId,
             status: 'processing',
             message: message,
@@ -146,46 +174,16 @@ define(['N/cache', 'N/log'], function(cache, log) {
             richContent: null,
             sessionContext: null,
             error: null,
-            // Flag indicating agent state is stored separately
-            hasAgentState: !!agentState
+            // Agent state embedded directly (trimmed to save space)
+            agentState: trimAgentStateForStorage(agentState)
         };
 
-        // Store main state
-        if (!safePut(requestId, mainState)) {
-            log.error('ProgressStore.create - failed to store main state', { requestId: requestId });
-            return mainState;
-        }
-
-        // Store agent state separately (without toolDefinitions - regenerated each step)
-        if (agentState) {
-            // Create a trimmed copy without toolDefinitions (they're regenerated each step)
-            const trimmedAgentState = {
-                ...agentState,
-                toolDefinitions: null,  // Don't store - regenerate on each step
-                // Keep tool call results minimal - store summaries only
-                allToolCalls: (agentState.allToolCalls || []).map(tc => ({
-                    tool: tc.tool,
-                    args: tc.args,
-                    displayName: tc.displayName,
-                    duration: tc.duration,
-                    // Store only summary, not full result
-                    resultSummary: tc.result ? {
-                        success: tc.result.success,
-                        rowCount: tc.result.rowCount || 0,
-                        found: tc.result.found,
-                        entityId: tc.result.entity?.id,
-                        error: tc.result.error
-                    } : null
-                }))
-            };
-
-            if (!safePut(requestId + '_agent', trimmedAgentState)) {
-                log.error('ProgressStore.create - failed to store agent state', { requestId: requestId });
-            }
+        if (!safePut(requestId, state)) {
+            log.error('ProgressStore.create - failed to store state', { requestId: requestId });
         }
 
         log.debug('ProgressStore.create', { requestId: requestId, hasAgentState: !!agentState });
-        return mainState;
+        return state;
     }
 
     /**
@@ -276,7 +274,6 @@ define(['N/cache', 'N/log'], function(cache, log) {
 
     /**
      * Mark request as complete with final answer
-     * Also cleans up the separate agent state cache
      * @param {string} requestId - Request ID
      * @param {object} result - Result object with answer, richContent, sessionContext
      */
@@ -296,14 +293,10 @@ define(['N/cache', 'N/log'], function(cache, log) {
             state.lastUpdate = Date.now();
             state.model = result.model || null;
             state.provider = result.provider || null;
-            // Clear the agent state reference since we're done
-            state.hasAgentState = false;
+            // Clear agent state since we're done (save space)
+            state.agentState = null;
 
             safePut(requestId, state);
-
-            // Clean up separate agent state cache
-            safeRemove(requestId + '_agent');
-            safeRemove(requestId + '_ctx');
 
             log.debug('ProgressStore.complete', {
                 requestId: requestId,
@@ -318,7 +311,6 @@ define(['N/cache', 'N/log'], function(cache, log) {
     /**
      * Mark request as failed with error
      * Creates an error entry if one doesn't exist (for early failures)
-     * Also cleans up separate cache keys
      * @param {string} requestId - Request ID
      * @param {string} error - Error message
      */
@@ -350,7 +342,7 @@ define(['N/cache', 'N/log'], function(cache, log) {
                     richContent: null,
                     sessionContext: null,
                     error: error,
-                    hasAgentState: false,
+                    agentState: null,
                     duration: 0
                 };
             } else {
@@ -358,7 +350,7 @@ define(['N/cache', 'N/log'], function(cache, log) {
                 state.error = error;
                 state.duration = Date.now() - state.startTime;
                 state.lastUpdate = Date.now();
-                state.hasAgentState = false;
+                state.agentState = null;
 
                 // Add error step if not already present
                 const hasErrorStep = state.steps.some(s => s.type === 'error');
@@ -375,10 +367,6 @@ define(['N/cache', 'N/log'], function(cache, log) {
 
             safePut(requestId, state);
 
-            // Clean up separate cache keys
-            safeRemove(requestId + '_agent');
-            safeRemove(requestId + '_ctx');
-
             log.error('ProgressStore.fail', { requestId: requestId, error: error, hadExistingEntry: hadExistingEntry });
         } catch (e) {
             log.error('ProgressStore.fail failed', { requestId: requestId, error: e.message, originalError: error });
@@ -386,34 +374,14 @@ define(['N/cache', 'N/log'], function(cache, log) {
     }
 
     /**
-     * Get current progress state and optionally refresh TTL
+     * Get current progress state (without agent state for polling efficiency)
      * @param {string} requestId - Request ID
-     * @param {boolean} refreshTtl - Whether to refresh TTL on access (default: REFRESH_TTL_ON_ACCESS)
      * @returns {object|null} Progress state or null if not found
      */
-    function get(requestId, refreshTtl) {
+    function get(requestId) {
         try {
             const state = safeGet(requestId);
-            if (!state) {
-                return null;
-            }
-
-            // Refresh TTL on access to extend cache lifetime during active polling
-            // This helps prevent cache expiration during long-running agent operations
-            if (refreshTtl !== false && REFRESH_TTL_ON_ACCESS && state.status === 'processing') {
-                state.lastAccess = Date.now();
-                // Best effort TTL refresh - don't fail the get if it fails
-                safePut(requestId, state);
-                // Also refresh agent state TTL if it exists
-                if (state.hasAgentState) {
-                    const agentState = safeGet(requestId + '_agent');
-                    if (agentState) {
-                        safePut(requestId + '_agent', agentState);
-                    }
-                }
-            }
-
-            return state;
+            return state || null;
         } catch (e) {
             log.error('ProgressStore.get failed', { requestId: requestId, error: e.message });
             return null;
@@ -422,24 +390,24 @@ define(['N/cache', 'N/log'], function(cache, log) {
 
     /**
      * Get agent state for step-by-step execution
-     * Reads from separate _agent cache key
+     * Reads from embedded agentState property (single-key architecture)
      * @param {string} requestId - Request ID
      * @returns {object|null} Agent state or null
      */
     function getAgentState(requestId) {
         try {
-            // First check if main state exists
-            const mainState = safeGet(requestId);
-            if (!mainState) return null;
-
-            // Get agent state from separate key
-            const agentState = safeGet(requestId + '_agent');
-            if (!agentState) {
-                log.debug('ProgressStore.getAgentState - agent state not found', { requestId: requestId });
+            const state = safeGet(requestId);
+            if (!state) {
+                log.debug('ProgressStore.getAgentState - request not found', { requestId: requestId });
                 return null;
             }
 
-            return agentState;
+            if (!state.agentState) {
+                log.debug('ProgressStore.getAgentState - no agent state', { requestId: requestId });
+                return null;
+            }
+
+            return state.agentState;
         } catch (e) {
             log.error('ProgressStore.getAgentState failed', { requestId: requestId, error: e.message });
             return null;
@@ -448,10 +416,9 @@ define(['N/cache', 'N/log'], function(cache, log) {
 
     /**
      * Set agent state for step-by-step execution
-     * Stores in separate _agent cache key with size management
+     * SINGLE KEY ARCHITECTURE: Updates embedded agentState property
      * - toolDefinitions are NOT stored (regenerated each step)
      * - allToolCalls stores summaries only, not full results
-     * - conversationContext overflows to _ctx key if needed
      *
      * @param {string} requestId - Request ID
      * @param {object} agentState - Agent state to store
@@ -459,67 +426,25 @@ define(['N/cache', 'N/log'], function(cache, log) {
      */
     function setAgentState(requestId, agentState) {
         try {
-            // First check main state exists
-            const mainState = safeGet(requestId);
-            if (!mainState) {
+            // Get current state
+            const state = safeGet(requestId);
+            if (!state) {
                 log.debug('ProgressStore.setAgentState - request not found', { requestId: requestId });
                 return false;
             }
 
-            // Create a trimmed copy for storage
-            const trimmedState = {
-                ...agentState,
-                // Don't store toolDefinitions - regenerated each step
-                toolDefinitions: null
-            };
+            // Trim and embed the agent state
+            state.agentState = trimAgentStateForStorage(agentState);
+            state.lastUpdate = Date.now();
 
-            // Trim allToolCalls to store summaries only
-            if (trimmedState.allToolCalls && trimmedState.allToolCalls.length > 0) {
-                trimmedState.allToolCalls = trimmedState.allToolCalls.map(tc => ({
-                    tool: tc.tool,
-                    args: tc.args,
-                    displayName: tc.displayName,
-                    duration: tc.duration,
-                    // Store summary instead of full result
-                    resultSummary: tc.result ? {
-                        success: tc.result.success,
-                        rowCount: tc.result.rowCount || 0,
-                        found: tc.result.found,
-                        entityId: tc.result.entity?.id,
-                        error: tc.result.error
-                    } : (tc.resultSummary || null)
-                }));
-            }
-
-            // Check if conversation context is too large - overflow to separate key
-            const MAX_CONTEXT_SIZE = 100 * 1024; // 100KB max in main state
-            if (trimmedState.conversationContext && trimmedState.conversationContext.length > MAX_CONTEXT_SIZE) {
-                // Store full context in separate key
-                const ctxStored = safePut(requestId + '_ctx', {
-                    conversationContext: trimmedState.conversationContext
-                });
-
-                if (ctxStored) {
-                    // Keep only recent context in main state
-                    trimmedState.conversationContext = trimmedState.conversationContext.slice(-MAX_CONTEXT_SIZE);
-                    trimmedState.hasContextOverflow = true;
-                }
-            }
-
-            // Store the trimmed agent state
-            const success = safePut(requestId + '_agent', trimmedState);
+            // Store the updated state
+            const success = safePut(requestId, state);
 
             if (success) {
-                // Update main state timestamp
-                mainState.lastUpdate = Date.now();
-                mainState.hasAgentState = true;
-                safePut(requestId, mainState);
-
                 log.debug('ProgressStore.setAgentState', {
                     requestId: requestId,
                     iteration: agentState.iteration,
-                    toolCallCount: trimmedState.allToolCalls?.length || 0,
-                    hasContextOverflow: trimmedState.hasContextOverflow || false
+                    toolCallCount: state.agentState?.allToolCalls?.length || 0
                 });
             } else {
                 log.error('ProgressStore.setAgentState - failed to store', {
@@ -545,13 +470,11 @@ define(['N/cache', 'N/log'], function(cache, log) {
     }
 
     /**
-     * Delete a progress entry and all related cache keys
+     * Delete a progress entry
      * @param {string} requestId - Request ID
      */
     function remove(requestId) {
         safeRemove(requestId);
-        safeRemove(requestId + '_agent');
-        safeRemove(requestId + '_ctx');
     }
 
     /**
