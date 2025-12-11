@@ -32,6 +32,10 @@ define(['N/cache', 'N/log'], function(cache, log) {
     const MAX_CACHE_SIZE_KB = 450; // Leave buffer below 500KB limit
     const MAX_CACHE_SIZE_BYTES = MAX_CACHE_SIZE_KB * 1024;
 
+    // Atomic completion lock configuration
+    const LOCK_PREFIX = 'lock_';
+    const LOCK_TTL = 30; // Lock expires after 30 seconds (safety net)
+
     /**
      * Get the cache - always get fresh reference
      * Uses PUBLIC scope to share across all scripts in the account
@@ -110,6 +114,84 @@ define(['N/cache', 'N/log'], function(cache, log) {
         } catch (e) {
             // Ignore removal errors
         }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // ATOMIC COMPLETION LOCK
+    // Prevents race conditions when multiple polls complete simultaneously
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Try to acquire completion lock for a request
+     * @param {string} requestId - Request ID
+     * @returns {boolean} True if lock acquired, false if already locked
+     */
+    function acquireCompletionLock(requestId) {
+        const lockKey = LOCK_PREFIX + requestId;
+        try {
+            const existing = getCache().get({ key: lockKey });
+            if (existing) {
+                log.debug('ProgressStore.acquireCompletionLock - already locked', { requestId: requestId });
+                return false;
+            }
+
+            // Set the lock
+            getCache().put({
+                key: lockKey,
+                value: JSON.stringify({ locked: true, timestamp: Date.now() }),
+                ttl: LOCK_TTL
+            });
+
+            log.debug('ProgressStore.acquireCompletionLock - acquired', { requestId: requestId });
+            return true;
+        } catch (e) {
+            log.error('ProgressStore.acquireCompletionLock failed', { requestId: requestId, error: e.message });
+            return false;
+        }
+    }
+
+    /**
+     * Check if a request has a completion lock (without acquiring)
+     * @param {string} requestId - Request ID
+     * @returns {boolean} True if locked
+     */
+    function hasCompletionLock(requestId) {
+        const lockKey = LOCK_PREFIX + requestId;
+        try {
+            const existing = getCache().get({ key: lockKey });
+            return !!existing;
+        } catch (e) {
+            return false;
+        }
+    }
+
+    /**
+     * Release completion lock
+     * @param {string} requestId - Request ID
+     */
+    function releaseCompletionLock(requestId) {
+        const lockKey = LOCK_PREFIX + requestId;
+        safeRemove(lockKey);
+    }
+
+    /**
+     * Check if request is already complete or completing
+     * @param {string} requestId - Request ID
+     * @returns {boolean} True if should skip processing
+     */
+    function isCompleteOrLocked(requestId) {
+        // Check lock first (faster)
+        if (hasCompletionLock(requestId)) {
+            return true;
+        }
+
+        // Check actual status
+        const state = safeGet(requestId);
+        if (state && (state.status === 'complete' || state.status === 'error')) {
+            return true;
+        }
+
+        return false;
     }
 
     /**
@@ -278,16 +360,32 @@ define(['N/cache', 'N/log'], function(cache, log) {
     }
 
     /**
-     * Mark request as complete with final answer
+     * Mark request as complete with final answer (ATOMIC)
+     * Uses completion lock to prevent race conditions from concurrent polls
      * @param {string} requestId - Request ID
      * @param {object} result - Result object with answer, richContent, sessionContext
+     * @returns {boolean} True if completion succeeded, false if already complete/locked
      */
     function complete(requestId, result) {
         try {
+            // ATOMIC: Try to acquire completion lock first
+            if (!acquireCompletionLock(requestId)) {
+                log.debug('ProgressStore.complete - skipped (already locked)', { requestId: requestId });
+                return false;
+            }
+
             const state = safeGet(requestId);
             if (!state) {
                 log.debug('ProgressStore.complete - request not found', { requestId: requestId });
-                return;
+                releaseCompletionLock(requestId);
+                return false;
+            }
+
+            // Double-check status (belt and suspenders)
+            if (state.status === 'complete' || state.status === 'error') {
+                log.debug('ProgressStore.complete - already finalized', { requestId: requestId, status: state.status });
+                releaseCompletionLock(requestId);
+                return false;
             }
 
             state.status = 'complete';
@@ -301,15 +399,26 @@ define(['N/cache', 'N/log'], function(cache, log) {
             // Clear agent state since we're done (save space)
             state.agentState = null;
 
-            safePut(requestId, state);
+            // CRITICAL: Check if safePut succeeded
+            const putSuccess = safePut(requestId, state);
+            if (!putSuccess) {
+                log.error('ProgressStore.complete - safePut FAILED', { requestId: requestId });
+                // Don't release lock - let it expire naturally to prevent retries
+                return false;
+            }
 
-            log.debug('ProgressStore.complete', {
+            log.debug('ProgressStore.complete - SUCCESS', {
                 requestId: requestId,
                 duration: state.duration,
                 stepCount: state.steps.length
             });
+
+            // Lock will expire naturally via TTL
+            return true;
         } catch (e) {
             log.error('ProgressStore.complete failed', { requestId: requestId, error: e.message });
+            releaseCompletionLock(requestId);
+            return false;
         }
     }
 
@@ -528,6 +637,7 @@ define(['N/cache', 'N/log'], function(cache, log) {
         addStep: addStep,
         updateLastStep: updateLastStep,
         updateStepByType: updateStepByType,
+        updateStep: updateStepByType, // Alias for streaming agent compatibility
         complete: complete,
         fail: fail,
         get: get,
@@ -535,6 +645,12 @@ define(['N/cache', 'N/log'], function(cache, log) {
         setAgentState: setAgentState,
         exists: exists,
         remove: remove,
-        getPollingResponse: getPollingResponse
+        getPollingResponse: getPollingResponse,
+
+        // Atomic completion lock functions
+        acquireCompletionLock: acquireCompletionLock,
+        hasCompletionLock: hasCompletionLock,
+        releaseCompletionLock: releaseCompletionLock,
+        isCompleteOrLocked: isCompleteOrLocked
     };
 });
