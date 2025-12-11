@@ -1950,15 +1950,19 @@
         renderSteps: function(steps, showPending) {
             if (!steps || steps.length === 0) return '';
 
+            // Filter out retry steps - they're intermediate and shouldn't be displayed
+            const filteredSteps = steps.filter(s => s.type !== 'retry');
+            if (filteredSteps.length === 0) return '';
+
             const chainId = 'chain-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
             const self = this;
-            const allComplete = steps.every(s => self.normalizeStepStatus(s.status) === 'complete') && !showPending;
-            const hasRunning = steps.some(s => self.normalizeStepStatus(s.status) === 'running');
+            const allComplete = filteredSteps.every(s => self.normalizeStepStatus(s.status) === 'complete') && !showPending;
+            const hasRunning = filteredSteps.some(s => self.normalizeStepStatus(s.status) === 'running');
 
             let html = `<div class="thought-chain${allComplete ? ' chain-complete' : ''}" data-chain-id="${chainId}">`;
             html += '<div class="thought-nodes">';
 
-            steps.forEach((step, idx) => {
+            filteredSteps.forEach((step, idx) => {
                 // Normalize status for connector logic
                 const stepStatus = this.normalizeStepStatus(step.status);
 
@@ -1974,7 +1978,7 @@
 
             // Add pending indicator at end if still loading
             if (showPending && !hasRunning) {
-                const lastIdx = steps.length;
+                const lastIdx = filteredSteps.length;
                 html += `<div class="node-connector active animate-in cascade-delay-${lastIdx}" style="--flow-delay: ${lastIdx * 0.3}s"></div>`;
                 html += `
                     <div class="thinking-node-indicator inline">
