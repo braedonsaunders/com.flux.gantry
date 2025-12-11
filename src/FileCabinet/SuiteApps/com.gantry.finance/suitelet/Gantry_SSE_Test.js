@@ -9,10 +9,17 @@
  *
  * This tests whether NetSuite flushes response.write() calls immediately
  * or buffers them until the script completes.
+ *
+ * MODES:
+ * - instant: Write all at once (control test)
+ * - simple: Write with delays (test HTTP streaming)
+ * - advisor: Simulate advisor flow
+ * - llm: Test actual LLM streaming with llm.generateTextStreamed()
  */
 define([
-    'N/log'
-], function(log) {
+    'N/log',
+    'N/llm'
+], function(log, llm) {
     'use strict';
 
     /**
@@ -102,6 +109,9 @@ define([
             } else if (mode === 'advisor') {
                 // Simulate advisor flow
                 runAdvisorSimulation(response, format);
+            } else if (mode === 'llm') {
+                // Test actual LLM streaming with llm.generateTextStreamed()
+                runLLMStreamingTest(response, format);
             } else {
                 writeChunk(response, {
                     type: 'error',
@@ -227,6 +237,74 @@ define([
             content: 'Based on my analysis, I found 42 GL transactions in the last 90 days.',
             timestamp: Date.now()
         }, format);
+    }
+
+    /**
+     * Test actual LLM streaming with llm.generateTextStreamed()
+     * This is the ultimate test: can we stream LLM tokens to the user in real-time?
+     */
+    function runLLMStreamingTest(response, format) {
+        writeChunk(response, {
+            type: 'llm_start',
+            message: 'Starting LLM streaming test...',
+            timestamp: Date.now()
+        }, format);
+
+        try {
+            // Use llm.generateTextStreamed() to get an iterator of tokens
+            const streamedResponse = llm.generateTextStreamed({
+                prompt: 'Count from 1 to 10 slowly, with one number per line and a brief pause between each. Make it dramatic.',
+                modelFamily: llm.ModelFamily.CLAUDE,
+                modelParameters: {
+                    maxTokens: 500
+                }
+            });
+
+            let tokenCount = 0;
+            let fullText = '';
+
+            // Iterate over the streamed tokens
+            for (const chunk of streamedResponse) {
+                tokenCount++;
+
+                // chunk.text contains the partial text from this chunk
+                if (chunk.text) {
+                    fullText += chunk.text;
+
+                    // Write each token to the HTTP response
+                    writeChunk(response, {
+                        type: 'llm_token',
+                        tokenNum: tokenCount,
+                        text: chunk.text,
+                        timestamp: Date.now()
+                    }, format);
+                }
+
+                // Also check for any other properties on the chunk
+                if (chunk.finishReason) {
+                    writeChunk(response, {
+                        type: 'llm_finish',
+                        reason: chunk.finishReason,
+                        timestamp: Date.now()
+                    }, format);
+                }
+            }
+
+            writeChunk(response, {
+                type: 'llm_complete',
+                totalTokens: tokenCount,
+                fullText: fullText,
+                timestamp: Date.now()
+            }, format);
+
+        } catch (e) {
+            writeChunk(response, {
+                type: 'llm_error',
+                message: e.message,
+                name: e.name,
+                timestamp: Date.now()
+            }, format);
+        }
     }
 
     return {
