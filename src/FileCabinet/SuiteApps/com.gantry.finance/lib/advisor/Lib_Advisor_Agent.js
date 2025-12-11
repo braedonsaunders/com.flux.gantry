@@ -109,7 +109,334 @@ ${dashboardDescriptions}
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // AGENT LOOP
+    // STEP-BY-STEP AGENT EXECUTION (for progressive rendering)
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Initialize agent state for step-by-step execution
+     * Creates the initial state and stores it for subsequent step calls
+     *
+     * @param {string} message - User's question
+     * @param {Array} history - Conversation history
+     * @param {object} sessionContext - Session context with resolved entities
+     * @param {string} requestId - Request ID for progress tracking
+     * @param {object} options - Additional options
+     * @returns {object} Initial agent state
+     */
+    function initAgentState(message, history, sessionContext, requestId, options) {
+        options = options || {};
+
+        // Get fiscal context
+        const fiscalContext = getFiscalContext();
+
+        // Build system prompt
+        const systemPrompt = buildSystemPrompt(fiscalContext, sessionContext);
+
+        // Get tool definitions
+        const toolDefinitions = Tools.getToolDefinitions();
+
+        // Build chat history for context (last 4 exchanges)
+        const chatHistory = [];
+        if (history && history.length > 0) {
+            const recentHistory = history.slice(-8);
+            for (const msg of recentHistory) {
+                if (msg.role === 'user' || msg.role === 'assistant') {
+                    chatHistory.push({
+                        role: msg.role,
+                        content: msg.content
+                    });
+                }
+            }
+        }
+
+        const agentState = {
+            message: message,
+            history: history,
+            sessionContext: sessionContext || {},
+            options: options,
+            requestId: requestId,
+            startTime: Date.now(),
+            iteration: 0,
+            conversationContext: '',
+            allToolCalls: [],
+            toolCallSignatures: {},  // JSON-serializable version of Map
+            consecutiveRepeats: 0,
+            systemPrompt: systemPrompt,
+            toolDefinitions: toolDefinitions,
+            chatHistory: chatHistory,
+            completed: false,
+            finalResponse: null
+        };
+
+        // Add initial thinking step
+        ProgressStore.addStep(requestId, {
+            type: 'thinking',
+            title: 'Understanding your question...',
+            status: 'complete'
+        });
+
+        return agentState;
+    }
+
+    /**
+     * Run ONE iteration of the agent loop
+     * Returns after each LLM call (with or without tool execution)
+     *
+     * @param {string} requestId - Request ID
+     * @returns {object} { hasMore: boolean, step: object|null, error: string|null, response: object|null }
+     */
+    function runAgentStep(requestId) {
+        const MAX_REPEATS = 2;
+
+        // Get current state
+        const agentState = ProgressStore.getAgentState(requestId);
+        if (!agentState) {
+            return { hasMore: false, error: 'Session not found or expired' };
+        }
+
+        // Check if already completed
+        if (agentState.completed) {
+            return { hasMore: false, response: agentState.finalResponse };
+        }
+
+        // Check max iterations
+        if (agentState.iteration >= MAX_ITERATIONS) {
+            log.debug('Agent reached max iterations', { requestId: requestId });
+
+            // Try to synthesize from what we have
+            if (agentState.allToolCalls && agentState.allToolCalls.length > 0) {
+                const toolResults = agentState.allToolCalls.map(tc => ({
+                    tool: tc.tool,
+                    result: tc.result
+                }));
+                const response = synthesizeFromToolResults(toolResults, agentState.message, agentState.startTime);
+
+                ProgressStore.complete(requestId, {
+                    answer: response.text,
+                    richContent: response.richContent,
+                    sessionContext: agentState.sessionContext
+                });
+
+                agentState.completed = true;
+                agentState.finalResponse = response;
+                ProgressStore.setAgentState(requestId, agentState);
+
+                return { hasMore: false, response: response };
+            }
+
+            ProgressStore.fail(requestId, 'Could not complete analysis after maximum attempts');
+            return { hasMore: false, error: 'Max iterations reached' };
+        }
+
+        agentState.iteration++;
+
+        // Build the prompt for this iteration
+        let currentPrompt = agentState.message;
+        if (agentState.conversationContext) {
+            currentPrompt = agentState.message + '\n\n--- Previous tool calls and results ---\n' + agentState.conversationContext;
+        }
+
+        // If too many repeats, force a final answer
+        const forceAnswer = agentState.consecutiveRepeats >= MAX_REPEATS;
+        if (forceAnswer) {
+            currentPrompt += '\n\n**IMPORTANT: You have tried the same tool multiple times with no results. You MUST now provide a final answer to the user based on what you know, or explain that you could not find the requested information. Do NOT call any more tools.**';
+        }
+
+        log.debug('Agent step', {
+            requestId: requestId,
+            iteration: agentState.iteration,
+            promptLength: currentPrompt.length,
+            forceAnswer: forceAnswer
+        });
+
+        try {
+            // Call LLM with tools
+            const llmResponse = AIProviders.callAI(currentPrompt, {
+                systemPrompt: agentState.systemPrompt,
+                chatHistory: agentState.chatHistory,
+                tools: forceAnswer ? null : agentState.toolDefinitions,
+                tier: THINKING_TIER,
+                purpose: `Agent iteration ${agentState.iteration}`,
+                temperature: 0.2
+            });
+
+            // Check for errors
+            if (!llmResponse || llmResponse.error) {
+                log.error('LLM call failed in step', {
+                    requestId: requestId,
+                    error: llmResponse ? llmResponse.error : 'No response'
+                });
+
+                ProgressStore.fail(requestId, 'Failed to get AI response');
+                return { hasMore: false, error: 'LLM call failed: ' + (llmResponse?.error || 'No response') };
+            }
+
+            // Handle tool calls
+            if (llmResponse.type === 'tool_call' && llmResponse.toolCalls && llmResponse.toolCalls.length > 0) {
+                let hadRepeat = false;
+                let executedAny = false;
+
+                for (const toolCall of llmResponse.toolCalls.slice(0, MAX_TOOL_CALLS_PER_TURN)) {
+                    const toolName = toolCall.name || toolCall.function?.name;
+                    const toolArgs = toolCall.arguments || toolCall.function?.arguments || {};
+
+                    // Parse arguments if string
+                    let parsedArgs = toolArgs;
+                    if (typeof toolArgs === 'string') {
+                        try {
+                            parsedArgs = JSON.parse(toolArgs);
+                        } catch (e) {
+                            parsedArgs = {};
+                        }
+                    }
+
+                    // Create signature to detect repeated calls
+                    const signature = toolName + '::' + JSON.stringify(parsedArgs);
+                    const previousCount = agentState.toolCallSignatures[signature] || 0;
+
+                    if (previousCount >= MAX_REPEATS) {
+                        log.debug('Skipping repeated tool call', {
+                            tool: toolName,
+                            previousCount: previousCount
+                        });
+                        hadRepeat = true;
+                        agentState.conversationContext += `\n[SKIPPED - Already called ${toolName} with same args ${previousCount} times. Try a different approach or provide your answer.]\n`;
+                        continue;
+                    }
+
+                    // Track this call
+                    agentState.toolCallSignatures[signature] = previousCount + 1;
+
+                    // Add progress step BEFORE executing
+                    const displayName = Tools.getToolDisplayName(toolName, parsedArgs);
+                    ProgressStore.addStep(requestId, {
+                        type: 'tool_call',
+                        title: displayName,
+                        tool: toolName,
+                        params: parsedArgs,
+                        status: 'running'
+                    });
+
+                    // Execute the tool
+                    const result = Tools.executeTool(toolName, parsedArgs);
+
+                    // Update progress step with result
+                    ProgressStore.updateLastStep(requestId, {
+                        status: 'complete',
+                        rowCount: result.rowCount || (result.rows ? result.rows.length : 0),
+                        success: result.success,
+                        summary: summarizeToolResult(result)
+                    });
+
+                    agentState.allToolCalls.push({
+                        tool: toolName,
+                        args: parsedArgs,
+                        result: result,
+                        displayName: displayName
+                    });
+
+                    // Add to conversation context for next iteration
+                    agentState.conversationContext += `\nTool: ${toolName}\n`;
+                    agentState.conversationContext += `Arguments: ${JSON.stringify(parsedArgs)}\n`;
+                    agentState.conversationContext += `Result: ${summarizeToolResult(result)}\n`;
+
+                    executedAny = true;
+                }
+
+                // Track repeats
+                if (!executedAny && hadRepeat) {
+                    agentState.consecutiveRepeats++;
+                } else if (executedAny) {
+                    agentState.consecutiveRepeats = 0;
+                }
+
+                // Save state and return (more steps needed)
+                ProgressStore.setAgentState(requestId, agentState);
+                return { hasMore: true, step: { type: 'tool_calls', count: agentState.allToolCalls.length } };
+            }
+
+            // Final text response - we're done!
+            if (llmResponse.text) {
+                log.debug('Agent completed', {
+                    requestId: requestId,
+                    iterations: agentState.iteration,
+                    duration: Date.now() - agentState.startTime
+                });
+
+                // Build rich response
+                const response = buildFinalResponse(
+                    llmResponse.text,
+                    agentState.allToolCalls,
+                    agentState.sessionContext,
+                    agentState.startTime
+                );
+
+                // Complete progress
+                ProgressStore.complete(requestId, {
+                    answer: llmResponse.text,
+                    richContent: response.richContent,
+                    sessionContext: response.sessionContext,
+                    model: AIProviders.getCurrentModelInfo().model,
+                    provider: AIProviders.getCurrentModelInfo().provider
+                });
+
+                agentState.completed = true;
+                agentState.finalResponse = response;
+                ProgressStore.setAgentState(requestId, agentState);
+
+                return { hasMore: false, response: response };
+            }
+
+            // No text and no tool calls - try again
+            log.debug('Agent received empty response, continuing', { requestId: requestId });
+            ProgressStore.setAgentState(requestId, agentState);
+            return { hasMore: true, step: { type: 'empty_response' } };
+
+        } catch (e) {
+            log.error('Agent step error', {
+                requestId: requestId,
+                iteration: agentState.iteration,
+                error: e.message,
+                stack: e.stack
+            });
+
+            // Check for fatal errors
+            const errorMsg = (e.message || '').toLowerCase();
+            const isFatalError =
+                errorMsg.includes('api key') ||
+                errorMsg.includes('authentication') ||
+                errorMsg.includes('unauthorized') ||
+                errorMsg.includes('forbidden') ||
+                errorMsg.includes('rate limit') ||
+                errorMsg.includes('quota') ||
+                errorMsg.includes('invalid_api_key') ||
+                errorMsg.includes('model not found');
+
+            if (isFatalError) {
+                ProgressStore.fail(requestId, 'Configuration error: ' + e.message);
+                return { hasMore: false, error: 'Configuration error: ' + e.message };
+            }
+
+            // Non-fatal error - add retry step and continue
+            if (agentState.iteration < MAX_ITERATIONS - 1) {
+                ProgressStore.addStep(requestId, {
+                    type: 'retry',
+                    title: 'Retrying: ' + (e.message || 'Unknown error').substring(0, 50),
+                    error: e.message,
+                    status: 'complete'
+                });
+
+                ProgressStore.setAgentState(requestId, agentState);
+                return { hasMore: true, step: { type: 'retry', error: e.message } };
+            }
+
+            ProgressStore.fail(requestId, e.message);
+            return { hasMore: false, error: e.message };
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // AGENT LOOP (synchronous - backward compatible)
     // ═══════════════════════════════════════════════════════════════════════════
 
     /**
@@ -657,8 +984,15 @@ ${dashboardDescriptions}
     // ═══════════════════════════════════════════════════════════════════════════
 
     return {
+        // Step-by-step execution (for progressive rendering)
+        initAgentState: initAgentState,
+        runAgentStep: runAgentStep,
+
+        // Synchronous execution (backward compatible)
         runAgent: runAgent,
         runAgentSync: runAgentSync,
+
+        // Utilities
         buildSystemPrompt: buildSystemPrompt,
         MAX_ITERATIONS: MAX_ITERATIONS
     };

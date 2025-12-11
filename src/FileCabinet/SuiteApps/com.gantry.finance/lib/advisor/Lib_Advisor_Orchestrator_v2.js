@@ -122,8 +122,9 @@ define([
     // ═══════════════════════════════════════════════════════════════════════════
 
     /**
-     * Start processing a chat message asynchronously.
+     * Start processing a chat message asynchronously with step-by-step execution.
      * Returns request_id immediately. Use getStatus() to poll for updates.
+     * Each getStatus() call advances the agent one step for progressive rendering.
      *
      * @param {Object} params - Chat parameters
      * @returns {Object} { request_id, status: 'processing' }
@@ -137,24 +138,23 @@ define([
         // Generate request ID
         const requestId = ProgressStore.generateRequestId();
 
-        // Create progress entry
-        ProgressStore.create(requestId, message);
-
         // Enable debug mode if requested
         Utils.resetDebugModeCache();
         if (aiSettings.debugMode === true) {
             Utils.setForceDebugMode(true);
         }
 
-        log.debug('ProcessChatAsync starting', {
+        log.debug('ProcessChatAsync starting (step-by-step mode)', {
             requestId: requestId,
             messageLength: message.length
         });
 
         try {
-            // Check for simple conversational patterns
+            // Check for simple conversational patterns (no agent needed)
             const conversationalResponse = matchConversationalPattern(message);
             if (conversationalResponse) {
+                // Create progress entry without agent state
+                ProgressStore.create(requestId, message, null);
                 ProgressStore.complete(requestId, {
                     answer: conversationalResponse,
                     richContent: [{ type: 'text', content: conversationalResponse }],
@@ -167,17 +167,35 @@ define([
                 };
             }
 
-            // Run the agent (this updates ProgressStore as it goes)
-            // In a real async implementation, this would be in a separate thread/process
-            // For SuiteScript, we run synchronously but track progress for UI
-            Agent.runAgent(message, history, sessionContext, requestId, {
+            // Initialize agent state for step-by-step execution
+            const agentState = Agent.initAgentState(message, history, sessionContext, requestId, {
                 debugMode: aiSettings.debugMode
             });
 
-            return {
-                request_id: requestId,
-                status: 'processing'
-            };
+            // Create progress entry WITH agent state
+            ProgressStore.create(requestId, message, agentState);
+
+            // Run first step immediately to get things started
+            const stepResult = Agent.runAgentStep(requestId);
+
+            // Return status based on first step result
+            if (stepResult.hasMore) {
+                return {
+                    request_id: requestId,
+                    status: 'processing'
+                };
+            } else if (stepResult.error) {
+                return {
+                    request_id: requestId,
+                    status: 'error',
+                    error: stepResult.error
+                };
+            } else {
+                return {
+                    request_id: requestId,
+                    status: 'complete'
+                };
+            }
 
         } catch (e) {
             log.error('ProcessChatAsync Error', { requestId: requestId, error: e.message });
@@ -192,13 +210,46 @@ define([
     }
 
     /**
-     * Get status of an async request (for polling)
+     * Get status of an async request and advance the agent if still processing.
+     * Each call to getStatus() runs ONE step of the agent loop for progressive rendering.
      *
      * @param {string} requestId - Request ID from processChatAsync
-     * @returns {Object} Progress state
+     * @returns {Object} Progress state with current steps
      */
     function getStatus(requestId) {
-        return ProgressStore.getPollingResponse(requestId);
+        // Get current state first
+        const progressState = ProgressStore.get(requestId);
+
+        if (!progressState) {
+            return {
+                status: 'not_found',
+                error: 'Request not found or expired'
+            };
+        }
+
+        // If already complete or error, just return current state
+        if (progressState.status === 'complete' || progressState.status === 'error') {
+            return ProgressStore.getPollingResponse(requestId);
+        }
+
+        // Still processing - run next step
+        try {
+            const stepResult = Agent.runAgentStep(requestId);
+
+            log.debug('getStatus ran step', {
+                requestId: requestId,
+                hasMore: stepResult.hasMore,
+                hasError: !!stepResult.error
+            });
+
+            // Return updated polling response
+            return ProgressStore.getPollingResponse(requestId);
+
+        } catch (e) {
+            log.error('getStatus step error', { requestId: requestId, error: e.message });
+            ProgressStore.fail(requestId, e.message);
+            return ProgressStore.getPollingResponse(requestId);
+        }
     }
 
     // ═══════════════════════════════════════════════════════════════════════════

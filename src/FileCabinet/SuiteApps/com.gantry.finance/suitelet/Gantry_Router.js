@@ -380,7 +380,8 @@ define([
     }
 
     /**
-     * Get advisor request status (for polling)
+     * Get advisor request status and advance agent one step (for polling)
+     * Each call runs ONE step of the agent loop for progressive rendering
      * @param {string} requestId - Request ID from advisor_chat_async
      */
     function getAdvisorStatus(requestId) {
@@ -392,7 +393,8 @@ define([
         }
 
         try {
-            return ProgressStore.getPollingResponse(requestId);
+            // Use orchestrator's getStatus which runs the next agent step
+            return AdvisorOrchestrator.getStatus(requestId);
         } catch (e) {
             log.error('Advisor Status Error', {
                 requestId: requestId,

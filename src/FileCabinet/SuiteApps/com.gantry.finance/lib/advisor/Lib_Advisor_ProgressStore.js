@@ -44,12 +44,13 @@ define(['N/cache', 'N/log'], function(cache, log) {
     }
 
     /**
-     * Create a new progress tracking entry
+     * Create a new progress tracking entry with agent state for step-by-step execution
      * @param {string} requestId - Unique request ID
      * @param {string} message - Original user message
+     * @param {object} agentState - Initial agent state for resumable execution
      * @returns {object} Initial progress state
      */
-    function create(requestId, message) {
+    function create(requestId, message, agentState) {
         const state = {
             requestId: requestId,
             status: 'processing',
@@ -60,7 +61,9 @@ define(['N/cache', 'N/log'], function(cache, log) {
             answer: null,
             richContent: null,
             sessionContext: null,
-            error: null
+            error: null,
+            // Agent state for step-by-step execution
+            agentState: agentState || null
         };
 
         try {
@@ -236,6 +239,55 @@ define(['N/cache', 'N/log'], function(cache, log) {
     }
 
     /**
+     * Get agent state for step-by-step execution
+     * @param {string} requestId - Request ID
+     * @returns {object|null} Agent state or null
+     */
+    function getAgentState(requestId) {
+        try {
+            const raw = getCache().get({ key: requestId });
+            if (!raw) return null;
+            const state = JSON.parse(raw);
+            return state.agentState || null;
+        } catch (e) {
+            log.error('ProgressStore.getAgentState failed', { requestId: requestId, error: e.message });
+            return null;
+        }
+    }
+
+    /**
+     * Set agent state for step-by-step execution
+     * @param {string} requestId - Request ID
+     * @param {object} agentState - Agent state to store
+     */
+    function setAgentState(requestId, agentState) {
+        try {
+            const raw = getCache().get({ key: requestId });
+            if (!raw) {
+                log.debug('ProgressStore.setAgentState - request not found', { requestId: requestId });
+                return;
+            }
+
+            const state = JSON.parse(raw);
+            state.agentState = agentState;
+            state.lastUpdate = Date.now();
+
+            getCache().put({
+                key: requestId,
+                value: JSON.stringify(state),
+                ttl: DEFAULT_TTL
+            });
+
+            log.debug('ProgressStore.setAgentState', {
+                requestId: requestId,
+                iteration: agentState.iteration
+            });
+        } catch (e) {
+            log.error('ProgressStore.setAgentState failed', { requestId: requestId, error: e.message });
+        }
+    }
+
+    /**
      * Check if request exists
      * @param {string} requestId - Request ID
      * @returns {boolean}
@@ -309,6 +361,8 @@ define(['N/cache', 'N/log'], function(cache, log) {
         complete: complete,
         fail: fail,
         get: get,
+        getAgentState: getAgentState,
+        setAgentState: setAgentState,
         exists: exists,
         remove: remove,
         getPollingResponse: getPollingResponse
