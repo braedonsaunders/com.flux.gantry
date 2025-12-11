@@ -2119,34 +2119,115 @@
                 detailContent += '</div>';
             }
             
-            // Render reflection step details
+            // Render reflection step details (from adaptive agent)
             if (step.type === 'reflection' && step.reflection) {
                 const ref = step.reflection;
                 detailContent += '<div class="reflection-details">';
-                
-                // Assessment badge
+
+                // Assessment badge with colors
                 const assessmentColors = {
                     'on_track': 'success',
-                    'needs_modification': 'warning', 
+                    'needs_pivot': 'warning',
+                    'needs_modification': 'warning',
                     'needs_expansion': 'info',
+                    'partial_success': 'info',
                     'can_simplify': 'success',
                     'blocked': 'danger'
                 };
                 const assessmentColor = assessmentColors[ref.assessment] || 'info';
+                const assessmentLabels = {
+                    'on_track': '✓ On Track',
+                    'needs_pivot': '↺ Strategy Change Needed',
+                    'partial_success': '◐ Partial Success',
+                    'blocked': '✗ Blocked'
+                };
+                const assessmentLabel = assessmentLabels[ref.assessment] || ref.assessment;
+
                 detailContent += `<div class="reflection-assessment">
-                    <span class="assessment-badge badge-${assessmentColor}">${this.escapeHtml(ref.assessment || 'analyzing')}</span>
+                    <span class="assessment-badge badge-${assessmentColor}">${this.escapeHtml(assessmentLabel)}</span>
                     <span class="confidence-badge">${Math.round((ref.confidence || 0.5) * 100)}% confident</span>
                 </div>`;
-                
-                // Key findings
-                if (ref.keyFindings && ref.keyFindings.length > 0) {
-                    detailContent += '<div class="reflection-findings"><div class="section-label">Key Findings:</div><ul>';
-                    ref.keyFindings.forEach(f => {
-                        detailContent += `<li>${this.escapeHtml(f)}</li>`;
+
+                // Findings with importance indicators
+                if (ref.findings && ref.findings.length > 0) {
+                    detailContent += '<div class="reflection-findings"><div class="section-label"><i class="fas fa-lightbulb"></i> Insights:</div>';
+                    ref.findings.forEach(f => {
+                        const importanceIcon = f.importance === 'high' ? '🔴' : f.importance === 'medium' ? '🟡' : '🟢';
+                        const importanceClass = f.importance === 'high' ? 'high' : f.importance === 'medium' ? 'medium' : 'low';
+                        detailContent += `<div class="finding-item finding-${importanceClass}">${importanceIcon} ${this.escapeHtml(f.insight)}</div>`;
                     });
-                    detailContent += '</ul></div>';
+                    detailContent += '</div>';
                 }
-                
+
+                // Failures with suggestions
+                if (ref.failures && ref.failures.length > 0) {
+                    detailContent += '<div class="reflection-failures"><div class="section-label"><i class="fas fa-exclamation-triangle"></i> Issues Found:</div>';
+                    ref.failures.forEach(f => {
+                        detailContent += `<div class="failure-item">
+                            <span class="failure-tool"><i class="fas fa-tools"></i> ${this.escapeHtml(f.tool)}</span>
+                            <span class="failure-reason">${this.escapeHtml(f.reason)}</span>
+                            ${f.suggestion ? `<span class="failure-suggestion"><i class="fas fa-arrow-right"></i> ${this.escapeHtml(f.suggestion)}</span>` : ''}
+                        </div>`;
+                    });
+                    detailContent += '</div>';
+                }
+
+                // Next strategy recommendation
+                if (ref.nextStrategy) {
+                    detailContent += `<div class="reflection-next-strategy">
+                        <div class="section-label"><i class="fas fa-route"></i> Recommended Approach:</div>
+                        <div class="strategy-text">${this.escapeHtml(ref.nextStrategy)}</div>
+                    </div>`;
+                }
+
+                // Pivot reason if applicable
+                if (ref.shouldPivot && ref.pivotReason) {
+                    detailContent += `<div class="reflection-pivot-reason">
+                        <i class="fas fa-random"></i> <strong>Pivoting because:</strong> ${this.escapeHtml(ref.pivotReason)}
+                    </div>`;
+                }
+
+                detailContent += '</div>';
+            }
+
+            // Render strategy_pivot step details
+            if (step.type === 'strategy_pivot' && step.strategy) {
+                const strat = step.strategy;
+                detailContent += '<div class="strategy-pivot-details">';
+
+                // New strategy description
+                if (strat.newStrategy) {
+                    detailContent += `<div class="strategy-new">
+                        <div class="section-label"><i class="fas fa-lightbulb"></i> New Strategy:</div>
+                        <div class="strategy-description">${this.escapeHtml(strat.newStrategy)}</div>
+                    </div>`;
+                }
+
+                // Reasoning
+                if (strat.reasoning) {
+                    detailContent += `<div class="strategy-reasoning">
+                        <div class="section-label"><i class="fas fa-brain"></i> Why This Approach:</div>
+                        <div class="reasoning-text">${this.escapeHtml(strat.reasoning)}</div>
+                    </div>`;
+                }
+
+                // First tool to try
+                if (strat.firstTool) {
+                    detailContent += `<div class="strategy-first-tool">
+                        <i class="fas fa-play-circle"></i> <strong>Starting with:</strong>
+                        <code>${this.escapeHtml(strat.firstTool)}</code>
+                        ${strat.firstToolArgs ? `<span class="tool-args">(${this.escapeHtml(JSON.stringify(strat.firstToolArgs))})</span>` : ''}
+                    </div>`;
+                }
+
+                // Backup tools
+                if (strat.backupTools && strat.backupTools.length > 0) {
+                    detailContent += `<div class="strategy-backups">
+                        <i class="fas fa-list"></i> <strong>Backup options:</strong>
+                        ${strat.backupTools.map(t => `<code>${this.escapeHtml(t)}</code>`).join(', ')}
+                    </div>`;
+                }
+
                 detailContent += '</div>';
             }
             
@@ -2391,7 +2472,8 @@
             const icons = {
                 'thinking': '<i class="fas fa-brain"></i>',
                 'deep_thinking': '<i class="fas fa-brain"></i>',
-                'reflection': '<i class="fas fa-sync-alt"></i>',
+                'reflection': '<i class="fas fa-lightbulb"></i>',
+                'strategy_pivot': '<i class="fas fa-random"></i>',
                 'plan_adaptation': '<i class="fas fa-project-diagram"></i>',
                 'classification': '<i class="fas fa-sitemap"></i>',
                 'template': '<i class="fas fa-file-code"></i>',
