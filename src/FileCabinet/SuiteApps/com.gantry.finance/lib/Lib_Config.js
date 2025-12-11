@@ -370,20 +370,28 @@ define(["N/record", "N/search", "N/query", "N/log", "N/runtime"], function (reco
         switch (baseConfigName) {
             case 'main':
                 return {
-                    dashboardOrder: ['cashflow', 'health', 'burden', 'time', 'integrity'],
+                    dashboardOrder: ['advisor', 'cashflow', 'health', 'burden', 'time', 'integrity', 'vendorperformance', 'customervalue', 'spendvelocity'],
                     dashboardNames: {
-                        cashflow: 'Cashflow',
-                        health: 'Financial Health',
-                        burden: 'Overhead Burden',
-                        time: 'Billable Time',
-                        integrity: 'Transaction Integrity'
+                        advisor: 'Advisor',
+                        cashflow: 'Liquidity',
+                        health: 'P&L',
+                        burden: 'True Cost',
+                        time: 'Billable IQ',
+                        integrity: 'Sentinel',
+                        vendorperformance: 'Procurement',
+                        customervalue: 'Revenue Intelligence',
+                        spendvelocity: 'Spend Velocity'
                     },
                     dashboardVisibility: {
+                        advisor: true,
                         cashflow: true,
                         health: true,
                         burden: true,
                         time: true,
-                        integrity: true
+                        integrity: true,
+                        vendorperformance: true,
+                        customervalue: true,
+                        spendvelocity: true
                     },
                     compactMode: false,
                     showSparklines: true,
