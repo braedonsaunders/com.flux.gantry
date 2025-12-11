@@ -2707,6 +2707,13 @@ body.dark-mode .message-text .md-heading {
     transition: all 0.25s ease;
 }
 
+/* Action buttons container - inline row */
+.advisor-action-btns {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
 /* New Chat button - subtle below input */
 .advisor-clear-btn {
     background: transparent;
@@ -2743,12 +2750,18 @@ body.dark-mode .message-text .md-heading {
     cursor: pointer;
     opacity: 0.8;
     transition: all 0.2s ease;
-    margin-right: 4px;
 }
 
 .advisor-stop-btn:hover {
     opacity: 1;
     background: rgba(239, 68, 68, 0.1);
+}
+
+.advisor-stop-btn.disabled {
+    color: var(--text-muted);
+    opacity: 0.3;
+    cursor: default;
+    pointer-events: none;
 }
 
 .advisor-stop-btn i {
