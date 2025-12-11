@@ -80,11 +80,21 @@ Analyze what happened and provide a JSON response:
     "pivot_reason": "why we need to change strategy (if should_pivot is true)"
 }
 
-## ANALYSIS GUIDELINES:
-- If entity not found → suggest listing available entities first
-- If query returns 0 rows → suggest expanding date range or removing filters
-- If same tool called multiple times → definitely needs pivot
-- If we have partial data → assess if it's enough to answer
+## CRITICAL ANALYSIS GUIDELINES:
+- **SUCCESS = rowCount > 0** → assessment should be "on_track", should_pivot = FALSE
+- If any tool returned rows of data, that is SUCCESS - use that data to answer!
+- Only suggest pivot when ALL recent calls truly failed (error or found=false)
+- 0 rows is NOT always a failure - it might mean "no matching data" which is a valid answer
+
+## WHEN TO PIVOT (should_pivot = true):
+- Entity genuinely not found (found=false)
+- Error occurred
+- Same tool called multiple times with no progress
+
+## WHEN NOT TO PIVOT (should_pivot = false):
+- Tool returned rows of data (rowCount > 0)
+- Tool found an entity (found=true)
+- We have enough information to answer the question
 
 Respond with ONLY the JSON object, no other text.`;
 
@@ -99,10 +109,39 @@ Respond with ONLY the JSON object, no other text.`;
 ## WHY IT FAILED:
 {failure_reasons}
 
+## AVAILABLE TOOLS (YOU MUST ONLY USE THESE):
+**Discovery:**
+- resolve_entity(term, type_hint?) - Find customer, vendor, employee, item, project by name
+- resolve_gl_account(term, account_type?) - Find GL account by name/number
+- resolve_classification(term, dimension?) - Find class, location, department, subsidiary
+- explore_schema(table) - Get available fields for a table
+
+**Data:**
+- get_ap_aging(vendor_id?) - AP aging by bucket
+- get_ar_aging(customer_id?) - AR aging by bucket
+- get_vendor_spend(vendor_id?, period?, limit?) - Vendor spending analysis
+- get_customer_revenue(customer_id?, period?, limit?) - Customer revenue analysis
+- get_gl_activity(account_id?, class_id?, department_id?, location_id?, period?) - GL transactions
+- get_trial_balance(account_type?) - Account balances
+- get_recent_transactions(transaction_type?, entity_id?, period?) - Recent transactions
+- get_transaction_detail(transaction_id) - Full transaction details
+- compare_periods(metric, period1, period2) - Period comparison
+- find_anomalies(data_type, account_id?, class_id?, threshold?, period?) - Find outliers
+- get_cash_position() - Current cash across bank accounts
+- get_expense_breakdown(period?, department_id?, class_id?) - Expense by category
+
+**Dashboards:**
+- dashboard_cashflow, dashboard_health, dashboard_burden, dashboard_time
+- dashboard_integrity, dashboard_vendorperformance, dashboard_customervalue, dashboard_spendvelocity
+
+**Utility:**
+- get_fiscal_context() - Get fiscal calendar info
+- run_custom_query(sql, purpose) - Execute custom SuiteQL (use sparingly)
+
 ## YOUR TASK:
-Create a new strategy. Consider:
-1. If entity wasn't found by name, try listing all available entities
-2. If a specific query failed, try a broader query first
+Create a new strategy using ONLY the tools listed above. Consider:
+1. If entity wasn't found by name, try get_trial_balance or get_recent_transactions to see what data exists
+2. If a specific query failed, try a broader data tool first
 3. If classification failed, try different dimensions (class vs department vs location)
 4. Use explore_schema to discover what data is actually available
 
@@ -110,10 +149,12 @@ Respond with JSON:
 {
     "new_strategy": "description of the new approach",
     "reasoning": "why this approach might work better",
-    "first_tool": "tool_name",
+    "first_tool": "exact_tool_name_from_list_above",
     "first_tool_args": {},
-    "backup_tools": ["alternative tools if first doesn't work"]
+    "backup_tools": ["exact_tool_names_from_list_above"]
 }
+
+IMPORTANT: first_tool and backup_tools MUST be exact tool names from the list above.
 
 Respond with ONLY the JSON object.`;
 
@@ -250,25 +291,62 @@ Respond with ONLY the JSON object.`;
     }
 
     /**
+     * Check if a tool call result represents a real failure
+     * A failure is: error, success=false, or found=false
+     * NOT a failure: success=true with 0 rows (that's just "no matching data")
+     */
+    function isToolCallFailure(tc) {
+        if (!tc.result) return true;
+        if (tc.result.error) return true;
+        if (tc.result.success === false) return true;
+        if (tc.result.found === false) return true;  // Entity not found
+        return false;
+    }
+
+    /**
+     * Check if a tool call returned useful data
+     */
+    function hasUsefulData(tc) {
+        if (!tc.result) return false;
+        if (!tc.result.success) return false;
+
+        // Check for rows
+        const rowCount = tc.result.rowCount || (tc.result.rows ? tc.result.rows.length : 0);
+        if (rowCount > 0) return true;
+
+        // Check for dashboard data
+        if (tc.result.data) return true;
+
+        // Check for found entity
+        if (tc.result.found === true) return true;
+
+        return false;
+    }
+
+    /**
      * Determine if we should trigger reflection based on recent results
+     *
+     * KEY INSIGHT: Only reflect when we're STUCK, not when things are working.
+     * If the most recent tool call succeeded with data, we should NOT reflect.
      */
     function shouldReflect(agentState) {
         if (!agentState.allToolCalls || agentState.allToolCalls.length === 0) return false;
 
-        // Count recent failures (last 3 calls)
-        const recentCalls = agentState.allToolCalls.slice(-3);
-        const failures = recentCalls.filter(tc => {
-            if (!tc.result) return true;
-            if (tc.result.error) return true;
-            if (!tc.result.success) return true;
-            const rowCount = tc.result.rowCount || (tc.result.rows ? tc.result.rows.length : 0);
-            return rowCount === 0;
-        });
+        // CRITICAL: If the MOST RECENT tool call returned useful data, don't reflect!
+        // The agent should USE that data, not second-guess itself.
+        const lastCall = agentState.allToolCalls[agentState.allToolCalls.length - 1];
+        if (hasUsefulData(lastCall)) {
+            return false;
+        }
 
-        // Reflect if we have multiple failures
+        // Count recent ACTUAL failures (last 3 calls)
+        const recentCalls = agentState.allToolCalls.slice(-3);
+        const failures = recentCalls.filter(tc => isToolCallFailure(tc));
+
+        // Reflect if we have multiple actual failures
         if (failures.length >= REFLECT_AFTER_FAILURES) return true;
 
-        // Reflect if we've had repeated tool calls (same signature)
+        // Reflect if we've had repeated tool calls (same signature) - sign of being stuck
         const signatures = recentCalls.map(tc => tc.tool + '::' + JSON.stringify(tc.args));
         const uniqueSignatures = new Set(signatures);
         if (signatures.length > uniqueSignatures.size) return true;
@@ -293,6 +371,16 @@ Respond with ONLY the JSON object.`;
         if (agentState.recentFailures.length > 5) {
             agentState.recentFailures = agentState.recentFailures.slice(-5);
         }
+    }
+
+    /**
+     * Clear failure state when we have success
+     * This prevents reflection from triggering after a successful tool call
+     */
+    function clearFailureState(agentState) {
+        agentState.recentFailures = [];
+        // Reset reflection count partially - allow 1 more reflection if truly needed
+        agentState.reflectionCount = Math.max(0, agentState.reflectionCount - 1);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -584,11 +672,14 @@ ${dashboardDescriptions}
                         displayName: displayName
                     });
 
-                    // Track failures for reflection
-                    const rowCount = result.rowCount || (result.rows ? result.rows.length : 0);
-                    const isFailure = !result.success || result.error || rowCount === 0;
-                    if (isFailure) {
+                    // Track failures/successes for reflection
+                    const toolCallRecord = { tool: toolName, args: parsedArgs, result: result };
+                    if (isToolCallFailure(toolCallRecord)) {
                         trackFailure(agentState, toolName, parsedArgs, result);
+                    } else if (hasUsefulData(toolCallRecord)) {
+                        // SUCCESS with data - clear failure state!
+                        // The agent got what it needed, no need to reflect
+                        clearFailureState(agentState);
                     }
 
                     // Add to conversation context for next iteration
