@@ -421,7 +421,6 @@ define(["N/query", "N/search", "N/log", "N/runtime", "./Lib_Shared", "./Lib_Conf
             processedFinancials,
             allocationBases,
             activeDepts,
-            unbilledLabourData,
             profile,
             classified,
             categories,
@@ -1276,11 +1275,16 @@ define(["N/query", "N/search", "N/log", "N/runtime", "./Lib_Shared", "./Lib_Conf
         
         // Also get BILLED hours separately for accurate rate calculation
         // This query returns cost based on filters, plus billed hours for rate denominator
+        // billed_hours must respect billableDefinition setting
+        const billedHoursExpr = billableDefinition === 'flag'
+            ? "SUM(CASE WHEN t.isbillable = 'T' THEN t.hours ELSE 0 END)"
+            : "SUM(CASE WHEN t.customer IS NOT NULL THEN t.hours ELSE 0 END)";
+
         const sql = `
-            SELECT 
+            SELECT
                 t.department,
                 SUM(t.hours) as total_hours,
-                SUM(CASE WHEN t.customer IS NOT NULL THEN t.hours ELSE 0 END) as billed_hours,
+                ${billedHoursExpr} as billed_hours,
                 SUM(${costExpr}) as total_cost
             FROM timebill t
             LEFT JOIN employee e ON t.employee = e.id
@@ -2220,9 +2224,9 @@ define(["N/query", "N/search", "N/log", "N/runtime", "./Lib_Shared", "./Lib_Conf
     // SUMMARY BUILDING
     // ═══════════════════════════════════════════════════════════════════════════
 
-    function buildSummaryMultiBase(financials, allocationBases, depts, unbilledLabour, config, classified, categories, startDate, endDate, preCalcTimebill = null) {
-        const unbilledMode = config.unbilledHoursMode || 'all';
-        const unbilledDepts = config.unbilledHoursDepts || depts.map(d => String(d.id));
+    function buildSummaryMultiBase(financials, allocationBases, depts, config, classified, categories, startDate, endDate, preCalcTimebill = null) {
+        // NOTE: unbilledLabour parameter was removed - it was vestigial and never used.
+        // Users should create timebill categories for time-based burden tracking.
 
         const categoryTotals = {};
         const burdenDetails = [];
@@ -3009,20 +3013,15 @@ define(["N/query", "N/search", "N/log", "N/runtime", "./Lib_Shared", "./Lib_Conf
                 const deptId = r.department;
                 
                 // Calculate cost based on method
+                // NOTE: This batch function only supports employee_rate and custom_rate.
+                // service_rate and average_rate require SQL queries (item table, avg calc).
+                // This is why buildSummaryMultiBase always uses SQL for timebill categories.
                 let cost = 0;
-                if (costMethod === 'labor_cost' || costMethod === 'employee_rate') {
-                    cost = hours * laborCost;
-                } else if (costMethod === 'loaded_labor') {
-                    const loadingFactor = laborConfig.loadingFactor || 1.0;
-                    cost = hours * laborCost * loadingFactor;
-                } else if (costMethod === 'custom_rate') {
+                if (costMethod === 'custom_rate') {
                     const customRate = parseFloat(timeFilters.customRate) || 50;
                     cost = hours * customRate;
-                } else if (costMethod === 'fixed_rate') {
-                    const fixedRate = cat.fixedRate || 0;
-                    cost = hours * fixedRate;
                 } else {
-                    // Default to labor cost
+                    // Default (employee_rate): use employee's labor cost
                     cost = hours * laborCost;
                 }
                 
@@ -3194,7 +3193,6 @@ define(["N/query", "N/search", "N/log", "N/runtime", "./Lib_Shared", "./Lib_Conf
                 processedFinancials,
                 allocationBases,
                 activeDepts,
-                {}, // unbilled data not needed for history
                 config,
                 classified,
                 categories,
@@ -3876,13 +3874,11 @@ define(["N/query", "N/search", "N/log", "N/runtime", "./Lib_Shared", "./Lib_Conf
         const allocationBases = fetchAllAllocationBases(startDate, endDate, activeDepts, config);
         const financialData = fetchFinancialsDetailed(startDate, endDate);
         const processedFinancials = processFinancials(financialData, activeDepts, allAccounts);
-        const unbilledLabourData = fetchUnbilledLabour(startDate, endDate, activeDepts, laborOverheadFactor, config);
-        
+
         const summary = buildSummaryMultiBase(
             processedFinancials,
             allocationBases,
             activeDepts,
-            unbilledLabourData,
             config,
             classified,
             categories,
@@ -4173,10 +4169,15 @@ define(["N/query", "N/search", "N/log", "N/runtime", "./Lib_Shared", "./Lib_Conf
         }
         
         // Get both total hours and billed hours for accurate rate calculation
+        // billed_hours must respect billableDefinition setting
+        const billedHoursExpr = billableDefinition === 'flag'
+            ? "SUM(CASE WHEN t.isbillable = 'T' THEN t.hours ELSE 0 END)"
+            : "SUM(CASE WHEN t.customer IS NOT NULL THEN t.hours ELSE 0 END)";
+
         const sql = `
-            SELECT 
+            SELECT
                 SUM(t.hours) as total_hours,
-                SUM(CASE WHEN t.customer IS NOT NULL THEN t.hours ELSE 0 END) as billed_hours,
+                ${billedHoursExpr} as billed_hours,
                 SUM(${costExpr}) as total_cost
             FROM timebill t
             LEFT JOIN employee e ON t.employee = e.id
@@ -5286,14 +5287,13 @@ define(["N/query", "N/search", "N/log", "N/runtime", "./Lib_Shared", "./Lib_Conf
         
         // Use EXACT SAME calculation as main dashboard
         const summary = buildSummaryMultiBase(
-            processedFinancials, 
-            allocationBases, 
-            activeDepts, 
-            {}, // unbilled hours data not needed for scenario
-            config, 
-            classified, 
-            categories, 
-            startDate, 
+            processedFinancials,
+            allocationBases,
+            activeDepts,
+            config,
+            classified,
+            categories,
+            startDate,
             endDate
         );
         
