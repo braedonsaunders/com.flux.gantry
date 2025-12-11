@@ -743,14 +743,12 @@
                     display: flex;
                     align-items: center;
                     gap: 12px;
-                    padding: 8px 12px;
-                    background: #f8fafc;
-                    border-radius: 8px;
-                    margin-bottom: 8px;
+                    padding: 8px 0;
+                    background: transparent;
                 }
 
                 body.dark-mode .progressive-thinking {
-                    background: #1e293b;
+                    background: transparent;
                 }
 
                 .progressive-thinking .thinking-indicator {
@@ -761,7 +759,7 @@
                 .progressive-thinking .thinking-dot {
                     width: 6px;
                     height: 6px;
-                    background: #3b82f6;
+                    background: #9ca3af;
                     border-radius: 50%;
                     animation: progressivePulse 1.4s ease-in-out infinite;
                 }
