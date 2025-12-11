@@ -1922,9 +1922,13 @@
             if (btn) {
                 btn.disabled = disabled;
             }
-            // Show stop button when processing, hide when not
+            // Enable stop button when processing, disable when not
             if (stopBtn) {
-                stopBtn.style.display = disabled ? 'inline-flex' : 'none';
+                if (disabled) {
+                    stopBtn.classList.remove('disabled');
+                } else {
+                    stopBtn.classList.add('disabled');
+                }
             }
         },
 
