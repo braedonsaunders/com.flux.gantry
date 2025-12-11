@@ -45,6 +45,31 @@
     transition: var(--cf-transition);
 }
 
+/* Ensure KPI elements are always visible after skeleton replacement */
+.cf-kpi-row .cf-kpi-card {
+    display: flex !important;
+    visibility: visible !important;
+}
+
+.cf-kpi-row .cf-kpi-card .kpi-content {
+    display: flex !important;
+    flex-direction: column !important;
+    visibility: visible !important;
+    min-width: 0;
+}
+
+.cf-kpi-row .cf-kpi-card .kpi-value,
+.cf-kpi-row .cf-kpi-card .kpi-label,
+.cf-kpi-row .cf-kpi-card .kpi-sub {
+    visibility: visible !important;
+    opacity: 1 !important;
+}
+
+.cf-kpi-row .col {
+    display: flex !important;
+    visibility: visible !important;
+}
+
 .cf-kpi-card.cf-kpi-warning {
     animation: cf-attention-pulse 2s ease-in-out infinite;
 }
