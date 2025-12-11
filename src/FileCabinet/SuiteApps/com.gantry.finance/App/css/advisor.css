@@ -4355,11 +4355,11 @@ body.dark-mode .strategy-backups code {
     100% { transform: rotate(360deg) translateX(14px) rotate(-360deg); }
 }
 
-/* --- Completed State (green check) --- */
+/* --- Completed State (grey check for intermediate steps) --- */
 .thought-node.complete .node-core {
-    background: linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%);
-    border-color: #10b981;
-    color: #059669;
+    background: linear-gradient(135deg, #f1f5f9 0%, #e2e8f0 100%);
+    border-color: #94a3b8;
+    color: #64748b;
 }
 
 .thought-node.complete .node-core i {
@@ -4370,9 +4370,20 @@ body.dark-mode .strategy-backups code {
     content: '✓';
     font-size: 8px;
     font-weight: 600;
-    color: #059669;
+    color: #64748b;
     opacity: 1;
     transform: scale(1);
+}
+
+/* --- Final Completed State (green check for last successful step) --- */
+.thought-node.complete.final .node-core {
+    background: linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%);
+    border-color: #10b981;
+    color: #059669;
+}
+
+.thought-node.complete.final .node-core::after {
+    color: #059669;
 }
 
 /* --- Completion Ripple Effect (subtle) --- */
@@ -4923,12 +4934,22 @@ body.dark-mode .thought-node.running .node-core {
 }
 
 body.dark-mode .thought-node.complete .node-core {
+    background: linear-gradient(135deg, #334155 0%, #475569 100%);
+    border-color: #64748b;
+    color: #94a3b8;
+}
+
+body.dark-mode .thought-node.complete .node-core::after {
+    color: #94a3b8;
+}
+
+body.dark-mode .thought-node.complete.final .node-core {
     background: linear-gradient(135deg, #064e3b 0%, #065f46 100%);
     border-color: #10b981;
     color: #34d399;
 }
 
-body.dark-mode .thought-node.complete .node-core::after {
+body.dark-mode .thought-node.complete.final .node-core::after {
     color: #34d399;
 }
 
