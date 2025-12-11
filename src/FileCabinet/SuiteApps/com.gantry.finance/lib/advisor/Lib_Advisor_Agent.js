@@ -115,57 +115,6 @@ Respond with JSON only:
     "expected_output_format": "What the final response should include (metrics, tables, charts, etc.)"
 }`;
 
-    const SELF_VERIFICATION_PROMPT = `You are verifying that a response fully answers the user's question.
-
-## ORIGINAL QUESTION:
-{user_question}
-
-## PLANNED GOAL:
-{goal}
-
-## DATA GATHERED:
-{data_summary}
-
-## PROPOSED RESPONSE CONTENT:
-{response_summary}
-
-## YOUR TASK:
-Determine if the proposed response FULLY answers the user's question.
-
-## CRITICAL: DATA SUFFICIENCY RULES
-Before marking incomplete, consider:
-1. **If a data tool returned rows (rowCount > 0), that data CAN answer the question**
-   - The LLM can compute totals, averages, and aggregations from returned rows
-   - DO NOT request "more data" when rows were already returned
-2. **For aging queries**: get_ar_aging or get_ap_aging with rows = COMPLETE DATA
-3. **For entity queries**: If rows contain the entity data = COMPLETE
-4. **The LLM has access to ALL returned row data** - it can sum, filter, analyze
-
-## COMPLETENESS CHECK:
-1. Did the data tool return relevant rows? → Data is SUFFICIENT
-2. Does the format_response include metrics/tables/insights? → Analysis is PRESENT
-3. Are the insights derived from the actual data? → Response is VALID
-
-## QUALITY CHECK (1-10):
-- 1-3: Missing critical data OR no analysis
-- 4-6: Has data but weak insights
-- 7-10: Has data with meaningful insights
-
-## IMPORTANT:
-- If data tools returned rows AND format_response was called → likely COMPLETE (score 7+)
-- Only recommend "gather_more_data" if ZERO relevant data was retrieved
-- "improve_analysis" is better than "gather_more_data" when data exists but insights are weak
-
-Respond with JSON only:
-{
-    "is_complete": true|false,
-    "missing_elements": ["list of missing data or analysis"],
-    "quality_score": 1-10,
-    "issues": ["list of quality issues"],
-    "recommendation": "proceed|gather_more_data|improve_analysis",
-    "improvement_guidance": "If not proceeding, what to do"
-}`;
-
     const PLAN_REASSESSMENT_PROMPT = `You are reassessing a plan because some steps failed.
 
 ## ORIGINAL QUESTION:
@@ -934,85 +883,6 @@ Respond with ONLY the JSON object.`;
         return context;
     }
 
-    /**
-     * Self-verification: Check if we have gathered enough data and the response is complete
-     * This runs BEFORE format_response to ensure quality
-     */
-    function performSelfVerification(agentState, requestId) {
-        // Only verify if we have a plan (goal to check against)
-        if (!agentState.plan) return { is_complete: true, recommendation: 'proceed' };
-
-        // Build data summary from tool calls (with null checks for tc.result)
-        const dataSummary = agentState.allToolCalls.map(tc => {
-            if (!tc.result) {
-                return `${tc.tool}: FAILED (no result)`;
-            }
-            const status = tc.result.success ? 'SUCCESS' : 'FAILED';
-            const dataInfo = tc.result.rowCount ? `${tc.result.rowCount} rows` :
-                            tc.result.found === true ? 'found' :
-                            tc.result.found === false ? 'not found' :
-                            tc.result.error ? `error: ${tc.result.error}` : 'no data';
-            return `${tc.tool}: ${status} (${dataInfo})`;
-        }).join('\n');
-
-        // Summarize what data we got (with null check for tc.result)
-        const successfulCalls = agentState.allToolCalls.filter(tc => tc.result && tc.result.success && (tc.result.rowCount > 0 || tc.result.found));
-        const dataGathered = successfulCalls.map(tc => tc.tool).join(', ');
-
-        const prompt = SELF_VERIFICATION_PROMPT
-            .replace('{user_question}', agentState.message)
-            .replace('{goal}', agentState.plan.goal_understanding || 'Answer the question')
-            .replace('{data_summary}', dataSummary || 'No data gathered')
-            .replace('{response_summary}', `Data gathered from: ${dataGathered || 'none'}`);
-
-        try {
-            const verifyResponse = AIProviders.callAI(prompt, {
-                systemPrompt: 'You are a quality assurance assistant verifying response completeness. Respond only with valid JSON.',
-                tier: THINKING_TIER,
-                purpose: 'Self-verification',
-                temperature: 0.2
-            });
-
-            if (verifyResponse && verifyResponse.text) {
-                try {
-                    let jsonText = verifyResponse.text.trim();
-                    const jsonMatch = jsonText.match(/\{[\s\S]*\}/);
-                    if (jsonMatch) jsonText = jsonMatch[0];
-
-                    const verification = JSON.parse(jsonText);
-
-                    // Add verification step to progress
-                    ProgressStore.addStep(requestId, {
-                        type: 'verification',
-                        title: 'Verifying response completeness...',
-                        status: 'complete',
-                        verification: {
-                            isComplete: verification.is_complete,
-                            qualityScore: verification.quality_score,
-                            recommendation: verification.recommendation
-                        }
-                    });
-
-                    log.debug('Self-verification result', {
-                        requestId: requestId,
-                        isComplete: verification.is_complete,
-                        qualityScore: verification.quality_score,
-                        recommendation: verification.recommendation
-                    });
-
-                    return verification;
-                } catch (parseError) {
-                    log.debug('Failed to parse verification response', { error: parseError.message });
-                }
-            }
-        } catch (e) {
-            log.debug('Self-verification call failed', { error: e.message });
-        }
-
-        // Default: proceed if verification fails
-        return { is_complete: true, recommendation: 'proceed' };
-    }
-
     // ═══════════════════════════════════════════════════════════════════════════
     // SYSTEM PROMPT - Financial Expert with Tools
     // ═══════════════════════════════════════════════════════════════════════════
@@ -1361,7 +1231,7 @@ format_response({
             currentPrompt += '\n\n**IMPORTANT: You have tried the same tool multiple times with no results. You MUST now provide a final answer to the user based on what you know, or explain that you could not find the requested information. Do NOT call any more tools.**';
         }
 
-        log.debug('Agent step', {
+        Utils.debugLog('Agent step', {
             requestId: requestId,
             iteration: agentState.iteration,
             promptLength: currentPrompt.length,
@@ -1414,7 +1284,7 @@ format_response({
                     const previousCount = agentState.toolCallSignatures[signature] || 0;
 
                     if (previousCount >= MAX_REPEATS) {
-                        log.debug('Skipping repeated tool call', {
+                        Utils.debugLog('Skipping repeated tool call', {
                             tool: toolName,
                             previousCount: previousCount
                         });
@@ -1457,72 +1327,11 @@ format_response({
 
                     // ═══════════════════════════════════════════════════════════════
                     // SPECIAL: format_response tool triggers completion
-                    // WITH SELF-VERIFICATION: Ensure response is complete before finishing
                     // ═══════════════════════════════════════════════════════════════
                     if (toolName === 'format_response' && result.success && result.isFormatResponse) {
-                        // Track format_response attempts for verification retry limits
-                        agentState.formatResponseAttempts = (agentState.formatResponseAttempts || 0) + 1;
-                        const MAX_FORMAT_RESPONSE_ATTEMPTS = 2;
-
-                        // Perform self-verification before completing
-                        const verification = performSelfVerification(agentState, requestId);
-
-                        // Check if we have useful data from previous tool calls
-                        const hasUsefulDataFromTools = agentState.allToolCalls.some(tc =>
-                            tc.result && tc.result.success && (tc.result.rowCount > 0 || tc.result.found === true)
-                        );
-
-                        // Decide whether to accept or continue based on verification + data state
-                        const shouldAcceptResponse =
-                            verification.is_complete ||
-                            verification.recommendation === 'proceed' ||
-                            verification.recommendation === 'improve_analysis' ||  // Accept if just needs better analysis
-                            (verification.quality_score && verification.quality_score >= 6) ||  // Accept if quality is decent
-                            agentState.formatResponseAttempts >= MAX_FORMAT_RESPONSE_ATTEMPTS ||  // Accept after retry limit
-                            (hasUsefulDataFromTools && verification.recommendation !== 'gather_more_data');  // Accept if we have data
-
-                        if (!shouldAcceptResponse && verification.recommendation === 'gather_more_data') {
-                            log.debug('Self-verification: requesting more data', {
-                                requestId: requestId,
-                                attempt: agentState.formatResponseAttempts,
-                                maxAttempts: MAX_FORMAT_RESPONSE_ATTEMPTS,
-                                missing: verification.missing_elements,
-                                hasUsefulData: hasUsefulDataFromTools
-                            });
-
-                            // Add guidance to conversation context
-                            agentState.conversationContext += `\n--- VERIFICATION FEEDBACK (Attempt ${agentState.formatResponseAttempts}/${MAX_FORMAT_RESPONSE_ATTEMPTS}) ---\n`;
-                            agentState.conversationContext += `Missing: ${(verification.missing_elements || []).join(', ')}\n`;
-                            agentState.conversationContext += `Guidance: ${verification.improvement_guidance || 'Improve your analysis'}\n`;
-
-                            // IMPORTANT: Don't mark format_response as failed - it succeeded!
-                            // Just record that verification requested improvements
-                            agentState.allToolCalls.push({
-                                tool: toolName,
-                                args: parsedArgs,
-                                result: {
-                                    success: true, // format_response DID succeed
-                                    isFormatResponse: true,
-                                    verificationPending: true,
-                                    verificationFeedback: verification.improvement_guidance
-                                },
-                                displayName: 'Formatting response...',
-                                duration: toolDuration
-                            });
-
-                            executedAny = true;
-                            continue;  // Try to improve
-                        }
-
-                        // Accept the response
-                        log.debug('format_response accepted - completing with rich content', {
+                        Utils.debugLog('format_response completed - finishing with rich content', {
                             requestId: requestId,
-                            blockCount: result.blockCount,
-                            qualityScore: verification.quality_score,
-                            attempt: agentState.formatResponseAttempts,
-                            acceptReason: !verification.is_complete ?
-                                (agentState.formatResponseAttempts >= MAX_FORMAT_RESPONSE_ATTEMPTS ? 'retry_limit' : 'has_data') :
-                                'verification_passed'
+                            blockCount: result.blockCount
                         });
 
                         // Complete the request with the formatted rich content
@@ -1584,7 +1393,7 @@ format_response({
 
                 // Check if we should trigger reflection based on recent results
                 if (shouldReflect(agentState) && agentState.reflectionCount < 3) {
-                    log.debug('Triggering reflection', {
+                    Utils.debugLog('Triggering reflection', {
                         requestId: requestId,
                         reflectionCount: agentState.reflectionCount,
                         recentFailures: agentState.recentFailures.length
@@ -1599,7 +1408,7 @@ format_response({
                         // If assessment is "blocked", force should_pivot to true
                         // ═══════════════════════════════════════════════════════════
                         if (reflection.assessment === 'blocked' && !reflection.should_pivot) {
-                            log.debug('Correcting inconsistent reflection: blocked but shouldPivot was false', {
+                            Utils.debugLog('Correcting inconsistent reflection: blocked but shouldPivot was false', {
                                 requestId: requestId
                             });
                             reflection.should_pivot = true;

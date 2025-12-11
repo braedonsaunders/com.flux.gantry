@@ -2871,6 +2871,16 @@
       div.textContent = text;
       return div.innerHTML;
     },
+
+    /**
+     * Clear stored table data to free memory
+     * Call this when clearing the chat or resetting the advisor
+     */
+    clearTableData() {
+      for (const key in _tableData) {
+        delete _tableData[key];
+      }
+    },
   };
 
   // Export to global scope

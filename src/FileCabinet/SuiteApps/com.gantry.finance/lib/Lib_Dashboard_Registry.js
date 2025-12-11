@@ -55,7 +55,14 @@ define([], function() {
             route: 'cashflow',
             sortOrder: 1,
             showInNav: true,
-            
+
+            // Contextual suggestions when on this dashboard
+            suggestions: [
+                'What are our upcoming payments this week?',
+                'Show our top 10 customers by outstanding balance',
+                'Compare cash position to last month'
+            ],
+
             // Keywords that route questions to this dashboard
             keywords: [
                 'treasury', 'cash position', 'cash balance', 'cash on hand',
@@ -124,7 +131,14 @@ define([], function() {
             route: 'health',
             sortOrder: 2,
             showInNav: true,
-            
+
+            // Contextual suggestions when on this dashboard
+            suggestions: [
+                'Which department has the highest profit margin?',
+                'Compare this quarter revenue to last quarter',
+                'What are our largest expense categories?'
+            ],
+
             keywords: [
                 'p&l', 'p and l', 'profit and loss', 'pnl',
                 'profitability pulse', 'profitability', 'profit pulse',
@@ -202,7 +216,14 @@ define([], function() {
             route: 'burden',
             sortOrder: 3,
             showInNav: true,
-            
+
+            // Contextual suggestions when on this dashboard
+            suggestions: [
+                'Which employees have the lowest utilization?',
+                'Show burden rate by department',
+                'What projects have the most unbilled time?'
+            ],
+
             keywords: [
                 'true cost', 'true costs',
                 'rate engine', 'rates', 'billing rates',
@@ -249,7 +270,14 @@ define([], function() {
             route: 'time',
             sortOrder: 4,
             showInNav: true,
-            
+
+            // Contextual suggestions when on this dashboard
+            suggestions: [
+                'Show billable hours by employee this month',
+                'Which projects have the most hours logged?',
+                'Compare utilization this month vs last month'
+            ],
+
             keywords: [
                 'billable iq', 'billable intelligence',
                 'utilization', 'utilization rate', 'employee utilization',
@@ -308,7 +336,14 @@ define([], function() {
             route: 'integrity',
             sortOrder: 5,
             showInNav: true,
-            
+
+            // Contextual suggestions when on this dashboard
+            suggestions: [
+                'Show all flagged transactions this month',
+                'Are there any potential duplicate bills?',
+                'Which transactions deviate from Benford\'s Law?'
+            ],
+
             keywords: [
                 'sentinel', 'transaction integrity', 'integrity',
                 'fraud', 'anomaly', 'anomalies',
@@ -356,7 +391,14 @@ define([], function() {
             route: 'vendorperformance',
             sortOrder: 6,
             showInNav: true,
-            
+
+            // Contextual suggestions when on this dashboard
+            suggestions: [
+                'Which contracts are up for renewal this quarter?',
+                'Show vendors where we\'re paying early and losing cash flow',
+                'Who are our strategic vs commodity vendors?'
+            ],
+
             keywords: [
                 'procurement', 'procurement score', 'vendor scorecard',
                 'vendor performance', 'vendor analysis',
@@ -447,7 +489,14 @@ define([], function() {
             route: 'customervalue',
             sortOrder: 7,
             showInNav: true,
-            
+
+            // Contextual suggestions when on this dashboard
+            suggestions: [
+                'Which customers are at risk of churning?',
+                'Show our highest lifetime value customers',
+                'How concentrated is our revenue in top customers?'
+            ],
+
             keywords: [
                 'revenue intelligence', 'customer intelligence', 'customer analytics',
                 'customer value', 'clv', 'ltv', 'lifetime value',
@@ -514,7 +563,14 @@ define([], function() {
             route: 'spendvelocity',
             sortOrder: 8,
             showInNav: true,
-            
+
+            // Contextual suggestions when on this dashboard
+            suggestions: [
+                'Which vendors have accelerating spend?',
+                'Show subscription creep patterns (boiling frog)',
+                'What shadow IT tools are spreading across teams?'
+            ],
+
             keywords: [
                 'cost dynamics', 'expense dynamics', 'cost trajectory',
                 'spend velocity', 'velocity', 'acceleration',
@@ -834,11 +890,22 @@ define([], function() {
         return ADVISOR_QUERIES;
     }
 
+    /**
+     * Get contextual suggestions for a dashboard
+     * @param {string} dashboardId - Dashboard ID (e.g., 'cashflow', 'health')
+     * @returns {string[]} Array of suggestion strings, or empty array if none
+     */
+    function getDashboardSuggestions(dashboardId) {
+        if (!dashboardId) return [];
+        const dashboard = DASHBOARDS[dashboardId];
+        return dashboard?.suggestions || [];
+    }
+
     // Public API
     return {
         DASHBOARDS: DASHBOARDS,
         ADVISOR_QUERIES: ADVISOR_QUERIES,
-        
+
         getAllDashboards: getAllDashboards,
         getNavItems: getNavItems,
         getDashboard: getDashboard,
@@ -847,6 +914,7 @@ define([], function() {
         findDashboardByKeyword: findDashboardByKeyword,
         getSchemaDescription: getSchemaDescription,
         getCompactSchemaHints: getCompactSchemaHints,
-        getAdvisorQueries: getAdvisorQueries
+        getAdvisorQueries: getAdvisorQueries,
+        getDashboardSuggestions: getDashboardSuggestions
     };
 });
