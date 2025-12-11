@@ -575,8 +575,8 @@
             
             // Update labels with timeframe
             const weeks = meta.activeConfig.horizonWeeks || 8;
-            if (el("#CF_InflowsLabel")) el("#CF_InflowsLabel").textContent = `Forecast Inflows (${weeks}wk)`;
-            if (el("#CF_OutflowsLabel")) el("#CF_OutflowsLabel").textContent = `Forecast Outflows (${weeks}wk)`;
+            if (el("#CF_InflowsLabel")) el("#CF_InflowsLabel").textContent = `Inflows (${weeks}wk)`;
+            if (el("#CF_OutflowsLabel")) el("#CF_OutflowsLabel").textContent = `Outflows (${weeks}wk)`;
             
             // Find and display lowest cash point
             let lowestCash = co.cash.startingCash || 0;
