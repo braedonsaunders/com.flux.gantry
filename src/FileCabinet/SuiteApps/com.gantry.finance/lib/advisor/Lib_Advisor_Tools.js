@@ -25,14 +25,32 @@ define([
     './Lib_Advisor_QueryExecutor',
     './Lib_Advisor_Utils',
     '../Lib_Dashboard_Registry',
-    '../Lib_Config'
+    '../Lib_Config',
+    // Dashboard data modules - loaded as dependencies to avoid dynamic require() errors
+    '../Lib_Cashflow_Data',
+    '../Lib_Health_Data',
+    '../Lib_Burden_Data',
+    '../Lib_Time_Data',
+    '../Lib_Integrity_Data',
+    '../Lib_VendorPerformance_Data',
+    '../Lib_CustomerValue_Data',
+    '../Lib_SpendVelocity_Data'
 ], function(
     log,
     EntityResolver,
     QueryExecutor,
     Utils,
     DashboardRegistry,
-    ConfigLib
+    ConfigLib,
+    // Dashboard data modules
+    CashflowData,
+    HealthData,
+    BurdenData,
+    TimeData,
+    IntegrityData,
+    VendorPerformanceData,
+    CustomerValueData,
+    SpendVelocityData
 ) {
     'use strict';
 
@@ -1356,8 +1374,7 @@ Use for: "cash flow", "runway", "cash projection", "liquidity", "treasury", "wor
             },
             execute: function(args) {
                 try {
-                    // Import the data module dynamically
-                    const CashflowData = require('../Lib_Cashflow_Data');
+                    // Use pre-loaded module (no dynamic require)
                     const data = CashflowData.getData(args);
 
                     return {
@@ -1409,7 +1426,7 @@ Use for: "financial health", "profitability", "margins", "how are we doing", "P&
             },
             execute: function(args) {
                 try {
-                    const HealthData = require('../Lib_Health_Data');
+                    // Use pre-loaded module (no dynamic require)
                     const data = HealthData.getData(args);
 
                     return {
@@ -1461,7 +1478,7 @@ Use for: "burden rate", "overhead", "labor burden", "cost recovery", "fringe rat
             },
             execute: function(args) {
                 try {
-                    const BurdenData = require('../Lib_Burden_Data');
+                    // Use pre-loaded module (no dynamic require)
                     const data = BurdenData.getData(args);
 
                     return {
@@ -1518,7 +1535,7 @@ Use for: "utilization", "billable hours", "time tracking", "unbilled time", "emp
             },
             execute: function(args) {
                 try {
-                    const TimeData = require('../Lib_Time_Data');
+                    // Use pre-loaded module (no dynamic require)
                     const data = TimeData.getData(args);
 
                     return {
@@ -1566,7 +1583,7 @@ Use for: "fraud detection", "anomalies", "duplicates", "Benford's law", "suspici
             },
             execute: function(args) {
                 try {
-                    const IntegrityData = require('../Lib_Integrity_Data');
+                    // Use pre-loaded module (no dynamic require)
                     const data = IntegrityData.getData(args);
 
                     return {
@@ -1619,8 +1636,8 @@ Use for: "vendor performance", "procurement", "vendor leverage", "payment terms"
             },
             execute: function(args) {
                 try {
-                    const VendorData = require('../Lib_VendorPerformance_Data');
-                    const data = VendorData.getData(args);
+                    // Use pre-loaded module (no dynamic require)
+                    const data = VendorPerformanceData.getData(args);
 
                     return {
                         success: true,
@@ -1672,8 +1689,8 @@ Use for: "customer value", "CLV", "lifetime value", "RFM", "churn risk", "custom
             },
             execute: function(args) {
                 try {
-                    const CustomerData = require('../Lib_CustomerValue_Data');
-                    const data = CustomerData.getData(args);
+                    // Use pre-loaded module (no dynamic require)
+                    const data = CustomerValueData.getData(args);
 
                     return {
                         success: true,
@@ -1725,8 +1742,8 @@ Use for: "spend velocity", "subscription creep", "shadow IT", "commitment cliff"
             },
             execute: function(args) {
                 try {
-                    const VelocityData = require('../Lib_SpendVelocity_Data');
-                    const data = VelocityData.getData(args);
+                    // Use pre-loaded module (no dynamic require)
+                    const data = SpendVelocityData.getData(args);
 
                     return {
                         success: true,

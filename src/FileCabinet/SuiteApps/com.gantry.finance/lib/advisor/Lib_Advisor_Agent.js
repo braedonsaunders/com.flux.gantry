@@ -52,6 +52,140 @@ define([
     const MAX_STRATEGY_PIVOTS = 3;      // Maximum strategy changes allowed
 
     // ═══════════════════════════════════════════════════════════════════════════
+    // PLANNING PHASE PROMPT
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    const PLANNING_PROMPT = `You are a financial analysis planning assistant. Analyze the user's question and create a plan to answer it.
+
+## USER QUESTION:
+{user_question}
+
+## AVAILABLE TOOLS:
+**Discovery (find IDs first):**
+- resolve_entity - Find customer, vendor, employee by name
+- resolve_gl_account - Find GL account by name/number
+- resolve_classification - Find class, location, department, subsidiary
+
+**Data (get actual numbers):**
+- get_ap_aging, get_ar_aging - Aging buckets
+- get_vendor_spend, get_customer_revenue - Entity analysis
+- get_gl_activity - GL transactions by account/class/dept
+- get_trial_balance - Current balances (can filter by account_type: Income, Expense, COGS, etc.)
+- get_recent_transactions - Transaction list
+- get_cash_position - Bank balances
+- get_expense_breakdown - Expenses by category
+- compare_periods - Period over period variance
+- find_anomalies - Outlier detection
+
+**Dashboards (comprehensive analysis):**
+- dashboard_cashflow - Cash position, runway, projections
+- dashboard_health - Profitability, margins, health score
+- dashboard_burden - Overhead/burden rates
+- dashboard_time - Utilization, billable hours
+- dashboard_integrity - Fraud detection, anomalies
+- dashboard_vendorperformance - Vendor metrics
+- dashboard_customervalue - Customer CLV, RFM
+- dashboard_spendvelocity - Cost trends
+
+## YOUR TASK:
+Create a plan that will FULLY answer the user's question. Think about:
+
+1. **What is the user's GOAL?** (not just the literal words, but what they actually want to know)
+2. **What data is needed?** Be specific about what constitutes a complete answer
+3. **What tools should be called and in what order?**
+4. **How will we know when we have enough data to answer?**
+
+## IMPORTANT CONSIDERATIONS:
+- For "income statement" → need Revenue (Income accounts), COGS accounts, and Expense accounts, then calculate Gross Profit and Net Income
+- For "balance sheet" → need Assets, Liabilities, and Equity accounts
+- For entity-specific questions → resolve entity first, then query with ID
+- For trend questions → may need multiple period comparisons or find_anomalies
+- Dashboard tools provide comprehensive pre-computed analysis - prefer these for broad questions
+
+Respond with JSON only:
+{
+    "goal_understanding": "What the user actually wants to know (the WHY, not just the WHAT)",
+    "data_needed": ["List of specific data points needed to fully answer"],
+    "plan_steps": [
+        {"step": 1, "action": "description", "tool": "tool_name", "args": {}, "purpose": "why this step"}
+    ],
+    "completion_criteria": "How to know when we have a complete answer",
+    "expected_output_format": "What the final response should include (metrics, tables, charts, etc.)"
+}`;
+
+    const SELF_VERIFICATION_PROMPT = `You are verifying that a response fully answers the user's question.
+
+## ORIGINAL QUESTION:
+{user_question}
+
+## PLANNED GOAL:
+{goal}
+
+## DATA GATHERED:
+{data_summary}
+
+## PROPOSED RESPONSE CONTENT:
+{response_summary}
+
+## YOUR TASK:
+Determine if the proposed response FULLY answers the user's question. Check:
+
+1. **Completeness**: Does the response contain ALL data needed to answer the question?
+   - For "income statement": Revenue, COGS, Gross Profit, Expenses, Net Income
+   - For "balance sheet": Assets, Liabilities, Equity
+   - For trend questions: Multiple periods with variance
+   - For entity questions: Actual data about that entity
+
+2. **Analysis Quality**: Does it provide INSIGHTS, not just data dump?
+   - Explains what the numbers mean
+   - Highlights key findings
+   - Provides context and comparisons
+
+3. **Accuracy**: Does the data support the conclusions?
+
+Respond with JSON only:
+{
+    "is_complete": true|false,
+    "missing_elements": ["list of missing data or analysis"],
+    "quality_score": 1-10,
+    "issues": ["list of quality issues"],
+    "recommendation": "proceed|gather_more_data|improve_analysis",
+    "improvement_guidance": "If not proceeding, what to do"
+}`;
+
+    const PLAN_REASSESSMENT_PROMPT = `You are reassessing a plan because some steps failed.
+
+## ORIGINAL QUESTION:
+{user_question}
+
+## ORIGINAL PLAN:
+{original_plan}
+
+## WHAT HAPPENED:
+{execution_summary}
+
+## AVAILABLE TOOLS:
+(Same as before - discovery, data, dashboard tools)
+
+## YOUR TASK:
+Determine if we can still answer the question and how. Consider:
+1. Did we get enough data despite the failures?
+2. Are there alternative tools that could provide the same information?
+3. Should we try a completely different approach?
+
+Respond with JSON only:
+{
+    "can_continue": true|false,
+    "have_sufficient_data": true|false,
+    "revised_plan": [
+        {"step": 1, "action": "description", "tool": "tool_name", "args": {}}
+    ],
+    "reasoning": "Why this revised approach will work",
+    "should_answer_now": true|false,
+    "answer_guidance": "If should_answer_now is true, guidance on how to structure the answer with available data"
+}`;
+
+    // ═══════════════════════════════════════════════════════════════════════════
     // REFLECTION & ADAPTATION PROMPTS
     // ═══════════════════════════════════════════════════════════════════════════
 
@@ -384,6 +518,228 @@ Respond with ONLY the JSON object.`;
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
+    // PLANNING PHASE FUNCTIONS
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Create an initial plan for answering the user's question
+     * This helps the agent understand the GOAL and what data is needed
+     */
+    function createPlan(message, requestId) {
+        const prompt = PLANNING_PROMPT.replace('{user_question}', message);
+
+        try {
+            const planResponse = AIProviders.callAI(prompt, {
+                systemPrompt: 'You are a financial analysis planning assistant. Create clear, actionable plans. Respond only with valid JSON.',
+                tier: THINKING_TIER,
+                purpose: 'Planning phase',
+                temperature: 0.3
+            });
+
+            if (planResponse && planResponse.text) {
+                try {
+                    let jsonText = planResponse.text.trim();
+                    const jsonMatch = jsonText.match(/\{[\s\S]*\}/);
+                    if (jsonMatch) jsonText = jsonMatch[0];
+
+                    const plan = JSON.parse(jsonText);
+
+                    // Add planning step to progress
+                    ProgressStore.addStep(requestId, {
+                        type: 'planning',
+                        title: 'Creating analysis plan...',
+                        status: 'complete',
+                        plan: {
+                            goal: plan.goal_understanding,
+                            dataNeeded: plan.data_needed,
+                            steps: plan.plan_steps ? plan.plan_steps.length : 0,
+                            completionCriteria: plan.completion_criteria
+                        }
+                    });
+
+                    log.debug('Plan created', {
+                        requestId: requestId,
+                        goal: plan.goal_understanding,
+                        stepCount: plan.plan_steps ? plan.plan_steps.length : 0
+                    });
+
+                    return plan;
+                } catch (parseError) {
+                    log.debug('Failed to parse plan response', { error: parseError.message });
+                }
+            }
+        } catch (e) {
+            log.debug('Planning call failed', { error: e.message });
+        }
+
+        return null;
+    }
+
+    /**
+     * Reassess the plan when tools fail
+     * Determines if we should continue, pivot, or answer with what we have
+     */
+    function reassessPlan(agentState, requestId) {
+        if (!agentState.plan) return null;
+
+        // Build execution summary
+        const executionSummary = agentState.allToolCalls.map(tc => {
+            const status = tc.result.success ? 'SUCCESS' : 'FAILED';
+            const dataInfo = tc.result.rowCount ? `(${tc.result.rowCount} rows)` :
+                            tc.result.found === true ? '(found)' :
+                            tc.result.found === false ? '(not found)' :
+                            tc.result.error ? `(error: ${tc.result.error})` : '';
+            return `${tc.tool}: ${status} ${dataInfo}`;
+        }).join('\n');
+
+        const prompt = PLAN_REASSESSMENT_PROMPT
+            .replace('{user_question}', agentState.message)
+            .replace('{original_plan}', JSON.stringify(agentState.plan, null, 2))
+            .replace('{execution_summary}', executionSummary);
+
+        try {
+            const reassessResponse = AIProviders.callAI(prompt, {
+                systemPrompt: 'You are reassessing a financial analysis plan. Be practical about what can still be achieved. Respond only with valid JSON.',
+                tier: THINKING_TIER,
+                purpose: 'Plan reassessment',
+                temperature: 0.3
+            });
+
+            if (reassessResponse && reassessResponse.text) {
+                try {
+                    let jsonText = reassessResponse.text.trim();
+                    const jsonMatch = jsonText.match(/\{[\s\S]*\}/);
+                    if (jsonMatch) jsonText = jsonMatch[0];
+
+                    const reassessment = JSON.parse(jsonText);
+
+                    // Add reassessment step to progress
+                    ProgressStore.addStep(requestId, {
+                        type: 'plan_reassessment',
+                        title: 'Reassessing approach...',
+                        status: 'complete',
+                        reassessment: {
+                            canContinue: reassessment.can_continue,
+                            hasSufficientData: reassessment.have_sufficient_data,
+                            shouldAnswerNow: reassessment.should_answer_now,
+                            reasoning: reassessment.reasoning
+                        }
+                    });
+
+                    return reassessment;
+                } catch (parseError) {
+                    log.debug('Failed to parse reassessment response', { error: parseError.message });
+                }
+            }
+        } catch (e) {
+            log.debug('Plan reassessment call failed', { error: e.message });
+        }
+
+        return null;
+    }
+
+    /**
+     * Build plan context to add to the conversation
+     */
+    function buildPlanContext(plan) {
+        if (!plan) return '';
+
+        let context = '\n\n--- ANALYSIS PLAN ---\n';
+        context += `GOAL: ${plan.goal_understanding}\n`;
+        context += `DATA NEEDED: ${plan.data_needed ? plan.data_needed.join(', ') : 'Not specified'}\n`;
+        context += `COMPLETION CRITERIA: ${plan.completion_criteria}\n`;
+
+        if (plan.plan_steps && plan.plan_steps.length > 0) {
+            context += `PLANNED STEPS:\n`;
+            plan.plan_steps.forEach((step, i) => {
+                context += `  ${i + 1}. ${step.action} (${step.tool}) - ${step.purpose}\n`;
+            });
+        }
+
+        if (plan.expected_output_format) {
+            context += `EXPECTED OUTPUT: ${plan.expected_output_format}\n`;
+        }
+
+        return context;
+    }
+
+    /**
+     * Self-verification: Check if we have gathered enough data and the response is complete
+     * This runs BEFORE format_response to ensure quality
+     */
+    function performSelfVerification(agentState, requestId) {
+        // Only verify if we have a plan (goal to check against)
+        if (!agentState.plan) return { is_complete: true, recommendation: 'proceed' };
+
+        // Build data summary from tool calls
+        const dataSummary = agentState.allToolCalls.map(tc => {
+            const status = tc.result.success ? 'SUCCESS' : 'FAILED';
+            const dataInfo = tc.result.rowCount ? `${tc.result.rowCount} rows` :
+                            tc.result.found === true ? 'found' :
+                            tc.result.found === false ? 'not found' :
+                            tc.result.error ? `error: ${tc.result.error}` : 'no data';
+            return `${tc.tool}: ${status} (${dataInfo})`;
+        }).join('\n');
+
+        // Summarize what data we got
+        const successfulCalls = agentState.allToolCalls.filter(tc => tc.result.success && (tc.result.rowCount > 0 || tc.result.found));
+        const dataGathered = successfulCalls.map(tc => tc.tool).join(', ');
+
+        const prompt = SELF_VERIFICATION_PROMPT
+            .replace('{user_question}', agentState.message)
+            .replace('{goal}', agentState.plan.goal_understanding || 'Answer the question')
+            .replace('{data_summary}', dataSummary || 'No data gathered')
+            .replace('{response_summary}', `Data gathered from: ${dataGathered || 'none'}`);
+
+        try {
+            const verifyResponse = AIProviders.callAI(prompt, {
+                systemPrompt: 'You are a quality assurance assistant verifying response completeness. Respond only with valid JSON.',
+                tier: THINKING_TIER,
+                purpose: 'Self-verification',
+                temperature: 0.2
+            });
+
+            if (verifyResponse && verifyResponse.text) {
+                try {
+                    let jsonText = verifyResponse.text.trim();
+                    const jsonMatch = jsonText.match(/\{[\s\S]*\}/);
+                    if (jsonMatch) jsonText = jsonMatch[0];
+
+                    const verification = JSON.parse(jsonText);
+
+                    // Add verification step to progress
+                    ProgressStore.addStep(requestId, {
+                        type: 'verification',
+                        title: 'Verifying response completeness...',
+                        status: 'complete',
+                        verification: {
+                            isComplete: verification.is_complete,
+                            qualityScore: verification.quality_score,
+                            recommendation: verification.recommendation
+                        }
+                    });
+
+                    log.debug('Self-verification result', {
+                        requestId: requestId,
+                        isComplete: verification.is_complete,
+                        qualityScore: verification.quality_score,
+                        recommendation: verification.recommendation
+                    });
+
+                    return verification;
+                } catch (parseError) {
+                    log.debug('Failed to parse verification response', { error: parseError.message });
+                }
+            }
+        } catch (e) {
+            log.debug('Self-verification call failed', { error: e.message });
+        }
+
+        // Default: proceed if verification fails
+        return { is_complete: true, recommendation: 'proceed' };
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
     // SYSTEM PROMPT - Financial Expert with Tools
     // ═══════════════════════════════════════════════════════════════════════════
 
@@ -537,11 +893,29 @@ format_response({
             strategyPivotCount: 0,
             currentStrategy: null,
             insights: [],           // Accumulated insights from reflections
-            lastReflection: null    // Most recent reflection result
+            lastReflection: null,   // Most recent reflection result
+            // Planning state
+            plan: null,             // The initial plan
+            planReassessmentCount: 0,
+            needsPlanReassessment: false
         };
 
         // NOTE: Initial thinking step is added by the orchestrator AFTER ProgressStore.create()
         // This ensures the request exists before adding steps
+
+        // Create initial plan for complex questions
+        // Skip planning for very simple queries (greetings, single-word queries)
+        const isSimpleQuery = message.length < 30 && !message.includes('?') &&
+            !/\b(show|get|what|how|why|compare|analyze|income|balance|cash|vendor|customer|expense)\b/i.test(message);
+
+        if (!isSimpleQuery) {
+            const plan = createPlan(message, requestId);
+            if (plan) {
+                agentState.plan = plan;
+                // Add plan context to conversation
+                agentState.conversationContext = buildPlanContext(plan);
+            }
+        }
 
         return agentState;
     }
@@ -706,11 +1080,42 @@ format_response({
 
                     // ═══════════════════════════════════════════════════════════════
                     // SPECIAL: format_response tool triggers completion
+                    // WITH SELF-VERIFICATION: Ensure response is complete before finishing
                     // ═══════════════════════════════════════════════════════════════
                     if (toolName === 'format_response' && result.success && result.isFormatResponse) {
+                        // Perform self-verification before completing
+                        const verification = performSelfVerification(agentState, requestId);
+
+                        // If verification says we need more data, don't complete yet
+                        if (!verification.is_complete && verification.recommendation === 'gather_more_data') {
+                            log.debug('Self-verification: need more data before completing', {
+                                requestId: requestId,
+                                missing: verification.missing_elements
+                            });
+
+                            // Add guidance to conversation context and continue
+                            agentState.conversationContext += `\n--- SELF-VERIFICATION FAILED ---\n`;
+                            agentState.conversationContext += `Missing: ${(verification.missing_elements || []).join(', ')}\n`;
+                            agentState.conversationContext += `Guidance: ${verification.improvement_guidance || 'Gather more data before answering'}\n`;
+                            agentState.conversationContext += `\n**DO NOT use format_response yet. First gather the missing data.**\n`;
+
+                            // Continue the loop instead of completing
+                            agentState.allToolCalls.push({
+                                tool: toolName,
+                                args: parsedArgs,
+                                result: { success: false, error: 'Response incomplete - need more data' },
+                                displayName: 'Formatting response...',
+                                duration: toolDuration
+                            });
+
+                            executedAny = true;
+                            continue;  // Don't complete, continue to next iteration
+                        }
+
                         log.debug('format_response tool called - completing with rich content', {
                             requestId: requestId,
-                            blockCount: result.blockCount
+                            blockCount: result.blockCount,
+                            qualityScore: verification.quality_score
                         });
 
                         // Complete the request with the formatted rich content
@@ -776,6 +1181,18 @@ format_response({
                     agentState.reflectionCount++;
 
                     if (reflection) {
+                        // ═══════════════════════════════════════════════════════════
+                        // FIX: Assessment-Action Consistency
+                        // If assessment is "blocked", force should_pivot to true
+                        // ═══════════════════════════════════════════════════════════
+                        if (reflection.assessment === 'blocked' && !reflection.should_pivot) {
+                            log.debug('Correcting inconsistent reflection: blocked but shouldPivot was false', {
+                                requestId: requestId
+                            });
+                            reflection.should_pivot = true;
+                            reflection.pivot_reason = reflection.pivot_reason || 'Assessment indicates blocked state - forcing pivot';
+                        }
+
                         agentState.lastReflection = reflection;
 
                         // Store insights for future context
@@ -818,6 +1235,36 @@ format_response({
                                 agentState.conversationContext += `Reasoning: ${newStrategy.reasoning}\n`;
                                 if (newStrategy.first_tool) {
                                     agentState.conversationContext += `Suggested first tool: ${newStrategy.first_tool}\n`;
+                                }
+                            }
+                        }
+
+                        // ═══════════════════════════════════════════════════════════
+                        // PLAN REASSESSMENT: When reflection shows issues, reassess
+                        // ═══════════════════════════════════════════════════════════
+                        if (agentState.plan && agentState.planReassessmentCount < 2 &&
+                            (reflection.assessment === 'blocked' || reflection.assessment === 'needs_pivot')) {
+
+                            log.debug('Triggering plan reassessment', {
+                                requestId: requestId,
+                                assessment: reflection.assessment
+                            });
+
+                            const reassessment = reassessPlan(agentState, requestId);
+                            agentState.planReassessmentCount++;
+
+                            if (reassessment) {
+                                // If we have sufficient data, hint to answer now
+                                if (reassessment.should_answer_now && reassessment.answer_guidance) {
+                                    agentState.conversationContext += `\n--- PLAN REASSESSMENT ---\n`;
+                                    agentState.conversationContext += `Status: Have sufficient data to answer\n`;
+                                    agentState.conversationContext += `Guidance: ${reassessment.answer_guidance}\n`;
+                                    agentState.conversationContext += `\n**You should now provide a final answer using the format_response tool.**\n`;
+                                } else if (reassessment.revised_plan && reassessment.revised_plan.length > 0) {
+                                    agentState.conversationContext += `\n--- REVISED PLAN ---\n`;
+                                    reassessment.revised_plan.forEach((step, i) => {
+                                        agentState.conversationContext += `${i + 1}. ${step.action} (${step.tool})\n`;
+                                    });
                                 }
                             }
                         }

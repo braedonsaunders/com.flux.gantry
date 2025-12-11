@@ -2732,6 +2732,18 @@
                 html += '</ul></div>';
                 return html;
             }
+
+            // Fallback: if item has content but no recognized type, render as text
+            // This handles cases where type is missing or unknown
+            if (item.content) {
+                return `<div class="response-text-block">${this.formatText(item.content)}</div>`;
+            }
+
+            // Last resort: if item is a string, render it directly
+            if (typeof item === 'string') {
+                return `<div class="response-text-block">${this.formatText(item)}</div>`;
+            }
+
             return '';
         },
         
