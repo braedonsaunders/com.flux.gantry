@@ -674,7 +674,9 @@ Use for: "customer revenue", "top customers", "sales by customer"`,
             name: 'get_gl_activity',
             description: `Get GL (General Ledger) transaction activity.
 Shows transactions and their GL impact filtered by account, class, location, and/or period.
-Use for: "GL activity", "account activity", "what hit this account", "GL variance", "class expenses"`,
+Use for: "GL activity", "account activity", "what hit this account", "GL variance", "class expenses"
+
+NOTE: Class/department/location filters use the segment values from the GL accounting lines directly.`,
             parameters: {
                 type: 'object',
                 properties: {
@@ -684,15 +686,15 @@ Use for: "GL activity", "account activity", "what hit this account", "GL varianc
                     },
                     class_id: {
                         type: 'number',
-                        description: 'Class ID to filter by'
+                        description: 'Class ID to filter by (uses GL line segment)'
                     },
                     department_id: {
                         type: 'number',
-                        description: 'Department ID to filter by'
+                        description: 'Department ID to filter by (uses GL line segment)'
                     },
                     location_id: {
                         type: 'number',
-                        description: 'Location ID to filter by'
+                        description: 'Location ID to filter by (uses GL line segment)'
                     },
                     period: {
                         type: 'string',
@@ -707,15 +709,19 @@ Use for: "GL activity", "account activity", "what hit this account", "GL varianc
                 required: []
             },
             execute: function(args) {
+                // Build filters - using transactionaccountingline's own segment fields
+                // This avoids the duplicate row problem from joining to transactionline
                 const filters = [];
                 if (args.account_id) filters.push(`tal.account = ${args.account_id}`);
-                if (args.class_id) filters.push(`tl.class = ${args.class_id}`);
-                if (args.department_id) filters.push(`tl.department = ${args.department_id}`);
-                if (args.location_id) filters.push(`tl.location = ${args.location_id}`);
+                if (args.class_id) filters.push(`tal.class = ${args.class_id}`);
+                if (args.department_id) filters.push(`tal.department = ${args.department_id}`);
+                if (args.location_id) filters.push(`tal.location = ${args.location_id}`);
 
                 const periodFilter = buildPeriodFilter(args.period || 'last_90_days');
                 const limit = args.limit || 50;
 
+                // Query uses transactionaccountingline's own class/dept/location fields
+                // This avoids the duplicate row problem from the previous LEFT JOIN
                 const query = `
                     SELECT
                         transaction.id AS transaction_id,
@@ -725,20 +731,20 @@ Use for: "GL activity", "account activity", "what hit this account", "GL varianc
                         transaction.memo,
                         account.acctnumber AS account_number,
                         account.accountsearchdisplayname AS account_name,
-                        BUILTIN.DF(tl.class) AS class_name,
-                        BUILTIN.DF(tl.department) AS department_name,
+                        BUILTIN.DF(tal.class) AS class_name,
+                        BUILTIN.DF(tal.department) AS department_name,
+                        BUILTIN.DF(tal.location) AS location_name,
                         tal.debit,
                         tal.credit,
                         (COALESCE(tal.debit, 0) - COALESCE(tal.credit, 0)) AS net_amount
                     FROM transactionaccountingline tal
                     INNER JOIN transaction ON tal.transaction = transaction.id
                     INNER JOIN account ON tal.account = account.id
-                    LEFT JOIN transactionline tl ON tl.transaction = transaction.id AND tl.mainline = 'F'
                     WHERE transaction.posting = 'T'
                         AND transaction.voided = 'F'
                         AND ${periodFilter}
                         ${filters.length > 0 ? 'AND ' + filters.join(' AND ') : ''}
-                    ORDER BY ABS(COALESCE(tal.debit, 0) - COALESCE(tal.credit, 0)) DESC
+                    ORDER BY transaction.trandate DESC, ABS(COALESCE(tal.debit, 0) - COALESCE(tal.credit, 0)) DESC
                     FETCH FIRST ${limit} ROWS ONLY
                 `;
 
@@ -1843,6 +1849,202 @@ IMPORTANT SuiteQL notes:
             },
             displayName: function(args) {
                 return args.purpose || 'Running custom query...';
+            }
+        },
+
+        format_response: {
+            name: 'format_response',
+            description: `REQUIRED: Format your final response with rich structured content.
+Use this tool when you are ready to provide your final answer to the user.
+This creates professional, visually appealing responses with multiple content types.
+
+ALWAYS use this tool for your final response instead of plain text.
+
+## Block Types:
+- **text**: Narrative analysis, insights, and explanations
+- **metrics**: Key numbers displayed prominently with optional trend indicators
+- **table**: Structured data with headers and rows
+- **chart**: Data visualization (bar, line, pie charts)
+- **list**: Bullet points for key takeaways or action items
+
+## Example:
+{
+    "title": "AR Aging Analysis",
+    "summary": "Brief one-liner summary",
+    "blocks": [
+        { "type": "text", "content": "Analysis summary..." },
+        { "type": "metrics", "items": [
+            { "label": "Total AR", "value": "$125,000", "change": "+5%", "trend": "up" }
+        ]},
+        { "type": "table", "title": "Top Customers", "headers": ["Customer", "Amount"], "rows": [["ABC Corp", "$50,000"]] },
+        { "type": "list", "title": "Key Insights", "items": ["Insight 1", "Insight 2"] }
+    ]
+}`,
+            parameters: {
+                type: 'object',
+                properties: {
+                    title: {
+                        type: 'string',
+                        description: 'Title for the response (e.g., "AR Aging Analysis")'
+                    },
+                    summary: {
+                        type: 'string',
+                        description: 'Brief one-line summary of the analysis'
+                    },
+                    blocks: {
+                        type: 'array',
+                        description: 'Array of content blocks',
+                        items: {
+                            type: 'object',
+                            properties: {
+                                type: {
+                                    type: 'string',
+                                    enum: ['text', 'metrics', 'table', 'chart', 'list'],
+                                    description: 'Block type'
+                                },
+                                content: {
+                                    type: 'string',
+                                    description: 'For text blocks: the narrative content'
+                                },
+                                title: {
+                                    type: 'string',
+                                    description: 'Optional title for tables, lists, charts'
+                                },
+                                items: {
+                                    type: 'array',
+                                    description: 'For metrics: array of {label, value, change?, trend?}. For list: array of strings'
+                                },
+                                headers: {
+                                    type: 'array',
+                                    description: 'For table: column headers'
+                                },
+                                rows: {
+                                    type: 'array',
+                                    description: 'For table: array of row arrays'
+                                },
+                                chartType: {
+                                    type: 'string',
+                                    enum: ['bar', 'line', 'pie'],
+                                    description: 'For chart: type of chart'
+                                },
+                                data: {
+                                    type: 'array',
+                                    description: 'For chart: array of {label, value} objects'
+                                }
+                            },
+                            required: ['type']
+                        }
+                    }
+                },
+                required: ['blocks']
+            },
+            execute: function(args) {
+                // Validate blocks
+                if (!args.blocks || !Array.isArray(args.blocks) || args.blocks.length === 0) {
+                    return {
+                        success: false,
+                        error: 'blocks array is required and must not be empty',
+                        tool: 'format_response'
+                    };
+                }
+
+                // Transform blocks into richContent format
+                const richContent = [];
+
+                // Add title if provided
+                if (args.title) {
+                    richContent.push({
+                        type: 'heading',
+                        content: args.title,
+                        level: 2
+                    });
+                }
+
+                // Add summary if provided
+                if (args.summary) {
+                    richContent.push({
+                        type: 'text',
+                        content: args.summary,
+                        style: 'summary'
+                    });
+                }
+
+                // Process each block
+                for (const block of args.blocks) {
+                    switch (block.type) {
+                        case 'text':
+                            richContent.push({
+                                type: 'text',
+                                content: block.content || ''
+                            });
+                            break;
+
+                        case 'metrics':
+                            if (block.items && Array.isArray(block.items)) {
+                                richContent.push({
+                                    type: 'metrics',
+                                    title: block.title,
+                                    items: block.items.map(item => ({
+                                        label: item.label,
+                                        value: item.value,
+                                        change: item.change,
+                                        trend: item.trend,
+                                        color: item.trend === 'up' ? 'green' : item.trend === 'down' ? 'red' : 'neutral'
+                                    }))
+                                });
+                            }
+                            break;
+
+                        case 'table':
+                            if (block.headers && block.rows) {
+                                richContent.push({
+                                    type: 'table',
+                                    title: block.title,
+                                    headers: block.headers,
+                                    rows: block.rows
+                                });
+                            }
+                            break;
+
+                        case 'chart':
+                            if (block.data && Array.isArray(block.data)) {
+                                richContent.push({
+                                    type: 'chart',
+                                    title: block.title,
+                                    chartType: block.chartType || 'bar',
+                                    data: block.data
+                                });
+                            }
+                            break;
+
+                        case 'list':
+                            if (block.items && Array.isArray(block.items)) {
+                                richContent.push({
+                                    type: 'list',
+                                    title: block.title,
+                                    items: block.items
+                                });
+                            }
+                            break;
+
+                        default:
+                            // Pass through unknown types
+                            richContent.push(block);
+                    }
+                }
+
+                return {
+                    success: true,
+                    isFormatResponse: true,
+                    richContent: richContent,
+                    title: args.title,
+                    summary: args.summary,
+                    blockCount: args.blocks.length,
+                    tool: 'format_response'
+                };
+            },
+            displayName: function(args) {
+                return 'Formatting response...';
             }
         }
     };
