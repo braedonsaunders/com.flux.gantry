@@ -1494,15 +1494,23 @@ ALWAYS use this for: "expense breakdown", "where are we spending", "expense by c
         get_recent_transactions: {
             name: 'get_recent_transactions',
             description: `Get recent transactions, optionally filtered by type or entity.
-Use for: "recent transactions", "latest invoices", "recent bills", "show transactions"`,
+Use for: "recent transactions", "latest invoices", "recent bills", "show transactions"
+
+Transaction types (use common names OR NetSuite codes):
+- bill/vendor bill/VendBill → Vendor Bills
+- invoice/customer invoice/CustInvc → Customer Invoices
+- payment/vendor payment/VendPymt → Vendor Payments
+- customer payment/CustPymt → Customer Payments
+- credit memo/VendCred/CustCred → Credit Memos
+- journal/Journal → Journal Entries
+- check/Check → Checks
+- deposit/Deposit → Deposits`,
             parameters: {
                 type: 'object',
                 properties: {
                     transaction_type: {
                         type: 'string',
-                        enum: ['CustInvc', 'CustPymt', 'CashSale', 'VendBill', 'VendPymt',
-                               'VendCred', 'CustCred', 'Journal', 'Check', 'Deposit'],
-                        description: 'Filter by transaction type'
+                        description: 'Filter by transaction type. Use common names like "bill", "invoice", "payment" or NetSuite codes like "VendBill", "CustInvc"'
                     },
                     entity_id: {
                         type: 'number',
@@ -1510,23 +1518,69 @@ Use for: "recent transactions", "latest invoices", "recent bills", "show transac
                     },
                     period: {
                         type: 'string',
-                        enum: ['today', 'this_week', 'this_month', 'last_30_days'],
-                        description: 'Time period (default: last_30_days)'
+                        enum: ['today', 'this_week', 'this_month', 'last_30_days', 'last_90_days', 'last_year', 'all'],
+                        description: 'Time period (default: last_90_days for better coverage)'
                     },
                     limit: {
                         type: 'number',
-                        description: 'Max transactions to return (default: 25)'
+                        description: 'Max transactions to return (default: 50)'
                     }
                 },
                 required: []
             },
             execute: function(args) {
-                const typeFilter = args.transaction_type ?
-                    `AND transaction.type = '${escapeSql(args.transaction_type)}'` : '';
+                // Map common transaction type names to NetSuite internal codes
+                const typeMapping = {
+                    // Vendor transactions
+                    'bill': 'VendBill',
+                    'vendor bill': 'VendBill',
+                    'vendbill': 'VendBill',
+                    'vendor payment': 'VendPymt',
+                    'vendpymt': 'VendPymt',
+                    'vendor credit': 'VendCred',
+                    'vendcred': 'VendCred',
+                    // Customer transactions
+                    'invoice': 'CustInvc',
+                    'customer invoice': 'CustInvc',
+                    'custinvc': 'CustInvc',
+                    'customer payment': 'CustPymt',
+                    'custpymt': 'CustPymt',
+                    'customer credit': 'CustCred',
+                    'credit memo': 'CustCred',
+                    'custcred': 'CustCred',
+                    // Other
+                    'cash sale': 'CashSale',
+                    'cashsale': 'CashSale',
+                    'journal': 'Journal',
+                    'journal entry': 'Journal',
+                    'check': 'Check',
+                    'deposit': 'Deposit',
+                    'expense report': 'ExpRept',
+                    'exprept': 'ExpRept'
+                };
+
+                // Normalize and map transaction type
+                let mappedType = null;
+                if (args.transaction_type) {
+                    const normalizedType = args.transaction_type.toLowerCase().trim();
+                    mappedType = typeMapping[normalizedType] || args.transaction_type;
+
+                    log.debug('Transaction type mapping', {
+                        original: args.transaction_type,
+                        normalized: normalizedType,
+                        mapped: mappedType
+                    });
+                }
+
+                const typeFilter = mappedType ?
+                    `AND transaction.type = '${escapeSql(mappedType)}'` : '';
                 const entityFilter = args.entity_id ?
                     `AND transaction.entity = ${args.entity_id}` : '';
-                const periodFilter = buildPeriodFilter(args.period || 'last_30_days');
-                const limit = args.limit || 25;
+
+                // Use longer default period for better results
+                const period = args.period || 'last_90_days';
+                const periodFilter = period === 'all' ? '1=1' : buildPeriodFilter(period);
+                const limit = args.limit || 50;
 
                 const query = `
                     SELECT
@@ -1550,7 +1604,28 @@ Use for: "recent transactions", "latest invoices", "recent bills", "show transac
                 `;
 
                 const result = QueryExecutor.executeQuery(query);
-                return formatResult(result, 'get_recent_transactions');
+                const formatted = formatResult(result, 'get_recent_transactions');
+
+                // Add helpful suggestions if no results found
+                if (formatted.success && formatted.rowCount === 0) {
+                    formatted.suggestions = [];
+
+                    if (args.entity_id) {
+                        formatted.suggestions.push(
+                            'Try get_vendor_spend or get_customer_revenue for entity-specific analysis',
+                            'Try get_ap_aging or get_ar_aging to see outstanding balances',
+                            'Try without the transaction_type filter to see all transactions for this entity',
+                            'Try period: "all" to search all time periods'
+                        );
+                    }
+
+                    if (mappedType && mappedType !== args.transaction_type) {
+                        formatted.mappedType = mappedType;
+                        formatted.note = `Searched for type "${mappedType}" (mapped from "${args.transaction_type}")`;
+                    }
+                }
+
+                return formatted;
             },
             displayName: function(args) {
                 return 'Getting recent transactions...';
