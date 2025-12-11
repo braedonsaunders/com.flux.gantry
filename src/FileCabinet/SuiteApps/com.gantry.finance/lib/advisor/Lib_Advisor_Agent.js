@@ -1004,8 +1004,8 @@ format_response({
         // Build system prompt
         const systemPrompt = buildSystemPrompt(fiscalContext, sessionContext);
 
-        // Get tool definitions
-        const toolDefinitions = Tools.getToolDefinitions();
+        // NOTE: toolDefinitions are NOT stored in agentState to save cache space
+        // They are regenerated fresh on each runAgentStep call via Tools.getToolDefinitions()
 
         // Build chat history for context (last 4 exchanges)
         const chatHistory = [];
@@ -1034,7 +1034,8 @@ format_response({
             toolCallSignatures: {},  // JSON-serializable version of Map
             consecutiveRepeats: 0,
             systemPrompt: systemPrompt,
-            toolDefinitions: toolDefinitions,
+            // toolDefinitions NOT stored - regenerated each step to save ~100KB cache space
+            toolDefinitions: null,
             chatHistory: chatHistory,
             completed: false,
             finalResponse: null,
@@ -1117,6 +1118,10 @@ format_response({
         }
 
         agentState.iteration++;
+
+        // Regenerate toolDefinitions fresh each step (not stored in cache to save space)
+        // This saves ~100KB of cache space per request
+        agentState.toolDefinitions = Tools.getToolDefinitions();
 
         // On FIRST poll iteration, run the planning phase and update the thinking step
         // This ensures the user sees the actual AI plan, not just static keyword analysis

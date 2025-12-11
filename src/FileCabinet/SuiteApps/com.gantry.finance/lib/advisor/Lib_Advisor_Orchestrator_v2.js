@@ -192,12 +192,14 @@ define([
             // Add extended debug info when debug mode is enabled
             if (Utils.isDebugMode()) {
                 const resolvedEntities = sessionContext.resolvedEntities || {};
+                // Get tool definitions separately (not stored in agentState to save cache space)
+                const toolDefs = Tools.getToolDefinitions();
                 thinkingStep.debug = {
                     userMessage: message,
                     historyLength: history.length,
                     sessionEntities: Object.keys(resolvedEntities),
                     resolvedEntityDetails: resolvedEntities,
-                    availableTools: agentState.toolDefinitions.map(t => t.name)
+                    availableTools: toolDefs.map(t => t.name)
                 };
                 thinkingStep.title = 'Understanding your question (Debug Mode ON)';
             }
