@@ -528,7 +528,11 @@ Response format:
         // Check if we have more tools to invoke
         const invokedCount = state.toolInvocations.length;
         if (invokedCount >= state.selectedTools.length) {
-            // All tools invoked, move to analyze
+            // All tools invoked - ADD TABLE BLOCKS IMMEDIATELY before moving to analyze
+            // This enables progressive rendering: tables appear BEFORE LLM formats narrative
+            addProgressiveTableBlocks(state);
+
+            // Move to analyze phase
             state.phase = PHASES.ANALYZE;
             return { success: true, nextPhase: PHASES.ANALYZE };
         }
@@ -1043,6 +1047,67 @@ Response format:
     // ═══════════════════════════════════════════════════════════════════════════
     // HELPER FUNCTIONS
     // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Add progressive table blocks immediately after INVOKE phase
+     * Uses REAL data from DataStore - NO hallucination possible
+     * Tables render in frontend BEFORE LLM generates narrative text
+     */
+    function addProgressiveTableBlocks(state) {
+        if (!state.dataReferences || state.dataReferences.length === 0) {
+            log.debug('SCA addProgressiveTableBlocks - no data refs', { requestId: state.requestId });
+            return;
+        }
+
+        state.dataReferences.forEach((ref, index) => {
+            try {
+                // Load actual data rows
+                const data = DataStore.loadRows(state.requestId, ref.refId, 0, 19);
+                if (!data || !data.rows || data.rows.length === 0) {
+                    log.debug('SCA addProgressiveTableBlocks - no rows for ref', { refId: ref.refId });
+                    return;
+                }
+
+                const summary = ref.summary || {};
+                const toolDisplayName = summary.toolDisplayName || summary.tool || 'Results';
+
+                // Build table block with REAL data
+                const tableBlock = {
+                    type: 'table',
+                    title: toolDisplayName,
+                    dataRef: ref.refId,
+                    totalRows: data.totalRows,
+                    headers: data.columns.slice(0, 8), // Limit columns for display
+                    rows: data.rows.slice(0, 10).map(row => {
+                        return data.columns.slice(0, 8).map(col => formatCellValue(row[col]));
+                    }),
+                    // Include summary stats for context
+                    summary: {
+                        rowCount: data.totalRows,
+                        columns: data.columns.length,
+                        aggregates: summary.aggregates
+                    }
+                };
+
+                // Add to progress store for immediate frontend rendering
+                ProgressStore.addBlock(state.requestId, tableBlock);
+
+                log.debug('SCA addProgressiveTableBlocks - added table block', {
+                    requestId: state.requestId,
+                    refId: ref.refId,
+                    rowCount: tableBlock.rows.length,
+                    totalRows: data.totalRows
+                });
+
+            } catch (e) {
+                log.error('SCA addProgressiveTableBlocks - error building block', {
+                    requestId: state.requestId,
+                    refId: ref.refId,
+                    error: e.message
+                });
+            }
+        });
+    }
 
     function parseJsonResponse(text) {
         if (!text) return null;
