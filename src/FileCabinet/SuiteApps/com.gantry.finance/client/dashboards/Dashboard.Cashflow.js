@@ -1205,7 +1205,7 @@
                 }
             }
 
-            html += logicHtml;
+            html = logicHtml + html;
 
             // Update content container (tabs and KPI row are already rendered)
             content.innerHTML = html;
