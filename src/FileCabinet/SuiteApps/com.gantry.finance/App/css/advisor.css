@@ -621,7 +621,7 @@ body.dark-mode .typing-indicator span {
     display: flex;
     flex-wrap: wrap;
     gap: 6px;
-    margin-bottom: 12px;
+    margin-bottom: 4px;
 }
 
 .tool-call {
@@ -3134,7 +3134,7 @@ body.dark-mode .advisor-alert.error {
 
 /* In blocks format, text should extend like other rich content */
 .advisor-message.assistant .message-bubble > .message-text {
-    margin-top: 16px;
+    margin-top: 6px;
 }
 
 /* Response text blocks - inline text within rich content flow */
