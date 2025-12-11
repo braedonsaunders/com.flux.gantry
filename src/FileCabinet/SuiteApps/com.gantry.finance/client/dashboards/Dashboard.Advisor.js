@@ -1408,24 +1408,31 @@
                 // Update existing chain with new steps
                 const existingSteps = existingChain._stepsData || [];
                 const allSteps = [...existingSteps];
+                let hasChanges = false;
 
                 // Add new steps that don't already exist
                 steps.forEach(step => {
-                    const exists = allSteps.some(s =>
+                    const existingIdx = allSteps.findIndex(s =>
                         s.title === step.title && s.type === step.type
                     );
-                    if (!exists) {
+                    if (existingIdx < 0) {
+                        // New step
                         allSteps.push(step);
+                        hasChanges = true;
                     } else {
-                        // Update existing step status
-                        const idx = allSteps.findIndex(s =>
-                            s.title === step.title && s.type === step.type
-                        );
-                        if (idx >= 0) {
-                            allSteps[idx] = step;
+                        // Check if status changed
+                        if (allSteps[existingIdx].status !== step.status) {
+                            allSteps[existingIdx] = step;
+                            hasChanges = true;
                         }
                     }
                 });
+
+                // Skip re-render if nothing changed
+                if (!hasChanges) {
+                    console.log('[Advisor appendSteps] No changes detected, skipping re-render');
+                    return;
+                }
 
                 // Re-render the chain
                 const chainHtml = this.renderSteps(allSteps);
@@ -1902,8 +1909,10 @@
                 // Add connector before node (except for first)
                 if (idx > 0) {
                     const prevStep = steps[idx - 1];
-                    const connectorClass = prevStep.status === 'complete' ? 'completed' :
-                                          (step.status === 'running' ? 'active' : '');
+                    // Connector is "active" if current step is running, otherwise "completed" (for any finished step)
+                    const prevFinished = prevStep.status === 'complete' || prevStep.status === 'error';
+                    const connectorClass = step.status === 'running' ? 'active' :
+                                          prevFinished ? 'completed' : 'completed';
                     html += `<div class="node-connector ${connectorClass} animate-in cascade-delay-${idx}" style="--flow-delay: ${idx * 0.3}s"></div>`;
                 }
 
