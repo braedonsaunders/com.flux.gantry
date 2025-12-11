@@ -92,6 +92,10 @@
           return this.renderAlert(item, "info");
         case "code":
           return this.renderCode(item);
+        case "text":
+          return this.renderText(item);
+        case "list":
+          return this.renderList(item);
         default:
           console.warn("[AdvisorRenderer] Unknown content type:", item.type);
           return "";
@@ -2479,6 +2483,46 @@
       }">`;
       html += `<code>${this.escapeHtml(code)}</code>`;
       html += "</pre></div>";
+
+      return html;
+    },
+
+    /**
+     * Render a text block (markdown content)
+     */
+    renderText(item) {
+      const content = item.content || item.text || "";
+      if (!content) return "";
+
+      return `<div class="advisor-text-block">${this.renderMarkdown(content)}</div>`;
+    },
+
+    /**
+     * Render a list (bullet or numbered)
+     */
+    renderList(item) {
+      const items = item.items || [];
+      const ordered = item.ordered || false;
+      const title = item.title;
+
+      if (!items || items.length === 0) return "";
+
+      let html = '<div class="advisor-list-block">';
+
+      if (title) {
+        html += `<div class="advisor-list-title">${this.escapeHtml(title)}</div>`;
+      }
+
+      const tag = ordered ? 'ol' : 'ul';
+      html += `<${tag} class="advisor-list">`;
+
+      items.forEach(listItem => {
+        // Support both simple strings and objects with text property
+        const text = typeof listItem === 'string' ? listItem : (listItem.text || listItem.content || String(listItem));
+        html += `<li>${this.renderMarkdown(text)}</li>`;
+      });
+
+      html += `</${tag}></div>`;
 
       return html;
     },
