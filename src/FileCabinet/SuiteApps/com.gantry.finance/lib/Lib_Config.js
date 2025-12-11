@@ -421,7 +421,8 @@ define(["N/record", "N/search", "N/query", "N/log", "N/runtime", "./Lib_Dashboar
                         max: 0.60
                     },
                     revenueDeclineWarningThreshold: 0.10,
-                    hiddenDepartments: []
+                    hiddenDepartments: [],
+                    excludeEmployeeTypes: []
                 };
 
             case 'time':
@@ -674,6 +675,7 @@ define(["N/record", "N/search", "N/query", "N/log", "N/runtime", "./Lib_Dashboar
                 
             case 'health':
                 result.departments = getDepartmentList();
+                result.employeeTypes = getEmployeeTypeList();
                 break;
                 
             case 'time':
@@ -1039,6 +1041,43 @@ define(["N/record", "N/search", "N/query", "N/log", "N/runtime", "./Lib_Dashboar
         return categories;
     }
 
+    /**
+     * Get employee types for configuration UI (e.g., Full-Time, Contractor, etc.)
+     */
+    function getEmployeeTypeList() {
+        const employeeTypes = [];
+        try {
+            const sql = `
+                SELECT id, name
+                FROM employeetype
+                WHERE isinactive = 'F'
+                ORDER BY name
+            `;
+            const results = query.runSuiteQL({ query: sql }).asMappedResults();
+            results.forEach(function(row) {
+                employeeTypes.push({
+                    id: String(row.id),
+                    name: row.name
+                });
+            });
+        } catch (e) {
+            // Try without isinactive filter (may not exist on all versions)
+            try {
+                const fallbackSql = `SELECT id, name FROM employeetype ORDER BY name`;
+                const results = query.runSuiteQL({ query: fallbackSql }).asMappedResults();
+                results.forEach(function(row) {
+                    employeeTypes.push({
+                        id: String(row.id),
+                        name: row.name
+                    });
+                });
+            } catch (e2) {
+                log.error('getEmployeeTypeList', e.message);
+            }
+        }
+        return employeeTypes;
+    }
+
     return {
         getStoredConfiguration: getStoredConfiguration,
         generateDefaultConfiguration: generateDefaultConfiguration,
@@ -1053,6 +1092,7 @@ define(["N/record", "N/search", "N/query", "N/log", "N/runtime", "./Lib_Dashboar
         getDepartmentList: getDepartmentList,
         getEmployeeList: getEmployeeList,
         getServiceItemList: getServiceItemList,
-        getVendorCategoryList: getVendorCategoryList
+        getVendorCategoryList: getVendorCategoryList,
+        getEmployeeTypeList: getEmployeeTypeList
     };
 });
