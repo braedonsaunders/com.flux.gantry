@@ -128,20 +128,31 @@ Respond with JSON only:
 {response_summary}
 
 ## YOUR TASK:
-Determine if the proposed response FULLY answers the user's question. Check:
+Determine if the proposed response FULLY answers the user's question.
 
-1. **Completeness**: Does the response contain ALL data needed to answer the question?
-   - For "income statement": Revenue, COGS, Gross Profit, Expenses, Net Income
-   - For "balance sheet": Assets, Liabilities, Equity
-   - For trend questions: Multiple periods with variance
-   - For entity questions: Actual data about that entity
+## CRITICAL: DATA SUFFICIENCY RULES
+Before marking incomplete, consider:
+1. **If a data tool returned rows (rowCount > 0), that data CAN answer the question**
+   - The LLM can compute totals, averages, and aggregations from returned rows
+   - DO NOT request "more data" when rows were already returned
+2. **For aging queries**: get_ar_aging or get_ap_aging with rows = COMPLETE DATA
+3. **For entity queries**: If rows contain the entity data = COMPLETE
+4. **The LLM has access to ALL returned row data** - it can sum, filter, analyze
 
-2. **Analysis Quality**: Does it provide INSIGHTS, not just data dump?
-   - Explains what the numbers mean
-   - Highlights key findings
-   - Provides context and comparisons
+## COMPLETENESS CHECK:
+1. Did the data tool return relevant rows? → Data is SUFFICIENT
+2. Does the format_response include metrics/tables/insights? → Analysis is PRESENT
+3. Are the insights derived from the actual data? → Response is VALID
 
-3. **Accuracy**: Does the data support the conclusions?
+## QUALITY CHECK (1-10):
+- 1-3: Missing critical data OR no analysis
+- 4-6: Has data but weak insights
+- 7-10: Has data with meaningful insights
+
+## IMPORTANT:
+- If data tools returned rows AND format_response was called → likely COMPLETE (score 7+)
+- Only recommend "gather_more_data" if ZERO relevant data was retrieved
+- "improve_analysis" is better than "gather_more_data" when data exists but insights are weak
 
 Respond with JSON only:
 {
@@ -800,10 +811,34 @@ ${dashboardDescriptions}
 ## CRITICAL: ANALYSIS REQUIREMENTS
 When you receive data from tools, you MUST:
 1. **ANALYZE the data** - don't just repeat it back. Look for patterns, trends, outliers.
-2. **PROVIDE INSIGHTS** - explain what the data means for the business.
-3. **COMPARE AND CONTEXTUALIZE** - how does this compare to benchmarks, previous periods, expectations?
-4. **HIGHLIGHT KEY FINDINGS** - what are the top 3-5 takeaways?
-5. **USE THE format_response TOOL** - Structure your final response using the format_response tool for rich content.
+2. **COMPUTE AGGREGATIONS YOURSELF** - if a tool returns rows with numbers, YOU calculate the totals, averages, percentages. Do NOT call another tool to compute what you already have.
+3. **PROVIDE INSIGHTS** - explain what the data means for the business.
+4. **COMPARE AND CONTEXTUALIZE** - how does this compare to benchmarks, previous periods, expectations?
+5. **HIGHLIGHT KEY FINDINGS** - what are the top 3-5 takeaways?
+6. **USE THE format_response TOOL** - Structure your final response using the format_response tool for rich content.
+
+## DATA COMPUTATION - YOU HAVE THE DATA, USE IT!
+When a tool like get_ar_aging returns 45 rows, YOU have all the data:
+- **Compute totals**: Sum the columns yourself (e.g., total_outstanding across all rows)
+- **Calculate percentages**: What % is in each aging bucket?
+- **Find patterns**: Which customers are highest? Which have overdue amounts?
+- **DO NOT call run_custom_query to re-aggregate data you already have**
+
+Example: If get_ar_aging returns rows with current_bucket, days_1_30, days_31_60, etc.:
+- YOU sum each column to get totals
+- YOU calculate: total_current / total_outstanding * 100 = current %
+- YOU identify the top 5 customers by total_outstanding
+
+## run_custom_query - WHEN TO USE IT
+**run_custom_query executes SuiteQL against NetSuite record types, NOT tool names.**
+- CORRECT: "SELECT ... FROM transaction WHERE ..."
+- CORRECT: "SELECT ... FROM customer WHERE ..."
+- WRONG: "SELECT ... FROM get_ar_aging" ← get_ar_aging is a TOOL, not a table!
+
+Only use run_custom_query for:
+- Queries that no existing tool supports
+- Complex joins across NetSuite tables
+- Specific field lookups not available in standard tools
 
 ## USING format_response TOOL
 When providing your final answer, ALWAYS use the format_response tool to structure your response. This tool allows you to create rich content blocks:
@@ -1083,39 +1118,69 @@ format_response({
                     // WITH SELF-VERIFICATION: Ensure response is complete before finishing
                     // ═══════════════════════════════════════════════════════════════
                     if (toolName === 'format_response' && result.success && result.isFormatResponse) {
+                        // Track format_response attempts for verification retry limits
+                        agentState.formatResponseAttempts = (agentState.formatResponseAttempts || 0) + 1;
+                        const MAX_FORMAT_RESPONSE_ATTEMPTS = 2;
+
                         // Perform self-verification before completing
                         const verification = performSelfVerification(agentState, requestId);
 
-                        // If verification says we need more data, don't complete yet
-                        if (!verification.is_complete && verification.recommendation === 'gather_more_data') {
-                            log.debug('Self-verification: need more data before completing', {
+                        // Check if we have useful data from previous tool calls
+                        const hasUsefulDataFromTools = agentState.allToolCalls.some(tc =>
+                            tc.result && tc.result.success && (tc.result.rowCount > 0 || tc.result.found === true)
+                        );
+
+                        // Decide whether to accept or continue based on verification + data state
+                        const shouldAcceptResponse =
+                            verification.is_complete ||
+                            verification.recommendation === 'proceed' ||
+                            verification.recommendation === 'improve_analysis' ||  // Accept if just needs better analysis
+                            (verification.quality_score && verification.quality_score >= 6) ||  // Accept if quality is decent
+                            agentState.formatResponseAttempts >= MAX_FORMAT_RESPONSE_ATTEMPTS ||  // Accept after retry limit
+                            (hasUsefulDataFromTools && verification.recommendation !== 'gather_more_data');  // Accept if we have data
+
+                        if (!shouldAcceptResponse && verification.recommendation === 'gather_more_data') {
+                            log.debug('Self-verification: requesting more data', {
                                 requestId: requestId,
-                                missing: verification.missing_elements
+                                attempt: agentState.formatResponseAttempts,
+                                maxAttempts: MAX_FORMAT_RESPONSE_ATTEMPTS,
+                                missing: verification.missing_elements,
+                                hasUsefulData: hasUsefulDataFromTools
                             });
 
-                            // Add guidance to conversation context and continue
-                            agentState.conversationContext += `\n--- SELF-VERIFICATION FAILED ---\n`;
+                            // Add guidance to conversation context
+                            agentState.conversationContext += `\n--- VERIFICATION FEEDBACK (Attempt ${agentState.formatResponseAttempts}/${MAX_FORMAT_RESPONSE_ATTEMPTS}) ---\n`;
                             agentState.conversationContext += `Missing: ${(verification.missing_elements || []).join(', ')}\n`;
-                            agentState.conversationContext += `Guidance: ${verification.improvement_guidance || 'Gather more data before answering'}\n`;
-                            agentState.conversationContext += `\n**DO NOT use format_response yet. First gather the missing data.**\n`;
+                            agentState.conversationContext += `Guidance: ${verification.improvement_guidance || 'Improve your analysis'}\n`;
 
-                            // Continue the loop instead of completing
+                            // IMPORTANT: Don't mark format_response as failed - it succeeded!
+                            // Just record that verification requested improvements
                             agentState.allToolCalls.push({
                                 tool: toolName,
                                 args: parsedArgs,
-                                result: { success: false, error: 'Response incomplete - need more data' },
+                                result: {
+                                    success: true, // format_response DID succeed
+                                    isFormatResponse: true,
+                                    verificationPending: true,
+                                    verificationFeedback: verification.improvement_guidance
+                                },
                                 displayName: 'Formatting response...',
                                 duration: toolDuration
                             });
 
                             executedAny = true;
-                            continue;  // Don't complete, continue to next iteration
+                            continue;  // Try to improve
                         }
 
-                        log.debug('format_response tool called - completing with rich content', {
+                        // Accept the response
+                        log.debug('format_response accepted - completing with rich content', {
                             requestId: requestId,
                             blockCount: result.blockCount,
-                            qualityScore: verification.quality_score
+                            qualityScore: verification.quality_score,
+                            attempt: agentState.formatResponseAttempts,
+                            acceptReason: !verification.is_complete ?
+                                (agentState.formatResponseAttempts >= MAX_FORMAT_RESPONSE_ATTEMPTS ? 'retry_limit' : 'has_data') :
+                                'verification_passed'
                         });
 
                         // Complete the request with the formatted rich content
