@@ -143,33 +143,19 @@ ${resolvedEntitiesContext}
         // Get tool definitions
         const toolDefinitions = Tools.getToolDefinitions();
 
-        // Initialize conversation for LLM
-        const llmMessages = [];
-
-        // Add system prompt
-        llmMessages.push({
-            role: 'system',
-            content: systemPrompt
-        });
-
-        // Add relevant history (last 4 exchanges max)
+        // Build chat history for context (last 4 exchanges)
+        const chatHistory = [];
         if (history && history.length > 0) {
-            const recentHistory = history.slice(-8); // 4 exchanges = 8 messages
+            const recentHistory = history.slice(-8);
             for (const msg of recentHistory) {
                 if (msg.role === 'user' || msg.role === 'assistant') {
-                    llmMessages.push({
+                    chatHistory.push({
                         role: msg.role,
                         content: msg.content
                     });
                 }
             }
         }
-
-        // Add current user message
-        llmMessages.push({
-            role: 'user',
-            content: message
-        });
 
         // Track progress
         ProgressStore.addStep(requestId, {
@@ -178,27 +164,38 @@ ${resolvedEntitiesContext}
             status: 'complete'
         });
 
-        // Agent loop
+        // Agent loop - tracks conversation context as augmented prompt
         let iterations = 0;
         let lastToolResults = null;
-        let allToolCalls = []; // Track all tool calls for response
+        let allToolCalls = [];
+        let conversationContext = ''; // Accumulates tool call context
 
         while (iterations < MAX_ITERATIONS) {
             iterations++;
 
+            // Build the prompt for this iteration
+            // Include previous tool results in the prompt for context
+            let currentPrompt = message;
+            if (conversationContext) {
+                currentPrompt = message + '\n\n--- Previous tool calls and results ---\n' + conversationContext;
+            }
+
             log.debug('Agent iteration', {
                 requestId: requestId,
                 iteration: iterations,
-                messageCount: llmMessages.length
+                promptLength: currentPrompt.length,
+                hasToolContext: !!conversationContext
             });
 
             try {
-                // Call LLM with tools
-                const llmResponse = AIProviders.callAI({
-                    messages: llmMessages,
+                // Call LLM with tools using correct interface: callAI(prompt, options)
+                const llmResponse = AIProviders.callAI(currentPrompt, {
+                    systemPrompt: systemPrompt,
+                    chatHistory: chatHistory,
                     tools: toolDefinitions,
                     tier: THINKING_TIER,
-                    purpose: `Agent iteration ${iterations}`
+                    purpose: `Agent iteration ${iterations}`,
+                    temperature: 0.2
                 });
 
                 // Check for errors
@@ -263,35 +260,16 @@ ${resolvedEntitiesContext}
                             result: result,
                             displayName: displayName
                         });
+
+                        // Add to conversation context for next iteration
+                        conversationContext += `\nTool: ${toolName}\n`;
+                        conversationContext += `Arguments: ${JSON.stringify(parsedArgs)}\n`;
+                        conversationContext += `Result: ${summarizeToolResult(result)}\n`;
                     }
 
                     lastToolResults = toolResults;
 
-                    // Add assistant message with tool calls
-                    llmMessages.push({
-                        role: 'assistant',
-                        content: llmResponse.text || '',
-                        tool_calls: llmResponse.toolCalls.map((tc, i) => ({
-                            id: tc.id || `tool_${i}`,
-                            type: 'function',
-                            function: {
-                                name: tc.name || tc.function?.name,
-                                arguments: typeof tc.arguments === 'string' ? tc.arguments : JSON.stringify(tc.arguments || {})
-                            }
-                        }))
-                    });
-
-                    // Add tool results
-                    for (let i = 0; i < toolResults.length; i++) {
-                        const tr = toolResults[i];
-                        llmMessages.push({
-                            role: 'tool',
-                            tool_call_id: llmResponse.toolCalls[i]?.id || `tool_${i}`,
-                            content: JSON.stringify(tr.result)
-                        });
-                    }
-
-                    // Continue to next iteration
+                    // Continue to next iteration with tool results in context
                     continue;
                 }
 
@@ -334,11 +312,33 @@ ${resolvedEntitiesContext}
                     stack: e.stack
                 });
 
-                // Try to continue if possible
+                // Check for fatal errors that shouldn't retry
+                const errorMsg = (e.message || '').toLowerCase();
+                const isFatalError =
+                    errorMsg.includes('api key') ||
+                    errorMsg.includes('authentication') ||
+                    errorMsg.includes('unauthorized') ||
+                    errorMsg.includes('forbidden') ||
+                    errorMsg.includes('rate limit') ||
+                    errorMsg.includes('quota') ||
+                    errorMsg.includes('invalid_api_key') ||
+                    errorMsg.includes('model not found');
+
+                if (isFatalError) {
+                    // Don't retry fatal errors
+                    ProgressStore.fail(requestId, 'Configuration error: ' + e.message);
+                    return buildErrorResponse(
+                        'I encountered a configuration error. Please check the AI provider settings. Error: ' + e.message,
+                        startTime
+                    );
+                }
+
+                // Non-fatal error - retry with details
                 if (iterations < MAX_ITERATIONS - 1) {
                     ProgressStore.addStep(requestId, {
                         type: 'retry',
-                        title: 'Retrying with different approach...',
+                        title: 'Retrying: ' + (e.message || 'Unknown error').substring(0, 50),
+                        error: e.message,
                         status: 'complete'
                     });
                     continue;
