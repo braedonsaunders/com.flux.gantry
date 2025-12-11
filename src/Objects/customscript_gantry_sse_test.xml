@@ -1,0 +1,23 @@
+<suitelet scriptid="customscript_gantry_sse_test">
+    <name>Gantry SSE Streaming Test</name>
+    <scriptfile>[/SuiteApps/com.gantry.finance/suitelet/Gantry_SSE_Test.js]</scriptfile>
+    <description>EXPERIMENTAL: Test Server-Sent Events streaming from NetSuite</description>
+    <isinactive>F</isinactive>
+    <notifyadmins>F</notifyadmins>
+    <notifyemails></notifyemails>
+    <notifyowner>T</notifyowner>
+    <scriptdeployments>
+        <scriptdeployment scriptid="customdeploy_gantry_sse_test">
+            <status>RELEASED</status>
+            <title>Gantry SSE Test</title>
+            <isdeployed>T</isdeployed>
+            <isonline>T</isonline>
+            <loglevel>DEBUG</loglevel>
+            <allemployees>T</allemployees>
+            <allpartners>F</allpartners>
+            <allroles>F</allroles>
+            <audslctrole></audslctrole>
+            <runasrole>ADMINISTRATOR</runasrole>
+        </scriptdeployment>
+    </scriptdeployments>
+</suitelet>
