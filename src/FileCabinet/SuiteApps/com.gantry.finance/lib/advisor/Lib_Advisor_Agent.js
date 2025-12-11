@@ -1151,7 +1151,9 @@ format_response({
                 ProgressStore.complete(requestId, {
                     answer: response.text,
                     richContent: response.richContent,
-                    sessionContext: agentState.sessionContext
+                    sessionContext: agentState.sessionContext,
+                    model: AIProviders.getCurrentModelInfo().model,
+                    provider: AIProviders.getCurrentModelInfo().provider
                 });
 
                 agentState.completed = true;
@@ -1189,7 +1191,9 @@ format_response({
                     ProgressStore.complete(requestId, {
                         answer: response.text + '\n\n*Note: Some operations failed but I was able to provide partial results.*',
                         richContent: response.richContent,
-                        sessionContext: agentState.sessionContext
+                        sessionContext: agentState.sessionContext,
+                        model: AIProviders.getCurrentModelInfo().model,
+                        provider: AIProviders.getCurrentModelInfo().provider
                     });
 
                     agentState.completed = true;
@@ -1356,7 +1360,9 @@ format_response({
                         ProgressStore.complete(requestId, {
                             answer: result.summary || result.title || 'Response formatted',
                             richContent: result.richContent,
-                            sessionContext: agentState.sessionContext
+                            sessionContext: agentState.sessionContext,
+                            model: AIProviders.getCurrentModelInfo().model,
+                            provider: AIProviders.getCurrentModelInfo().provider
                         });
 
                         return {

@@ -158,7 +158,9 @@ define([
                 ProgressStore.complete(requestId, {
                     answer: conversationalResponse,
                     richContent: [{ type: 'text', content: conversationalResponse }],
-                    sessionContext: sessionContext
+                    sessionContext: sessionContext,
+                    model: 'Gantry',
+                    provider: 'system'
                 });
 
                 return {

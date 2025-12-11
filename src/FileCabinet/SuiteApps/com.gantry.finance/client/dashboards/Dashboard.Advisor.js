@@ -1722,7 +1722,7 @@
                 content: response.text || '',
                 richContent: response.richContent,
                 steps: response.steps,
-                model: response.model,
+                model: response.model || 'Gantry',
                 userQuery: this.lastUserMessage || '',
                 timestamp: Date.now()
             };
@@ -1735,30 +1735,29 @@
             }
 
             // Add message footer with model badge and response actions (retry, copy, print)
-            if (response.model) {
-                const bubble = msgEl.querySelector('.message-bubble');
-                if (bubble) {
-                    const footerId = 'msg-' + Date.now() + '-' + Math.random().toString(36).substr(2, 5);
-                    const retryQuery = this.lastUserMessage ? this.escapeHtml(this.lastUserMessage).replace(/'/g, "\\'") : '';
-                    const footer = document.createElement('div');
-                    footer.className = 'message-footer';
-                    footer.id = footerId;
-                    footer.innerHTML = `
-                        <div class="model-badge">${this.escapeHtml(response.model)}</div>
-                        <div class="response-actions">
-                            <button class="action-btn action-btn-subtle" onclick="AdvisorChat.retryQuery('${retryQuery}')" title="Retry">
-                                <i class="fas fa-redo"></i>
-                            </button>
-                            <button class="action-btn" onclick="AdvisorChat.copyResponse('${footerId}')" title="Copy">
-                                <i class="fas fa-copy"></i>
-                            </button>
-                            <button class="action-btn" onclick="AdvisorChat.printResponse('${footerId}')" title="Print">
-                                <i class="fas fa-print"></i>
-                            </button>
-                        </div>
-                    `;
-                    bubble.appendChild(footer);
-                }
+            const bubble = msgEl.querySelector('.message-bubble');
+            if (bubble) {
+                const modelName = response.model || 'Gantry';
+                const footerId = 'msg-' + Date.now() + '-' + Math.random().toString(36).substr(2, 5);
+                const retryQuery = this.lastUserMessage ? this.escapeHtml(this.lastUserMessage).replace(/'/g, "\\'") : '';
+                const footer = document.createElement('div');
+                footer.className = 'message-footer';
+                footer.id = footerId;
+                footer.innerHTML = `
+                    <div class="model-badge">${this.escapeHtml(modelName)}</div>
+                    <div class="response-actions">
+                        <button class="action-btn action-btn-subtle" onclick="AdvisorChat.retryQuery('${retryQuery}')" title="Retry">
+                            <i class="fas fa-redo"></i>
+                        </button>
+                        <button class="action-btn" onclick="AdvisorChat.copyResponse('${footerId}')" title="Copy">
+                            <i class="fas fa-copy"></i>
+                        </button>
+                        <button class="action-btn" onclick="AdvisorChat.printResponse('${footerId}')" title="Print">
+                            <i class="fas fa-print"></i>
+                        </button>
+                    </div>
+                `;
+                bubble.appendChild(footer);
             }
 
             this.scrollToBottom();
@@ -2056,29 +2055,28 @@
                 bubble.appendChild(textDiv);
             }
             
-            // Add message footer with model badge and response actions
-            if (msg.model) {
-                const msgId = 'msg-' + Date.now() + '-' + Math.random().toString(36).substr(2, 5);
-                const retryQuery = msg.userQuery ? this.escapeHtml(msg.userQuery).replace(/'/g, "\\'") : '';
-                const footer = document.createElement('div');
-                footer.className = 'message-footer';
-                footer.id = msgId;
-                footer.innerHTML = `
-                    <div class="model-badge">${this.escapeHtml(msg.model)}</div>
-                    <div class="response-actions">
-                        <button class="action-btn action-btn-subtle" onclick="AdvisorChat.retryQuery('${retryQuery}')" title="Retry">
-                            <i class="fas fa-redo"></i>
-                        </button>
-                        <button class="action-btn" onclick="AdvisorChat.copyResponse('${msgId}')" title="Copy">
-                            <i class="fas fa-copy"></i>
-                        </button>
-                        <button class="action-btn" onclick="AdvisorChat.printResponse('${msgId}')" title="Print">
-                            <i class="fas fa-print"></i>
-                        </button>
-                    </div>
-                `;
-                bubble.appendChild(footer);
-            }
+            // Add message footer with model badge and response actions (always show for assistant messages)
+            const modelName = msg.model || 'Gantry';
+            const msgId = 'msg-' + Date.now() + '-' + Math.random().toString(36).substr(2, 5);
+            const retryQuery = msg.userQuery ? this.escapeHtml(msg.userQuery).replace(/'/g, "\\'") : '';
+            const footer = document.createElement('div');
+            footer.className = 'message-footer';
+            footer.id = msgId;
+            footer.innerHTML = `
+                <div class="model-badge">${this.escapeHtml(modelName)}</div>
+                <div class="response-actions">
+                    <button class="action-btn action-btn-subtle" onclick="AdvisorChat.retryQuery('${retryQuery}')" title="Retry">
+                        <i class="fas fa-redo"></i>
+                    </button>
+                    <button class="action-btn" onclick="AdvisorChat.copyResponse('${msgId}')" title="Copy">
+                        <i class="fas fa-copy"></i>
+                    </button>
+                    <button class="action-btn" onclick="AdvisorChat.printResponse('${msgId}')" title="Print">
+                        <i class="fas fa-print"></i>
+                    </button>
+                </div>
+            `;
+            bubble.appendChild(footer);
         },
         
         /**
