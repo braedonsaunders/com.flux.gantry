@@ -854,7 +854,7 @@
             if (!grid) return;
 
             // Show loading skeleton (already in HTML)
-            GantryAPI.get('dashboard_scores')
+            API.get('dashboard_scores')
                 .then(function(response) {
                     if (response && response.scores) {
                         self.renderDashboardScores(response.scores);
