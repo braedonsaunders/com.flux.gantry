@@ -111,7 +111,6 @@
             if (detectedColor) {
                 const applied = applyDetectedColor(detectedColor);
                 if (applied) {
-                    console.log('[Gantry] Synced sidebar with NetSuite color:', detectedColor, 'from:', sourceElement, `(${sourceDoc})`);
                     return true;
                 }
             }
@@ -119,7 +118,6 @@
             return false;
 
         } catch (e) {
-            console.log('[Gantry] Color sync error:', e.message);
             return false;
         }
     }
@@ -135,16 +133,13 @@
             const success = syncNetSuiteColor();
 
             if (success) {
-                console.log('[Gantry] Color sync succeeded on attempt', attempts);
                 return;
             }
 
             if (attempts < maxRetries) {
-                const delay = initialDelay * Math.pow(2, attempts - 1); // 100, 200, 400, 800, 1600ms
-                console.log('[Gantry] Color detection attempt', attempts, 'failed, retrying in', delay + 'ms');
+                const delay = initialDelay * Math.pow(2, attempts - 1);
                 setTimeout(attempt, delay);
             } else {
-                console.log('[Gantry] No NetSuite header color detected after', maxRetries, 'attempts, using defaults');
                 // Apply default dark sidebar
                 applyDetectedColor('rgb(30, 41, 59)');
             }
@@ -306,7 +301,6 @@
         if (sidebarEl && !sidebarEl.classList.contains('sidebar-ready')) {
             requestAnimationFrame(() => {
                 sidebarEl.classList.add('sidebar-ready');
-                console.log('[Gantry] Sidebar revealed with synced color');
             });
         }
 
@@ -402,118 +396,18 @@
     if (sidebar && window.GANTRY_COLOR_READY && !sidebar.classList.contains('sidebar-ready')) {
         requestAnimationFrame(() => {
             sidebar.classList.add('sidebar-ready');
-            console.log('[Gantry] Sidebar revealed (DOM init fallback)');
         });
     }
-
-    // Log loaded state
-    console.log('[Gantry.App] Routes registered:', Object.keys(Router.routes));
     
-    // ==========================================
-    // DEBUG: DOM/CSS VISIBILITY DIAGNOSTICS
-    // ==========================================
-    function debugLayoutVisibility() {
-        console.group('[Gantry.Debug] Layout Visibility Diagnostics');
-
-        // Log viewport and document dimensions first
-        console.log('  VIEWPORT:', {
-            innerWidth: window.innerWidth,
-            innerHeight: window.innerHeight,
-            documentWidth: document.documentElement.scrollWidth,
-            documentHeight: document.documentElement.scrollHeight
-        });
-
-        const elements = {
-            'body': document.body,
-            '.gantry-wrapper': document.querySelector('.gantry-wrapper'),
-            '.gantry-sidebar': document.querySelector('.gantry-sidebar'),
-            '.gantry-main': document.querySelector('.gantry-main'),
-            '#gantry-view-container': document.getElementById('gantry-view-container'),
-            '#gantry-loading-screen': document.getElementById('gantry-loading-screen')
-        };
-
-        for (const [selector, el] of Object.entries(elements)) {
-            if (!el) {
-                console.warn(`  ${selector}: NOT FOUND`);
-                continue;
-            }
-
-            const style = window.getComputedStyle(el);
-            const rect = el.getBoundingClientRect();
-
-            // Log dimensions prominently
-            console.log(`  ${selector}: ${rect.width.toFixed(0)}x${rect.height.toFixed(0)} @ (${rect.left.toFixed(0)},${rect.top.toFixed(0)}) | display:${style.display} visibility:${style.visibility} opacity:${style.opacity}`);
-
-            // Log transform separately if not 'none'
-            if (style.transform !== 'none') {
-                console.log(`    ^ transform: ${style.transform}`);
-            }
-        }
-
-        // Check if sidebar-ready class is applied
-        const sidebar = document.querySelector('.gantry-sidebar');
-        if (sidebar) {
-            console.log('  Sidebar has sidebar-ready:', sidebar.classList.contains('sidebar-ready'));
-        }
-
-        // Check view container content
-        const viewContainer = document.getElementById('gantry-view-container');
-        if (viewContainer) {
-            console.log('  View container innerHTML length:', viewContainer.innerHTML.length);
-            console.log('  View container first 200 chars:', viewContainer.innerHTML.substring(0, 200));
-        }
-
-        // Check for any elements with problematic styles
-        const wrapper = document.querySelector('.gantry-wrapper');
-        if (wrapper) {
-            const wrapperStyle = window.getComputedStyle(wrapper);
-            if (wrapperStyle.display === 'none' || wrapperStyle.visibility === 'hidden' || parseFloat(wrapperStyle.opacity) === 0) {
-                console.error('  WARNING: .gantry-wrapper is hidden!');
-            }
-        }
-
-        // Check parent frame (if in iframe)
-        try {
-            if (window.parent && window.parent !== window) {
-                console.log('  PARENT FRAME DETECTED - checking iframe container...');
-                const parentDoc = window.parent.document;
-                const iframeWrapper = parentDoc.querySelector('.gantry-frame-wrapper');
-                const iframe = parentDoc.querySelector('.gantry-iframe');
-
-                if (iframeWrapper) {
-                    const wrapperRect = iframeWrapper.getBoundingClientRect();
-                    const wrapperStyle = window.parent.getComputedStyle(iframeWrapper);
-                    console.log(`  .gantry-frame-wrapper (PARENT): ${wrapperRect.width.toFixed(0)}x${wrapperRect.height.toFixed(0)} @ top:${wrapperStyle.top} | display:${wrapperStyle.display} visibility:${wrapperStyle.visibility}`);
-                } else {
-                    console.warn('  .gantry-frame-wrapper: NOT FOUND in parent');
-                }
-
-                if (iframe) {
-                    const iframeRect = iframe.getBoundingClientRect();
-                    console.log(`  .gantry-iframe (PARENT): ${iframeRect.width.toFixed(0)}x${iframeRect.height.toFixed(0)}`);
-                } else {
-                    console.warn('  .gantry-iframe: NOT FOUND in parent');
-                }
-            }
-        } catch (e) {
-            console.log('  Cannot access parent frame (cross-origin):', e.message);
-        }
-
-        console.groupEnd();
-    }
-
     // ==========================================
     // START APPLICATION
     // ==========================================
     async function startApp() {
-        console.log('[Gantry.App] startApp() called');
-
         // === FINAL SIDEBAR REVEAL SAFETY NET ===
         // Ensure sidebar is visible before showing app content
         const sidebarFinal = document.querySelector('.gantry-sidebar');
         if (sidebarFinal && !sidebarFinal.classList.contains('sidebar-ready')) {
             sidebarFinal.classList.add('sidebar-ready');
-            console.log('[Gantry] Sidebar revealed (startApp safety net)');
         }
 
         // Default to advisor as the first route
@@ -529,14 +423,12 @@
                     defaultRoute = SettingsController.data.defaultDashboard;
                 }
             } catch (e) {
-                console.warn('[Gantry.App] Could not load settings, using defaults', e);
+                // Use defaults if settings fail to load
             }
         }
 
         // Navigate to default route
-        console.log('[Gantry.App] About to navigate to:', defaultRoute);
         Router.navigate(defaultRoute);
-        console.log('[Gantry.App] Started - navigated to', defaultRoute);
 
         // === HIDE LOADING SCREEN ===
         // Fade out the loading screen after app is initialized
@@ -545,26 +437,14 @@
             // Small delay to ensure first paint of dashboard content
             setTimeout(() => {
                 loadingScreen.classList.add('hidden');
-                console.log('[Gantry.App] Loading screen hidden');
 
                 // Remove from DOM after animation completes
                 setTimeout(() => {
                     loadingScreen.remove();
-
-                    // Run diagnostics after everything should be visible
-                    console.log('[Gantry.App] Running post-load diagnostics...');
-                    debugLayoutVisibility();
                 }, 500);
             }, 100);
-        } else {
-            console.warn('[Gantry.App] Loading screen element not found');
-            // Run diagnostics anyway
-            debugLayoutVisibility();
         }
     }
-
-    // Expose debug function globally for manual testing
-    window.GantryDebugLayout = debugLayoutVisibility;
 
     startApp();
 

@@ -1175,6 +1175,4 @@
         ChartManager.resizeAll();
     });
 
-    console.log('[Gantry.Core] Loaded with visual components');
-
 })(window);

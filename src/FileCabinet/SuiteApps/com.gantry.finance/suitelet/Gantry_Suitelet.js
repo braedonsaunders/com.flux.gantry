@@ -304,7 +304,6 @@ define([
                         if (headerBottom > 0) {
                             headerBottom = Math.max(80, Math.min(120, headerBottom));
                             wrapper.style.top = headerBottom + 'px';
-                            console.log('[Gantry] Iframe positioned at top:', headerBottom + 'px');
                             return true;
                         }
 
