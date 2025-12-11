@@ -123,7 +123,11 @@ define([
             description: `Find a business entity (customer, vendor, employee, item, project) by name.
 Returns the entity's ID, full name, and type.
 Use this when the user mentions a company name, person name, product, or project.
-Examples: "Oracle", "John Smith", "Widget Pro", "Project Alpha"`,
+Examples: "Oracle", "John Smith", "Widget Pro", "Project Alpha"
+
+IMPORTANT: Use transaction_context to help determine entity type:
+- For bills/payments to vendors → use type_hint: "vendor"
+- For invoices/payments from customers → use type_hint: "customer"`,
             parameters: {
                 type: 'object',
                 properties: {
@@ -134,14 +138,40 @@ Examples: "Oracle", "John Smith", "Widget Pro", "Project Alpha"`,
                     type_hint: {
                         type: 'string',
                         enum: ['customer', 'vendor', 'employee', 'item', 'project', 'auto'],
-                        description: 'Expected entity type. Use "auto" to search all types.'
+                        description: 'Expected entity type. Use "vendor" for AP/bill queries, "customer" for AR/invoice queries, or "auto" to search all types.'
+                    },
+                    transaction_context: {
+                        type: 'string',
+                        enum: [
+                            'bill', 'vendor_bill', 'VendBill',
+                            'invoice', 'customer_invoice', 'CustInvc',
+                            'vendor_payment', 'VendPymt',
+                            'customer_payment', 'CustPymt',
+                            'expense', 'ap', 'ar'
+                        ],
+                        description: 'Optional: The transaction type context helps determine entity type. Bills/AP suggest vendor, Invoices/AR suggest customer.'
                     }
                 },
                 required: ['term']
             },
             execute: function(args) {
                 const term = args.term;
-                const typeHint = args.type_hint || 'auto';
+                let typeHint = args.type_hint || 'auto';
+
+                // Infer type_hint from transaction_context if not explicitly set
+                if (typeHint === 'auto' && args.transaction_context) {
+                    const ctx = args.transaction_context.toLowerCase();
+                    if (ctx.includes('bill') || ctx.includes('vend') || ctx.includes('ap') || ctx.includes('expense')) {
+                        typeHint = 'vendor';
+                    } else if (ctx.includes('invoice') || ctx.includes('cust') || ctx.includes('ar')) {
+                        typeHint = 'customer';
+                    }
+                    log.debug('resolve_entity inferred type from transaction_context', {
+                        term: term,
+                        transaction_context: args.transaction_context,
+                        inferred_type: typeHint
+                    });
+                }
 
                 try {
                     const result = EntityResolver.resolveEntityWithFallback(term, typeHint);
@@ -1510,7 +1540,17 @@ Transaction types (use common names OR NetSuite codes):
                 properties: {
                     transaction_type: {
                         type: 'string',
-                        description: 'Filter by transaction type. Use common names like "bill", "invoice", "payment" or NetSuite codes like "VendBill", "CustInvc"'
+                        enum: [
+                            // Common names (will be mapped)
+                            'bill', 'vendor bill', 'invoice', 'customer invoice',
+                            'payment', 'vendor payment', 'customer payment',
+                            'credit memo', 'journal', 'check', 'deposit', 'cash sale', 'expense report',
+                            // NetSuite internal codes (used directly)
+                            'VendBill', 'VendPymt', 'VendCred',
+                            'CustInvc', 'CustPymt', 'CustCred',
+                            'CashSale', 'Journal', 'Check', 'Deposit', 'ExpRept'
+                        ],
+                        description: 'Filter by transaction type. Use common names (bill, invoice) or NetSuite codes (VendBill, CustInvc)'
                     },
                     entity_id: {
                         type: 'number',
