@@ -314,15 +314,36 @@ You have access to tools that can:
     }
 
     /**
-     * Call LLM to decide what to do next
+     * Convert tool definitions to N/llm Tool objects
+     * NetSuite requires tools to be created with llm.createTool()
      */
+    function convertToLLMTools(toolDefinitions) {
+        const llmTools = [];
+
+        for (const toolDef of toolDefinitions) {
+            try {
+                const tool = llm.createTool({
+                    name: toolDef.name,
+                    description: toolDef.description,
+                    parameters: toolDef.parameters
+                });
+                llmTools.push(tool);
+            } catch (e) {
+                log.error('Tool conversion error', { tool: toolDef.name, error: e.message });
+            }
+        }
+
+        return llmTools;
+    }
+
     function callLLMForDecision(session) {
         try {
             // Build conversation context
             const conversationContext = Session.buildConversationContext(session);
 
-            // Get tool definitions
-            const tools = Tools.getToolDefinitions();
+            // Get tool definitions and convert to N/llm Tool objects
+            const toolDefinitions = Tools.getToolDefinitions();
+            const tools = convertToLLMTools(toolDefinitions);
 
             // Build the prompt
             const prompt = conversationContext + '\n\nBased on the above, what should I do next? Either call a tool or provide the final answer.';
