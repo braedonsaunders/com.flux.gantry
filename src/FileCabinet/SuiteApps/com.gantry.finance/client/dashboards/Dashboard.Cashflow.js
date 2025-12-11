@@ -669,13 +669,13 @@
                     });
                 }
 
-                // Net change cell
-                const netClass = w.netChange >= 0 ? 'positive' : 'negative';
+                // Net change cell - colored based on value
+                const netClass = w.netChange > 0 ? 'positive' : (w.netChange < 0 ? 'negative' : 'neutral');
                 html += `<td class="net-cell ${netClass}">${w.netChange >= 0 ? '+' : ''}${fmtMoney(w.netChange)}</td>`;
 
-                // End cash cell
-                const endCashClass = w.endingCash < 0 ? 'negative' : '';
-                html += `<td class="end-cash-cell ${endCashClass}">${fmtMoney(w.endingCash)}</td>`;
+                // End cash cell - pill style
+                const endCashPillClass = w.endingCash >= 0 ? 'positive' : 'negative';
+                html += `<td class="end-cash-cell"><span class="end-cash-pill ${endCashPillClass}">${fmtMoney(w.endingCash)}</span></td>`;
 
                 const tr = document.createElement("tr");
                 tr.className = w.endingCash < 0 ? 'cf-row-negative' : '';

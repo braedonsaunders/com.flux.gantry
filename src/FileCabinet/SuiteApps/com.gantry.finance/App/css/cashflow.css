@@ -45,10 +45,22 @@
     transition: var(--cf-transition);
 }
 
-/* Ensure KPI elements are always visible after skeleton replacement */
+/* Ensure KPI elements are always visible */
+.cf-kpi-row {
+    display: flex !important;
+    flex-wrap: nowrap !important;
+}
+
+.cf-kpi-row > .col {
+    flex: 1 1 0 !important;
+    min-width: 0 !important;
+    display: block !important;
+}
+
 .cf-kpi-row .cf-kpi-card {
     display: flex !important;
     visibility: visible !important;
+    opacity: 1 !important;
 }
 
 .cf-kpi-row .cf-kpi-card .kpi-content {
@@ -61,13 +73,39 @@
 .cf-kpi-row .cf-kpi-card .kpi-value,
 .cf-kpi-row .cf-kpi-card .kpi-label,
 .cf-kpi-row .cf-kpi-card .kpi-sub {
+    display: block !important;
     visibility: visible !important;
     opacity: 1 !important;
 }
 
-.cf-kpi-row .col {
+/* Specific fix for Lowest Point KPI card */
+#cfLowestCashCard {
     display: flex !important;
     visibility: visible !important;
+    opacity: 1 !important;
+    min-height: 50px !important;
+}
+
+#cfLowestCashCard .kpi-content {
+    display: flex !important;
+    flex-direction: column !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+    overflow: visible !important;
+}
+
+#cfLowestCashCard .kpi-value,
+#cfLowestCashCard .kpi-label,
+#cfLowestCashCard .kpi-sub {
+    display: block !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+    overflow: visible !important;
+    color: inherit !important;
+}
+
+#cfLowestCashCard .kpi-value.text-danger {
+    color: #dc2626 !important;
 }
 
 .cf-kpi-card.cf-kpi-warning {
@@ -98,8 +136,8 @@
     background: #fff;
     border: 1px solid var(--cf-border);
     border-radius: var(--cf-radius-sm);
-    padding: 10px 14px;
-    margin-bottom: 6px;
+    padding: 5px 10px;
+    margin-bottom: 3px;
     transition: var(--cf-transition);
     cursor: pointer;
 }
@@ -107,34 +145,33 @@
 .cf-bucket-card:hover {
     background: var(--cf-light);
     border-color: #cbd5e1;
-    box-shadow: var(--cf-shadow);
 }
 
 .cf-bucket-card .bucket-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 4px;
+    margin-bottom: 2px;
 }
 
 .cf-bucket-card .bucket-label {
     font-weight: 500;
-    font-size: 11px;
+    font-size: 10px;
     color: var(--cf-gray);
 }
 
 .cf-bucket-card .bucket-amount {
     font-weight: 600;
-    font-size: 13px;
+    font-size: 11px;
     color: var(--cf-dark);
 }
 
 .cf-bucket-card .bucket-bar {
-    height: 4px;
+    height: 3px;
     background: var(--cf-border);
     border-radius: 2px;
     overflow: hidden;
-    margin-bottom: 4px;
+    margin-bottom: 2px;
 }
 
 .cf-bucket-card .bucket-bar-fill {
@@ -355,11 +392,41 @@
     font-size: 13px;
 }
 
+.cf-timeline-table .net-cell.positive {
+    color: var(--cf-success);
+}
+
+.cf-timeline-table .net-cell.negative {
+    color: var(--cf-danger);
+}
+
+.cf-timeline-table .net-cell.neutral {
+    color: var(--cf-gray);
+}
+
 .cf-timeline-table .end-cash-cell {
     text-align: right;
     font-weight: 700;
-    font-size: 14px;
-    padding-right: 20px;
+    font-size: 12px;
+    padding-right: 12px;
+}
+
+.cf-timeline-table .end-cash-pill {
+    display: inline-block;
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-weight: 600;
+    font-size: 12px;
+}
+
+.cf-timeline-table .end-cash-pill.positive {
+    background: rgba(16, 185, 129, 0.12);
+    color: #059669;
+}
+
+.cf-timeline-table .end-cash-pill.negative {
+    background: rgba(239, 68, 68, 0.12);
+    color: #dc2626;
 }
 
 .cf-timeline-header {
