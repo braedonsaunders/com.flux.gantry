@@ -80,26 +80,142 @@ define([
 
     /**
      * Build date filter based on period string
+     * Uses fiscal calendar from ConfigLib for accurate fiscal year handling
      */
     function buildPeriodFilter(period, dateField) {
         dateField = dateField || 'transaction.trandate';
+
+        // Get fiscal calendar for smart period detection
+        const fiscalCalendar = ConfigLib.getFiscalCalendar();
+        const fyStartDate = fiscalCalendar.fiscalYearStartDate;  // YYYY-MM-DD
+        const fyEndDate = fiscalCalendar.fiscalYearEndDate;      // YYYY-MM-DD
+        const fyStartMonth = fiscalCalendar.fiscalYearStartMonth || 0;  // 0-11
+        const fyStartDay = fiscalCalendar.fiscalYearStartDay || 1;
+
+        // Calculate prior fiscal year dates
+        const now = new Date();
+        const fyStart = new Date(fyStartDate);
+        const fyEnd = new Date(fyEndDate);
+
+        // Last fiscal year
+        const lastFyStart = new Date(fyStart);
+        lastFyStart.setFullYear(lastFyStart.getFullYear() - 1);
+        const lastFyEnd = new Date(fyEnd);
+        lastFyEnd.setFullYear(lastFyEnd.getFullYear() - 1);
+
+        // 2 fiscal years ago
+        const twoFyStart = new Date(fyStart);
+        twoFyStart.setFullYear(twoFyStart.getFullYear() - 2);
+        const twoFyEnd = new Date(fyEnd);
+        twoFyEnd.setFullYear(twoFyEnd.getFullYear() - 2);
+
+        // 3 fiscal years ago
+        const threeFyStart = new Date(fyStart);
+        threeFyStart.setFullYear(threeFyStart.getFullYear() - 3);
+        const threeFyEnd = new Date(fyEnd);
+        threeFyEnd.setFullYear(threeFyEnd.getFullYear() - 3);
+
+        // Helper to format date for SQL
+        const toSqlDate = (d) => {
+            const year = d.getFullYear();
+            const month = String(d.getMonth() + 1).padStart(2, '0');
+            const day = String(d.getDate()).padStart(2, '0');
+            return `${year}-${month}-${day}`;
+        };
+
+        // Calculate fiscal quarters based on fiscal year start
+        const getFiscalQuarterDates = (fyStartDate, quarterNum) => {
+            const fy = new Date(fyStartDate);
+            const qStart = new Date(fy);
+            qStart.setMonth(fy.getMonth() + (quarterNum - 1) * 3);
+            const qEnd = new Date(qStart);
+            qEnd.setMonth(qStart.getMonth() + 3);
+            qEnd.setDate(qEnd.getDate() - 1);
+            return { start: toSqlDate(qStart), end: toSqlDate(qEnd) };
+        };
+
+        // Current fiscal year quarters
+        const fyQ1 = getFiscalQuarterDates(fyStart, 1);
+        const fyQ2 = getFiscalQuarterDates(fyStart, 2);
+        const fyQ3 = getFiscalQuarterDates(fyStart, 3);
+        const fyQ4 = getFiscalQuarterDates(fyStart, 4);
+
+        // Last fiscal year quarters
+        const lastFyQ1 = getFiscalQuarterDates(lastFyStart, 1);
+        const lastFyQ2 = getFiscalQuarterDates(lastFyStart, 2);
+        const lastFyQ3 = getFiscalQuarterDates(lastFyStart, 3);
+        const lastFyQ4 = getFiscalQuarterDates(lastFyStart, 4);
+
+        // YTD comparison point in prior year (same elapsed time)
+        const daysIntoFy = Math.floor((now - fyStart) / (1000 * 60 * 60 * 24));
+        const priorYtdEnd = new Date(lastFyStart);
+        priorYtdEnd.setDate(priorYtdEnd.getDate() + daysIntoFy);
+
+        // Latest closed period end date (for complete accounting data)
+        const closedPeriodEnd = fiscalCalendar.latestClosedPeriod ?
+            fiscalCalendar.latestClosedPeriod.endDate : toSqlDate(now);
+
         const periodFilters = {
+            // === Daily ===
             'today': `${dateField} = CURRENT_DATE`,
             'yesterday': `${dateField} = CURRENT_DATE - 1`,
+
+            // === Weekly ===
             'this_week': `${dateField} >= TRUNC(CURRENT_DATE, 'IW')`,
             'last_week': `${dateField} >= TRUNC(CURRENT_DATE, 'IW') - 7 AND ${dateField} < TRUNC(CURRENT_DATE, 'IW')`,
+
+            // === Monthly ===
             'this_month': `${dateField} >= TRUNC(CURRENT_DATE, 'MM')`,
             'last_month': `${dateField} >= ADD_MONTHS(TRUNC(CURRENT_DATE, 'MM'), -1) AND ${dateField} < TRUNC(CURRENT_DATE, 'MM')`,
+
+            // === Calendar Quarters ===
             'this_quarter': `${dateField} >= TRUNC(CURRENT_DATE, 'Q')`,
             'last_quarter': `${dateField} >= ADD_MONTHS(TRUNC(CURRENT_DATE, 'Q'), -3) AND ${dateField} < TRUNC(CURRENT_DATE, 'Q')`,
-            'ytd': `${dateField} >= TRUNC(CURRENT_DATE, 'YYYY')`,
+
+            // === Fiscal Year-to-Date (uses actual fiscal year start) ===
+            'ytd': `${dateField} >= TO_DATE('${fyStartDate}', 'YYYY-MM-DD')`,
+            'fytd': `${dateField} >= TO_DATE('${fyStartDate}', 'YYYY-MM-DD')`,  // Alias
+
+            // === Fiscal YTD to last closed period (complete accounting data) ===
+            'ytd_closed': `${dateField} >= TO_DATE('${fyStartDate}', 'YYYY-MM-DD') AND ${dateField} <= TO_DATE('${closedPeriodEnd}', 'YYYY-MM-DD')`,
+            'fytd_closed': `${dateField} >= TO_DATE('${fyStartDate}', 'YYYY-MM-DD') AND ${dateField} <= TO_DATE('${closedPeriodEnd}', 'YYYY-MM-DD')`,  // Alias
+
+            // === Full Fiscal Years ===
+            'this_fiscal_year': `${dateField} >= TO_DATE('${fyStartDate}', 'YYYY-MM-DD') AND ${dateField} <= TO_DATE('${fyEndDate}', 'YYYY-MM-DD')`,
+            'last_fiscal_year': `${dateField} >= TO_DATE('${toSqlDate(lastFyStart)}', 'YYYY-MM-DD') AND ${dateField} <= TO_DATE('${toSqlDate(lastFyEnd)}', 'YYYY-MM-DD')`,
+            '2_fiscal_years_ago': `${dateField} >= TO_DATE('${toSqlDate(twoFyStart)}', 'YYYY-MM-DD') AND ${dateField} <= TO_DATE('${toSqlDate(twoFyEnd)}', 'YYYY-MM-DD')`,
+            '3_fiscal_years_ago': `${dateField} >= TO_DATE('${toSqlDate(threeFyStart)}', 'YYYY-MM-DD') AND ${dateField} <= TO_DATE('${toSqlDate(threeFyEnd)}', 'YYYY-MM-DD')`,
+
+            // === Prior Year YTD Comparison (same point in last fiscal year) ===
+            'prior_year_ytd': `${dateField} >= TO_DATE('${toSqlDate(lastFyStart)}', 'YYYY-MM-DD') AND ${dateField} <= TO_DATE('${toSqlDate(priorYtdEnd)}', 'YYYY-MM-DD')`,
+
+            // === Current Fiscal Year Quarters ===
+            'fiscal_q1': `${dateField} >= TO_DATE('${fyQ1.start}', 'YYYY-MM-DD') AND ${dateField} <= TO_DATE('${fyQ1.end}', 'YYYY-MM-DD')`,
+            'fiscal_q2': `${dateField} >= TO_DATE('${fyQ2.start}', 'YYYY-MM-DD') AND ${dateField} <= TO_DATE('${fyQ2.end}', 'YYYY-MM-DD')`,
+            'fiscal_q3': `${dateField} >= TO_DATE('${fyQ3.start}', 'YYYY-MM-DD') AND ${dateField} <= TO_DATE('${fyQ3.end}', 'YYYY-MM-DD')`,
+            'fiscal_q4': `${dateField} >= TO_DATE('${fyQ4.start}', 'YYYY-MM-DD') AND ${dateField} <= TO_DATE('${fyQ4.end}', 'YYYY-MM-DD')`,
+
+            // === Last Fiscal Year Quarters ===
+            'last_fiscal_q1': `${dateField} >= TO_DATE('${lastFyQ1.start}', 'YYYY-MM-DD') AND ${dateField} <= TO_DATE('${lastFyQ1.end}', 'YYYY-MM-DD')`,
+            'last_fiscal_q2': `${dateField} >= TO_DATE('${lastFyQ2.start}', 'YYYY-MM-DD') AND ${dateField} <= TO_DATE('${lastFyQ2.end}', 'YYYY-MM-DD')`,
+            'last_fiscal_q3': `${dateField} >= TO_DATE('${lastFyQ3.start}', 'YYYY-MM-DD') AND ${dateField} <= TO_DATE('${lastFyQ3.end}', 'YYYY-MM-DD')`,
+            'last_fiscal_q4': `${dateField} >= TO_DATE('${lastFyQ4.start}', 'YYYY-MM-DD') AND ${dateField} <= TO_DATE('${lastFyQ4.end}', 'YYYY-MM-DD')`,
+
+            // === Rolling Periods (calendar-based) ===
             'last_30_days': `${dateField} >= CURRENT_DATE - 30`,
             'last_60_days': `${dateField} >= CURRENT_DATE - 60`,
             'last_90_days': `${dateField} >= CURRENT_DATE - 90`,
+            'last_180_days': `${dateField} >= CURRENT_DATE - 180`,
             'last_365_days': `${dateField} >= CURRENT_DATE - 365`,
-            'last_year': `${dateField} >= CURRENT_DATE - 365`,  // Alias for last_365_days
             'last_2_years': `${dateField} >= CURRENT_DATE - 730`,
-            'all': '1=1'  // No date restriction
+            'last_3_years': `${dateField} >= CURRENT_DATE - 1095`,
+
+            // === Multi-Year Fiscal ===
+            'last_2_fiscal_years': `${dateField} >= TO_DATE('${toSqlDate(lastFyStart)}', 'YYYY-MM-DD')`,
+            'last_3_fiscal_years': `${dateField} >= TO_DATE('${toSqlDate(twoFyStart)}', 'YYYY-MM-DD')`,
+
+            // === All Time ===
+            'all': '1=1'
         };
         return periodFilters[period] || periodFilters['all'];
     }
@@ -876,8 +992,18 @@ Can filter by minimum/maximum spend, class, department, and subsidiary.`,
                     },
                     period: {
                         type: 'string',
-                        enum: ['this_month', 'last_month', 'this_quarter', 'last_quarter', 'ytd', 'last_30_days', 'last_90_days', 'last_365_days', 'last_year', 'last_2_years', 'all'],
-                        description: 'Time period filter (default: all)'
+                        enum: [
+                            'today', 'yesterday', 'this_week', 'last_week',
+                            'this_month', 'last_month', 'this_quarter', 'last_quarter',
+                            'ytd', 'fytd', 'ytd_closed', 'prior_year_ytd',
+                            'this_fiscal_year', 'last_fiscal_year', '2_fiscal_years_ago', '3_fiscal_years_ago',
+                            'fiscal_q1', 'fiscal_q2', 'fiscal_q3', 'fiscal_q4',
+                            'last_fiscal_q1', 'last_fiscal_q2', 'last_fiscal_q3', 'last_fiscal_q4',
+                            'last_30_days', 'last_60_days', 'last_90_days', 'last_180_days', 'last_365_days',
+                            'last_2_years', 'last_3_years', 'last_2_fiscal_years', 'last_3_fiscal_years',
+                            'all'
+                        ],
+                        description: 'Time period filter. Fiscal periods use actual fiscal year from accounting periods. ytd_closed uses last closed period for complete data. prior_year_ytd matches same point in last fiscal year for comparison. (default: all)'
                     },
                     min_spend: {
                         type: 'number',
@@ -1029,8 +1155,18 @@ Can filter by minimum/maximum revenue, class, department, subsidiary, and sales 
                     },
                     period: {
                         type: 'string',
-                        enum: ['this_month', 'last_month', 'this_quarter', 'last_quarter', 'ytd', 'last_30_days', 'last_90_days', 'last_365_days', 'last_year', 'last_2_years', 'all'],
-                        description: 'Time period filter (default: all)'
+                        enum: [
+                            'today', 'yesterday', 'this_week', 'last_week',
+                            'this_month', 'last_month', 'this_quarter', 'last_quarter',
+                            'ytd', 'fytd', 'ytd_closed', 'prior_year_ytd',
+                            'this_fiscal_year', 'last_fiscal_year', '2_fiscal_years_ago', '3_fiscal_years_ago',
+                            'fiscal_q1', 'fiscal_q2', 'fiscal_q3', 'fiscal_q4',
+                            'last_fiscal_q1', 'last_fiscal_q2', 'last_fiscal_q3', 'last_fiscal_q4',
+                            'last_30_days', 'last_60_days', 'last_90_days', 'last_180_days', 'last_365_days',
+                            'last_2_years', 'last_3_years', 'last_2_fiscal_years', 'last_3_fiscal_years',
+                            'all'
+                        ],
+                        description: 'Time period filter. Fiscal periods use actual fiscal year from accounting periods. ytd_closed uses last closed period for complete data. prior_year_ytd matches same point in last fiscal year for comparison. (default: all)'
                     },
                     min_revenue: {
                         type: 'number',
@@ -1225,8 +1361,18 @@ NOTE: Class/department/location filters use the segment values from the GL accou
                     },
                     period: {
                         type: 'string',
-                        enum: ['this_month', 'last_month', 'this_quarter', 'last_quarter', 'ytd', 'last_30_days', 'last_90_days', 'last_365_days', 'last_year', 'last_2_years', 'all'],
-                        description: 'Time period filter (default: all)'
+                        enum: [
+                            'today', 'yesterday', 'this_week', 'last_week',
+                            'this_month', 'last_month', 'this_quarter', 'last_quarter',
+                            'ytd', 'fytd', 'ytd_closed', 'prior_year_ytd',
+                            'this_fiscal_year', 'last_fiscal_year', '2_fiscal_years_ago', '3_fiscal_years_ago',
+                            'fiscal_q1', 'fiscal_q2', 'fiscal_q3', 'fiscal_q4',
+                            'last_fiscal_q1', 'last_fiscal_q2', 'last_fiscal_q3', 'last_fiscal_q4',
+                            'last_30_days', 'last_60_days', 'last_90_days', 'last_180_days', 'last_365_days',
+                            'last_2_years', 'last_3_years', 'last_2_fiscal_years', 'last_3_fiscal_years',
+                            'all'
+                        ],
+                        description: 'Time period filter. Fiscal periods use actual fiscal year from accounting periods. ytd_closed uses last closed period for complete data. prior_year_ytd matches same point in last fiscal year for comparison. (default: all)'
                     },
                     limit: {
                         type: 'number',
@@ -2930,8 +3076,15 @@ Use for: "expense breakdown", "where is money going", "expenses by category"`,
                 properties: {
                     period: {
                         type: 'string',
-                        enum: ['this_month', 'last_month', 'this_quarter', 'last_quarter', 'ytd', 'last_90_days', 'last_365_days', 'last_year'],
-                        description: 'Time period (default: ytd)'
+                        enum: [
+                            'this_month', 'last_month', 'this_quarter', 'last_quarter',
+                            'ytd', 'fytd', 'ytd_closed', 'prior_year_ytd',
+                            'this_fiscal_year', 'last_fiscal_year', '2_fiscal_years_ago', '3_fiscal_years_ago',
+                            'fiscal_q1', 'fiscal_q2', 'fiscal_q3', 'fiscal_q4',
+                            'last_fiscal_q1', 'last_fiscal_q2', 'last_fiscal_q3', 'last_fiscal_q4',
+                            'last_90_days', 'last_365_days', 'last_2_fiscal_years', 'last_3_fiscal_years'
+                        ],
+                        description: 'Time period. Fiscal periods use actual fiscal year from accounting periods. ytd_closed uses last closed period for complete data. prior_year_ytd matches same point in last fiscal year for comparison. (default: ytd)'
                     },
                     department_id: {
                         type: 'number',
