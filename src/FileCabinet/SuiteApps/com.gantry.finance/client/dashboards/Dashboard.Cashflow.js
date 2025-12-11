@@ -684,10 +684,10 @@
                 elNetFlow.style.color = netFlow >= 0 ? "#10b981" : "#ef4444";
             }
             if (netFlowIcon) {
-                netFlowIcon.className = netFlow >= 0 ? "cfo-icon bg-green-soft" : "cfo-icon bg-red-soft";
+                netFlowIcon.className = netFlow >= 0 ? "cf-vital-icon-ring bg-green-gradient" : "cf-vital-icon-ring bg-red-gradient";
             }
             if (netFlowIconI) {
-                netFlowIconI.className = netFlow >= 0 ? "fas fa-arrow-up text-green" : "fas fa-arrow-down text-red";
+                netFlowIconI.className = netFlow >= 0 ? "fas fa-arrow-up" : "fas fa-arrow-down";
             }
 
             // Cash Position Chart
