@@ -797,42 +797,161 @@ define(['N/log', 'N/runtime', 'N/record', '../Lib_Config'], function(log, runtim
         return details;
     }
 
+    /**
+     * Apply pivot transformation to convert long-format data to wide-format
+     * Example: rows with (account, department, amount) become rows with (account, Dept1, Dept2, ...)
+     *
+     * @param {Array} rows - Original rows in long format
+     * @param {Array} columns - Original column names
+     * @param {Object} pivotConfig - Configuration for pivot
+     *   - rowField: Field to use as row identifier (e.g., 'account_name')
+     *   - columnField: Field whose values become column headers (e.g., 'department')
+     *   - valueField: Field containing values to pivot (e.g., 'amount')
+     *   - rowGroupField: Optional field for grouping rows (e.g., 'account_type_name')
+     *   - showTotalColumn: Whether to add a total column
+     * @returns {Object} { rows: pivotedRows, columns: newColumns }
+     */
+    function applyPivotTransformation(rows, columns, pivotConfig) {
+        if (!rows || !rows.length || !pivotConfig || !pivotConfig.enabled) {
+            return { rows: rows, columns: columns };
+        }
+
+        var rowField = pivotConfig.rowField;
+        var columnField = pivotConfig.columnField;
+        var valueField = pivotConfig.valueField;
+        var rowGroupField = pivotConfig.rowGroupField;
+        var showTotalColumn = pivotConfig.showTotalColumn !== false;
+
+        // Collect unique column values (these become new column headers)
+        var columnValues = [];
+        var columnValueSet = {};
+        rows.forEach(function(row) {
+            var colVal = row[columnField];
+            if (colVal && !columnValueSet[colVal]) {
+                columnValueSet[colVal] = true;
+                columnValues.push(colVal);
+            }
+        });
+
+        // Sort column values alphabetically
+        columnValues.sort();
+
+        // Build map of rowKey -> pivoted row data
+        var rowMap = {};
+        var rowOrder = []; // Preserve original ordering
+
+        rows.forEach(function(row) {
+            var rowKey = row[rowField];
+            var colVal = row[columnField];
+            var value = row[valueField] || 0;
+
+            if (!rowMap[rowKey]) {
+                rowMap[rowKey] = {
+                    _rowKey: rowKey,
+                    _total: 0
+                };
+
+                // Copy non-pivot fields to the pivoted row
+                columns.forEach(function(col) {
+                    if (col !== columnField && col !== valueField) {
+                        rowMap[rowKey][col] = row[col];
+                    }
+                });
+
+                // Initialize all pivot columns to 0
+                columnValues.forEach(function(cv) {
+                    rowMap[rowKey][cv] = 0;
+                });
+
+                rowOrder.push(rowKey);
+            }
+
+            // Set the value for this column
+            rowMap[rowKey][colVal] = value;
+            rowMap[rowKey]._total += value;
+        });
+
+        // Build pivoted rows in original order
+        var pivotedRows = rowOrder.map(function(rowKey) {
+            var row = rowMap[rowKey];
+            var result = {};
+
+            // Copy non-pivot fields first
+            columns.forEach(function(col) {
+                if (col !== columnField && col !== valueField && row[col] !== undefined) {
+                    result[col] = row[col];
+                }
+            });
+
+            // Add pivot columns
+            columnValues.forEach(function(cv) {
+                result[cv] = row[cv];
+            });
+
+            // Add total column if requested
+            if (showTotalColumn) {
+                result['Total'] = row._total;
+            }
+
+            return result;
+        });
+
+        // Build new column list
+        var newColumns = [];
+        columns.forEach(function(col) {
+            if (col !== columnField && col !== valueField) {
+                newColumns.push(col);
+            }
+        });
+        newColumns = newColumns.concat(columnValues);
+        if (showTotalColumn) {
+            newColumns.push('Total');
+        }
+
+        return {
+            rows: pivotedRows,
+            columns: newColumns,
+            pivotApplied: true,
+            groupBy: rowGroupField // Preserve groupBy for the pivoted table
+        };
+    }
+
     return {
         // Constants
         DEFAULT_MAX_TOKENS: DEFAULT_MAX_TOKENS,
         GOVERNANCE_THRESHOLD_LLM: GOVERNANCE_THRESHOLD_LLM,
         GOVERNANCE_THRESHOLD_QUERY: GOVERNANCE_THRESHOLD_QUERY,
         SCA_TOKEN_LIMITS: SCA_TOKEN_LIMITS,
-        
+
         // Query utilities
         cleanQuery: cleanQuery,
-        
+
         // JSON utilities
         extractJsonFromText: extractJsonFromText,
         extractAndRemoveJson: extractAndRemoveJson,
-        
+
         // Governance
         checkGovernance: checkGovernance,
         buildPartialResponse: buildPartialResponse,
-        
+
         // Formatting
         formatDateYMD: formatDateYMD,
         formatResultsCompact: formatResultsCompact,
         formatChatHistoryAsText: formatChatHistoryAsText,
         mapStatus: mapStatus,
-        
+
         // Session
         extractTopicsFromQuery: extractTopicsFromQuery,
-        
+
         // Schema Discovery
         getRecordSchema: getRecordSchema,
-        
+
         // Data Transformation
         applyPivotTransformation: applyPivotTransformation,
-        
+
         // Error handling
         extractErrorDetails: extractErrorDetails,
-        
+
         // Debug mode (centralized control for all advisor modules)
         isDebugMode: isDebugMode,
         resetDebugModeCache: resetDebugModeCache,
@@ -840,122 +959,3 @@ define(['N/log', 'N/runtime', 'N/record', '../Lib_Config'], function(log, runtim
         debugLog: debugLog
     };
 });
-
-/**
- * Apply pivot transformation to convert long-format data to wide-format
- * Example: rows with (account, department, amount) become rows with (account, Dept1, Dept2, ...)
- * 
- * @param {Array} rows - Original rows in long format
- * @param {Array} columns - Original column names
- * @param {Object} pivotConfig - Configuration for pivot
- *   - rowField: Field to use as row identifier (e.g., 'account_name')
- *   - columnField: Field whose values become column headers (e.g., 'department')
- *   - valueField: Field containing values to pivot (e.g., 'amount')
- *   - rowGroupField: Optional field for grouping rows (e.g., 'account_type_name')
- *   - showTotalColumn: Whether to add a total column
- * @returns {Object} { rows: pivotedRows, columns: newColumns }
- */
-function applyPivotTransformation(rows, columns, pivotConfig) {
-    if (!rows || !rows.length || !pivotConfig || !pivotConfig.enabled) {
-        return { rows: rows, columns: columns };
-    }
-    
-    var rowField = pivotConfig.rowField;
-    var columnField = pivotConfig.columnField;
-    var valueField = pivotConfig.valueField;
-    var rowGroupField = pivotConfig.rowGroupField;
-    var showTotalColumn = pivotConfig.showTotalColumn !== false;
-    
-    // Collect unique column values (these become new column headers)
-    var columnValues = [];
-    var columnValueSet = {};
-    rows.forEach(function(row) {
-        var colVal = row[columnField];
-        if (colVal && !columnValueSet[colVal]) {
-            columnValueSet[colVal] = true;
-            columnValues.push(colVal);
-        }
-    });
-    
-    // Sort column values alphabetically
-    columnValues.sort();
-    
-    // Build map of rowKey -> pivoted row data
-    var rowMap = {};
-    var rowOrder = []; // Preserve original ordering
-    
-    rows.forEach(function(row) {
-        var rowKey = row[rowField];
-        var colVal = row[columnField];
-        var value = row[valueField] || 0;
-        
-        if (!rowMap[rowKey]) {
-            rowMap[rowKey] = {
-                _rowKey: rowKey,
-                _total: 0
-            };
-            
-            // Copy non-pivot fields to the pivoted row
-            columns.forEach(function(col) {
-                if (col !== columnField && col !== valueField) {
-                    rowMap[rowKey][col] = row[col];
-                }
-            });
-            
-            // Initialize all pivot columns to 0
-            columnValues.forEach(function(cv) {
-                rowMap[rowKey][cv] = 0;
-            });
-            
-            rowOrder.push(rowKey);
-        }
-        
-        // Set the value for this column
-        rowMap[rowKey][colVal] = value;
-        rowMap[rowKey]._total += value;
-    });
-    
-    // Build pivoted rows in original order
-    var pivotedRows = rowOrder.map(function(rowKey) {
-        var row = rowMap[rowKey];
-        var result = {};
-        
-        // Copy non-pivot fields first
-        columns.forEach(function(col) {
-            if (col !== columnField && col !== valueField && row[col] !== undefined) {
-                result[col] = row[col];
-            }
-        });
-        
-        // Add pivot columns
-        columnValues.forEach(function(cv) {
-            result[cv] = row[cv];
-        });
-        
-        // Add total column if requested
-        if (showTotalColumn) {
-            result['Total'] = row._total;
-        }
-        
-        return result;
-    });
-    
-    // Build new column list
-    var newColumns = [];
-    columns.forEach(function(col) {
-        if (col !== columnField && col !== valueField) {
-            newColumns.push(col);
-        }
-    });
-    newColumns = newColumns.concat(columnValues);
-    if (showTotalColumn) {
-        newColumns.push('Total');
-    }
-    
-    return {
-        rows: pivotedRows,
-        columns: newColumns,
-        pivotApplied: true,
-        groupBy: rowGroupField // Preserve groupBy for the pivoted table
-    };
-}
