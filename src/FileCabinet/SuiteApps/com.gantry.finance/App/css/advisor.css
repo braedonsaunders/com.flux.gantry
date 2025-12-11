@@ -284,6 +284,10 @@
     max-width: 700px;
 }
 
+.query-categories.animate-in {
+    animation: panelSlide 0.3s ease-out;
+}
+
 .query-category-btn {
     display: flex;
     flex-direction: column;
