@@ -224,8 +224,20 @@ define([
 
     /**
      * Format query result for LLM consumption
+     *
+     * TRUNCATION AWARENESS: When results hit the query limit, the response includes
+     * truncation metadata so the LLM can inform the user and suggest using DataStore
+     * to fetch additional rows if needed.
+     *
+     * @param {object} result - Query result with rows, columns
+     * @param {string} toolName - Name of the tool for context
+     * @param {object} [options] - Optional settings
+     * @param {number} [options.limit] - The limit used in the query (for truncation detection)
+     * @returns {object} Formatted result with truncation awareness
      */
-    function formatResult(result, toolName) {
+    function formatResult(result, toolName, options) {
+        options = options || {};
+
         if (!result.success) {
             return {
                 success: false,
@@ -234,13 +246,31 @@ define([
             };
         }
 
-        return {
+        const rowCount = result.rows ? result.rows.length : 0;
+        const formatted = {
             success: true,
-            rowCount: result.rows ? result.rows.length : 0,
+            rowCount: rowCount,
             columns: result.columns || [],
             rows: result.rows || [],
             tool: toolName
         };
+
+        // TRUNCATION AWARENESS: Detect when we hit the limit
+        // If the number of rows equals the limit, there may be more data
+        if (options.limit && rowCount >= options.limit) {
+            formatted.truncated = true;
+            formatted.queryLimit = options.limit;
+            formatted.truncationNote = `Results limited to ${options.limit} rows. More data may be available. ` +
+                `To see additional records, the user can ask for more results or use more specific filters.`;
+
+            log.debug('formatResult: Results truncated', {
+                tool: toolName,
+                limit: options.limit,
+                rowCount: rowCount
+            });
+        }
+
+        return formatted;
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -691,7 +721,7 @@ Can filter by minimum outstanding amount, specific aging buckets, and subsidiary
                     },
                     limit: {
                         type: 'number',
-                        description: 'Maximum vendors to return (default: 50)'
+                        description: 'Maximum vendors to return (default: 500, no hard limit - ask for more if needed)'
                     },
                     sort_by: {
                         type: 'string',
@@ -711,7 +741,7 @@ Can filter by minimum outstanding amount, specific aging buckets, and subsidiary
                 }
 
                 const subsidiaryFilter = args.subsidiary_id ? `AND transaction.subsidiary = ${args.subsidiary_id}` : '';
-                const limit = args.limit || 50;
+                const limit = args.limit || 500;  // Increased default - no unnecessary restriction
 
                 // Determine sort order
                 let orderBy = 'total_unpaid DESC';
@@ -768,8 +798,9 @@ Can filter by minimum outstanding amount, specific aging buckets, and subsidiary
                         ORDER BY vendor.companyname, transaction.duedate
                         FETCH FIRST ${limit * 10} ROWS ONLY
                     `;
+                    const detailLimit = limit * 10;
                     const result = QueryExecutor.executeQuery(detailQuery);
-                    return formatResult(result, 'get_ap_aging');
+                    return formatResult(result, 'get_ap_aging', { limit: detailLimit });
                 }
 
                 const query = `
@@ -798,7 +829,7 @@ Can filter by minimum outstanding amount, specific aging buckets, and subsidiary
                 `;
 
                 const result = QueryExecutor.executeQuery(query);
-                return formatResult(result, 'get_ap_aging');
+                return formatResult(result, 'get_ap_aging', { limit: limit });
             },
             displayName: function(args) {
                 if (args.vendor_ids && args.vendor_ids.length > 0) {
@@ -855,7 +886,7 @@ Can filter by minimum outstanding amount, specific aging buckets, subsidiary, an
                     },
                     limit: {
                         type: 'number',
-                        description: 'Maximum customers to return (default: 50)'
+                        description: 'Maximum customers to return (default: 500, no hard limit - ask for more if needed)'
                     },
                     sort_by: {
                         type: 'string',
@@ -876,7 +907,7 @@ Can filter by minimum outstanding amount, specific aging buckets, subsidiary, an
 
                 const subsidiaryFilter = args.subsidiary_id ? `AND transaction.subsidiary = ${args.subsidiary_id}` : '';
                 const salesRepFilter = args.sales_rep_id ? `AND transaction.salesrep = ${args.sales_rep_id}` : '';
-                const limit = args.limit || 50;
+                const limit = args.limit || 500;  // Increased default - no unnecessary restriction
 
                 // Determine sort order
                 let orderBy = 'total_unpaid DESC';
@@ -934,8 +965,9 @@ Can filter by minimum outstanding amount, specific aging buckets, subsidiary, an
                         ORDER BY customer.companyname, transaction.duedate
                         FETCH FIRST ${limit * 10} ROWS ONLY
                     `;
+                    const detailLimit = limit * 10;  // More rows for detail view
                     const result = QueryExecutor.executeQuery(detailQuery);
-                    return formatResult(result, 'get_ar_aging');
+                    return formatResult(result, 'get_ar_aging', { limit: detailLimit });
                 }
 
                 const query = `
@@ -965,7 +997,7 @@ Can filter by minimum outstanding amount, specific aging buckets, subsidiary, an
                 `;
 
                 const result = QueryExecutor.executeQuery(query);
-                return formatResult(result, 'get_ar_aging');
+                return formatResult(result, 'get_ar_aging', { limit: limit });
             },
             displayName: function(args) {
                 if (args.customer_ids && args.customer_ids.length > 0) {
@@ -1848,173 +1880,9 @@ ALWAYS use this for: "balance sheet", "assets and liabilities", "financial posit
             }
         },
 
-        get_ar_aging: {
-            name: 'get_ar_aging',
-            description: `Get Accounts Receivable aging summary showing outstanding invoices by aging bucket.
-Returns customers with their AR broken down into Current, 1-30, 31-60, 61-90, and 90+ day buckets.
-ALWAYS use this for: "AR aging", "receivables", "who owes us", "overdue invoices", "customer balances", "accounts receivable", "outstanding invoices"`,
-            parameters: {
-                type: 'object',
-                properties: {
-                    customer_id: {
-                        type: 'number',
-                        description: 'Optional: filter to specific customer ID'
-                    },
-                    include_details: {
-                        type: 'boolean',
-                        description: 'Include invoice-level detail (default: false for summary)'
-                    }
-                },
-                required: []
-            },
-            execute: function(args) {
-                const custFilter = args.customer_id ?
-                    `AND transaction.entity = ${args.customer_id}` : '';
-
-                const query = `
-                    SELECT
-                        BUILTIN.DF(transaction.entity) AS customer,
-                        transaction.entity AS customer_id,
-                        SUM(CASE WHEN CURRENT_DATE - transaction.duedate <= 0 THEN transaction.foreignamountunpaid ELSE 0 END) AS current_bucket,
-                        SUM(CASE WHEN CURRENT_DATE - transaction.duedate BETWEEN 1 AND 30 THEN transaction.foreignamountunpaid ELSE 0 END) AS days_1_30,
-                        SUM(CASE WHEN CURRENT_DATE - transaction.duedate BETWEEN 31 AND 60 THEN transaction.foreignamountunpaid ELSE 0 END) AS days_31_60,
-                        SUM(CASE WHEN CURRENT_DATE - transaction.duedate BETWEEN 61 AND 90 THEN transaction.foreignamountunpaid ELSE 0 END) AS days_61_90,
-                        SUM(CASE WHEN CURRENT_DATE - transaction.duedate > 90 THEN transaction.foreignamountunpaid ELSE 0 END) AS days_over_90,
-                        SUM(transaction.foreignamountunpaid) AS total_outstanding,
-                        COUNT(transaction.id) AS invoice_count
-                    FROM transaction
-                    WHERE transaction.type IN ('CustInvc', 'CustCred')
-                        AND transaction.foreignamountunpaid != 0
-                        AND transaction.posting = 'T'
-                        AND transaction.voided = 'F'
-                        ${custFilter}
-                    GROUP BY transaction.entity, BUILTIN.DF(transaction.entity)
-                    ORDER BY total_outstanding DESC
-                    FETCH FIRST 100 ROWS ONLY
-                `;
-
-                const result = QueryExecutor.executeQuery(query);
-                const formatted = formatResult(result, 'get_ar_aging');
-
-                // Calculate grand totals
-                if (formatted.success && formatted.rows) {
-                    let grandTotal = 0;
-                    let totalCurrent = 0;
-                    let total1_30 = 0;
-                    let total31_60 = 0;
-                    let total61_90 = 0;
-                    let totalOver90 = 0;
-
-                    formatted.rows.forEach(row => {
-                        totalCurrent += parseFloat(row.current_bucket) || 0;
-                        total1_30 += parseFloat(row.days_1_30) || 0;
-                        total31_60 += parseFloat(row.days_31_60) || 0;
-                        total61_90 += parseFloat(row.days_61_90) || 0;
-                        totalOver90 += parseFloat(row.days_over_90) || 0;
-                        grandTotal += parseFloat(row.total_outstanding) || 0;
-                    });
-
-                    formatted.summary = {
-                        grandTotal: grandTotal,
-                        totalCurrent: totalCurrent,
-                        total1_30: total1_30,
-                        total31_60: total31_60,
-                        total61_90: total61_90,
-                        totalOver90: totalOver90,
-                        totalOverdue: total1_30 + total31_60 + total61_90 + totalOver90,
-                        percentOverdue: grandTotal > 0 ?
-                            ((total1_30 + total31_60 + total61_90 + totalOver90) / grandTotal * 100).toFixed(1) + '%' : '0%'
-                    };
-                }
-
-                return formatted;
-            },
-            displayName: function(args) {
-                return args.customer_id ? 'Getting customer AR aging...' : 'Getting AR aging summary...';
-            }
-        },
-
-        get_ap_aging: {
-            name: 'get_ap_aging',
-            description: `Get Accounts Payable aging summary showing outstanding bills by aging bucket.
-Returns vendors with their AP broken down into Current, 1-30, 31-60, 61-90, and 90+ day buckets.
-ALWAYS use this for: "AP aging", "payables", "what we owe", "bills due", "vendor balances", "accounts payable", "outstanding bills"`,
-            parameters: {
-                type: 'object',
-                properties: {
-                    vendor_id: {
-                        type: 'number',
-                        description: 'Optional: filter to specific vendor ID'
-                    }
-                },
-                required: []
-            },
-            execute: function(args) {
-                const vendorFilter = args.vendor_id ?
-                    `AND transaction.entity = ${args.vendor_id}` : '';
-
-                const query = `
-                    SELECT
-                        BUILTIN.DF(transaction.entity) AS vendor,
-                        transaction.entity AS vendor_id,
-                        SUM(CASE WHEN CURRENT_DATE - transaction.duedate <= 0 THEN transaction.foreignamountunpaid ELSE 0 END) AS current_bucket,
-                        SUM(CASE WHEN CURRENT_DATE - transaction.duedate BETWEEN 1 AND 30 THEN transaction.foreignamountunpaid ELSE 0 END) AS days_1_30,
-                        SUM(CASE WHEN CURRENT_DATE - transaction.duedate BETWEEN 31 AND 60 THEN transaction.foreignamountunpaid ELSE 0 END) AS days_31_60,
-                        SUM(CASE WHEN CURRENT_DATE - transaction.duedate BETWEEN 61 AND 90 THEN transaction.foreignamountunpaid ELSE 0 END) AS days_61_90,
-                        SUM(CASE WHEN CURRENT_DATE - transaction.duedate > 90 THEN transaction.foreignamountunpaid ELSE 0 END) AS days_over_90,
-                        SUM(transaction.foreignamountunpaid) AS total_outstanding,
-                        COUNT(transaction.id) AS bill_count
-                    FROM transaction
-                    WHERE transaction.type IN ('VendBill', 'VendCred')
-                        AND transaction.foreignamountunpaid != 0
-                        AND transaction.posting = 'T'
-                        AND transaction.voided = 'F'
-                        ${vendorFilter}
-                    GROUP BY transaction.entity, BUILTIN.DF(transaction.entity)
-                    ORDER BY total_outstanding DESC
-                    FETCH FIRST 100 ROWS ONLY
-                `;
-
-                const result = QueryExecutor.executeQuery(query);
-                const formatted = formatResult(result, 'get_ap_aging');
-
-                // Calculate grand totals
-                if (formatted.success && formatted.rows) {
-                    let grandTotal = 0;
-                    let totalCurrent = 0;
-                    let total1_30 = 0;
-                    let total31_60 = 0;
-                    let total61_90 = 0;
-                    let totalOver90 = 0;
-
-                    formatted.rows.forEach(row => {
-                        totalCurrent += parseFloat(row.current_bucket) || 0;
-                        total1_30 += parseFloat(row.days_1_30) || 0;
-                        total31_60 += parseFloat(row.days_31_60) || 0;
-                        total61_90 += parseFloat(row.days_61_90) || 0;
-                        totalOver90 += parseFloat(row.days_over_90) || 0;
-                        grandTotal += parseFloat(row.total_outstanding) || 0;
-                    });
-
-                    formatted.summary = {
-                        grandTotal: grandTotal,
-                        totalCurrent: totalCurrent,
-                        total1_30: total1_30,
-                        total31_60: total31_60,
-                        total61_90: total61_90,
-                        totalOver90: totalOver90,
-                        totalOverdue: total1_30 + total31_60 + total61_90 + totalOver90,
-                        percentOverdue: grandTotal > 0 ?
-                            ((total1_30 + total31_60 + total61_90 + totalOver90) / grandTotal * 100).toFixed(1) + '%' : '0%'
-                    };
-                }
-
-                return formatted;
-            },
-            displayName: function(args) {
-                return args.vendor_id ? 'Getting vendor AP aging...' : 'Getting AP aging summary...';
-            }
-        },
+        // NOTE: get_ar_aging and get_ap_aging are defined earlier in this file
+        // with comprehensive filtering options (batch IDs, filters, sorting).
+        // Duplicate definitions were removed to prevent shadowing.
 
         get_top_customers: {
             name: 'get_top_customers',
@@ -3002,11 +2870,11 @@ Use for: "anomalies", "unusual transactions", "what caused the spike", "outliers
                                 ELSE 0
                             END > ${threshold}
                         ORDER BY z_score DESC
-                        FETCH FIRST 20 ROWS ONLY
+                        FETCH FIRST 100 ROWS ONLY
                     `;
 
                     const result = QueryExecutor.executeQuery(query);
-                    return formatResult(result, 'find_anomalies');
+                    return formatResult(result, 'find_anomalies', { limit: 100 });
                 }
 
                 // For vendor bills anomalies
@@ -3047,11 +2915,11 @@ Use for: "anomalies", "unusual transactions", "what caused the spike", "outliers
                                 ELSE 0
                             END > ${threshold}
                         ORDER BY z_score DESC
-                        FETCH FIRST 20 ROWS ONLY
+                        FETCH FIRST 100 ROWS ONLY
                     `;
 
                     const result = QueryExecutor.executeQuery(query);
-                    return formatResult(result, 'find_anomalies');
+                    return formatResult(result, 'find_anomalies', { limit: 100 });
                 }
 
                 // Default: all transactions
@@ -3089,11 +2957,11 @@ Use for: "anomalies", "unusual transactions", "what caused the spike", "outliers
                             ELSE 0
                         END > ${threshold}
                     ORDER BY z_score DESC
-                    FETCH FIRST 20 ROWS ONLY
+                    FETCH FIRST 100 ROWS ONLY
                 `;
 
                 const result = QueryExecutor.executeQuery(query);
-                return formatResult(result, 'find_anomalies');
+                return formatResult(result, 'find_anomalies', { limit: 100 });
             },
             displayName: function(args) {
                 return 'Looking for anomalies...';
@@ -3263,11 +3131,11 @@ Use for: "expense breakdown", "where is money going", "expenses by category"`,
                     GROUP BY account.acctnumber, account.accountsearchdisplayname
                     HAVING SUM(COALESCE(tal.debit, 0) - COALESCE(tal.credit, 0)) > 0
                     ORDER BY amount DESC
-                    FETCH FIRST 30 ROWS ONLY
+                    FETCH FIRST 200 ROWS ONLY
                 `;
 
                 const result = QueryExecutor.executeQuery(query);
-                const formatted = formatResult(result, 'get_expense_breakdown');
+                const formatted = formatResult(result, 'get_expense_breakdown', { limit: 200 });
 
                 // Calculate total
                 if (formatted.success && formatted.rows) {
