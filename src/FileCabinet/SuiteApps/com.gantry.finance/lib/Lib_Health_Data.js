@@ -2227,29 +2227,17 @@ define(["N/search", "N/query", "N/log", "./Lib_Core", "./Lib_Config"], function 
             var fiscalCalendar = ConfigLib.getFiscalCalendar();
             var fiscalYearStartMonth = fiscalCalendar.fiscalYearStartMonth;
 
-            // Match getData() date logic exactly: go back 6 weeks, then get last day of previous month
-            var sixWeeksAgo = new Date(today);
-            sixWeeksAgo.setDate(sixWeeksAgo.getDate() - 42);
-            var rangeEnd = new Date(sixWeeksAgo.getFullYear(), sixWeeksAgo.getMonth(), 0); // Last day of month before sixWeeksAgo
+            // Use fiscal YTD dates to match getData() logic
+            var endDate = new Date(today.getFullYear(), today.getMonth(), 0); // Last day of last month
+            var fyYear = endDate.getMonth() < fiscalYearStartMonth ? endDate.getFullYear() - 1 : endDate.getFullYear();
+            var startDate = new Date(fyYear, fiscalYearStartMonth, 1); // Fiscal year start
 
-            // Fiscal year start date
-            var fyYear = rangeEnd.getMonth() < fiscalYearStartMonth ? rangeEnd.getFullYear() - 1 : rangeEnd.getFullYear();
-            var rangeStart = new Date(fyYear, fiscalYearStartMonth, 1);
-
-            var start = Core.formatDateForQuery(rangeStart);
-            var end = Core.formatDateForQuery(rangeEnd);
+            var start = Core.formatDateForQuery(startDate);
+            var end = Core.formatDateForQuery(endDate);
 
             // Calculate months dynamically
-            var rawMonthsInRange = (rangeEnd.getFullYear() - rangeStart.getFullYear()) * 12 + (rangeEnd.getMonth() - rangeStart.getMonth()) + 1;
+            var rawMonthsInRange = (endDate.getFullYear() - startDate.getFullYear()) * 12 + (endDate.getMonth() - startDate.getMonth()) + 1;
             var months = Math.max(1, rawMonthsInRange);
-
-            // Period definitions matching getData() exactly
-            var currentMonthStart = new Date(rangeEnd.getFullYear(), rangeEnd.getMonth(), 1);
-            var currentMonthEnd = new Date(rangeEnd);
-
-            var prevMonthEnd = new Date(currentMonthStart);
-            prevMonthEnd.setDate(prevMonthEnd.getDate() - 1);
-            var prevMonthStart = new Date(prevMonthEnd.getFullYear(), prevMonthEnd.getMonth(), 1);
 
             // Fetch P&L data for range, previous month, and current month (for chooseTargetGMPct)
             var revenue = 0, cogs = 0, opex = 0;
@@ -2274,6 +2262,8 @@ define(["N/search", "N/query", "N/log", "./Lib_Core", "./Lib_Config"], function 
                 }
 
                 // Previous month GM% (for chooseTargetGMPct)
+                var prevMonthEnd = new Date(endDate.getFullYear(), endDate.getMonth(), 0);
+                var prevMonthStart = new Date(prevMonthEnd.getFullYear(), prevMonthEnd.getMonth(), 1);
                 var prevSql = "SELECT " +
                     "SUM(CASE WHEN a.accttype IN ('Income', 'OthIncome') THEN -tl.amount ELSE 0 END) as revenue, " +
                     "SUM(CASE WHEN a.accttype = 'COGS' THEN tl.amount ELSE 0 END) as cogs " +
@@ -2289,14 +2279,15 @@ define(["N/search", "N/query", "N/log", "./Lib_Core", "./Lib_Config"], function 
                     prevMonthGmPct = prevRev > 0 ? (prevRev - prevCogs) / prevRev : 0;
                 }
 
-                // Current month GM% (rangeEnd month)
+                // Current month GM% (endDate month, which is last complete month)
+                var currMonthStart = new Date(endDate.getFullYear(), endDate.getMonth(), 1);
                 var currSql = "SELECT " +
                     "SUM(CASE WHEN a.accttype IN ('Income', 'OthIncome') THEN -tl.amount ELSE 0 END) as revenue, " +
                     "SUM(CASE WHEN a.accttype = 'COGS' THEN tl.amount ELSE 0 END) as cogs " +
                     "FROM transactionline tl " +
                     "JOIN transaction t ON t.id = tl.transaction " +
                     "JOIN account a ON a.id = tl.account " +
-                    "WHERE t.trandate BETWEEN TO_DATE('" + Core.formatDateForQuery(currentMonthStart) + "', 'YYYY-MM-DD') AND TO_DATE('" + Core.formatDateForQuery(currentMonthEnd) + "', 'YYYY-MM-DD') " +
+                    "WHERE t.trandate BETWEEN TO_DATE('" + Core.formatDateForQuery(currMonthStart) + "', 'YYYY-MM-DD') AND TO_DATE('" + end + "', 'YYYY-MM-DD') " +
                     "AND t.posting = 'T' AND tl.mainline = 'F'";
                 var currResult = Core.runQuery(currSql);
                 if (currResult && currResult.length > 0) {
