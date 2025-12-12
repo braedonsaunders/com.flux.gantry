@@ -544,6 +544,25 @@ define(["N/record", "N/search", "N/query", "N/log", "N/runtime", "./Lib_Dashboar
                     rowsPerPage: 15
                 };
 
+            case 'permissions':
+                return {
+                    // When enabled=false, permissions are not enforced
+                    enabled: false,
+                    // Role-specific permissions (key is role internal ID as string)
+                    roles: {
+                        '3': { // Administrator always has full access
+                            dashboards: ['*'],
+                            subsidiaries: ['*']
+                        }
+                    },
+                    // Default for roles not explicitly listed
+                    defaultPermissions: {
+                        dashboards: ['*'],
+                        subsidiaries: ['*']
+                    },
+                    auditEnabled: false
+                };
+
             case 'cashflow':
             default:
                 return {
