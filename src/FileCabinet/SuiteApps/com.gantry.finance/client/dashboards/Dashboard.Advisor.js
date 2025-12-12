@@ -31,27 +31,26 @@
 
     /**
      * Geometric Animation Controller
-     * Lightweight particle animation with gradient colors and lifecycle phases
-     * Phases: birth (from brain) → expand (full viewport) → converge (to chat) → ambient
+     * Phases: birth → pause → orbGlow → explode → orbit → converge → shine → ambient
      */
     const GeometricAnimation = {
         canvas: null,
         ctx: null,
         particles: [],
         animationId: null,
-        phase: 'idle', // idle, birth, expand, converge, ambient, departure
+        phase: 'idle',
         isActive: false,
-        globalTime: 0, // For color animation
+        globalTime: 0,
+        orbitAngle: 0,
 
-        // Configuration
         config: {
-            particleCount: 55,            // More density
-            connectionDistance: 90,       // Tighter connections
+            particleCount: 55,
+            connectionDistance: 90,
             particleSize: { min: 1.5, max: 2.5 },
-            birthDuration: 1400,          // Slower, more graceful birth
-            expandDuration: 1200,         // Expand to full screen
-            convergeDuration: 1000,       // Converge to chat
-            // Gradient color palette (indigo → purple → cyan)
+            birthDuration: 1200,
+            explodeDuration: 1400,
+            orbitDuration: 3000,
+            convergeDuration: 1800,
             colors: [
                 { r: 99, g: 102, b: 241 },   // Indigo
                 { r: 139, g: 92, b: 246 },   // Purple
@@ -60,9 +59,6 @@
             ]
         },
 
-        /**
-         * Initialize the canvas and particles
-         */
         init: function() {
             this.canvas = document.getElementById('geometric-canvas');
             if (!this.canvas) return;
@@ -74,73 +70,60 @@
 
             this.isActive = true;
             this.globalTime = 0;
+            this.orbitAngle = 0;
             this.createParticles();
             this.startBirth();
         },
 
-        /**
-         * Resize canvas to match window
-         */
         resize: function() {
             if (!this.canvas) return;
             this.canvas.width = window.innerWidth;
             this.canvas.height = window.innerHeight;
         },
 
-        /**
-         * Get the brain icon center position
-         */
         getBrainCenter: function() {
             const heroOrb = document.querySelector('.hero-orb');
             if (heroOrb) {
                 const rect = heroOrb.getBoundingClientRect();
-                return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+                return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2, element: heroOrb };
             }
-            // Fallback to upper center
-            return { x: this.canvas.width / 2, y: this.canvas.height * 0.25 };
+            return { x: this.canvas.width / 2, y: this.canvas.height * 0.25, element: null };
         },
 
-        /**
-         * Create particles starting behind the brain icon
-         */
         createParticles: function() {
             this.particles = [];
             const center = this.getBrainCenter();
 
             for (let i = 0; i < this.config.particleCount; i++) {
-                const angle = Math.random() * Math.PI * 2;
+                const angle = (i / this.config.particleCount) * Math.PI * 2 + Math.random() * 0.3;
                 const colorIndex = i % this.config.colors.length;
+                const orbitRadius = 150 + Math.random() * 250;
+                const orbitSpeed = 0.3 + Math.random() * 0.4;
 
                 this.particles.push({
                     x: center.x,
                     y: center.y,
-                    originX: center.x,
-                    originY: center.y,
-                    expandX: 0,  // Will be set during expand phase
-                    expandY: 0,
                     angle: angle,
-                    speed: 0.2 + Math.random() * 0.3,
+                    orbitRadius: orbitRadius,
+                    orbitSpeed: orbitSpeed,
+                    orbitOffset: Math.random() * Math.PI * 2,
                     size: this.config.particleSize.min + Math.random() * (this.config.particleSize.max - this.config.particleSize.min),
+                    baseSize: 0,
                     opacity: 0,
                     targetOpacity: 0.5 + Math.random() * 0.2,
                     colorIndex: colorIndex,
-                    colorOffset: Math.random() * Math.PI * 2, // For color animation
-                    vx: 0,
-                    vy: 0
+                    colorOffset: Math.random() * Math.PI * 2,
+                    expandX: 0,
+                    expandY: 0
                 });
             }
         },
 
-        /**
-         * Get interpolated gradient color for a particle
-         */
         getParticleColor: function(particle, opacity) {
             const colors = this.config.colors;
-            // Animate color over time with particle offset
             const t = (this.globalTime * 0.001 + particle.colorOffset) % (Math.PI * 2);
-            const colorT = (Math.sin(t) + 1) / 2; // 0 to 1
+            const colorT = (Math.sin(t) + 1) / 2;
 
-            // Interpolate between two colors based on particle index
             const c1 = colors[particle.colorIndex];
             const c2 = colors[(particle.colorIndex + 1) % colors.length];
 
@@ -152,7 +135,7 @@
         },
 
         /**
-         * Birth phase - particles emerge gracefully from behind brain icon
+         * Birth: particles emerge from behind orb, expand slightly past it
          */
         startBirth: function() {
             this.phase = 'birth';
@@ -166,21 +149,18 @@
                 const progress = Math.min(elapsed / this.config.birthDuration, 1);
                 this.globalTime = elapsed;
 
-                // Particles emerge gracefully with slower acceleration
                 this.particles.forEach((p, i) => {
-                    // More stagger for wave-like emergence
-                    const stagger = (i / this.particles.length) * 0.6;
+                    const stagger = (i / this.particles.length) * 0.5;
                     const particleProgress = Math.max(0, (progress - stagger) / (1 - stagger));
 
                     if (particleProgress > 0) {
-                        // Slow ease-out for gentle acceleration
                         const eased = this.easeOutSine(particleProgress);
-                        p.opacity = p.targetOpacity * eased;
-
-                        // Gradual expansion from center - starts slow, stays controlled
-                        const burstRadius = 50 * this.easeOutQuart(particleProgress);
+                        p.opacity = p.targetOpacity * eased * 0.7;
+                        // Emerge just past the orb (70px radius)
+                        const burstRadius = 70 * this.easeOutQuart(particleProgress);
                         p.x = center.x + Math.cos(p.angle) * burstRadius;
                         p.y = center.y + Math.sin(p.angle) * burstRadius;
+                        p.baseSize = p.size;
                     }
                 });
 
@@ -189,7 +169,10 @@
                 if (progress < 1) {
                     this.animationId = requestAnimationFrame(animateBirth);
                 } else {
-                    this.startExpand();
+                    // Pause briefly, then glow the orb
+                    setTimeout(() => {
+                        if (this.isActive) this.startOrbGlow();
+                    }, 400);
                 }
             };
 
@@ -197,67 +180,158 @@
         },
 
         /**
-         * Expand phase - particles spread to fill the entire viewport
+         * Orb Glow: orb glows momentarily before explosion
          */
-        startExpand: function() {
-            this.phase = 'expand';
+        startOrbGlow: function() {
+            this.phase = 'orbGlow';
+            const center = this.getBrainCenter();
+            const heroOrb = center.element;
+
+            if (heroOrb) {
+                heroOrb.classList.add('orb-charging');
+            }
+
+            // Hold particles in place while orb glows
+            const glowDuration = 600;
             const startTime = Date.now();
-            const padding = 50;
 
-            // Assign each particle a target position across the full viewport
-            this.particles.forEach(p => {
-                p.originX = p.x;
-                p.originY = p.y;
-                p.expandX = padding + Math.random() * (this.canvas.width - padding * 2);
-                p.expandY = padding + Math.random() * (this.canvas.height - padding * 2);
-            });
-
-            const animateExpand = () => {
-                if (!this.isActive || this.phase !== 'expand') return;
+            const animateGlow = () => {
+                if (!this.isActive || this.phase !== 'orbGlow') return;
 
                 const elapsed = Date.now() - startTime;
-                const progress = Math.min(elapsed / this.config.expandDuration, 1);
-                const eased = this.easeOutExpo(progress);
+                const progress = Math.min(elapsed / glowDuration, 1);
                 this.globalTime += 16;
 
+                // Particles pulse slightly during charge
+                const pulse = Math.sin(progress * Math.PI * 3) * 0.2;
                 this.particles.forEach(p => {
-                    // Smooth expansion to target positions
-                    p.x = p.originX + (p.expandX - p.originX) * eased;
-                    p.y = p.originY + (p.expandY - p.originY) * eased;
+                    p.opacity = p.targetOpacity * (0.7 + pulse * 0.3);
                 });
 
                 this.draw();
 
                 if (progress < 1) {
-                    this.animationId = requestAnimationFrame(animateExpand);
+                    this.animationId = requestAnimationFrame(animateGlow);
                 } else {
-                    // Brief pause at full expansion, then converge
-                    setTimeout(() => {
-                        if (this.isActive && this.phase === 'expand') {
-                            this.startConverge();
-                        }
-                    }, 300);
+                    if (heroOrb) heroOrb.classList.remove('orb-charging');
+                    this.startExplode();
                 }
             };
 
-            this.animationId = requestAnimationFrame(animateExpand);
+            this.animationId = requestAnimationFrame(animateGlow);
         },
 
         /**
-         * Converge phase - particles flow toward chat input with stunning finale
+         * Explode: particles blow up FROM the orb center to fill the screen
+         */
+        startExplode: function() {
+            this.phase = 'explode';
+            const startTime = Date.now();
+            const center = this.getBrainCenter();
+            const padding = 60;
+
+            // Reset particles to center and assign explosion targets
+            this.particles.forEach(p => {
+                p.originX = center.x;
+                p.originY = center.y;
+                p.x = center.x;
+                p.y = center.y;
+                p.expandX = padding + Math.random() * (this.canvas.width - padding * 2);
+                p.expandY = padding + Math.random() * (this.canvas.height - padding * 2);
+            });
+
+            const animateExplode = () => {
+                if (!this.isActive || this.phase !== 'explode') return;
+
+                const elapsed = Date.now() - startTime;
+                const progress = Math.min(elapsed / this.config.explodeDuration, 1);
+                this.globalTime += 16;
+
+                // Explosive expansion with dramatic easing
+                const eased = this.easeOutExpo(progress);
+
+                this.particles.forEach((p, i) => {
+                    const stagger = (i / this.particles.length) * 0.2;
+                    const particleProgress = Math.max(0, (progress - stagger) / (1 - stagger));
+                    const particleEased = this.easeOutExpo(particleProgress);
+
+                    p.x = p.originX + (p.expandX - p.originX) * particleEased;
+                    p.y = p.originY + (p.expandY - p.originY) * particleEased;
+                    p.opacity = p.targetOpacity * Math.min(1, particleProgress * 1.5);
+                });
+
+                this.draw();
+
+                if (progress < 1) {
+                    this.animationId = requestAnimationFrame(animateExplode);
+                } else {
+                    this.startOrbit();
+                }
+            };
+
+            this.animationId = requestAnimationFrame(animateExplode);
+        },
+
+        /**
+         * Orbit: particles rotate orbitally for a few seconds
+         */
+        startOrbit: function() {
+            this.phase = 'orbit';
+            const startTime = Date.now();
+            const center = this.getBrainCenter();
+
+            // Store current positions as orbit centers
+            this.particles.forEach(p => {
+                p.orbitCenterX = p.x;
+                p.orbitCenterY = p.y;
+            });
+
+            const animateOrbit = () => {
+                if (!this.isActive || this.phase !== 'orbit') return;
+
+                const elapsed = Date.now() - startTime;
+                const progress = Math.min(elapsed / this.config.orbitDuration, 1);
+                this.globalTime += 16;
+                this.orbitAngle += 0.015;
+
+                this.particles.forEach((p, i) => {
+                    // Orbital rotation around their position
+                    const orbitScale = 20 + (i % 3) * 10;
+                    const individualAngle = this.orbitAngle * p.orbitSpeed + p.orbitOffset;
+
+                    p.x = p.orbitCenterX + Math.cos(individualAngle) * orbitScale;
+                    p.y = p.orbitCenterY + Math.sin(individualAngle) * orbitScale * 0.6;
+
+                    // Slowly drift orbit centers toward screen center for visual flow
+                    p.orbitCenterX += (center.x - p.orbitCenterX) * 0.0005;
+                    p.orbitCenterY += (center.y - p.orbitCenterY) * 0.0005;
+                });
+
+                this.draw();
+
+                if (progress < 1) {
+                    this.animationId = requestAnimationFrame(animateOrbit);
+                } else {
+                    this.startConverge();
+                }
+            };
+
+            this.animationId = requestAnimationFrame(animateOrbit);
+        },
+
+        /**
+         * Converge: slower, more dramatic flow to the text box
          */
         startConverge: function() {
             this.phase = 'converge';
             const startTime = Date.now();
 
-            // Get chat input and its container
             const chatInput = document.getElementById('advisor-input-full');
             const inputWrapper = chatInput ? chatInput.closest('.advisor-input-area') : null;
             const chatRect = chatInput ? chatInput.getBoundingClientRect() : null;
             const targetX = chatRect ? chatRect.left + chatRect.width / 2 : this.canvas.width / 2;
             const targetY = chatRect ? chatRect.top + chatRect.height / 2 : this.canvas.height * 0.9;
 
-            // Store starting positions and sizes
             this.particles.forEach(p => {
                 p.originX = p.x;
                 p.originY = p.y;
@@ -272,43 +346,49 @@
                 this.globalTime += 16;
 
                 this.particles.forEach((p, i) => {
-                    // Staggered convergence with curve
-                    const stagger = (i / this.particles.length) * 0.3;
+                    // More dramatic stagger
+                    const stagger = (i / this.particles.length) * 0.4;
                     const particleProgress = Math.max(0, Math.min(1, (progress - stagger) / (1 - stagger)));
 
                     if (particleProgress > 0) {
-                        const t = this.easeInOutQuad(particleProgress);
-                        // Curve toward target
-                        const midY = Math.min(p.originY, targetY) - 50;
+                        // Slower, more dramatic easing
+                        const t = this.easeInOutCubic(particleProgress);
+
+                        // Sweeping curve toward target
+                        const controlOffsetX = (p.originX < targetX ? -1 : 1) * 100;
+                        const midY = Math.min(p.originY, targetY) - 80;
                         const bez = this.quadraticBezier(
                             p.originX, p.originY,
-                            (p.originX + targetX) / 2, midY,
+                            (p.originX + targetX) / 2 + controlOffsetX, midY,
                             targetX, targetY,
                             t
                         );
                         p.x = bez.x;
                         p.y = bez.y;
 
-                        // Shrink as they converge
-                        p.size = p.originSize * (1 - particleProgress * 0.4);
+                        // Shrink and fade slightly as they converge
+                        p.size = p.originSize * (1 - particleProgress * 0.5);
+                        p.opacity = p.targetOpacity * (1 - particleProgress * 0.3);
                     }
                 });
 
                 this.draw();
 
-                // Progressive glow effect on chat input
-                if (chatInput && progress > 0.4) {
-                    const glowProgress = (progress - 0.4) / 0.6;
+                // Progressive glow on chat input
+                if (chatInput && progress > 0.3) {
+                    const glowProgress = (progress - 0.3) / 0.7;
                     const glowIntensity = this.easeOutQuart(glowProgress);
-                    const glowSize = 15 + 20 * glowIntensity;
-                    const glowOpacity = 0.3 + 0.3 * glowIntensity;
-                    chatInput.style.boxShadow = `0 0 ${glowSize}px rgba(99, 102, 241, ${glowOpacity}), 0 0 ${glowSize * 2}px rgba(139, 92, 246, ${glowOpacity * 0.5})`;
+                    const glowSize = 15 + 30 * glowIntensity;
+                    const glowOpacity = 0.3 + 0.4 * glowIntensity;
+                    chatInput.style.boxShadow = `
+                        0 0 ${glowSize}px rgba(99, 102, 241, ${glowOpacity}),
+                        0 0 ${glowSize * 2}px rgba(139, 92, 246, ${glowOpacity * 0.5})
+                    `;
                 }
 
                 if (progress < 1) {
                     this.animationId = requestAnimationFrame(animateConverge);
                 } else {
-                    // Trigger stunning shine effect
                     this.triggerInputShine(chatInput, inputWrapper);
                 }
             };
@@ -316,21 +396,16 @@
             this.animationId = requestAnimationFrame(animateConverge);
         },
 
-        /**
-         * Trigger a stunning momentary shine effect on the input
-         */
         triggerInputShine: function(chatInput, inputWrapper) {
             if (!chatInput) {
                 this.startAmbient();
                 return;
             }
 
-            // Add shine class for CSS animation
             if (inputWrapper) {
                 inputWrapper.classList.add('input-shine-active');
             }
 
-            // Animate the glow pulse
             const shineStart = Date.now();
             const shineDuration = 600;
 
@@ -338,29 +413,25 @@
                 const elapsed = Date.now() - shineStart;
                 const progress = Math.min(elapsed / shineDuration, 1);
 
-                // Pulse: grow then shrink
                 const pulse = Math.sin(progress * Math.PI);
-                const glowSize = 25 + 35 * pulse;
-                const glowOpacity = 0.5 + 0.3 * pulse;
+                const glowSize = 25 + 40 * pulse;
+                const glowOpacity = 0.5 + 0.4 * pulse;
 
-                // Multi-layer glow with color shift
                 chatInput.style.boxShadow = `
                     0 0 ${glowSize}px rgba(99, 102, 241, ${glowOpacity}),
                     0 0 ${glowSize * 1.5}px rgba(139, 92, 246, ${glowOpacity * 0.6}),
                     0 0 ${glowSize * 2}px rgba(6, 182, 212, ${glowOpacity * 0.3}),
-                    inset 0 0 ${glowSize * 0.3}px rgba(255, 255, 255, ${pulse * 0.15})
+                    inset 0 0 ${glowSize * 0.3}px rgba(255, 255, 255, ${pulse * 0.2})
                 `;
 
-                // Scale pulse on wrapper
                 if (inputWrapper) {
-                    const scale = 1 + pulse * 0.008;
+                    const scale = 1 + pulse * 0.01;
                     inputWrapper.style.transform = `scale(${scale})`;
                 }
 
                 if (progress < 1) {
                     this.animationId = requestAnimationFrame(animateShine);
                 } else {
-                    // Clean up and transition to ambient
                     chatInput.style.boxShadow = '';
                     if (inputWrapper) {
                         inputWrapper.style.transform = '';
@@ -373,9 +444,6 @@
             this.animationId = requestAnimationFrame(animateShine);
         },
 
-        /**
-         * Quadratic bezier helper
-         */
         quadraticBezier: function(x0, y0, x1, y1, x2, y2, t) {
             const mt = 1 - t;
             return {
@@ -384,19 +452,15 @@
             };
         },
 
-        /**
-         * Ambient phase - very slow subtle movement
-         */
         startAmbient: function() {
             this.phase = 'ambient';
 
-            // Spread particles back out gently
             this.particles.forEach(p => {
                 p.x = 50 + Math.random() * (this.canvas.width - 100);
                 p.y = 50 + Math.random() * (this.canvas.height - 100);
-                p.vx = (Math.random() - 0.5) * 0.15;
-                p.vy = (Math.random() - 0.5) * 0.15;
-                p.targetOpacity = 0.12 + Math.random() * 0.08; // Very subtle
+                p.vx = (Math.random() - 0.5) * 0.12;
+                p.vy = (Math.random() - 0.5) * 0.12;
+                p.targetOpacity = 0.1 + Math.random() * 0.08;
                 p.size = this.config.particleSize.min + Math.random() * (this.config.particleSize.max - this.config.particleSize.min);
             });
 
@@ -409,15 +473,13 @@
                     p.y += p.vy;
                     p.opacity += (p.targetOpacity - p.opacity) * 0.02;
 
-                    // Soft bounce
                     if (p.x < 20 || p.x > this.canvas.width - 20) p.vx *= -1;
                     if (p.y < 20 || p.y > this.canvas.height - 20) p.vy *= -1;
 
-                    // Tiny drift
-                    p.vx += (Math.random() - 0.5) * 0.005;
-                    p.vy += (Math.random() - 0.5) * 0.005;
-                    p.vx = Math.max(-0.2, Math.min(0.2, p.vx));
-                    p.vy = Math.max(-0.2, Math.min(0.2, p.vy));
+                    p.vx += (Math.random() - 0.5) * 0.003;
+                    p.vy += (Math.random() - 0.5) * 0.003;
+                    p.vx = Math.max(-0.15, Math.min(0.15, p.vx));
+                    p.vy = Math.max(-0.15, Math.min(0.15, p.vy));
                 });
 
                 this.draw();
@@ -427,9 +489,6 @@
             this.animationId = requestAnimationFrame(animateAmbient);
         },
 
-        /**
-         * Departure phase - fade out
-         */
         startDeparture: function() {
             if (this.phase === 'departure' || this.phase === 'idle') return;
 
@@ -460,17 +519,14 @@
             this.animationId = requestAnimationFrame(animateDeparture);
         },
 
-        /**
-         * Draw particles and connections (optimized)
-         */
         draw: function() {
             if (!this.ctx) return;
             this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
 
             const len = this.particles.length;
 
-            // Draw connections (optimized - skip if too many)
-            if (len <= 40) {
+            // Draw connections during non-ambient phases
+            if (len <= 60 && this.phase !== 'ambient') {
                 this.ctx.lineWidth = 0.5;
                 for (let i = 0; i < len; i++) {
                     const p1 = this.particles[i];
@@ -493,7 +549,6 @@
                 }
             }
 
-            // Draw particles with gradient colors
             this.particles.forEach(p => {
                 this.ctx.beginPath();
                 this.ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
@@ -502,9 +557,6 @@
             });
         },
 
-        /**
-         * Cleanup
-         */
         cleanup: function() {
             this.isActive = false;
             this.phase = 'idle';
@@ -521,6 +573,9 @@
             if (this.boundResize) {
                 window.removeEventListener('resize', this.boundResize);
             }
+            // Clean up orb class if still present
+            const heroOrb = document.querySelector('.hero-orb');
+            if (heroOrb) heroOrb.classList.remove('orb-charging');
         },
 
         // Easing functions
@@ -538,6 +593,9 @@
         },
         easeInOutQuad: function(t) {
             return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+        },
+        easeInOutCubic: function(t) {
+            return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
         },
         easeInQuad: function(t) {
             return t * t;
