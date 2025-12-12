@@ -302,6 +302,7 @@
         startConverge: function() {
             this.phase = 'converge';
             const startTime = Date.now();
+            let cardsShown = false;
 
             const chatInput = document.getElementById('advisor-input-full');
             const inputWrapper = chatInput ? chatInput.closest('.advisor-input-area') : null;
@@ -321,6 +322,15 @@
                 const elapsed = Date.now() - startTime;
                 const progress = Math.min(elapsed / this.config.convergeDuration, 1);
                 this.globalTime += 16;
+
+                // Show cards early (at 30% through converge)
+                if (!cardsShown && progress > 0.3) {
+                    cardsShown = true;
+                    var scoreCategories = document.getElementById('score-categories');
+                    if (scoreCategories) {
+                        scoreCategories.classList.add('cards-visible');
+                    }
+                }
 
                 this.particles.forEach((p, i) => {
                     // More dramatic stagger
@@ -1449,8 +1459,8 @@
                 { dashboard: 'burden', category: 'profitability', label: 'Margins', icon: 'fa-balance-scale' },
                 { dashboard: 'time', category: 'labor', label: 'Labor', icon: 'fa-user-clock' },
                 { dashboard: 'customervalue', category: 'customers', label: 'Customers', icon: 'fa-users' },
-                { dashboard: 'vendorperformance', category: null, label: 'Vendors', icon: 'fa-handshake' },
-                { dashboard: 'integrity', category: null, label: 'Data Quality', icon: 'fa-shield-alt' }
+                { dashboard: 'vendorperformance', category: 'vendors', label: 'Vendors', icon: 'fa-handshake' },
+                { dashboard: 'integrity', category: 'dataquality', label: 'Data Quality', icon: 'fa-shield-alt' }
             ];
 
             // Get configured names and visibility
@@ -1496,14 +1506,8 @@
             container.querySelectorAll('.score-category-card').forEach(function(card) {
                 card.addEventListener('click', function() {
                     const category = card.getAttribute('data-category');
-                    const dashboard = card.getAttribute('data-dashboard');
-
                     if (category) {
-                        // Show category queries
                         self.showCategoryQueries(category);
-                    } else {
-                        // Navigate to dashboard
-                        GantryApp.navigate(dashboard);
                     }
                 });
             });
@@ -1828,6 +1832,45 @@
                     { text: 'Customer Invoices', question: 'Show invoices for ', prefill: true, placeholder: 'Enter customer name' },
                     { text: 'Latest Invoice', question: 'Show the latest invoice' },
                     { text: 'Latest Bill', question: 'Show the latest vendor bill' }
+                ]
+            },
+            customers: {
+                name: 'Customers',
+                icon: 'fa-users',
+                color: 'linear-gradient(135deg, #06b6d4 0%, #0891b2 100%)',
+                queries: [
+                    { text: 'Top Customers', question: 'Who are our top 10 customers by revenue?' },
+                    { text: 'Customer List', question: 'Show all active customers' },
+                    { text: 'Customer Revenue', question: 'Show revenue by customer YTD' },
+                    { text: 'Customer Trends', question: 'Show customer revenue trends over time' },
+                    { text: 'New Customers', question: 'Show new customers this quarter' },
+                    { text: 'Customer Details', question: 'Show details for customer ', prefill: true, placeholder: 'Enter customer name' }
+                ]
+            },
+            vendors: {
+                name: 'Vendors',
+                icon: 'fa-handshake',
+                color: 'linear-gradient(135deg, #ec4899 0%, #db2777 100%)',
+                queries: [
+                    { text: 'Top Vendors', question: 'Who are our top vendors by spend?' },
+                    { text: 'Vendor List', question: 'Show all active vendors' },
+                    { text: 'Vendor Spend YTD', question: 'Show spend by vendor year to date' },
+                    { text: 'Vendor Bills', question: 'Show recent vendor bills' },
+                    { text: 'Vendor Performance', question: 'Show vendor payment history and terms' },
+                    { text: 'Vendor Details', question: 'Show details for vendor ', prefill: true, placeholder: 'Enter vendor name' }
+                ]
+            },
+            dataquality: {
+                name: 'Sentinel',
+                icon: 'fa-shield-alt',
+                color: 'linear-gradient(135deg, #6366f1 0%, #4f46e5 100%)',
+                queries: [
+                    { text: 'Flagged Transactions', question: 'Show all flagged transactions this month' },
+                    { text: 'Duplicate Check', question: 'Are there any potential duplicate bills?' },
+                    { text: 'Benford Analysis', question: 'Which transactions deviate from Benford\'s Law?' },
+                    { text: 'Weekend Entries', question: 'Show transactions entered on weekends' },
+                    { text: 'Anomaly Detection', question: 'Show suspicious or anomalous transactions' },
+                    { text: 'Risk Summary', question: 'What is our current transaction risk score?' }
                 ]
             }
         },
