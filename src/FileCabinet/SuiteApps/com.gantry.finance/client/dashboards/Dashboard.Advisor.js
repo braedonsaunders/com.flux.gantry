@@ -52,7 +52,7 @@
             pauseDuration: 200,           // was 300
             glowDuration: 400,            // was 500
             explodeDuration: 1050,        // was 1200, +10% slower then 20% faster
-            orbitDuration: 1000,          // was 1500
+            orbitDuration: 600,           // Shorter float time
             convergeDuration: 700,        // Fast suction into input
             shineDuration: 480,           // was 600
             colors: [
@@ -237,6 +237,12 @@
             const center = this.getBrainCenter();
             const chatInput = document.getElementById('advisor-input-full');
 
+            // Show cards immediately when orbit starts (particles have exploded)
+            var scoreCategories = document.getElementById('score-categories');
+            if (scoreCategories) {
+                scoreCategories.classList.add('cards-visible');
+            }
+
             // Store starting positions and set up organic drift parameters
             this.particles.forEach((p, i) => {
                 p.orbitStartX = p.x;
@@ -302,7 +308,6 @@
         startConverge: function() {
             this.phase = 'converge';
             const startTime = Date.now();
-            let cardsShown = false;
 
             const chatInput = document.getElementById('advisor-input-full');
             const inputWrapper = chatInput ? chatInput.closest('.advisor-input-area') : null;
@@ -322,15 +327,6 @@
                 const elapsed = Date.now() - startTime;
                 const progress = Math.min(elapsed / this.config.convergeDuration, 1);
                 this.globalTime += 16;
-
-                // Show cards early (at 30% through converge)
-                if (!cardsShown && progress > 0.3) {
-                    cardsShown = true;
-                    var scoreCategories = document.getElementById('score-categories');
-                    if (scoreCategories) {
-                        scoreCategories.classList.add('cards-visible');
-                    }
-                }
 
                 this.particles.forEach((p, i) => {
                     // More dramatic stagger
@@ -1881,14 +1877,14 @@
         showCategoryQueries: function(categoryId) {
             const category = this.queryCategories[categoryId];
             if (!category) return;
-            
-            const categoriesEl = document.getElementById('query-categories');
+
+            const scoreCategoriesEl = document.getElementById('score-categories');
             const panelEl = document.getElementById('query-panel');
             const iconEl = document.getElementById('query-panel-icon');
             const titleEl = document.getElementById('query-panel-title');
             const gridEl = document.getElementById('query-panel-grid');
-            
-            if (!categoriesEl || !panelEl) return;
+
+            if (!panelEl) return;
             
             // Update panel header
             iconEl.style.background = category.color;
@@ -1937,25 +1933,20 @@
                 });
             });
             
-            // Show panel, hide categories
-            categoriesEl.style.display = 'none';
+            // Show panel, hide score-categories
+            if (scoreCategoriesEl) scoreCategoriesEl.style.display = 'none';
             panelEl.style.display = 'block';
         },
-        
+
         /**
          * Hide category queries, show categories
          */
         hideCategoryQueries: function() {
-            const categoriesEl = document.getElementById('query-categories');
+            const scoreCategoriesEl = document.getElementById('score-categories');
             const panelEl = document.getElementById('query-panel');
 
-            if (categoriesEl) {
-                categoriesEl.style.display = 'grid';
-                // Trigger animation by removing and re-adding the class
-                categoriesEl.classList.remove('animate-in');
-                // Force reflow to restart animation
-                void categoriesEl.offsetWidth;
-                categoriesEl.classList.add('animate-in');
+            if (scoreCategoriesEl) {
+                scoreCategoriesEl.style.display = 'flex';
             }
             if (panelEl) panelEl.style.display = 'none';
         },
