@@ -22,6 +22,7 @@
 define([
     'N/log',
     'N/search',
+    'N/dataset',
     './Lib_Advisor_EntityResolver',
     './Lib_Advisor_QueryExecutor',
     './Lib_Advisor_Utils',
@@ -41,6 +42,7 @@ define([
 ], function(
     log,
     search,
+    dataset,
     EntityResolver,
     QueryExecutor,
     Utils,
@@ -5901,7 +5903,7 @@ Use this when user asks:
                     capabilities: result,
                     totalTools: totalTools,
                     categories: Object.keys(capabilities),
-                    tip: 'Use list_dashboards, list_reports, or list_saved_searches for detailed discovery',
+                    tip: 'Use list_dashboards, list_datasets, or list_saved_searches for detailed discovery',
                     tool: 'list_capabilities'
                 };
             },
@@ -5910,392 +5912,216 @@ Use this when user asks:
             }
         },
 
-        list_reports: {
-            name: 'list_reports',
-            shortDescription: 'List available report types',
-            category: 'reports',
-            description: `List available reports that can be run with run_report.
-Returns both standard financial reports and discovered custom reports.
+        // ═══════════════════════════════════════════════════════════════════════════
+        // DATASET TOOLS - Using real N/dataset module for SuiteAnalytics Workbooks
+        // ═══════════════════════════════════════════════════════════════════════════
+
+        list_datasets: {
+            name: 'list_datasets',
+            shortDescription: 'List all SuiteAnalytics datasets',
+            category: 'data',
+            description: `List all available datasets created in SuiteAnalytics Workbooks.
+Datasets are pre-built queries that users have created and saved.
+Use this to discover what datasets are available before running them.
 
 Use this when:
-- User asks "what reports are available?"
-- You need to find a specific report type
-- You want to see filtering options for reports`,
+- User asks "what datasets are available?"
+- User mentions a dataset by name and you need to find its ID
+- You want to see what pre-built data sources exist`,
             parameters: {
                 type: 'object',
                 properties: {
-                    category: {
-                        type: 'string',
-                        enum: ['all', 'financial', 'operational', 'custom'],
-                        description: 'Filter by report category (default: all)'
-                    },
-                    include_custom: {
-                        type: 'boolean',
-                        description: 'Include custom/saved report definitions (default: true)'
+                    max_results: {
+                        type: 'number',
+                        description: 'Maximum number of datasets to return (default: 50, max: 200)'
                     }
                 },
                 required: []
             },
             execute: function(args) {
-                const category = args.category || 'all';
-                const includeCustom = args.include_custom !== false;
+                const maxResults = Math.min(args.max_results || 50, 200);
 
-                log.debug('list_reports', { category: category, includeCustom: includeCustom });
-
-                try {
-                    // Standard reports available through run_report
-                    const standardReports = {
-                        financial: [
-                            {
-                                id: 'income_statement',
-                                name: 'Income Statement (P&L)',
-                                description: 'Profit & Loss report showing revenue, expenses, and net income',
-                                parameters: ['period', 'subsidiary_id', 'class_id', 'department_id', 'location_id']
-                            },
-                            {
-                                id: 'balance_sheet',
-                                name: 'Balance Sheet',
-                                description: 'Assets, liabilities, and equity as of a specific date',
-                                parameters: ['period', 'subsidiary_id', 'class_id', 'department_id', 'location_id']
-                            },
-                            {
-                                id: 'cash_flow',
-                                name: 'Cash Flow Statement',
-                                description: 'Cash inflows and outflows from operating, investing, and financing activities',
-                                parameters: ['period', 'subsidiary_id']
-                            },
-                            {
-                                id: 'trial_balance',
-                                name: 'Trial Balance',
-                                description: 'All account balances showing debits and credits',
-                                parameters: ['period', 'subsidiary_id', 'class_id', 'department_id']
-                            },
-                            {
-                                id: 'general_ledger',
-                                name: 'General Ledger Detail',
-                                description: 'Detailed GL transactions by account',
-                                parameters: ['period', 'account_id', 'subsidiary_id']
-                            }
-                        ],
-                        operational: [
-                            {
-                                id: 'ar_aging',
-                                name: 'AR Aging Summary',
-                                description: 'Accounts receivable aging by customer',
-                                parameters: ['as_of_date', 'customer_id']
-                            },
-                            {
-                                id: 'ap_aging',
-                                name: 'AP Aging Summary',
-                                description: 'Accounts payable aging by vendor',
-                                parameters: ['as_of_date', 'vendor_id']
-                            }
-                        ]
-                    };
-
-                    // Build result based on category filter
-                    let reports = [];
-
-                    if (category === 'all' || category === 'financial') {
-                        reports = reports.concat(standardReports.financial.map(r => ({
-                            ...r,
-                            category: 'financial',
-                            type: 'standard'
-                        })));
-                    }
-
-                    if (category === 'all' || category === 'operational') {
-                        reports = reports.concat(standardReports.operational.map(r => ({
-                            ...r,
-                            category: 'operational',
-                            type: 'standard'
-                        })));
-                    }
-
-                    // Try to find custom reports (saved searches that act as reports)
-                    let customReports = [];
-                    if (includeCustom && (category === 'all' || category === 'custom')) {
-                        try {
-                            // Search for report-like saved searches
-                            const reportSearch = search.create({
-                                type: 'savedsearch',
-                                filters: [
-                                    ['isinactive', 'is', 'F'],
-                                    'AND',
-                                    ['ispublic', 'is', 'T'],
-                                    'AND',
-                                    [
-                                        ['title', 'contains', 'report'],
-                                        'OR',
-                                        ['title', 'contains', 'summary'],
-                                        'OR',
-                                        ['title', 'contains', 'analysis'],
-                                        'OR',
-                                        ['title', 'contains', 'dashboard']
-                                    ]
-                                ],
-                                columns: [
-                                    search.createColumn({ name: 'internalid' }),
-                                    search.createColumn({ name: 'title', sort: search.Sort.ASC }),
-                                    search.createColumn({ name: 'recordtype' }),
-                                    search.createColumn({ name: 'id' })
-                                ]
-                            });
-
-                            reportSearch.run().each(function(result) {
-                                customReports.push({
-                                    id: result.getValue('id') || result.getValue('internalid'),
-                                    name: result.getValue('title'),
-                                    description: 'Custom saved search report on ' + (result.getText('recordtype') || result.getValue('recordtype') || 'records'),
-                                    category: 'custom',
-                                    type: 'saved_search',
-                                    recordType: result.getText('recordtype') || result.getValue('recordtype'),
-                                    parameters: ['filters (optional)']
-                                });
-                                return customReports.length < 25; // Limit custom reports
-                            });
-                        } catch (searchErr) {
-                            log.debug('Could not search for custom reports', { error: searchErr.message });
-                        }
-                    }
-
-                    reports = reports.concat(customReports);
-
-                    return {
-                        success: true,
-                        reports: reports,
-                        count: reports.length,
-                        standardCount: reports.filter(r => r.type === 'standard').length,
-                        customCount: customReports.length,
-                        categories: category === 'all' ? ['financial', 'operational', 'custom'] : [category],
-                        usage: 'Use run_report({ report_type: "report_id" }) for standard reports, or run_saved_search({ search_id: "id" }) for custom reports',
-                        tool: 'list_reports'
-                    };
-
-                } catch (e) {
-                    log.error('list_reports error', { error: e.message });
-
-                    return {
-                        success: false,
-                        error: e.message,
-                        tool: 'list_reports'
-                    };
-                }
-            },
-            displayName: function(args) {
-                return 'Listing available reports...';
-            }
-        },
-
-        run_report: {
-            name: 'run_report',
-            shortDescription: 'Run a standard financial report',
-            category: 'reports',
-            description: `Execute a financial report from NetSuite's standard reports or custom reports.
-This executes the report and returns the data in a structured format.
-
-Common report types:
-- income_statement: Profit & Loss report
-- balance_sheet: Balance Sheet report
-- cash_flow: Cash Flow Statement
-- ar_aging: AR Aging Summary
-- ap_aging: AP Aging Summary
-- trial_balance: Trial Balance
-- general_ledger: GL Detail
-
-Use parameters to filter by date range, subsidiary, class, department, etc.`,
-            parameters: {
-                type: 'object',
-                properties: {
-                    report_type: {
-                        type: 'string',
-                        description: 'Type of report to run',
-                        enum: ['income_statement', 'balance_sheet', 'cash_flow', 'ar_aging', 'ap_aging', 'trial_balance', 'general_ledger', 'custom']
-                    },
-                    report_id: {
-                        type: 'string',
-                        description: 'For custom reports, the internal ID or script ID of the report'
-                    },
-                    period: {
-                        type: 'string',
-                        description: 'Time period: "this_month", "last_month", "this_quarter", "last_quarter", "ytd", "last_year", or specific dates as "YYYY-MM-DD to YYYY-MM-DD"'
-                    },
-                    subsidiary_id: {
-                        type: 'number',
-                        description: 'Filter by subsidiary internal ID'
-                    },
-                    class_id: {
-                        type: 'number',
-                        description: 'Filter by class internal ID'
-                    },
-                    department_id: {
-                        type: 'number',
-                        description: 'Filter by department internal ID'
-                    },
-                    location_id: {
-                        type: 'number',
-                        description: 'Filter by location internal ID'
-                    }
-                },
-                required: ['report_type']
-            },
-            execute: function(args) {
-                const reportType = args.report_type;
-                const period = args.period || 'this_month';
-
-                log.debug('run_report', { reportType: reportType, period: period });
+                log.debug('list_datasets', { maxResults: maxResults });
 
                 try {
-                    // Map report types to our existing dashboard/data tools
-                    // Since N/report is not available, we simulate reports using our data tools
-                    let result;
+                    // Use N/dataset.list() to get all available datasets
+                    const allDatasets = dataset.list();
 
-                    switch (reportType) {
-                        case 'income_statement':
-                            // Use existing income statement query
-                            const incomeSQL = `
-                                SELECT
-                                    account.accttype AS account_type,
-                                    account.displaynamewithhierarchy AS account_name,
-                                    SUM(CASE WHEN tal.credit IS NOT NULL THEN tal.credit ELSE 0 END) AS credit,
-                                    SUM(CASE WHEN tal.debit IS NOT NULL THEN tal.debit ELSE 0 END) AS debit,
-                                    SUM(COALESCE(tal.credit, 0) - COALESCE(tal.debit, 0)) AS net_amount
-                                FROM transactionaccountingline tal
-                                JOIN transaction t ON t.id = tal.transaction
-                                JOIN account ON account.id = tal.account
-                                WHERE t.posting = 'T'
-                                AND account.accttype IN ('Income', 'COGS', 'Expense', 'OthIncome', 'OthExpense')
-                                AND t.trandate >= ADD_MONTHS(TRUNC(SYSDATE, 'YEAR'), 0)
-                                GROUP BY account.accttype, account.displaynamewithhierarchy
-                                ORDER BY account.accttype, account.displaynamewithhierarchy
-                                FETCH FIRST 500 ROWS ONLY
-                            `;
-                            result = QueryExecutor.executeQuery(incomeSQL);
-                            result.reportType = 'Income Statement';
-                            break;
-
-                        case 'balance_sheet':
-                            const balanceSQL = `
-                                SELECT
-                                    account.accttype AS account_type,
-                                    account.displaynamewithhierarchy AS account_name,
-                                    SUM(COALESCE(tal.debit, 0) - COALESCE(tal.credit, 0)) AS balance
-                                FROM transactionaccountingline tal
-                                JOIN transaction t ON t.id = tal.transaction
-                                JOIN account ON account.id = tal.account
-                                WHERE t.posting = 'T'
-                                AND account.accttype IN ('Bank', 'AcctRec', 'OthCurrAsset', 'FixedAsset', 'OthAsset',
-                                                         'AcctPay', 'CreditCard', 'OthCurrLiab', 'LongTermLiab',
-                                                         'Equity', 'RetainEarn')
-                                GROUP BY account.accttype, account.displaynamewithhierarchy
-                                ORDER BY account.accttype, account.displaynamewithhierarchy
-                                FETCH FIRST 500 ROWS ONLY
-                            `;
-                            result = QueryExecutor.executeQuery(balanceSQL);
-                            result.reportType = 'Balance Sheet';
-                            break;
-
-                        case 'ar_aging':
-                            // Delegate to existing get_ar_aging functionality
-                            const arResult = DATA_TOOLS.get_ar_aging.execute({});
-                            return {
-                                success: arResult.success,
-                                reportType: 'AR Aging Summary',
-                                columns: arResult.columns,
-                                rows: arResult.rows,
-                                rowCount: arResult.rowCount,
-                                tool: 'run_report'
-                            };
-
-                        case 'ap_aging':
-                            // Delegate to existing get_ap_aging functionality
-                            const apResult = DATA_TOOLS.get_ap_aging.execute({});
-                            return {
-                                success: apResult.success,
-                                reportType: 'AP Aging Summary',
-                                columns: apResult.columns,
-                                rows: apResult.rows,
-                                rowCount: apResult.rowCount,
-                                tool: 'run_report'
-                            };
-
-                        case 'trial_balance':
-                            const trialResult = DATA_TOOLS.get_trial_balance.execute({});
-                            return {
-                                success: trialResult.success,
-                                reportType: 'Trial Balance',
-                                columns: trialResult.columns,
-                                rows: trialResult.rows,
-                                rowCount: trialResult.rowCount,
-                                tool: 'run_report'
-                            };
-
-                        case 'cash_flow':
-                            // Use cash flow dashboard
-                            const cashResult = DASHBOARD_TOOLS.dashboard_cashflow.execute({});
-                            return {
-                                success: cashResult.success,
-                                reportType: 'Cash Flow Summary',
-                                data: cashResult.data,
-                                tool: 'run_report'
-                            };
-
-                        case 'general_ledger':
-                            const glResult = DATA_TOOLS.get_gl_activity.execute({
-                                period: period
-                            });
-                            return {
-                                success: glResult.success,
-                                reportType: 'General Ledger',
-                                columns: glResult.columns,
-                                rows: glResult.rows,
-                                rowCount: glResult.rowCount,
-                                tool: 'run_report'
-                            };
-
-                        case 'custom':
-                            if (!args.report_id) {
-                                return {
-                                    success: false,
-                                    error: 'report_id is required for custom reports',
-                                    tool: 'run_report'
-                                };
-                            }
-                            // For custom reports, try to run as a saved search
-                            return UTILITY_TOOLS.run_saved_search.execute({
-                                search_id: args.report_id,
-                                max_results: 500
-                            });
-
-                        default:
-                            return {
-                                success: false,
-                                error: 'Unknown report type: ' + reportType,
-                                availableTypes: ['income_statement', 'balance_sheet', 'cash_flow', 'ar_aging', 'ap_aging', 'trial_balance', 'general_ledger', 'custom'],
-                                tool: 'run_report'
-                            };
+                    if (!allDatasets || allDatasets.length === 0) {
+                        return {
+                            success: true,
+                            datasets: [],
+                            count: 0,
+                            message: 'No datasets found. Datasets are created in SuiteAnalytics Workbook.',
+                            tip: 'Use list_saved_searches to find saved searches, or use specific data tools like get_income_statement, get_ar_aging, etc.',
+                            tool: 'list_datasets'
+                        };
                     }
 
-                    const formatted = formatResult(result, 'run_report');
-                    formatted.reportType = result.reportType || reportType;
-                    return formatted;
-
-                } catch (e) {
-                    log.error('run_report error', {
-                        reportType: reportType,
-                        error: e.message
+                    // Format dataset list
+                    const datasets = allDatasets.slice(0, maxResults).map(function(ds) {
+                        return {
+                            id: ds.id,
+                            name: ds.name || ds.id,
+                            description: ds.description || 'SuiteAnalytics Dataset'
+                        };
                     });
 
                     return {
+                        success: true,
+                        datasets: datasets,
+                        count: datasets.length,
+                        totalAvailable: allDatasets.length,
+                        usage: 'Use run_dataset({ dataset_id: "id" }) to execute a dataset',
+                        tool: 'list_datasets'
+                    };
+
+                } catch (e) {
+                    log.error('list_datasets error', { error: e.message, stack: e.stack });
+
+                    // Provide helpful error message
+                    let errorMessage = e.message;
+                    if (e.message.indexOf('INSUFFICIENT_PERMISSION') > -1) {
+                        errorMessage = 'Insufficient permissions to list datasets. The SuiteAnalytics Workbook feature may not be enabled or accessible.';
+                    }
+
+                    return {
                         success: false,
-                        error: e.message,
-                        reportType: reportType,
-                        tool: 'run_report'
+                        error: errorMessage,
+                        tip: 'Datasets require SuiteAnalytics Workbook. Use list_saved_searches for saved searches instead.',
+                        tool: 'list_datasets'
                     };
                 }
             },
             displayName: function(args) {
-                return 'Running ' + (args.report_type || 'report') + '...';
+                return 'Listing available datasets...';
+            }
+        },
+
+        run_dataset: {
+            name: 'run_dataset',
+            shortDescription: 'Execute a SuiteAnalytics dataset by ID',
+            category: 'data',
+            description: `Run a SuiteAnalytics dataset and return its results.
+Datasets are pre-built queries created in SuiteAnalytics Workbook.
+
+Use list_datasets first to discover available datasets and their IDs.
+
+The dataset is executed and returns results similar to a saved search or SuiteQL query.`,
+            parameters: {
+                type: 'object',
+                properties: {
+                    dataset_id: {
+                        type: 'string',
+                        description: 'The internal ID of the dataset to run (use list_datasets to find IDs)'
+                    },
+                    max_results: {
+                        type: 'number',
+                        description: 'Maximum number of results to return (default: 500, max: 1000)'
+                    }
+                },
+                required: ['dataset_id']
+            },
+            execute: function(args) {
+                const datasetId = args.dataset_id;
+                const maxResults = Math.min(args.max_results || 500, 1000);
+
+                log.debug('run_dataset', { datasetId: datasetId, maxResults: maxResults });
+
+                if (!datasetId) {
+                    return {
+                        success: false,
+                        error: 'dataset_id is required. Use list_datasets to find available datasets.',
+                        tool: 'run_dataset'
+                    };
+                }
+
+                try {
+                    // Load the dataset
+                    const loadedDataset = dataset.load({ id: datasetId });
+
+                    if (!loadedDataset) {
+                        return {
+                            success: false,
+                            error: 'Dataset not found: ' + datasetId,
+                            tip: 'Use list_datasets to see available datasets',
+                            tool: 'run_dataset'
+                        };
+                    }
+
+                    // Run the dataset - returns a query.ResultSet
+                    const resultSet = loadedDataset.run();
+
+                    // Extract columns
+                    const columns = [];
+                    if (resultSet.columns && resultSet.columns.length > 0) {
+                        resultSet.columns.forEach(function(col) {
+                            columns.push(col.label || col.alias || col.fieldId || 'column');
+                        });
+                    }
+
+                    // Extract rows (up to maxResults)
+                    const rows = [];
+                    const iterator = resultSet.iterator();
+                    let rowCount = 0;
+
+                    iterator.each(function(result) {
+                        if (rowCount >= maxResults) {
+                            return false; // Stop iteration
+                        }
+
+                        const row = {};
+                        columns.forEach(function(colName, idx) {
+                            const value = result.getValue(idx);
+                            row[colName] = value;
+                        });
+                        rows.push(row);
+                        rowCount++;
+
+                        return true; // Continue iteration
+                    });
+
+                    return {
+                        success: true,
+                        datasetId: datasetId,
+                        datasetName: loadedDataset.name || datasetId,
+                        columns: columns,
+                        rows: rows,
+                        rowCount: rows.length,
+                        maxResults: maxResults,
+                        hasMore: rowCount >= maxResults,
+                        tool: 'run_dataset'
+                    };
+
+                } catch (e) {
+                    log.error('run_dataset error', {
+                        datasetId: datasetId,
+                        error: e.message,
+                        stack: e.stack
+                    });
+
+                    // Provide helpful error messages
+                    let errorMessage = e.message;
+                    let tip = 'Use list_datasets to verify the dataset exists.';
+
+                    if (e.message.indexOf('INVALID_KEY_OR_REF') > -1 || e.message.indexOf('Invalid dataset') > -1) {
+                        errorMessage = 'Dataset not found: ' + datasetId;
+                    } else if (e.message.indexOf('INSUFFICIENT_PERMISSION') > -1) {
+                        errorMessage = 'Insufficient permissions to run this dataset.';
+                        tip = 'Check that you have access to SuiteAnalytics Workbook and this specific dataset.';
+                    }
+
+                    return {
+                        success: false,
+                        error: errorMessage,
+                        datasetId: datasetId,
+                        tip: tip,
+                        tool: 'run_dataset'
+                    };
+                }
+            },
+            displayName: function(args) {
+                return 'Running dataset ' + (args.dataset_id || '') + '...';
             }
         },
 
