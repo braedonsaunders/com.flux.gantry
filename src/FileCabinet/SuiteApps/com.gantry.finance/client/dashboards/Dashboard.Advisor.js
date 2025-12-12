@@ -2390,61 +2390,136 @@
             let existingChain = stepsContainer.querySelector('.thought-chain');
 
             if (existingChain) {
-                // Update existing chain with new steps
+                // Incremental update: only modify what changed, append new steps
                 const existingSteps = existingChain._stepsData || [];
-                const allSteps = [...existingSteps];
-                let hasChanges = false;
+                const chainId = existingChain.getAttribute('data-chain-id');
+                const nodesContainer = existingChain.querySelector('.thought-nodes');
+                const existingNodes = nodesContainer.querySelectorAll('.thought-node');
 
-                // Add new steps that don't already exist
+                let hasChanges = false;
+                const statusChanges = []; // Track which existing nodes need status updates
+                const newSteps = []; // Track genuinely new steps to append
+
+                // Categorize incoming steps
                 steps.forEach(step => {
-                    const existingIdx = allSteps.findIndex(s =>
+                    const existingIdx = existingSteps.findIndex(s =>
                         s.title === step.title && s.type === step.type
                     );
                     if (existingIdx < 0) {
-                        // New step
-                        allSteps.push(step);
+                        // Genuinely new step
+                        newSteps.push(step);
                         hasChanges = true;
-                    } else {
-                        // Check if status changed
-                        if (allSteps[existingIdx].status !== step.status) {
-                            allSteps[existingIdx] = step;
-                            hasChanges = true;
+                    } else if (existingSteps[existingIdx].status !== step.status) {
+                        // Status changed on existing step
+                        statusChanges.push({ idx: existingIdx, step: step });
+                        existingSteps[existingIdx] = step;
+                        hasChanges = true;
+                    }
+                });
+
+                // Skip if nothing changed
+                if (!hasChanges) {
+                    console.log('[Advisor appendSteps] No changes detected, skipping update');
+                    return;
+                }
+
+                // 1. Update status on existing nodes (in-place, no re-render)
+                statusChanges.forEach(({ idx, step }) => {
+                    const node = existingNodes[idx];
+                    if (!node) return;
+
+                    const newStatus = this.normalizeStepStatus(step.status);
+                    const oldStatus = node.classList.contains('running') ? 'running' :
+                                     node.classList.contains('complete') ? 'complete' :
+                                     node.classList.contains('error') ? 'error' : 'pending';
+
+                    if (newStatus !== oldStatus) {
+                        // Update node status class
+                        node.classList.remove('running', 'complete', 'error', 'pending');
+                        node.classList.add(newStatus);
+
+                        // Handle orbital dots (only present when running)
+                        const orbitalDots = node.querySelector('.orbital-dots');
+                        if (newStatus === 'running' && !orbitalDots) {
+                            const dots = document.createElement('div');
+                            dots.className = 'orbital-dots';
+                            dots.innerHTML = '<span></span><span></span><span></span>';
+                            node.querySelector('.node-ring').after(dots);
+                        } else if (newStatus !== 'running' && orbitalDots) {
+                            orbitalDots.remove();
+                        }
+
+                        // Update tooltip status
+                        const tooltipStatus = node.querySelector('.tooltip-status');
+                        if (tooltipStatus) {
+                            tooltipStatus.classList.remove('running', 'complete', 'error', 'pending');
+                            tooltipStatus.classList.add(newStatus);
+                            tooltipStatus.textContent = newStatus;
+                        }
+
+                        // Update connector before this node
+                        if (idx > 0) {
+                            const connectors = nodesContainer.querySelectorAll('.node-connector');
+                            const connector = connectors[idx - 1];
+                            if (connector) {
+                                connector.classList.remove('active', 'completed');
+                                connector.classList.add(newStatus === 'running' ? 'active' : 'completed');
+                            }
                         }
                     }
                 });
 
-                // Skip re-render if nothing changed
-                if (!hasChanges) {
-                    console.log('[Advisor appendSteps] No changes detected, skipping re-render');
-                    return;
+                // 2. Remove pending indicator and thinking trail before appending
+                const pendingIndicator = nodesContainer.querySelector('.thinking-node-indicator');
+                const pendingConnector = pendingIndicator ? pendingIndicator.previousElementSibling : null;
+                if (pendingIndicator) pendingIndicator.remove();
+                if (pendingConnector && pendingConnector.classList.contains('node-connector')) pendingConnector.remove();
+
+                const thinkingTrail = nodesContainer.querySelector('.thinking-trail');
+                if (thinkingTrail) thinkingTrail.remove();
+
+                // 3. Append new steps
+                newSteps.forEach(step => {
+                    const newIdx = existingSteps.length;
+                    existingSteps.push(step);
+
+                    // Add connector
+                    const connectorStatus = this.normalizeStepStatus(step.status) === 'running' ? 'active' : 'completed';
+                    const connectorHtml = `<div class="node-connector ${connectorStatus} animate-in cascade-delay-${newIdx}" style="--flow-delay: ${newIdx * 0.3}s"></div>`;
+                    nodesContainer.insertAdjacentHTML('beforeend', connectorHtml);
+
+                    // Add node
+                    const isFinal = !isStillLoading && newSteps.indexOf(step) === newSteps.length - 1;
+                    const nodeHtml = this.renderThoughtNode(step, newIdx, chainId, isFinal);
+                    nodesContainer.insertAdjacentHTML('beforeend', nodeHtml);
+                });
+
+                // 4. Re-add pending indicator if still loading
+                const hasRunning = existingSteps.some(s => this.normalizeStepStatus(s.status) === 'running');
+                if (isStillLoading && !hasRunning) {
+                    const lastIdx = existingSteps.length;
+                    const pendingHtml = `
+                        <div class="node-connector active animate-in cascade-delay-${lastIdx}" style="--flow-delay: ${lastIdx * 0.3}s"></div>
+                        <div class="thinking-node-indicator inline">
+                            <div class="thinking-node-core"><i class="fas fa-brain"></i></div>
+                            <div class="thinking-node-ring"></div>
+                        </div>
+                    `;
+                    nodesContainer.insertAdjacentHTML('beforeend', pendingHtml);
                 }
 
-                // Capture existing expansion state before re-render
-                const existingChainId = existingChain.getAttribute('data-chain-id');
-                const expansionPanel = document.getElementById(existingChainId + '-expansion');
-                const expandedIdx = expansionPanel ? expansionPanel.getAttribute('data-expanded-idx') : null;
-                const wasExpanded = expansionPanel && expansionPanel.classList.contains('visible') && expandedIdx !== null && expandedIdx !== '';
-
-                // Re-render the chain with pending indicator if still loading, preserving chainId
-                const chainHtml = this.renderSteps(allSteps, isStillLoading, existingChainId);
-                const tempDiv = document.createElement('div');
-                tempDiv.innerHTML = chainHtml;
-                const newChain = tempDiv.firstElementChild;
-
-                if (newChain) {
-                    // Store step data on the chain element for expansion
-                    newChain._stepsData = allSteps.map((s, i) => ({...s, _chainId: newChain.getAttribute('data-chain-id')}));
-                    existingChain.replaceWith(newChain);
-
-                    // Restore expansion state if a step was expanded
-                    if (wasExpanded) {
-                        const self = this;
-                        // Use requestAnimationFrame to ensure DOM is updated before restoring expansion
-                        requestAnimationFrame(function() {
-                            self.toggleExpansion(existingChainId, parseInt(expandedIdx, 10));
-                        });
-                    }
+                // 5. Add thinking trail if there's a running step
+                if (hasRunning) {
+                    nodesContainer.insertAdjacentHTML('beforeend', '<div class="thinking-trail"><span></span><span></span><span></span></div>');
                 }
+
+                // 6. Update chain-complete class
+                const allComplete = existingSteps.every(s => this.normalizeStepStatus(s.status) === 'complete') && !isStillLoading;
+                existingChain.classList.toggle('chain-complete', allComplete);
+
+                // 7. Update stored step data
+                existingChain._stepsData = existingSteps.map(s => ({...s, _chainId: chainId}));
+
             } else {
                 // Create new thought-chain with pending indicator if still loading
                 const chainHtml = this.renderSteps(steps, isStillLoading);
@@ -2495,32 +2570,28 @@
                 const thinking = stepsContainer.querySelector('.progressive-thinking');
                 if (thinking) thinking.remove();
 
-                // Re-render the thought chain without pending indicator
+                // Finalize the thought chain with incremental updates (no full re-render)
                 const existingChain = stepsContainer.querySelector('.thought-chain');
-                if (existingChain && existingChain._stepsData) {
-                    // Capture existing expansion state before re-render
-                    const existingChainId = existingChain.getAttribute('data-chain-id');
-                    const expansionPanel = document.getElementById(existingChainId + '-expansion');
-                    const expandedIdx = expansionPanel ? expansionPanel.getAttribute('data-expanded-idx') : null;
-                    const wasExpanded = expansionPanel && expansionPanel.classList.contains('visible') && expandedIdx !== null && expandedIdx !== '';
+                if (existingChain) {
+                    const nodesContainer = existingChain.querySelector('.thought-nodes');
 
-                    // Re-render preserving chainId
-                    const chainHtml = this.renderSteps(existingChain._stepsData, false, existingChainId);
-                    const tempDiv = document.createElement('div');
-                    tempDiv.innerHTML = chainHtml;
-                    const newChain = tempDiv.firstElementChild;
-                    if (newChain) {
-                        newChain._stepsData = existingChain._stepsData.map((s, i) => ({...s, _chainId: newChain.getAttribute('data-chain-id')}));
-                        existingChain.replaceWith(newChain);
+                    // Remove pending indicator and thinking trail
+                    const pendingIndicator = nodesContainer.querySelector('.thinking-node-indicator');
+                    const pendingConnector = pendingIndicator ? pendingIndicator.previousElementSibling : null;
+                    if (pendingIndicator) pendingIndicator.remove();
+                    if (pendingConnector && pendingConnector.classList.contains('node-connector')) pendingConnector.remove();
 
-                        // Restore expansion state if a step was expanded
-                        if (wasExpanded) {
-                            const self = this;
-                            requestAnimationFrame(function() {
-                                self.toggleExpansion(existingChainId, parseInt(expandedIdx, 10));
-                            });
-                        }
-                    }
+                    const thinkingTrail = nodesContainer.querySelector('.thinking-trail');
+                    if (thinkingTrail) thinkingTrail.remove();
+
+                    // Mark chain as complete
+                    existingChain.classList.add('chain-complete');
+
+                    // Update final node styling
+                    const nodes = nodesContainer.querySelectorAll('.thought-node');
+                    nodes.forEach((node, idx) => {
+                        node.classList.toggle('final', idx === nodes.length - 1);
+                    });
                 }
             }
 
