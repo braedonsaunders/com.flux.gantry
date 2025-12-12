@@ -189,14 +189,24 @@ define(['N/cache', 'N/log'], function(cache, log) {
         return summary;
     }
 
+    /**
+     * Format a number as currency with proper negative handling
+     * FIXED: Ensures negative values display as -$X.XX instead of $-X.XX
+     */
     function formatNumber(num) {
         if (num === null || num === undefined) return 'N/A';
-        if (Math.abs(num) >= 1000000) {
-            return '$' + (num / 1000000).toFixed(2) + 'M';
-        } else if (Math.abs(num) >= 1000) {
-            return '$' + (num / 1000).toFixed(1) + 'K';
+
+        // Handle negative numbers correctly: -$1.5M not $-1.5M
+        const isNegative = num < 0;
+        const absNum = Math.abs(num);
+        const sign = isNegative ? '-' : '';
+
+        if (absNum >= 1000000) {
+            return sign + '$' + (absNum / 1000000).toFixed(2) + 'M';
+        } else if (absNum >= 1000) {
+            return sign + '$' + (absNum / 1000).toFixed(1) + 'K';
         }
-        return '$' + num.toFixed(2);
+        return sign + '$' + absNum.toFixed(2);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════

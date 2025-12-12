@@ -39,7 +39,8 @@ define([
         INTENT: 'intent',
         SELECT: 'select',
         INVOKE: 'invoke',
-        RESPOND: 'respond',   // NEW: Merged analyze+format with data access
+        REFLECT: 'reflect',   // NEW: ReAct pattern - evaluate results and decide next action
+        RESPOND: 'respond',   // Merged analyze+format with data access
         COMPLETE: 'complete',
         // Legacy phases kept for backward compatibility
         ANALYZE: 'analyze',
@@ -53,6 +54,22 @@ define([
     const MAX_DATA_LOADS = 3;
     const MAX_ANALYZE_ITERATIONS = 3;  // Prevent analyze loops
     const MAX_FORMAT_ITERATIONS = 2;   // Prevent format loops
+    const MAX_REFLECT_ITERATIONS = 3;  // Prevent infinite reflection loops
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // FAILURE MODE CLASSIFICATION
+    // Distinguishes between different types of "no data" results
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    const FAILURE_MODES = {
+        SUCCESS: 'success',                    // Got useful data
+        ENTITY_NOT_FOUND: 'entity_not_found',  // Entity doesn't exist in system
+        ENTITY_FOUND_NO_DATA: 'entity_found_no_data',  // Entity exists but no matching transactions
+        QUERY_TOO_RESTRICTIVE: 'query_too_restrictive', // Filters excluded all results
+        NO_DATA_EXISTS: 'no_data_exists',      // No data for this query type at all
+        PARTIAL_SUCCESS: 'partial_success',    // Some tools succeeded, some failed
+        TOOL_ERROR: 'tool_error'               // Tool execution error
+    };
 
     // ═══════════════════════════════════════════════════════════════════════════
     // LIGHTWEIGHT PROMPTS
@@ -175,6 +192,97 @@ Create blocks array with these types:
 
 Response format:
 {"title": "Response Title", "summary": "One line summary", "blocks": [...]}`;
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // REFLECT PROMPT - ReAct Pattern (Reasoning + Acting)
+    // Evaluates tool results and decides next action
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    const REFLECT_PROMPT = `You are evaluating tool execution results. Analyze what happened and decide the next action.
+
+ORIGINAL QUESTION: "{question}"
+
+TOOL EXECUTION SUMMARY:
+{tool_summary}
+
+RESOLVED ENTITIES:
+{resolved_entities}
+
+DATA COLLECTED:
+{data_summary}
+
+═══════════════════════════════════════════════════════════════════════════════
+EVALUATE THE RESULTS:
+
+1. Did we successfully answer the question? Consider:
+   - Entity resolution: Was the mentioned entity found?
+   - Data retrieval: Did we get relevant data rows?
+   - Coverage: Do we have enough data to provide a meaningful answer?
+
+2. If results are insufficient, diagnose WHY:
+   - ENTITY_NOT_FOUND: The entity (customer/vendor/account) doesn't exist
+   - ENTITY_FOUND_NO_DATA: Entity exists but has no transactions/data for this query
+   - QUERY_TOO_RESTRICTIVE: Filters (date range, type) excluded all results
+   - WRONG_TOOL: Selected tool doesn't match the actual question
+   - NO_DATA_EXISTS: This type of data simply doesn't exist in the system
+
+3. Based on diagnosis, decide next action:
+   - PROCEED: We have enough data, move to response generation
+   - BROADEN: Retry with broader parameters (remove filters, expand date range)
+   - DIFFERENT_TOOL: Try a different tool that might work better
+   - CLARIFY: We need user clarification (ambiguous entity, unclear intent)
+   - GIVE_UP: We've exhausted options, explain what we tried
+
+═══════════════════════════════════════════════════════════════════════════════
+
+Response format (JSON only):
+{{
+  "evaluation": {{
+    "has_useful_data": true|false,
+    "entity_found": true|false|null,
+    "data_rows_found": number,
+    "failure_mode": "SUCCESS|ENTITY_NOT_FOUND|ENTITY_FOUND_NO_DATA|QUERY_TOO_RESTRICTIVE|WRONG_TOOL|NO_DATA_EXISTS"
+  }},
+  "diagnosis": "Brief explanation of what happened",
+  "action": "PROCEED|BROADEN|DIFFERENT_TOOL|CLARIFY|GIVE_UP",
+  "action_details": {{
+    "tool": "tool_name_if_retry",
+    "modified_params": {{}},
+    "clarification_question": "question_if_clarify",
+    "explanation": "explanation_if_give_up"
+  }},
+  "reasoning": "Why this action is the best choice"
+}}`;
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // LLM-DRIVEN TOOL RECOVERY PROMPT
+    // When tools fail, let LLM suggest alternatives based on context
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    const RECOVERY_PROMPT = `A tool failed while answering a financial question. Suggest an alternative approach.
+
+QUESTION: "{question}"
+FAILED TOOL: {failed_tool}
+ERROR: {error}
+
+AVAILABLE TOOLS:
+{tool_list}
+
+ALREADY TRIED:
+{already_tried}
+
+Based on the error and question context, suggest:
+1. An alternative tool that could provide similar information
+2. Modified parameters that might work better
+3. Whether to give up and explain the limitation to the user
+
+Response format (JSON only):
+{{
+  "suggestion": "TRY_ALTERNATIVE|MODIFY_PARAMS|GIVE_UP",
+  "alternative_tool": "tool_name or null",
+  "reasoning": "Why this alternative might work",
+  "user_message": "Message to show user if giving up"
+}}`;
 
     // ═══════════════════════════════════════════════════════════════════════════
     // WORLD-CLASS RESPOND PROMPT - LLM as Data Analyst
@@ -388,6 +496,7 @@ Response format (JSON only):
             iteration: 0,
             analyzeIterations: 0,    // Track analyze phase runs
             formatIterations: 0,     // Track format phase runs
+            reflectIterations: 0,    // Track reflect phase runs (ReAct pattern)
             startTime: Date.now(),
             phaseTimings: {},        // Track duration per phase
             errors: [],
@@ -395,12 +504,30 @@ Response format (JSON only):
             stepIds: {
                 intent: null,
                 select: null,
+                reflect: null,       // NEW: REFLECT phase step tracking
                 analyze: null,
                 format: null
             },
             // RECOMMENDATION 6: Error recovery tracking
             recoveryAttempts: {},     // Track which tools have been tried for recovery
-            alternativeToolsQueue: [] // Queue of alternative tools to try
+            alternativeToolsQueue: [], // Queue of alternative tools to try
+
+            // ═══════════════════════════════════════════════════════════════════════
+            // ReAct Pattern State - Reflection and Reasoning
+            // ═══════════════════════════════════════════════════════════════════════
+            reflection: {
+                hasReflected: false,           // Whether we've done initial reflection
+                failureMode: null,             // Classified failure type
+                entityFound: null,             // Track entity resolution separately from data
+                dataFound: null,               // Track data retrieval separately
+                broadeningAttempts: 0,         // How many times we've tried broadening
+                clarificationNeeded: false,    // Whether we need user input
+                gaveUp: false,                 // Whether we exhausted options
+                journey: []                    // Track what we tried for transparency
+            },
+
+            // Follow-up context - preserve data from previous exchanges
+            previousDataRefs: sessionContext?.lastDataRefs || null
         };
     }
 
@@ -631,9 +758,40 @@ Response format (JSON only):
 
     /**
      * Phase 2: SELECT - Pick tools by name
+     * Enhanced with follow-up data reuse capability
      */
     function executeSelectPhase(state) {
         const phaseStart = Date.now();
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // FOLLOW-UP DATA REUSE
+        // If this is a follow-up question and we have previous data, skip tool selection
+        // and go directly to RESPOND using the cached data
+        // ═══════════════════════════════════════════════════════════════════════
+        if (state.intent.intent === 'follow_up' && state.previousDataRefs && state.previousDataRefs.length > 0) {
+            log.debug('SCA SELECT phase - follow-up with previous data, skipping tool selection');
+
+            // Reuse previous data references
+            state.dataReferences = state.previousDataRefs;
+            state.selectedTools = []; // No new tools needed
+
+            upsertThinkingStep(state, 'select', {
+                title: 'Using previous results',
+                phase: 'select',
+                status: 'complete',
+                duration: Date.now() - phaseStart,
+                context: {
+                    intent: state.intent.intent,
+                    reusingPreviousData: true,
+                    dataRefs: state.dataReferences.length
+                }
+            });
+
+            // Skip INVOKE and go straight to REFLECT (which will proceed to RESPOND)
+            state.phase = PHASES.REFLECT;
+            return { success: true, nextPhase: PHASES.REFLECT };
+        }
+
         const entityContext = state.intent.entities && state.intent.entities.length > 0
             ? `Mentioned entities: ${state.intent.entities.join(', ')}`
             : 'No specific entities mentioned';
@@ -744,62 +902,50 @@ Response format (JSON only):
         const enhanced = { ...args };
         const resolvedEntries = Object.entries(state.resolvedEntities);
 
-        // Tools that use customer_id parameter
-        const customerIdTools = ['get_customer_revenue', 'get_recent_transactions', 'get_transaction_detail'];
-        // Tools that use vendor_id parameter
-        const vendorIdTools = ['get_vendor_spend', 'get_recent_transactions', 'get_transaction_detail'];
-        // Tools that use entity_id parameter (generic)
-        const entityIdTools = ['get_recent_transactions', 'get_transaction_detail', 'get_ar_detail', 'get_ap_detail'];
+        // ═══════════════════════════════════════════════════════════════════════
+        // DYNAMIC ENTITY ID INJECTION
+        // Instead of hardcoded tool lists, inspect the tool's parameter schema
+        // This automatically works for any new tools added in the future
+        // ═══════════════════════════════════════════════════════════════════════
+
+        // Get tool schema to determine which parameters it accepts
+        const tool = Tools.getTool(toolName);
+        const toolParams = tool?.parameters?.properties || {};
+
+        // Mapping from entity type to parameter name(s)
+        const ENTITY_TYPE_TO_PARAMS = {
+            'customer': ['customer_id', 'entity_id'],
+            'vendor': ['vendor_id', 'entity_id'],
+            'employee': ['employee_id', 'entity_id'],
+            'account': ['account_id'],
+            'item': ['item_id'],
+            'project': ['project_id', 'job_id'],
+            'class': ['class_id'],
+            'department': ['department_id'],
+            'location': ['location_id']
+        };
 
         for (const [searchTerm, entity] of resolvedEntries) {
             if (!entity || !entity.id) continue;
 
             const entityType = (entity.type || '').toLowerCase();
+            const candidateParams = ENTITY_TYPE_TO_PARAMS[entityType] || [];
 
-            // Auto-inject customer_id
-            if (customerIdTools.includes(toolName) && entityType === 'customer') {
-                if (!enhanced.customer_id) {
-                    enhanced.customer_id = entity.id;
-                    log.debug('Auto-injected customer_id', { toolName, entityName: entity.name, entityId: entity.id });
+            // Try to inject into each candidate parameter if the tool accepts it
+            for (const paramName of candidateParams) {
+                // Check if tool accepts this parameter AND we haven't already set it
+                if (toolParams[paramName] && !enhanced[paramName]) {
+                    enhanced[paramName] = entity.id;
+                    log.debug('Dynamic entity ID injection', {
+                        toolName,
+                        paramName,
+                        entityName: entity.name,
+                        entityId: entity.id,
+                        entityType: entityType
+                    });
+                    // Only inject into the first matching parameter
+                    break;
                 }
-            }
-
-            // Auto-inject vendor_id
-            if (vendorIdTools.includes(toolName) && entityType === 'vendor') {
-                if (!enhanced.vendor_id) {
-                    enhanced.vendor_id = entity.id;
-                    log.debug('Auto-injected vendor_id', { toolName, entityName: entity.name, entityId: entity.id });
-                }
-            }
-
-            // Auto-inject entity_id (for generic entity tools)
-            if (entityIdTools.includes(toolName)) {
-                if (!enhanced.entity_id && (entityType === 'customer' || entityType === 'vendor')) {
-                    enhanced.entity_id = entity.id;
-                    log.debug('Auto-injected entity_id', { toolName, entityName: entity.name, entityId: entity.id, type: entityType });
-                }
-            }
-
-            // Auto-inject account_id for GL tools
-            if ((toolName === 'get_gl_activity' || toolName === 'get_trial_balance') && entityType === 'account') {
-                if (!enhanced.account_id) {
-                    enhanced.account_id = entity.id;
-                    log.debug('Auto-injected account_id', { toolName, entityName: entity.name, entityId: entity.id });
-                }
-            }
-
-            // Auto-inject class_id, department_id, location_id for classification dimensions
-            if (entityType === 'class' && !enhanced.class_id) {
-                enhanced.class_id = entity.id;
-                log.debug('Auto-injected class_id', { toolName, entityName: entity.name, entityId: entity.id });
-            }
-            if (entityType === 'department' && !enhanced.department_id) {
-                enhanced.department_id = entity.id;
-                log.debug('Auto-injected department_id', { toolName, entityName: entity.name, entityId: entity.id });
-            }
-            if (entityType === 'location' && !enhanced.location_id) {
-                enhanced.location_id = entity.id;
-                log.debug('Auto-injected location_id', { toolName, entityName: entity.name, entityId: entity.id });
             }
         }
 
@@ -808,18 +954,25 @@ Response format (JSON only):
 
     /**
      * Phase 3: INVOKE - Call tools one at a time
+     * After all tools complete, transitions to REFLECT phase for ReAct pattern evaluation
      */
     function executeInvokePhase(state) {
         // Check if we have more tools to invoke
         const invokedCount = state.toolInvocations.length;
         if (invokedCount >= state.selectedTools.length) {
-            // All tools invoked - ADD TABLE BLOCKS IMMEDIATELY before moving to respond
+            // All tools invoked - ADD TABLE BLOCKS IMMEDIATELY before moving to reflect
             // This enables progressive rendering: tables appear BEFORE LLM generates narrative
             addProgressiveTableBlocks(state);
 
-            // Move to RESPOND phase (merged analyze+format with full data access)
-            state.phase = PHASES.RESPOND;
-            return { success: true, nextPhase: PHASES.RESPOND };
+            // ═══════════════════════════════════════════════════════════════════════
+            // ReAct Pattern: Move to REFLECT phase to evaluate results
+            // Instead of blindly proceeding to RESPOND, let LLM evaluate:
+            // - Did we get useful data?
+            // - If not, why? (entity not found vs no data vs too restrictive)
+            // - What should we do next? (proceed, broaden, retry, clarify, give up)
+            // ═══════════════════════════════════════════════════════════════════════
+            state.phase = PHASES.REFLECT;
+            return { success: true, nextPhase: PHASES.REFLECT };
         }
 
         const toolName = state.selectedTools[invokedCount];
@@ -924,13 +1077,43 @@ Response format (JSON only):
             if (result.success && result.rows && result.rows.length > 0) {
                 dataRef = DataStore.storeData(state.requestId, toolName, result);
                 state.dataReferences.push(dataRef);
+                // Track that we found data (for reflection)
+                state.reflection.dataFound = true;
             }
 
-            // Track resolved entities
-            if (toolName.startsWith('resolve_') && result.found && result.entity) {
-                const searchTerm = args.term || args.name || 'unknown';
-                state.resolvedEntities[searchTerm] = result.entity;
+            // ═══════════════════════════════════════════════════════════════════════
+            // TRACK ENTITY RESOLUTION SEPARATELY FROM DATA
+            // This enables proper diagnosis in REFLECT phase:
+            // - Entity found but no data = ENTITY_FOUND_NO_DATA
+            // - Entity not found = ENTITY_NOT_FOUND
+            // ═══════════════════════════════════════════════════════════════════════
+            if (toolName.startsWith('resolve_')) {
+                if (result.found && result.entity) {
+                    const searchTerm = args.term || args.name || 'unknown';
+                    state.resolvedEntities[searchTerm] = result.entity;
+                    state.reflection.entityFound = true;
+
+                    // Record in journey
+                    state.reflection.journey.push({
+                        action: 'entity_resolved',
+                        entity: result.entity.name,
+                        type: result.entity.type,
+                        id: result.entity.id,
+                        confidence: result.confidence || 1.0
+                    });
+                } else {
+                    // Entity was NOT found - important distinction
+                    state.reflection.entityFound = false;
+                    state.reflection.journey.push({
+                        action: 'entity_not_found',
+                        searchTerm: args.term,
+                        typeHint: args.type_hint || 'auto'
+                    });
+                }
             }
+
+            // Classify the invocation result for reflection
+            const invocationResult = classifyToolResult(toolName, result, args, state);
 
             const invocation = {
                 tool: toolName,
@@ -941,7 +1124,10 @@ Response format (JSON only):
                 dataRef: dataRef?.refId,
                 duration: toolDuration,
                 fromCache: fromCache,  // Track cache usage
-                timestamp: Date.now()
+                timestamp: Date.now(),
+                // NEW: Classification for reflection
+                resultClass: invocationResult.classification,
+                resultDetails: invocationResult.details
             };
             state.toolInvocations.push(invocation);
 
@@ -1054,26 +1240,504 @@ Response format (JSON only):
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
+    // TOOL RESULT CLASSIFICATION
+    // Distinguishes between different types of results for intelligent reflection
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Classify a tool result to enable intelligent reflection
+     * Distinguishes between: success, entity not found, entity found but no data, etc.
+     */
+    function classifyToolResult(toolName, result, args, state) {
+        // Entity resolution tools
+        if (toolName.startsWith('resolve_')) {
+            if (result.found && result.entity) {
+                return {
+                    classification: 'ENTITY_FOUND',
+                    details: { entity: result.entity, confidence: result.confidence }
+                };
+            } else {
+                return {
+                    classification: 'ENTITY_NOT_FOUND',
+                    details: { searchTerm: args.term, typeHint: args.type_hint }
+                };
+            }
+        }
+
+        // Data retrieval tools
+        const rowCount = result.rowCount || (result.rows ? result.rows.length : 0);
+
+        if (!result.success) {
+            return {
+                classification: 'TOOL_ERROR',
+                details: { error: result.error || 'Unknown error' }
+            };
+        }
+
+        if (rowCount > 0) {
+            return {
+                classification: 'DATA_FOUND',
+                details: { rowCount: rowCount, truncated: result.truncated || false }
+            };
+        }
+
+        // Zero rows - need to determine WHY
+        // Check if we had an entity filter that might be too restrictive
+        const hasEntityFilter = args.customer_id || args.vendor_id || args.entity_id;
+        const hasDateFilter = args.start_date || args.end_date || args.period;
+        const hasTypeFilter = args.transaction_type || args.account_type;
+
+        if (hasEntityFilter && state.reflection.entityFound) {
+            // Entity was found but query returned no data
+            return {
+                classification: 'ENTITY_FOUND_NO_DATA',
+                details: {
+                    entityFilter: hasEntityFilter,
+                    dateFilter: hasDateFilter,
+                    typeFilter: hasTypeFilter,
+                    suggestion: hasDateFilter || hasTypeFilter ? 'Try broader filters' : 'No matching data exists'
+                }
+            };
+        }
+
+        if (hasDateFilter || hasTypeFilter) {
+            // Filters might be too restrictive
+            return {
+                classification: 'QUERY_TOO_RESTRICTIVE',
+                details: {
+                    dateFilter: hasDateFilter,
+                    typeFilter: hasTypeFilter,
+                    suggestion: 'Try removing or broadening filters'
+                }
+            };
+        }
+
+        // No data exists for this query type
+        return {
+            classification: 'NO_DATA_EXISTS',
+            details: { tool: toolName, suggestion: 'This data type may not exist in the system' }
+        };
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // REFLECT PHASE - ReAct Pattern (Reasoning + Acting)
+    // Evaluates tool results and decides the next action
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Phase 3.5: REFLECT - Evaluate results and decide next action
+     * This is the core of the ReAct pattern:
+     * 1. Evaluate: Did we get useful data?
+     * 2. Reason: If not, why? (entity not found, no data, too restrictive, wrong tool)
+     * 3. Decide: Proceed, broaden, retry, clarify, or give up
+     * 4. Loop back to INVOKE if retrying, otherwise proceed to RESPOND
+     */
+    function executeReflectPhase(state) {
+        const phaseStart = Date.now();
+
+        // Increment reflection counter
+        state.reflectIterations++;
+
+        // Check for infinite loop prevention
+        if (state.reflectIterations > MAX_REFLECT_ITERATIONS) {
+            log.audit('SCA REFLECT phase - max iterations reached, proceeding to RESPOND', {
+                iterations: state.reflectIterations
+            });
+            state.phase = PHASES.RESPOND;
+            return { success: true, nextPhase: PHASES.RESPOND };
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // QUICK CHECK: If we have data, just proceed (no LLM call needed)
+        // ═══════════════════════════════════════════════════════════════════════
+        const hasUsefulData = state.dataReferences.length > 0;
+        const totalRows = state.toolInvocations.reduce((sum, inv) =>
+            sum + (inv.rowCount || 0), 0);
+
+        if (hasUsefulData && totalRows > 0) {
+            // We have data - proceed to RESPOND
+            state.reflection.hasReflected = true;
+            state.reflection.failureMode = FAILURE_MODES.SUCCESS;
+            state.phase = PHASES.RESPOND;
+
+            log.debug('SCA REFLECT phase - data found, proceeding to RESPOND', {
+                dataRefs: state.dataReferences.length,
+                totalRows: totalRows
+            });
+
+            return { success: true, nextPhase: PHASES.RESPOND };
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // NO DATA CASE: Use LLM to evaluate and decide next action
+        // ═══════════════════════════════════════════════════════════════════════
+
+        // Build summaries for the LLM
+        const toolSummary = buildToolSummaryForReflection(state);
+        const resolvedEntitiesStr = buildResolvedEntitiesForReflection(state);
+        const dataSummary = buildDataSummaryForReflection(state);
+
+        const prompt = REFLECT_PROMPT
+            .replace('{question}', state.message)
+            .replace('{tool_summary}', toolSummary)
+            .replace('{resolved_entities}', resolvedEntitiesStr)
+            .replace('{data_summary}', dataSummary);
+
+        // Add thinking step
+        upsertThinkingStep(state, 'reflect', {
+            title: 'Evaluating results',
+            phase: 'reflect',
+            status: 'active',
+            context: {
+                iteration: state.reflectIterations,
+                hasData: hasUsefulData,
+                entityFound: state.reflection.entityFound
+            }
+        });
+
+        try {
+            const response = AIProviders.callAI(prompt, {
+                tier: FAST_TIER,
+                temperature: 0.2,
+                maxTokens: 500,
+                jsonMode: true,
+                purpose: 'SCA:reflect'
+            });
+
+            const parsed = parseJsonResponse(response?.text);
+            const duration = Date.now() - phaseStart;
+            state.phaseTimings.reflect = (state.phaseTimings.reflect || 0) + duration;
+
+            if (!parsed || !parsed.action) {
+                throw new Error('Invalid reflect response - missing action');
+            }
+
+            // Update reflection state
+            state.reflection.hasReflected = true;
+            state.reflection.failureMode = parsed.evaluation?.failure_mode || FAILURE_MODES.NO_DATA_EXISTS;
+
+            // Record in journey
+            state.reflection.journey.push({
+                action: 'reflection',
+                iteration: state.reflectIterations,
+                evaluation: parsed.evaluation,
+                decision: parsed.action,
+                reasoning: parsed.reasoning
+            });
+
+            // Handle the decided action
+            const nextPhase = handleReflectAction(state, parsed);
+
+            // Update thinking step
+            upsertThinkingStep(state, 'reflect', {
+                title: 'Evaluating results',
+                phase: 'reflect',
+                status: 'complete',
+                duration: duration,
+                context: {
+                    iteration: state.reflectIterations,
+                    action: parsed.action,
+                    reasoning: parsed.reasoning?.substring(0, 100)
+                },
+                debug: buildDebugInfo(prompt, response, state, { reflection: parsed })
+            });
+
+            log.debug('SCA REFLECT phase complete', {
+                action: parsed.action,
+                failureMode: parsed.evaluation?.failure_mode,
+                nextPhase: nextPhase,
+                duration: duration
+            });
+
+            return { success: true, nextPhase: nextPhase };
+
+        } catch (e) {
+            const duration = Date.now() - phaseStart;
+            log.error('SCA REFLECT phase failed', { error: e.message, duration: duration });
+            state.errors.push({ phase: 'reflect', error: e.message, timestamp: Date.now() });
+
+            // Default: proceed to RESPOND with what we have
+            state.phase = PHASES.RESPOND;
+
+            upsertThinkingStep(state, 'reflect', {
+                title: 'Evaluating results',
+                phase: 'reflect',
+                status: 'complete',
+                duration: duration,
+                context: {
+                    fallback: true,
+                    error: e.message.substring(0, 100)
+                }
+            });
+
+            return { success: true, nextPhase: PHASES.RESPOND };
+        }
+    }
+
+    /**
+     * Handle the action decided by REFLECT phase
+     * Returns the next phase to execute
+     */
+    function handleReflectAction(state, parsed) {
+        const action = parsed.action;
+        const details = parsed.action_details || {};
+
+        switch (action) {
+            case 'PROCEED':
+                // We have enough data (or gave up trying)
+                state.phase = PHASES.RESPOND;
+                return PHASES.RESPOND;
+
+            case 'BROADEN':
+                // Retry with broader parameters
+                state.reflection.broadeningAttempts++;
+
+                if (state.reflection.broadeningAttempts > 2) {
+                    // Too many broadening attempts - give up
+                    log.debug('SCA REFLECT - too many broadening attempts, giving up');
+                    state.phase = PHASES.RESPOND;
+                    return PHASES.RESPOND;
+                }
+
+                // Modify the last tool's args and retry
+                if (details.tool && details.modified_params) {
+                    // Add the tool with modified params to the queue
+                    state.selectedTools.push(details.tool);
+                    state.reflection.journey.push({
+                        action: 'broaden_retry',
+                        tool: details.tool,
+                        modifiedParams: details.modified_params
+                    });
+
+                    // Store modified params for the next invoke
+                    state.broadenedParams = details.modified_params;
+                }
+
+                state.phase = PHASES.INVOKE;
+                return PHASES.INVOKE;
+
+            case 'DIFFERENT_TOOL':
+                // Try a completely different tool
+                if (details.tool && Tools.getTool(details.tool)) {
+                    const alreadyTried = state.toolInvocations.map(t => t.tool);
+                    if (!alreadyTried.includes(details.tool)) {
+                        state.selectedTools.push(details.tool);
+                        state.reflection.journey.push({
+                            action: 'try_different_tool',
+                            tool: details.tool,
+                            reasoning: parsed.reasoning
+                        });
+
+                        state.phase = PHASES.INVOKE;
+                        return PHASES.INVOKE;
+                    }
+                }
+                // Tool already tried or invalid - proceed to respond
+                state.phase = PHASES.RESPOND;
+                return PHASES.RESPOND;
+
+            case 'CLARIFY':
+                // We need user clarification - store the question and proceed
+                state.reflection.clarificationNeeded = true;
+                state.reflection.clarificationQuestion = details.clarification_question;
+                state.phase = PHASES.RESPOND;
+                return PHASES.RESPOND;
+
+            case 'GIVE_UP':
+                // We've exhausted options - proceed with explanation
+                state.reflection.gaveUp = true;
+                state.reflection.giveUpExplanation = details.explanation;
+                state.phase = PHASES.RESPOND;
+                return PHASES.RESPOND;
+
+            default:
+                // Unknown action - proceed to respond
+                log.audit('SCA REFLECT - unknown action', { action: action });
+                state.phase = PHASES.RESPOND;
+                return PHASES.RESPOND;
+        }
+    }
+
+    /**
+     * Build tool execution summary for REFLECT prompt
+     */
+    function buildToolSummaryForReflection(state) {
+        if (state.toolInvocations.length === 0) {
+            return 'No tools were executed.';
+        }
+
+        return state.toolInvocations.map((inv, idx) => {
+            const status = inv.failed ? 'FAILED' : (inv.rowCount > 0 ? 'SUCCESS' : 'NO_DATA');
+            const details = [];
+
+            if (inv.args) {
+                const argStr = Object.entries(inv.args)
+                    .filter(([k, v]) => v !== undefined && v !== null)
+                    .map(([k, v]) => `${k}=${JSON.stringify(v)}`)
+                    .join(', ');
+                if (argStr) details.push(`Args: ${argStr}`);
+            }
+
+            if (inv.resultClass) {
+                details.push(`Classification: ${inv.resultClass}`);
+            }
+
+            if (inv.error) {
+                details.push(`Error: ${inv.error}`);
+            }
+
+            return `${idx + 1}. ${inv.tool}: ${status} (${inv.rowCount || 0} rows)\n   ${details.join('\n   ')}`;
+        }).join('\n\n');
+    }
+
+    /**
+     * Build resolved entities summary for REFLECT prompt
+     */
+    function buildResolvedEntitiesForReflection(state) {
+        const entries = Object.entries(state.resolvedEntities);
+        if (entries.length === 0) {
+            if (state.reflection.entityFound === false) {
+                return 'Entity resolution was attempted but NO MATCHES were found.';
+            }
+            return 'No entities were resolved.';
+        }
+
+        return entries.map(([term, entity]) =>
+            `"${term}" → ${entity.name} (${entity.type}, ID: ${entity.id})`
+        ).join('\n');
+    }
+
+    /**
+     * Build data summary for REFLECT prompt
+     */
+    function buildDataSummaryForReflection(state) {
+        if (state.dataReferences.length === 0) {
+            return 'NO DATA was collected. All queries returned 0 rows.';
+        }
+
+        return state.dataReferences.map(ref => {
+            const summary = ref.summary || {};
+            return `- ${summary.tool || 'Unknown'}: ${summary.rowCount || 0} rows`;
+        }).join('\n');
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // LLM-DRIVEN TOOL RECOVERY
+    // When tools fail, ask LLM for intelligent alternatives
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Use LLM to suggest alternative tools when one fails
+     * This replaces the static getAlternativeTools() lookup for smarter recovery
+     */
+    function getLLMSuggestedAlternative(toolName, error, state) {
+        const alreadyTried = state.toolInvocations.map(t => t.tool).join(', ') || 'none';
+
+        const prompt = RECOVERY_PROMPT
+            .replace('{question}', state.message)
+            .replace('{failed_tool}', toolName)
+            .replace('{error}', error)
+            .replace('{tool_list}', getToolListForPrompt())
+            .replace('{already_tried}', alreadyTried);
+
+        try {
+            const response = AIProviders.callAI(prompt, {
+                tier: FAST_TIER,
+                temperature: 0.2,
+                maxTokens: 300,
+                jsonMode: true,
+                purpose: 'SCA:recovery'
+            });
+
+            const parsed = parseJsonResponse(response?.text);
+
+            if (parsed && parsed.alternative_tool && parsed.suggestion !== 'GIVE_UP') {
+                // Verify the tool exists
+                if (Tools.getTool(parsed.alternative_tool)) {
+                    log.debug('SCA LLM-suggested recovery tool', {
+                        failed: toolName,
+                        suggested: parsed.alternative_tool,
+                        reasoning: parsed.reasoning
+                    });
+                    return {
+                        tool: parsed.alternative_tool,
+                        reasoning: parsed.reasoning
+                    };
+                }
+            }
+
+            return null;
+        } catch (e) {
+            log.debug('SCA LLM recovery failed, falling back to static alternatives', { error: e.message });
+            return null;
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
     // WORLD-CLASS RESPOND PHASE - LLM as Data Analyst
     // ═══════════════════════════════════════════════════════════════════════════
 
     /**
      * Phase 4: RESPOND - Single merged phase with FULL DATA ACCESS
      * LLM sees actual data rows and uses {{token}} syntax for guaranteed accuracy
+     * Now enhanced with context from REFLECT phase
      */
     function executeRespondPhase(state) {
         const phaseStart = Date.now();
 
-        // Check if we have any data
-        if (state.dataReferences.length === 0) {
-            // No data - provide fallback
+        // ═══════════════════════════════════════════════════════════════════════
+        // HANDLE REFLECTION OUTCOMES
+        // Use context from REFLECT phase to provide intelligent responses
+        // ═══════════════════════════════════════════════════════════════════════
+
+        // Check if clarification is needed
+        if (state.reflection.clarificationNeeded) {
             state.formattedResponse = {
-                title: 'Unable to Answer',
-                summary: 'No data found',
+                title: 'Clarification Needed',
+                summary: 'I need more information to answer your question',
                 blocks: [{
                     type: 'text',
-                    content: "I wasn't able to find the data needed to answer your question. Please try rephrasing or providing more specific details."
+                    content: state.reflection.clarificationQuestion ||
+                        "I found multiple possible interpretations of your question. Could you provide more details?"
                 }]
+            };
+            state.phase = PHASES.COMPLETE;
+            return { success: true, nextPhase: PHASES.COMPLETE };
+        }
+
+        // Check if we gave up
+        if (state.reflection.gaveUp) {
+            const explanation = state.reflection.giveUpExplanation ||
+                "I wasn't able to find the data needed to answer your question.";
+
+            // Build a helpful journey summary
+            const journeySummary = buildJourneySummary(state);
+
+            state.formattedResponse = {
+                title: 'Unable to Answer',
+                summary: explanation.substring(0, 100),
+                blocks: [
+                    { type: 'text', content: explanation },
+                    ...(journeySummary ? [{
+                        type: 'list',
+                        title: 'What I Tried',
+                        items: journeySummary
+                    }] : [])
+                ]
+            };
+            state.phase = PHASES.COMPLETE;
+            return { success: true, nextPhase: PHASES.COMPLETE };
+        }
+
+        // Check if we have any data
+        if (state.dataReferences.length === 0) {
+            // No data - provide intelligent fallback based on failure mode
+            const failureResponse = buildFailureModeResponse(state);
+
+            state.formattedResponse = {
+                title: failureResponse.title,
+                summary: failureResponse.summary,
+                blocks: failureResponse.blocks
             };
             state.phase = PHASES.COMPLETE;
 
@@ -1081,7 +1745,10 @@ Response format (JSON only):
                 title: 'Generating response',
                 phase: 'respond',
                 status: 'complete',
-                context: { noData: true }
+                context: {
+                    noData: true,
+                    failureMode: state.reflection.failureMode
+                }
             });
 
             return { success: true, nextPhase: PHASES.COMPLETE };
@@ -1529,6 +2196,137 @@ Response format (JSON only):
             return value.toLocaleString('en-US');
         }
         return String(value);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // INTELLIGENT FAILURE RESPONSE BUILDERS
+    // Provide helpful context based on what went wrong
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Build a user-friendly journey summary showing what was tried
+     */
+    function buildJourneySummary(state) {
+        if (!state.reflection.journey || state.reflection.journey.length === 0) {
+            return null;
+        }
+
+        const items = [];
+        for (const step of state.reflection.journey) {
+            switch (step.action) {
+                case 'entity_resolved':
+                    items.push(`Found "${step.entity}" (${step.type})`);
+                    break;
+                case 'entity_not_found':
+                    items.push(`Could not find entity matching "${step.searchTerm}"`);
+                    break;
+                case 'broaden_retry':
+                    items.push(`Retried ${step.tool} with broader parameters`);
+                    break;
+                case 'try_different_tool':
+                    items.push(`Tried alternative tool: ${step.tool}`);
+                    break;
+                case 'reflection':
+                    if (step.decision === 'GIVE_UP') {
+                        items.push(`Determined: ${step.reasoning}`);
+                    }
+                    break;
+            }
+        }
+
+        return items.length > 0 ? items : null;
+    }
+
+    /**
+     * Build an intelligent failure response based on the diagnosed failure mode
+     */
+    function buildFailureModeResponse(state) {
+        const failureMode = state.reflection.failureMode;
+        const entityFound = state.reflection.entityFound;
+
+        // Default response
+        let title = 'Unable to Find Data';
+        let summary = "I couldn't find the data needed to answer your question.";
+        let blocks = [];
+
+        switch (failureMode) {
+            case FAILURE_MODES.ENTITY_NOT_FOUND:
+                title = 'Entity Not Found';
+                summary = "I couldn't find the entity you mentioned in the system.";
+                blocks = [{
+                    type: 'text',
+                    content: "I searched for the entity you mentioned but couldn't find a match in the system. " +
+                        "Please check the spelling or try a different name. You can ask me to 'list customers' or 'list vendors' to see what's available."
+                }];
+                break;
+
+            case FAILURE_MODES.ENTITY_FOUND_NO_DATA:
+                const entityName = Object.values(state.resolvedEntities)[0]?.name || 'the entity';
+                title = 'No Data Found';
+                summary = `Found ${entityName}, but no matching data exists.`;
+                blocks = [{
+                    type: 'text',
+                    content: `I found ${entityName} in the system, but there's no data matching your query. ` +
+                        "This could mean:\n" +
+                        "• The entity has no transactions for the specified time period\n" +
+                        "• The filters are too restrictive\n" +
+                        "• This type of data doesn't exist for this entity\n\n" +
+                        "Try asking with a broader date range or fewer filters."
+                }];
+                break;
+
+            case FAILURE_MODES.QUERY_TOO_RESTRICTIVE:
+                title = 'No Matching Data';
+                summary = 'The query filters may be too restrictive.';
+                blocks = [{
+                    type: 'text',
+                    content: "I couldn't find any data matching your criteria. " +
+                        "The filters (date range, transaction type, etc.) might be too restrictive. " +
+                        "Try asking with a broader date range or fewer constraints."
+                }];
+                break;
+
+            case FAILURE_MODES.NO_DATA_EXISTS:
+                title = 'Data Not Available';
+                summary = 'This type of data may not exist in the system.';
+                blocks = [{
+                    type: 'text',
+                    content: "I wasn't able to find this type of data in the system. " +
+                        "It's possible this data hasn't been entered or isn't tracked. " +
+                        "Try asking about a different type of data or check if this information is available in NetSuite."
+                }];
+                break;
+
+            case FAILURE_MODES.TOOL_ERROR:
+                title = 'Query Error';
+                summary = 'An error occurred while fetching the data.';
+                const lastError = state.errors[state.errors.length - 1];
+                blocks = [{
+                    type: 'text',
+                    content: "I encountered an error while trying to fetch the data. " +
+                        (lastError?.suggestion || "Please try rephrasing your question.")
+                }];
+                break;
+
+            default:
+                blocks = [{
+                    type: 'text',
+                    content: "I wasn't able to find the data needed to answer your question. " +
+                        "Please try rephrasing or providing more specific details."
+                }];
+        }
+
+        // Add journey summary if available
+        const journeySummary = buildJourneySummary(state);
+        if (journeySummary) {
+            blocks.push({
+                type: 'list',
+                title: 'What I Tried',
+                items: journeySummary
+            });
+        }
+
+        return { title, summary, blocks };
     }
 
     /**
@@ -2263,7 +3061,8 @@ Response format (JSON only):
             phase: state.phase,
             iteration: state.iteration,
             analyzeIter: state.analyzeIterations,
-            formatIter: state.formatIterations
+            formatIter: state.formatIterations,
+            reflectIter: state.reflectIterations
         });
 
         let result;
@@ -2284,6 +3083,9 @@ Response format (JSON only):
             case PHASES.INVOKE:
                 result = executeInvokePhase(state);
                 // Route to appropriate next phase
+                if (result.nextPhase === PHASES.REFLECT) {
+                    return { hasMore: true, phase: PHASES.REFLECT };
+                }
                 if (result.nextPhase === PHASES.RESPOND) {
                     return { hasMore: true, phase: PHASES.RESPOND };
                 }
@@ -2291,6 +3093,20 @@ Response format (JSON only):
                     return { hasMore: true, phase: PHASES.ANALYZE };
                 }
                 return { hasMore: true, phase: PHASES.INVOKE };
+
+            // ═══════════════════════════════════════════════════════════════════════
+            // ReAct Pattern: REFLECT phase evaluates results and decides next action
+            // ═══════════════════════════════════════════════════════════════════════
+            case PHASES.REFLECT:
+                result = executeReflectPhase(state);
+                // REFLECT can loop back to INVOKE for retry, or proceed to RESPOND
+                if (result.nextPhase === PHASES.INVOKE) {
+                    return { hasMore: true, phase: PHASES.INVOKE };
+                }
+                if (result.nextPhase === PHASES.RESPOND) {
+                    return { hasMore: true, phase: PHASES.RESPOND };
+                }
+                return { hasMore: true, phase: result.nextPhase };
 
             case PHASES.RESPOND:
                 result = executeRespondPhase(state);
@@ -2386,7 +3202,16 @@ Response format (JSON only):
             sessionContext: {
                 resolvedEntities: state.resolvedEntities,
                 // RECOMMENDATION 1: Include LLM-extracted semantic topics (no word lists)
-                semanticTopics: state.intent?.semantic_topics || []
+                semanticTopics: state.intent?.semantic_topics || [],
+                // FOLLOW-UP DATA REUSE: Store data references for reuse in follow-up questions
+                // This allows "show that as a table" or "tell me more" to access previous data
+                lastDataRefs: state.dataReferences.length > 0 ? state.dataReferences : null,
+                lastToolResults: state.toolInvocations.length > 0 ? state.toolInvocations.map(t => ({
+                    tool: t.tool,
+                    success: t.success,
+                    rowCount: t.rowCount,
+                    dataRef: t.dataRef
+                })) : null
             },
             metadata: {
                 phases: {

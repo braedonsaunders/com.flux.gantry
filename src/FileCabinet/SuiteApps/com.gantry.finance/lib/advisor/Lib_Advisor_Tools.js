@@ -80,6 +80,155 @@ define([
         return String(str).replace(/'/g, "''").replace(/%/g, '\\%').replace(/_/g, '\\_');
     }
 
+    // ═══════════════════════════════════════════════════════════════════════════
+    // RUNTIME SORT COLUMN VALIDATION
+    // Prevents SQL injection via ORDER BY clause even though enums provide protection
+    // Defense-in-depth: validate at runtime before interpolation
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Validate sort column against an explicit whitelist
+     * Returns the validated column or the default if invalid
+     * @param {string} sortBy - The sort_by value from args
+     * @param {Array<string>} allowedColumns - Whitelist of allowed column names
+     * @param {string} defaultColumn - Default column if validation fails
+     * @returns {string} Validated column name
+     */
+    function validateSortColumn(sortBy, allowedColumns, defaultColumn) {
+        if (!sortBy) {
+            return defaultColumn;
+        }
+
+        if (allowedColumns.includes(sortBy)) {
+            return sortBy;
+        }
+
+        // Log rejected column for audit
+        log.audit('Invalid sort column rejected', {
+            received: sortBy,
+            allowed: allowedColumns,
+            usingDefault: defaultColumn
+        });
+
+        return defaultColumn;
+    }
+
+    /**
+     * Build a safe ORDER BY clause with runtime validation
+     * Maps validated sort_by values to SQL expressions
+     * @param {string} sortBy - The sort_by value from args
+     * @param {Object} sortMappings - Map of sort_by values to SQL expressions
+     * @param {string} defaultOrderBy - Default ORDER BY expression
+     * @returns {string} Safe ORDER BY expression
+     */
+    function buildSafeOrderBy(sortBy, sortMappings, defaultOrderBy) {
+        if (!sortBy) {
+            return defaultOrderBy;
+        }
+
+        // Validate against mapping keys
+        const validatedSort = validateSortColumn(sortBy, Object.keys(sortMappings), null);
+
+        if (validatedSort && sortMappings[validatedSort]) {
+            return sortMappings[validatedSort];
+        }
+
+        return defaultOrderBy;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // AUTO-BROADEN ON EMPTY RESULTS
+    // When a query returns 0 rows, suggest broader parameters automatically
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Suggest broader parameters when a query returns empty results
+     * Used by REFLECT phase to automatically retry with less restrictive filters
+     *
+     * @param {Object} args - Original tool arguments
+     * @param {string} toolName - Name of the tool that returned empty
+     * @returns {Object} { canBroaden: boolean, broadenedArgs: Object, suggestions: Array }
+     */
+    function suggestBroaderParams(args, toolName) {
+        const suggestions = [];
+        const broadenedArgs = { ...args };
+        let canBroaden = false;
+
+        // 1. Broaden date/period filter
+        if (args.period && args.period !== 'all') {
+            const periodBroadening = {
+                'last_30_days': 'last_90_days',
+                'last_60_days': 'last_180_days',
+                'last_90_days': 'last_365_days',
+                'last_180_days': 'last_2_years',
+                'last_365_days': 'last_3_years',
+                'this_month': 'last_90_days',
+                'this_quarter': 'this_fiscal_year',
+                'this_fiscal_year': 'last_2_fiscal_years',
+                'last_fiscal_year': 'last_3_fiscal_years'
+            };
+
+            if (periodBroadening[args.period]) {
+                broadenedArgs.period = periodBroadening[args.period];
+                suggestions.push(`Expanded date range from ${args.period} to ${broadenedArgs.period}`);
+                canBroaden = true;
+            } else if (args.period !== 'all') {
+                broadenedArgs.period = 'all';
+                suggestions.push(`Removed date filter (was: ${args.period})`);
+                canBroaden = true;
+            }
+        }
+
+        // 2. Remove explicit date filters if present
+        if (args.start_date || args.end_date) {
+            delete broadenedArgs.start_date;
+            delete broadenedArgs.end_date;
+            suggestions.push('Removed explicit date range filters');
+            canBroaden = true;
+        }
+
+        // 3. Remove transaction type filter
+        if (args.transaction_type) {
+            delete broadenedArgs.transaction_type;
+            suggestions.push(`Removed transaction type filter (was: ${args.transaction_type})`);
+            canBroaden = true;
+        }
+
+        // 4. Increase limit if it was restrictive
+        if (args.limit && args.limit < 50) {
+            broadenedArgs.limit = Math.min(args.limit * 2, 100);
+            suggestions.push(`Increased result limit from ${args.limit} to ${broadenedArgs.limit}`);
+            canBroaden = true;
+        }
+
+        // 5. Remove min/max threshold filters
+        if (args.min_spend) {
+            delete broadenedArgs.min_spend;
+            suggestions.push(`Removed minimum spend filter (was: ${args.min_spend})`);
+            canBroaden = true;
+        }
+        if (args.min_revenue) {
+            delete broadenedArgs.min_revenue;
+            suggestions.push(`Removed minimum revenue filter (was: ${args.min_revenue})`);
+            canBroaden = true;
+        }
+        if (args.min_amount) {
+            delete broadenedArgs.min_amount;
+            suggestions.push(`Removed minimum amount filter (was: ${args.min_amount})`);
+            canBroaden = true;
+        }
+
+        // 6. Don't remove entity_id, customer_id, vendor_id - those are intentional filters
+        // that changing would give completely different results
+
+        return {
+            canBroaden,
+            broadenedArgs,
+            suggestions,
+            originalArgs: args
+        };
+    }
+
     /**
      * Build date filter based on period string
      * Uses fiscal calendar from ConfigLib for accurate fiscal year handling
@@ -334,6 +483,11 @@ IMPORTANT: Use transaction_context to help determine entity type:
                     const result = EntityResolver.resolveEntityWithFallback(term, typeHint);
 
                     if (result.resolved && result.entity) {
+                        // ═══════════════════════════════════════════════════════════════════════
+                        // FIX: Include proper rowCount metadata
+                        // rowCount: 1 when entity found, enables correct downstream processing
+                        // Alternative matches included for disambiguation
+                        // ═══════════════════════════════════════════════════════════════════════
                         return {
                             success: true,
                             found: true,
@@ -343,15 +497,28 @@ IMPORTANT: Use transaction_context to help determine entity type:
                                 type: result.actualType || 'unknown'
                             },
                             confidence: result.confidence || 1.0,
+                            // FIXED: rowCount reflects that we found an entity
+                            rowCount: 1,
+                            // Include alternative matches if available (for ambiguity detection)
+                            alternatives: result.alternatives || [],
+                            ambiguous: result.ambiguous || false,
                             tool: 'resolve_entity'
                         };
                     } else {
+                        // ═══════════════════════════════════════════════════════════════════════
+                        // FIX: rowCount: 0 when entity NOT found
+                        // This enables proper failure mode detection in REFLECT phase
+                        // ═══════════════════════════════════════════════════════════════════════
                         return {
                             success: true,
                             found: false,
                             searchTerm: term,
                             typeHint: typeHint,
                             message: `No entity found matching "${term}"`,
+                            // FIXED: rowCount reflects no matches
+                            rowCount: 0,
+                            // Include suggestions if available
+                            suggestions: result.suggestions || [],
                             tool: 'resolve_entity'
                         };
                     }
@@ -359,6 +526,7 @@ IMPORTANT: Use transaction_context to help determine entity type:
                     return {
                         success: false,
                         error: e.message,
+                        rowCount: 0,
                         tool: 'resolve_entity'
                     };
                 }
@@ -1097,11 +1265,14 @@ Can filter by minimum/maximum spend, class, department, and subsidiary.`,
                 const classFilter = args.class_id ? `AND tl.class = ${args.class_id}` : '';
                 const deptFilter = args.department_id ? `AND tl.department = ${args.department_id}` : '';
 
-                // Determine sort order
-                let orderBy = 'total_spend DESC';
-                if (args.sort_by === 'transaction_count') orderBy = 'transaction_count DESC';
-                else if (args.sort_by === 'vendor_name') orderBy = 'vendor_name ASC';
-                else if (args.sort_by === 'recent_activity') orderBy = 'last_transaction DESC';
+                // Determine sort order with runtime validation (defense-in-depth)
+                const sortMappings = {
+                    'total_spend': 'total_spend DESC',
+                    'transaction_count': 'transaction_count DESC',
+                    'vendor_name': 'vendor_name ASC',
+                    'recent_activity': 'last_transaction DESC'
+                };
+                const orderBy = buildSafeOrderBy(args.sort_by, sortMappings, 'total_spend DESC');
 
                 // Build HAVING clause for spend thresholds
                 const havingClauses = [];
@@ -5074,6 +5245,9 @@ ALWAYS use this tool for your final response instead of plain text.
         getToolListForPrompt: getToolListForPrompt,
         getToolDefinition: getToolDefinition,
         getToolSchemaText: getToolSchemaText,
+
+        // ReAct Pattern Support
+        suggestBroaderParams: suggestBroaderParams,  // Auto-broaden on empty results
 
         // Individual tool categories (for direct access if needed)
         DISCOVERY_TOOLS: DISCOVERY_TOOLS,

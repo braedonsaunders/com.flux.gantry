@@ -45,6 +45,28 @@ define([
         account: { table: 'account', nameField: 'accountsearchdisplayname', codeField: 'acctnumber' }
     };
 
+    // ═══════════════════════════════════════════════════════════════════════════
+    // CONFIDENCE AND AMBIGUITY THRESHOLDS
+    // Prevents false positives like "AR" matching "Arkansas Corp"
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    const RESOLUTION_CONFIG = {
+        // Minimum term length for substring matching (prevents "AR" matching "Barbara")
+        MIN_SUBSTRING_TERM_LENGTH: 3,
+
+        // Confidence thresholds
+        HIGH_CONFIDENCE_THRESHOLD: 0.90,    // Exact match or starts-with
+        MEDIUM_CONFIDENCE_THRESHOLD: 0.70,  // Contains match
+        LOW_CONFIDENCE_THRESHOLD: 0.50,     // Fuzzy/partial match
+
+        // Ambiguity detection
+        AMBIGUITY_SCORE_DIFF: 0.15,         // If top matches within this range, flag as ambiguous
+        MAX_AMBIGUOUS_SUGGESTIONS: 5,       // How many alternatives to show for disambiguation
+
+        // Minimum confidence to accept a match
+        MINIMUM_ACCEPTABLE_CONFIDENCE: 0.50
+    };
+
     /**
      * Escape SQL string to prevent injection
      */
@@ -184,24 +206,106 @@ define([
             return {
                 success: true,
                 notFound: true,
+                resolved: false,
                 message: `No entity found matching "${userTerm}"`,
-                confidence: 'none'
+                confidence: 'none',
+                suggestions: []
             };
         }
-        
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // CONFIDENCE THRESHOLD CHECK
+        // For short search terms (< 3 chars), require higher confidence
+        // This prevents "AR" from matching "Arkansas Corp" with medium confidence
+        // ═══════════════════════════════════════════════════════════════════════
+        const termLength = term.length;
+        const requiresHighConfidence = termLength < RESOLUTION_CONFIG.MIN_SUBSTRING_TERM_LENGTH;
+
+        // Filter candidates based on term length and confidence
+        let filteredCandidates = allCandidates;
+        if (requiresHighConfidence) {
+            // For short terms, only accept exact matches or starts-with
+            filteredCandidates = allCandidates.filter(c => c.score >= RESOLUTION_CONFIG.HIGH_CONFIDENCE_THRESHOLD);
+
+            if (filteredCandidates.length === 0) {
+                // No high-confidence matches for short term
+                log.debug('Short term requires high confidence', {
+                    term: term,
+                    termLength: termLength,
+                    candidates: allCandidates.length,
+                    topScore: allCandidates[0]?.score
+                });
+
+                return {
+                    success: true,
+                    notFound: true,
+                    resolved: false,
+                    message: `Search term "${userTerm}" is too short for reliable matching. Please provide more characters.`,
+                    confidence: 'none',
+                    suggestions: allCandidates.slice(0, RESOLUTION_CONFIG.MAX_AMBIGUOUS_SUGGESTIONS).map(c => ({
+                        id: c.id,
+                        name: c.name,
+                        type: c.type,
+                        score: c.score
+                    })),
+                    shortTermWarning: true
+                };
+            }
+        }
+
         // Sort by score (with preferred type bonus)
-        allCandidates.sort((a, b) => {
+        filteredCandidates.sort((a, b) => {
             const aScore = a.score + (a.isPreferredType ? 0.1 : 0);
             const bScore = b.score + (b.isPreferredType ? 0.1 : 0);
             return bScore - aScore;
         });
-        
-        const best = allCandidates[0];
-        const confidence = best.score >= 0.9 ? 'high' : best.score >= 0.7 ? 'medium' : 'low';
-        
+
+        const best = filteredCandidates[0];
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // AMBIGUITY DETECTION
+        // If multiple matches have similar scores, flag as ambiguous
+        // User should clarify which entity they meant
+        // ═══════════════════════════════════════════════════════════════════════
+        const isAmbiguous = detectAmbiguity(filteredCandidates, best.score);
+
+        if (isAmbiguous.ambiguous) {
+            log.debug('Ambiguous entity match detected', {
+                term: term,
+                topMatches: isAmbiguous.topMatches.map(m => `${m.name}(${m.score})`)
+            });
+
+            return {
+                success: true,
+                resolved: true,
+                ambiguous: true,
+                entity: {
+                    id: best.id,
+                    name: best.name,
+                    code: best.code
+                },
+                actualType: best.type,
+                autoResolved: type === 'auto',
+                confidence: 'low',
+                matchQuality: Math.round(best.score * 100),
+                ambiguityMessage: `Multiple matches found for "${userTerm}". Using best match "${best.name}" but you may want to clarify.`,
+                alternatives: isAmbiguous.topMatches.slice(1).map(c => ({
+                    id: c.id,
+                    name: c.name,
+                    type: c.type,
+                    score: Math.round(c.score * 100)
+                }))
+            };
+        }
+
+        // Clear match - return with confidence
+        const confidence = best.score >= RESOLUTION_CONFIG.HIGH_CONFIDENCE_THRESHOLD ? 'high' :
+                          best.score >= RESOLUTION_CONFIG.MEDIUM_CONFIDENCE_THRESHOLD ? 'medium' : 'low';
+
         return {
             success: true,
             resolved: true,
+            ambiguous: false,
             entity: {
                 id: best.id,
                 name: best.name,
@@ -211,11 +315,37 @@ define([
             autoResolved: type === 'auto',
             confidence,
             matchQuality: Math.round(best.score * 100),
-            alternateMatches: allCandidates.slice(1, 4).map(c => ({
+            alternateMatches: filteredCandidates.slice(1, 4).map(c => ({
                 id: c.id,
                 name: c.name,
-                type: c.type
+                type: c.type,
+                score: Math.round(c.score * 100)
             }))
+        };
+    }
+
+    /**
+     * Detect if entity matches are ambiguous (multiple similar-scoring matches)
+     * @param {Array} candidates - Sorted list of candidates
+     * @param {number} topScore - Score of the best match
+     * @returns {Object} { ambiguous: boolean, topMatches: Array }
+     */
+    function detectAmbiguity(candidates, topScore) {
+        if (candidates.length < 2) {
+            return { ambiguous: false, topMatches: candidates };
+        }
+
+        // Find all candidates within the ambiguity threshold of the top score
+        const ambiguityThreshold = topScore - RESOLUTION_CONFIG.AMBIGUITY_SCORE_DIFF;
+        const topMatches = candidates.filter(c => c.score >= ambiguityThreshold);
+
+        // If we have multiple matches with very similar scores, it's ambiguous
+        // Also check if the best match isn't a clear winner (not high confidence)
+        const isAmbiguous = topMatches.length > 1 && topScore < RESOLUTION_CONFIG.HIGH_CONFIDENCE_THRESHOLD;
+
+        return {
+            ambiguous: isAmbiguous,
+            topMatches: topMatches.slice(0, RESOLUTION_CONFIG.MAX_AMBIGUOUS_SUGGESTIONS)
         };
     }
 
