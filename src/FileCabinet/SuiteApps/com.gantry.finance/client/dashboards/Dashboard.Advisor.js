@@ -43,14 +43,14 @@
         isActive: false,
         globalTime: 0, // For color animation
 
-        // Lightweight configuration
+        // Configuration
         config: {
-            particleCount: 35,           // Reduced for performance
-            connectionDistance: 100,      // Reduced connection checks
+            particleCount: 55,            // More density
+            connectionDistance: 90,       // Tighter connections
             particleSize: { min: 1.5, max: 2.5 },
-            birthDuration: 800,          // Quick birth
-            expandDuration: 1200,        // Expand to full screen
-            convergeDuration: 1000,      // Converge to chat
+            birthDuration: 1400,          // Slower, more graceful birth
+            expandDuration: 1200,         // Expand to full screen
+            convergeDuration: 1000,       // Converge to chat
             // Gradient color palette (indigo → purple → cyan)
             colors: [
                 { r: 99, g: 102, b: 241 },   // Indigo
@@ -152,7 +152,7 @@
         },
 
         /**
-         * Birth phase - particles emerge from behind brain icon
+         * Birth phase - particles emerge gracefully from behind brain icon
          */
         startBirth: function() {
             this.phase = 'birth';
@@ -164,18 +164,21 @@
 
                 const elapsed = Date.now() - startTime;
                 const progress = Math.min(elapsed / this.config.birthDuration, 1);
-                const eased = this.easeOutCubic(progress);
                 this.globalTime = elapsed;
 
-                // Particles emerge in a small radius around brain
+                // Particles emerge gracefully with slower acceleration
                 this.particles.forEach((p, i) => {
-                    const stagger = (i / this.particles.length) * 0.4;
+                    // More stagger for wave-like emergence
+                    const stagger = (i / this.particles.length) * 0.6;
                     const particleProgress = Math.max(0, (progress - stagger) / (1 - stagger));
 
                     if (particleProgress > 0) {
-                        p.opacity = p.targetOpacity * this.easeOutCubic(particleProgress);
-                        // Small burst from center
-                        const burstRadius = 40 * particleProgress;
+                        // Slow ease-out for gentle acceleration
+                        const eased = this.easeOutSine(particleProgress);
+                        p.opacity = p.targetOpacity * eased;
+
+                        // Gradual expansion from center - starts slow, stays controlled
+                        const burstRadius = 50 * this.easeOutQuart(particleProgress);
                         p.x = center.x + Math.cos(p.angle) * burstRadius;
                         p.y = center.y + Math.sin(p.angle) * burstRadius;
                     }
@@ -241,22 +244,24 @@
         },
 
         /**
-         * Converge phase - particles flow toward chat input
+         * Converge phase - particles flow toward chat input with stunning finale
          */
         startConverge: function() {
             this.phase = 'converge';
             const startTime = Date.now();
 
-            // Get chat input position
+            // Get chat input and its container
             const chatInput = document.getElementById('advisor-input-full');
+            const inputWrapper = chatInput ? chatInput.closest('.advisor-input-area') : null;
             const chatRect = chatInput ? chatInput.getBoundingClientRect() : null;
             const targetX = chatRect ? chatRect.left + chatRect.width / 2 : this.canvas.width / 2;
             const targetY = chatRect ? chatRect.top + chatRect.height / 2 : this.canvas.height * 0.9;
 
-            // Store starting positions
+            // Store starting positions and sizes
             this.particles.forEach(p => {
                 p.originX = p.x;
                 p.originY = p.y;
+                p.originSize = p.size;
             });
 
             const animateConverge = () => {
@@ -285,27 +290,87 @@
                         p.y = bez.y;
 
                         // Shrink as they converge
-                        p.size = p.size * (1 - particleProgress * 0.3);
+                        p.size = p.originSize * (1 - particleProgress * 0.4);
                     }
                 });
 
                 this.draw();
 
-                // Glow effect on chat input
-                if (chatInput && progress > 0.5) {
-                    const glowIntensity = (progress - 0.5) * 2;
-                    chatInput.style.boxShadow = `0 0 ${25 * glowIntensity}px rgba(99, 102, 241, ${0.4 * glowIntensity})`;
+                // Progressive glow effect on chat input
+                if (chatInput && progress > 0.4) {
+                    const glowProgress = (progress - 0.4) / 0.6;
+                    const glowIntensity = this.easeOutQuart(glowProgress);
+                    const glowSize = 15 + 20 * glowIntensity;
+                    const glowOpacity = 0.3 + 0.3 * glowIntensity;
+                    chatInput.style.boxShadow = `0 0 ${glowSize}px rgba(99, 102, 241, ${glowOpacity}), 0 0 ${glowSize * 2}px rgba(139, 92, 246, ${glowOpacity * 0.5})`;
                 }
 
                 if (progress < 1) {
                     this.animationId = requestAnimationFrame(animateConverge);
                 } else {
-                    if (chatInput) chatInput.style.boxShadow = '';
-                    this.startAmbient();
+                    // Trigger stunning shine effect
+                    this.triggerInputShine(chatInput, inputWrapper);
                 }
             };
 
             this.animationId = requestAnimationFrame(animateConverge);
+        },
+
+        /**
+         * Trigger a stunning momentary shine effect on the input
+         */
+        triggerInputShine: function(chatInput, inputWrapper) {
+            if (!chatInput) {
+                this.startAmbient();
+                return;
+            }
+
+            // Add shine class for CSS animation
+            if (inputWrapper) {
+                inputWrapper.classList.add('input-shine-active');
+            }
+
+            // Animate the glow pulse
+            const shineStart = Date.now();
+            const shineDuration = 600;
+
+            const animateShine = () => {
+                const elapsed = Date.now() - shineStart;
+                const progress = Math.min(elapsed / shineDuration, 1);
+
+                // Pulse: grow then shrink
+                const pulse = Math.sin(progress * Math.PI);
+                const glowSize = 25 + 35 * pulse;
+                const glowOpacity = 0.5 + 0.3 * pulse;
+
+                // Multi-layer glow with color shift
+                chatInput.style.boxShadow = `
+                    0 0 ${glowSize}px rgba(99, 102, 241, ${glowOpacity}),
+                    0 0 ${glowSize * 1.5}px rgba(139, 92, 246, ${glowOpacity * 0.6}),
+                    0 0 ${glowSize * 2}px rgba(6, 182, 212, ${glowOpacity * 0.3}),
+                    inset 0 0 ${glowSize * 0.3}px rgba(255, 255, 255, ${pulse * 0.15})
+                `;
+
+                // Scale pulse on wrapper
+                if (inputWrapper) {
+                    const scale = 1 + pulse * 0.008;
+                    inputWrapper.style.transform = `scale(${scale})`;
+                }
+
+                if (progress < 1) {
+                    this.animationId = requestAnimationFrame(animateShine);
+                } else {
+                    // Clean up and transition to ambient
+                    chatInput.style.boxShadow = '';
+                    if (inputWrapper) {
+                        inputWrapper.style.transform = '';
+                        inputWrapper.classList.remove('input-shine-active');
+                    }
+                    this.startAmbient();
+                }
+            };
+
+            this.animationId = requestAnimationFrame(animateShine);
         },
 
         /**
@@ -464,6 +529,12 @@
         },
         easeOutCubic: function(t) {
             return 1 - Math.pow(1 - t, 3);
+        },
+        easeOutQuart: function(t) {
+            return 1 - Math.pow(1 - t, 4);
+        },
+        easeOutSine: function(t) {
+            return Math.sin((t * Math.PI) / 2);
         },
         easeInOutQuad: function(t) {
             return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
