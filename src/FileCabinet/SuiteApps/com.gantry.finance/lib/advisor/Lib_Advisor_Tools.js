@@ -741,7 +741,8 @@ IMPORTANT: Tables are NOT the same as transaction types!
 
 Available tables: transaction (all txn types), transactionline (line items),
 transactionaccountingline (GL entries), customer, vendor, employee, item, account,
-classification, department, location, subsidiary, accountingperiod, project`,
+classification, department, location, subsidiary, accountingperiod, project,
+inventorybalance (stock levels), budget (budget data), ProjectFinancials (project P&L)`,
             parameters: {
                 type: 'object',
                 properties: {
@@ -750,7 +751,8 @@ classification, department, location, subsidiary, accountingperiod, project`,
                         enum: ['transaction', 'transactionline', 'transactionaccountingline',
                                'customer', 'vendor', 'employee', 'item', 'account',
                                'classification', 'department', 'location', 'subsidiary',
-                               'accountingperiod', 'project'],
+                               'accountingperiod', 'project', 'inventorybalance', 'budget',
+                               'ProjectFinancials'],
                         description: 'SuiteQL table name (NOT transaction type - use transaction table with type filter)'
                     }
                 },
@@ -831,12 +833,29 @@ classification, department, location, subsidiary, accountingperiod, project`,
                         ]
                     },
                     accountingperiod: {
-                        key_fields: ['id', 'periodname', 'startdate', 'enddate', 'isyear', 'isquarter'],
+                        key_fields: ['id', 'periodname', 'startdate', 'enddate', 'isyear', 'isquarter',
+                                    'closed', 'alllocked', 'arlocked', 'aplocked', 'fiscalyear'],
                         notes: [
                             'isyear = \'T\' for year records, \'F\' for months',
                             'isquarter = \'T\' for quarter records',
                             'Use isyear = \'F\' AND isquarter = \'F\' for monthly periods'
                         ]
+                    },
+                    inventorybalance: {
+                        key_fields: ['item', 'location', 'quantityonhand', 'quantityavailable',
+                                    'quantityonorder', 'quantitybackordered'],
+                        notes: ['Real-time inventory by item/location', 'Join to item for details'],
+                        joins: { 'item': 'item.id', 'location': 'location.id' }
+                    },
+                    budget: {
+                        key_fields: ['id', 'account', 'accountingperiod', 'amount', 'subsidiary', 'department', 'class'],
+                        notes: ['Budget amounts by account/period', 'Compare with transactionaccountingline for variance'],
+                        joins: { 'account': 'account.id', 'accountingperiod': 'accountingperiod.id' }
+                    },
+                    ProjectFinancials: {
+                        key_fields: ['PROJECT', 'projecttask', 'item', 'ACCOUNT', 'actual', 'amount', 'DATE', 'subsidiary'],
+                        notes: ['Project P&L data', 'actual=T for actuals', 'Negative=revenue, positive=cost'],
+                        joins: { 'PROJECT': 'project.id', 'ACCOUNT': 'account.id' }
                     }
                 };
 
@@ -2390,124 +2409,6 @@ Supports filtering by minimum spend, subsidiary, class, department, and can incl
             }
         },
 
-        get_revenue_by_month: {
-            name: 'get_revenue_by_month',
-            description: `Get monthly revenue trend showing revenue by month.
-ALWAYS use this for: "revenue trend", "monthly revenue", "revenue by month", "sales trend", "how is revenue trending"`,
-            parameters: {
-                type: 'object',
-                properties: {
-                    months: {
-                        type: 'number',
-                        description: 'Number of months to show (default: 12)'
-                    }
-                },
-                required: []
-            },
-            execute: function(args) {
-                const months = args.months || 12;
-
-                const query = `
-                    SELECT
-                        TO_CHAR(t.trandate, 'YYYY-MM') AS month,
-                        SUM(t.foreigntotal) AS revenue,
-                        COUNT(DISTINCT t.id) AS invoice_count,
-                        COUNT(DISTINCT t.entity) AS customer_count
-                    FROM transaction t
-                    WHERE t.type = 'CustInvc'
-                        AND t.posting = 'T'
-                        AND t.voided = 'F'
-                        AND t.trandate >= ADD_MONTHS(TRUNC(SYSDATE, 'MM'), -${months})
-                    GROUP BY TO_CHAR(t.trandate, 'YYYY-MM')
-                    ORDER BY month
-                `;
-
-                const result = QueryExecutor.executeQuery(query);
-                return formatResult(result, 'get_revenue_by_month');
-            },
-            displayName: function(args) {
-                return `Getting ${args.months || 12} months revenue trend...`;
-            }
-        },
-
-        get_expense_by_category: {
-            name: 'get_expense_by_category',
-            description: `Get expense breakdown by expense account category.
-ALWAYS use this for: "expense breakdown", "where are we spending", "expense by category", "operating expenses", "cost breakdown"`,
-            parameters: {
-                type: 'object',
-                properties: {
-                    period: {
-                        type: 'string',
-                        enum: ['ytd', 'this_quarter', 'this_month', 'last_month'],
-                        description: 'Time period (default: ytd)'
-                    },
-                    department_id: {
-                        type: 'number',
-                        description: 'Optional: filter by department ID'
-                    }
-                },
-                required: []
-            },
-            execute: function(args) {
-                const period = args.period || 'ytd';
-                const deptFilter = args.department_id ?
-                    `AND tl.department = ${args.department_id}` : '';
-
-                let dateFilter = '';
-                if (period === 'ytd') {
-                    dateFilter = `AND ap.startdate >= (SELECT startdate FROM accountingperiod WHERE isyear = 'T' AND startdate <= SYSDATE ORDER BY startdate DESC FETCH FIRST 1 ROWS ONLY)`;
-                } else if (period === 'this_quarter') {
-                    dateFilter = `AND ap.startdate >= TRUNC(SYSDATE, 'Q')`;
-                } else if (period === 'this_month') {
-                    dateFilter = `AND ap.startdate >= TRUNC(SYSDATE, 'MM')`;
-                } else if (period === 'last_month') {
-                    dateFilter = `AND ap.startdate >= ADD_MONTHS(TRUNC(SYSDATE, 'MM'), -1) AND ap.enddate < TRUNC(SYSDATE, 'MM')`;
-                }
-
-                const query = `
-                    SELECT
-                        acct.acctnumber AS account_number,
-                        acct.accountsearchdisplayname AS account_name,
-                        SUM(tal.amount) AS amount,
-                        COUNT(DISTINCT tal.transaction) AS transaction_count
-                    FROM transactionaccountingline tal
-                    INNER JOIN transaction t ON tal.transaction = t.id
-                    INNER JOIN accountingperiod ap ON t.postingperiod = ap.id
-                    INNER JOIN account acct ON tal.account = acct.id
-                    LEFT JOIN transactionline tl ON tl.transaction = tal.transaction AND tl.id = tal.transactionline
-                    WHERE t.posting = 'T'
-                        AND t.voided = 'F'
-                        AND acct.accttype IN ('Expense', 'OthExpense')
-                        AND ap.isyear = 'F' AND ap.isquarter = 'F'
-                        ${dateFilter}
-                        ${deptFilter}
-                    GROUP BY acct.acctnumber, acct.accountsearchdisplayname
-                    ORDER BY amount DESC
-                `;
-
-                const result = QueryExecutor.executeQuery(query);
-                const formatted = formatResult(result, 'get_expense_by_category');
-
-                // Calculate total
-                if (formatted.success && formatted.rows) {
-                    let totalExpenses = 0;
-                    formatted.rows.forEach(row => {
-                        totalExpenses += parseFloat(row.amount) || 0;
-                    });
-                    formatted.summary = {
-                        totalExpenses: totalExpenses,
-                        categoryCount: formatted.rows.length
-                    };
-                }
-
-                return formatted;
-            },
-            displayName: function(args) {
-                return `Getting expense breakdown (${args.period || 'ytd'})...`;
-            }
-        },
-
         get_recent_transactions: {
             name: 'get_recent_transactions',
             description: `Get recent transactions, optionally filtered by type or entity.
@@ -3333,6 +3234,1296 @@ Use for: "expense breakdown", "where is money going", "expenses by category"`,
             },
             displayName: function(args) {
                 return 'Getting expense breakdown...';
+            }
+        },
+
+        // ═══════════════════════════════════════════════════════════════════════════
+        // NEW FINANCIAL ANALYSIS TOOLS
+        // ═══════════════════════════════════════════════════════════════════════════
+
+        get_budget_variance: {
+            name: 'get_budget_variance',
+            description: `Compare actual financial results vs budget by account and period.
+Use for: "budget variance", "actual vs budget", "budget comparison", "are we over budget", "budget performance"
+
+Shows variance amount, variance percentage, and whether over/under budget.
+Can filter by account type, department, class, and specific accounts.`,
+            parameters: {
+                type: 'object',
+                properties: {
+                    period: {
+                        type: 'string',
+                        enum: [
+                            'this_month', 'last_month', 'this_quarter', 'last_quarter',
+                            'ytd', 'fytd', 'ytd_closed',
+                            'this_fiscal_year', 'last_fiscal_year',
+                            'fiscal_q1', 'fiscal_q2', 'fiscal_q3', 'fiscal_q4'
+                        ],
+                        description: 'Time period for comparison (default: ytd)'
+                    },
+                    account_type: {
+                        type: 'string',
+                        enum: ['Expense', 'Income', 'COGS', 'all'],
+                        description: 'Filter by account type (default: all)'
+                    },
+                    department_id: {
+                        type: 'number',
+                        description: 'Filter by department'
+                    },
+                    class_id: {
+                        type: 'number',
+                        description: 'Filter by class'
+                    },
+                    subsidiary_id: {
+                        type: 'number',
+                        description: 'Filter by subsidiary'
+                    },
+                    min_variance_pct: {
+                        type: 'number',
+                        description: 'Minimum absolute variance % to include (e.g., 10 for 10%+)'
+                    },
+                    limit: {
+                        type: 'number',
+                        description: 'Maximum accounts to return (default: 50)'
+                    }
+                },
+                required: []
+            },
+            execute: function(args) {
+                const periodFilter = buildPeriodFilter(args.period || 'ytd');
+                const limit = Math.min(args.limit || 50, 100);
+
+                // Account type filter
+                let acctTypeFilter = '';
+                if (args.account_type && args.account_type !== 'all') {
+                    if (args.account_type === 'Expense') {
+                        acctTypeFilter = `AND acct.accttype IN ('Expense', 'OthExpense')`;
+                    } else if (args.account_type === 'Income') {
+                        acctTypeFilter = `AND acct.accttype IN ('Income', 'OthIncome')`;
+                    } else if (args.account_type === 'COGS') {
+                        acctTypeFilter = `AND acct.accttype = 'COGS'`;
+                    }
+                } else {
+                    acctTypeFilter = `AND acct.accttype IN ('Expense', 'OthExpense', 'Income', 'OthIncome', 'COGS')`;
+                }
+
+                const deptFilter = args.department_id ? `AND tl.department = ${args.department_id}` : '';
+                const classFilter = args.class_id ? `AND tl.class = ${args.class_id}` : '';
+                const subsidiaryFilter = args.subsidiary_id ? `AND t.subsidiary = ${args.subsidiary_id}` : '';
+
+                const varianceFilter = args.min_variance_pct ?
+                    `HAVING ABS(CASE WHEN SUM(budget.amount) = 0 THEN 100 ELSE (SUM(actual_amt) - SUM(budget.amount)) / NULLIF(ABS(SUM(budget.amount)), 0) * 100 END) >= ${args.min_variance_pct}` : '';
+
+                const query = `
+                    WITH actuals AS (
+                        SELECT
+                            tal.account,
+                            SUM(COALESCE(tal.debit, 0) - COALESCE(tal.credit, 0)) AS actual_amt
+                        FROM transactionaccountingline tal
+                        INNER JOIN transaction t ON tal.transaction = t.id
+                        LEFT JOIN transactionline tl ON tl.transaction = t.id AND tl.id = tal.transactionline
+                        WHERE t.posting = 'T'
+                            AND t.voided = 'F'
+                            AND ${periodFilter}
+                            ${subsidiaryFilter}
+                            ${deptFilter}
+                            ${classFilter}
+                        GROUP BY tal.account
+                    ),
+                    budgets AS (
+                        SELECT
+                            b.account,
+                            SUM(b.amount) AS amount
+                        FROM budget b
+                        INNER JOIN accountingperiod ap ON b.accountingperiod = ap.id
+                        WHERE ap.isyear = 'F' AND ap.isquarter = 'F'
+                            AND ${periodFilter.replace(/t\.trandate/g, 'ap.startdate')}
+                        GROUP BY b.account
+                    )
+                    SELECT
+                        acct.acctnumber AS account_number,
+                        acct.accountsearchdisplayname AS account_name,
+                        acct.accttype AS account_type,
+                        COALESCE(actuals.actual_amt, 0) AS actual_amount,
+                        COALESCE(budgets.amount, 0) AS budget_amount,
+                        COALESCE(actuals.actual_amt, 0) - COALESCE(budgets.amount, 0) AS variance_amount,
+                        CASE
+                            WHEN COALESCE(budgets.amount, 0) = 0 THEN NULL
+                            ELSE ROUND((COALESCE(actuals.actual_amt, 0) - COALESCE(budgets.amount, 0)) / NULLIF(ABS(budgets.amount), 0) * 100, 1)
+                        END AS variance_pct,
+                        CASE
+                            WHEN acct.accttype IN ('Expense', 'OthExpense', 'COGS') THEN
+                                CASE WHEN COALESCE(actuals.actual_amt, 0) > COALESCE(budgets.amount, 0) THEN 'OVER' ELSE 'UNDER' END
+                            ELSE
+                                CASE WHEN COALESCE(actuals.actual_amt, 0) < COALESCE(budgets.amount, 0) THEN 'UNDER' ELSE 'OVER' END
+                        END AS variance_status
+                    FROM account acct
+                    LEFT JOIN actuals ON actuals.account = acct.id
+                    LEFT JOIN budgets ON budgets.account = acct.id
+                    WHERE (actuals.actual_amt IS NOT NULL OR budgets.amount IS NOT NULL)
+                        ${acctTypeFilter}
+                    ${varianceFilter}
+                    ORDER BY ABS(COALESCE(actuals.actual_amt, 0) - COALESCE(budgets.amount, 0)) DESC
+                    FETCH FIRST ${limit} ROWS ONLY
+                `;
+
+                const result = QueryExecutor.executeQuery(query);
+                const formatted = formatResult(result, 'get_budget_variance', { limit: limit });
+
+                // Add summary statistics
+                if (formatted.success && formatted.rows && formatted.rows.length > 0) {
+                    let totalActual = 0, totalBudget = 0, overCount = 0, underCount = 0;
+                    formatted.rows.forEach(row => {
+                        totalActual += parseFloat(row.actual_amount) || 0;
+                        totalBudget += parseFloat(row.budget_amount) || 0;
+                        if (row.variance_status === 'OVER') overCount++;
+                        if (row.variance_status === 'UNDER') underCount++;
+                    });
+                    formatted.summary = {
+                        total_actual: totalActual,
+                        total_budget: totalBudget,
+                        total_variance: totalActual - totalBudget,
+                        accounts_over_budget: overCount,
+                        accounts_under_budget: underCount
+                    };
+                }
+
+                return formatted;
+            },
+            displayName: function(args) {
+                return `Getting budget variance (${args.period || 'ytd'})...`;
+            }
+        },
+
+        get_project_profitability: {
+            name: 'get_project_profitability',
+            description: `Get project profitability analysis showing revenue, costs, and margin by project.
+Use for: "project profitability", "project P&L", "project margin", "project performance", "which projects are profitable"
+
+Uses ProjectFinancials data to show actuals by project with revenue/cost breakdown.
+Can filter by subsidiary, specific project, or transaction type.`,
+            parameters: {
+                type: 'object',
+                properties: {
+                    project_id: {
+                        type: 'number',
+                        description: 'Filter by specific project ID'
+                    },
+                    subsidiary_id: {
+                        type: 'number',
+                        description: 'Filter by subsidiary'
+                    },
+                    include_tasks: {
+                        type: 'boolean',
+                        description: 'Include task-level breakdown (default: false)'
+                    },
+                    min_amount: {
+                        type: 'number',
+                        description: 'Minimum absolute amount to include'
+                    },
+                    limit: {
+                        type: 'number',
+                        description: 'Maximum projects to return (default: 50)'
+                    }
+                },
+                required: []
+            },
+            execute: function(args) {
+                const limit = Math.min(args.limit || 50, 100);
+                const projectFilter = args.project_id ? `AND pf.PROJECT = ${args.project_id}` : '';
+                const subsidiaryFilter = args.subsidiary_id ? `AND pf.subsidiary = ${args.subsidiary_id}` : '';
+                const amountFilter = args.min_amount ? `HAVING ABS(SUM(pf.amount)) >= ${args.min_amount}` : '';
+
+                let query;
+                if (args.include_tasks) {
+                    // Task-level breakdown
+                    query = `
+                        SELECT
+                            pf.PROJECT AS project_id,
+                            BUILTIN.DF(pf.PROJECT) AS project_name,
+                            pf.projecttask AS task_id,
+                            BUILTIN.DF(pf.projecttask) AS task_name,
+                            pf.ACCOUNT AS account_id,
+                            BUILTIN.DF(pf.ACCOUNT) AS account_name,
+                            SUM(CASE WHEN pf.amount < 0 THEN ABS(pf.amount) ELSE 0 END) AS revenue,
+                            SUM(CASE WHEN pf.amount > 0 THEN pf.amount ELSE 0 END) AS cost,
+                            SUM(-pf.amount) AS net_amount,
+                            COUNT(DISTINCT pf.TRANSACTION) AS transaction_count,
+                            MIN(pf.DATE) AS first_date,
+                            MAX(pf.DATE) AS last_date
+                        FROM ProjectFinancials pf
+                        WHERE pf.actual = 'T'
+                            ${projectFilter}
+                            ${subsidiaryFilter}
+                        GROUP BY pf.PROJECT, BUILTIN.DF(pf.PROJECT), pf.projecttask, BUILTIN.DF(pf.projecttask),
+                                 pf.ACCOUNT, BUILTIN.DF(pf.ACCOUNT)
+                        ${amountFilter}
+                        ORDER BY pf.PROJECT, net_amount DESC
+                        FETCH FIRST ${limit * 3} ROWS ONLY
+                    `;
+                } else {
+                    // Project-level summary
+                    query = `
+                        SELECT
+                            pf.PROJECT AS project_id,
+                            BUILTIN.DF(pf.PROJECT) AS project_name,
+                            SUM(CASE WHEN pf.amount < 0 THEN ABS(pf.amount) ELSE 0 END) AS revenue,
+                            SUM(CASE WHEN pf.amount > 0 THEN pf.amount ELSE 0 END) AS cost,
+                            SUM(-pf.amount) AS net_profit,
+                            CASE
+                                WHEN SUM(CASE WHEN pf.amount < 0 THEN ABS(pf.amount) ELSE 0 END) = 0 THEN NULL
+                                ELSE ROUND(SUM(-pf.amount) / NULLIF(SUM(CASE WHEN pf.amount < 0 THEN ABS(pf.amount) ELSE 0 END), 0) * 100, 1)
+                            END AS margin_pct,
+                            COUNT(DISTINCT pf.TRANSACTION) AS transaction_count,
+                            COUNT(DISTINCT pf.projecttask) AS task_count,
+                            MIN(pf.DATE) AS first_date,
+                            MAX(pf.DATE) AS last_date
+                        FROM ProjectFinancials pf
+                        WHERE pf.actual = 'T'
+                            ${projectFilter}
+                            ${subsidiaryFilter}
+                        GROUP BY pf.PROJECT, BUILTIN.DF(pf.PROJECT)
+                        ${amountFilter}
+                        ORDER BY net_profit DESC
+                        FETCH FIRST ${limit} ROWS ONLY
+                    `;
+                }
+
+                const result = QueryExecutor.executeQuery(query);
+                const formatted = formatResult(result, 'get_project_profitability', { limit: limit });
+
+                // Add summary
+                if (formatted.success && formatted.rows && formatted.rows.length > 0) {
+                    let totalRevenue = 0, totalCost = 0, profitableCount = 0;
+                    formatted.rows.forEach(row => {
+                        totalRevenue += parseFloat(row.revenue) || 0;
+                        totalCost += parseFloat(row.cost) || 0;
+                        if ((parseFloat(row.net_profit) || parseFloat(row.net_amount) || 0) > 0) profitableCount++;
+                    });
+                    formatted.summary = {
+                        total_revenue: totalRevenue,
+                        total_cost: totalCost,
+                        total_profit: totalRevenue - totalCost,
+                        overall_margin_pct: totalRevenue > 0 ? Math.round((totalRevenue - totalCost) / totalRevenue * 1000) / 10 : null,
+                        profitable_projects: profitableCount,
+                        total_projects: formatted.rows.length
+                    };
+                }
+
+                return formatted;
+            },
+            displayName: function(args) {
+                return args.project_id ? `Getting project ${args.project_id} profitability...` : 'Getting project profitability...';
+            }
+        },
+
+        get_department_profitability: {
+            name: 'get_department_profitability',
+            description: `Get P&L breakdown by department showing revenue, expenses, and margin.
+Use for: "department profitability", "department P&L", "segment analysis", "departmental performance"
+
+Shows income, expenses, and net margin for each department.
+Can filter by subsidiary and time period.`,
+            parameters: {
+                type: 'object',
+                properties: {
+                    period: {
+                        type: 'string',
+                        enum: [
+                            'this_month', 'last_month', 'this_quarter', 'last_quarter',
+                            'ytd', 'fytd', 'ytd_closed',
+                            'this_fiscal_year', 'last_fiscal_year',
+                            'last_90_days', 'last_365_days'
+                        ],
+                        description: 'Time period (default: ytd)'
+                    },
+                    subsidiary_id: {
+                        type: 'number',
+                        description: 'Filter by subsidiary'
+                    },
+                    include_inactive: {
+                        type: 'boolean',
+                        description: 'Include inactive departments (default: false)'
+                    },
+                    limit: {
+                        type: 'number',
+                        description: 'Maximum departments to return (default: 50)'
+                    }
+                },
+                required: []
+            },
+            execute: function(args) {
+                const periodFilter = buildPeriodFilter(args.period || 'ytd');
+                const limit = Math.min(args.limit || 50, 100);
+                const subsidiaryFilter = args.subsidiary_id ? `AND t.subsidiary = ${args.subsidiary_id}` : '';
+                const inactiveFilter = args.include_inactive ? '' : `AND dept.isinactive = 'F'`;
+
+                const query = `
+                    SELECT
+                        tl.department AS department_id,
+                        BUILTIN.DF(tl.department) AS department_name,
+                        SUM(CASE WHEN acct.accttype IN ('Income', 'OthIncome')
+                            THEN COALESCE(tal.credit, 0) - COALESCE(tal.debit, 0) ELSE 0 END) AS revenue,
+                        SUM(CASE WHEN acct.accttype IN ('Expense', 'OthExpense')
+                            THEN COALESCE(tal.debit, 0) - COALESCE(tal.credit, 0) ELSE 0 END) AS expenses,
+                        SUM(CASE WHEN acct.accttype = 'COGS'
+                            THEN COALESCE(tal.debit, 0) - COALESCE(tal.credit, 0) ELSE 0 END) AS cogs,
+                        SUM(CASE WHEN acct.accttype IN ('Income', 'OthIncome')
+                            THEN COALESCE(tal.credit, 0) - COALESCE(tal.debit, 0) ELSE 0 END) -
+                        SUM(CASE WHEN acct.accttype IN ('Expense', 'OthExpense', 'COGS')
+                            THEN COALESCE(tal.debit, 0) - COALESCE(tal.credit, 0) ELSE 0 END) AS net_income,
+                        COUNT(DISTINCT tal.transaction) AS transaction_count
+                    FROM transactionaccountingline tal
+                    INNER JOIN transaction t ON tal.transaction = t.id
+                    INNER JOIN account acct ON tal.account = acct.id
+                    INNER JOIN transactionline tl ON tl.transaction = t.id AND tl.id = tal.transactionline
+                    LEFT JOIN department dept ON tl.department = dept.id
+                    WHERE t.posting = 'T'
+                        AND t.voided = 'F'
+                        AND tl.department IS NOT NULL
+                        AND acct.accttype IN ('Income', 'OthIncome', 'Expense', 'OthExpense', 'COGS')
+                        AND ${periodFilter}
+                        ${subsidiaryFilter}
+                        ${inactiveFilter}
+                    GROUP BY tl.department, BUILTIN.DF(tl.department)
+                    ORDER BY net_income DESC
+                    FETCH FIRST ${limit} ROWS ONLY
+                `;
+
+                const result = QueryExecutor.executeQuery(query);
+                const formatted = formatResult(result, 'get_department_profitability', { limit: limit });
+
+                // Add margin calculations and summary
+                if (formatted.success && formatted.rows) {
+                    let totalRevenue = 0, totalExpenses = 0, totalCogs = 0;
+                    formatted.rows.forEach(row => {
+                        const revenue = parseFloat(row.revenue) || 0;
+                        row.margin_pct = revenue > 0 ? Math.round((parseFloat(row.net_income) || 0) / revenue * 1000) / 10 : null;
+                        totalRevenue += revenue;
+                        totalExpenses += parseFloat(row.expenses) || 0;
+                        totalCogs += parseFloat(row.cogs) || 0;
+                    });
+                    formatted.summary = {
+                        total_revenue: totalRevenue,
+                        total_expenses: totalExpenses,
+                        total_cogs: totalCogs,
+                        total_net_income: totalRevenue - totalExpenses - totalCogs,
+                        department_count: formatted.rows.length
+                    };
+                }
+
+                return formatted;
+            },
+            displayName: function(args) {
+                return `Getting department profitability (${args.period || 'ytd'})...`;
+            }
+        },
+
+        get_employee_expenses: {
+            name: 'get_employee_expenses',
+            description: `Get expense report analysis by employee.
+Use for: "employee expenses", "expense reports", "who is spending", "T&E analysis", "travel expenses"
+
+Shows expense totals, categories, and status by employee.
+Can filter by period, expense category, and approval status.`,
+            parameters: {
+                type: 'object',
+                properties: {
+                    period: {
+                        type: 'string',
+                        enum: [
+                            'this_month', 'last_month', 'this_quarter', 'last_quarter',
+                            'ytd', 'fytd', 'this_fiscal_year', 'last_fiscal_year',
+                            'last_30_days', 'last_90_days', 'last_365_days'
+                        ],
+                        description: 'Time period (default: ytd)'
+                    },
+                    employee_id: {
+                        type: 'number',
+                        description: 'Filter by specific employee'
+                    },
+                    department_id: {
+                        type: 'number',
+                        description: 'Filter by department'
+                    },
+                    expense_category: {
+                        type: 'string',
+                        description: 'Filter by expense category name (partial match)'
+                    },
+                    status: {
+                        type: 'string',
+                        enum: ['all', 'approved', 'pending', 'rejected'],
+                        description: 'Filter by approval status (default: all)'
+                    },
+                    min_amount: {
+                        type: 'number',
+                        description: 'Minimum expense amount'
+                    },
+                    group_by: {
+                        type: 'string',
+                        enum: ['employee', 'category', 'department'],
+                        description: 'How to group results (default: employee)'
+                    },
+                    limit: {
+                        type: 'number',
+                        description: 'Maximum rows to return (default: 50)'
+                    }
+                },
+                required: []
+            },
+            execute: function(args) {
+                const periodFilter = buildPeriodFilter(args.period || 'ytd');
+                const limit = Math.min(args.limit || 50, 100);
+                const groupBy = args.group_by || 'employee';
+
+                const employeeFilter = args.employee_id ? `AND t.entity = ${args.employee_id}` : '';
+                const deptFilter = args.department_id ? `AND tl.department = ${args.department_id}` : '';
+                const categoryFilter = args.expense_category ?
+                    `AND LOWER(acct.accountsearchdisplayname) LIKE LOWER('%${escapeSqlLike(args.expense_category)}%') ESCAPE '\\'` : '';
+                const minAmountFilter = args.min_amount ? `HAVING SUM(tl.amount) >= ${args.min_amount}` : '';
+
+                let statusFilter = '';
+                if (args.status && args.status !== 'all') {
+                    if (args.status === 'approved') {
+                        statusFilter = `AND t.approvalstatus = 'Approved'`;
+                    } else if (args.status === 'pending') {
+                        statusFilter = `AND t.approvalstatus = 'Pending Approval'`;
+                    } else if (args.status === 'rejected') {
+                        statusFilter = `AND t.approvalstatus = 'Rejected'`;
+                    }
+                }
+
+                let selectFields, groupByFields, orderBy;
+                if (groupBy === 'category') {
+                    selectFields = `
+                        acct.acctnumber AS category_number,
+                        acct.accountsearchdisplayname AS category_name,
+                        COUNT(DISTINCT t.entity) AS employee_count`;
+                    groupByFields = `acct.acctnumber, acct.accountsearchdisplayname`;
+                    orderBy = 'total_amount DESC';
+                } else if (groupBy === 'department') {
+                    selectFields = `
+                        tl.department AS department_id,
+                        BUILTIN.DF(tl.department) AS department_name,
+                        COUNT(DISTINCT t.entity) AS employee_count`;
+                    groupByFields = `tl.department, BUILTIN.DF(tl.department)`;
+                    orderBy = 'total_amount DESC';
+                } else {
+                    // Default: group by employee
+                    selectFields = `
+                        t.entity AS employee_id,
+                        BUILTIN.DF(t.entity) AS employee_name,
+                        tl.department AS department_id,
+                        BUILTIN.DF(tl.department) AS department_name`;
+                    groupByFields = `t.entity, BUILTIN.DF(t.entity), tl.department, BUILTIN.DF(tl.department)`;
+                    orderBy = 'total_amount DESC';
+                }
+
+                const query = `
+                    SELECT
+                        ${selectFields},
+                        SUM(tl.amount) AS total_amount,
+                        COUNT(DISTINCT t.id) AS report_count,
+                        COUNT(tl.id) AS line_count,
+                        MIN(t.trandate) AS first_expense,
+                        MAX(t.trandate) AS last_expense
+                    FROM transaction t
+                    INNER JOIN transactionline tl ON tl.transaction = t.id
+                    LEFT JOIN account acct ON tl.expenseaccount = acct.id
+                    WHERE t.type = 'ExpRept'
+                        AND t.voided = 'F'
+                        AND tl.mainline = 'F'
+                        AND ${periodFilter}
+                        ${employeeFilter}
+                        ${deptFilter}
+                        ${categoryFilter}
+                        ${statusFilter}
+                    GROUP BY ${groupByFields}
+                    ${minAmountFilter}
+                    ORDER BY ${orderBy}
+                    FETCH FIRST ${limit} ROWS ONLY
+                `;
+
+                const result = QueryExecutor.executeQuery(query);
+                const formatted = formatResult(result, 'get_employee_expenses', { limit: limit });
+
+                // Add summary
+                if (formatted.success && formatted.rows && formatted.rows.length > 0) {
+                    let totalExpenses = 0, totalReports = 0;
+                    formatted.rows.forEach(row => {
+                        totalExpenses += parseFloat(row.total_amount) || 0;
+                        totalReports += parseInt(row.report_count) || 0;
+                    });
+                    formatted.summary = {
+                        total_expenses: totalExpenses,
+                        total_reports: totalReports,
+                        row_count: formatted.rows.length,
+                        grouped_by: groupBy
+                    };
+                }
+
+                return formatted;
+            },
+            displayName: function(args) {
+                return `Getting employee expenses (${args.period || 'ytd'})...`;
+            }
+        },
+
+        get_purchase_orders: {
+            name: 'get_purchase_orders',
+            description: `Get purchase order status and analysis.
+Use for: "purchase orders", "PO status", "outstanding orders", "pending deliveries", "procurement pipeline"
+
+Shows PO status, amounts, receipt status, and aging.
+Can filter by vendor, status, department, and date.`,
+            parameters: {
+                type: 'object',
+                properties: {
+                    period: {
+                        type: 'string',
+                        enum: [
+                            'this_month', 'last_month', 'this_quarter', 'last_quarter',
+                            'ytd', 'fytd', 'this_fiscal_year', 'last_fiscal_year',
+                            'last_30_days', 'last_90_days', 'last_365_days', 'all'
+                        ],
+                        description: 'Time period for PO creation date (default: ytd)'
+                    },
+                    vendor_id: {
+                        type: 'number',
+                        description: 'Filter by vendor'
+                    },
+                    status: {
+                        type: 'string',
+                        enum: ['all', 'open', 'pending_receipt', 'partially_received', 'fully_received', 'closed'],
+                        description: 'Filter by PO status (default: open)'
+                    },
+                    department_id: {
+                        type: 'number',
+                        description: 'Filter by department'
+                    },
+                    subsidiary_id: {
+                        type: 'number',
+                        description: 'Filter by subsidiary'
+                    },
+                    min_amount: {
+                        type: 'number',
+                        description: 'Minimum PO amount'
+                    },
+                    limit: {
+                        type: 'number',
+                        description: 'Maximum POs to return (default: 100)'
+                    }
+                },
+                required: []
+            },
+            execute: function(args) {
+                const limit = Math.min(args.limit || 100, 200);
+                const status = args.status || 'open';
+
+                // Build period filter - different for 'all'
+                let periodFilter;
+                if (args.period === 'all') {
+                    periodFilter = '1=1';
+                } else {
+                    periodFilter = buildPeriodFilter(args.period || 'ytd');
+                }
+
+                const vendorFilter = args.vendor_id ? `AND t.entity = ${args.vendor_id}` : '';
+                const deptFilter = args.department_id ? `AND t.id IN (SELECT transaction FROM transactionline WHERE department = ${args.department_id})` : '';
+                const subsidiaryFilter = args.subsidiary_id ? `AND t.subsidiary = ${args.subsidiary_id}` : '';
+                const minAmountFilter = args.min_amount ? `AND ABS(t.foreigntotal) >= ${args.min_amount}` : '';
+
+                let statusFilter = '';
+                if (status !== 'all') {
+                    if (status === 'open') {
+                        statusFilter = `AND t.status IN ('PurchOrd:A', 'PurchOrd:B', 'PurchOrd:D', 'PurchOrd:E')`;
+                    } else if (status === 'pending_receipt') {
+                        statusFilter = `AND t.status = 'PurchOrd:B'`;
+                    } else if (status === 'partially_received') {
+                        statusFilter = `AND t.status = 'PurchOrd:D'`;
+                    } else if (status === 'fully_received') {
+                        statusFilter = `AND t.status = 'PurchOrd:E'`;
+                    } else if (status === 'closed') {
+                        statusFilter = `AND t.status = 'PurchOrd:H'`;
+                    }
+                }
+
+                const query = `
+                    SELECT
+                        t.id AS po_id,
+                        t.tranid AS po_number,
+                        t.trandate AS po_date,
+                        t.entity AS vendor_id,
+                        BUILTIN.DF(t.entity) AS vendor_name,
+                        t.subsidiary AS subsidiary_id,
+                        BUILTIN.DF(t.subsidiary) AS subsidiary_name,
+                        ABS(t.foreigntotal) AS total_amount,
+                        t.status AS status_code,
+                        BUILTIN.DF(t.status) AS status_name,
+                        t.duedate AS expected_date,
+                        TRUNC(SYSDATE) - TRUNC(t.trandate) AS days_since_created,
+                        CASE WHEN t.duedate < SYSDATE THEN TRUNC(SYSDATE) - TRUNC(t.duedate) ELSE 0 END AS days_overdue,
+                        t.memo
+                    FROM transaction t
+                    WHERE t.type = 'PurchOrd'
+                        AND t.voided = 'F'
+                        AND ${periodFilter}
+                        ${vendorFilter}
+                        ${statusFilter}
+                        ${deptFilter}
+                        ${subsidiaryFilter}
+                        ${minAmountFilter}
+                    ORDER BY t.trandate DESC
+                    FETCH FIRST ${limit} ROWS ONLY
+                `;
+
+                const result = QueryExecutor.executeQuery(query);
+                const formatted = formatResult(result, 'get_purchase_orders', { limit: limit });
+
+                // Add summary
+                if (formatted.success && formatted.rows && formatted.rows.length > 0) {
+                    let totalAmount = 0, overdueCount = 0, overdueAmount = 0;
+                    formatted.rows.forEach(row => {
+                        const amount = parseFloat(row.total_amount) || 0;
+                        totalAmount += amount;
+                        if ((parseInt(row.days_overdue) || 0) > 0) {
+                            overdueCount++;
+                            overdueAmount += amount;
+                        }
+                    });
+                    formatted.summary = {
+                        total_amount: totalAmount,
+                        po_count: formatted.rows.length,
+                        overdue_count: overdueCount,
+                        overdue_amount: overdueAmount
+                    };
+                }
+
+                return formatted;
+            },
+            displayName: function(args) {
+                return `Getting purchase orders (${args.status || 'open'})...`;
+            }
+        },
+
+        get_sales_orders: {
+            name: 'get_sales_orders',
+            description: `Get sales order pipeline and backlog analysis.
+Use for: "sales orders", "order backlog", "pending fulfillment", "sales pipeline", "order status"
+
+Shows SO status, amounts, fulfillment status, and customer details.
+Can filter by customer, status, and date.`,
+            parameters: {
+                type: 'object',
+                properties: {
+                    period: {
+                        type: 'string',
+                        enum: [
+                            'this_month', 'last_month', 'this_quarter', 'last_quarter',
+                            'ytd', 'fytd', 'this_fiscal_year', 'last_fiscal_year',
+                            'last_30_days', 'last_90_days', 'last_365_days', 'all'
+                        ],
+                        description: 'Time period for SO creation date (default: ytd)'
+                    },
+                    customer_id: {
+                        type: 'number',
+                        description: 'Filter by customer'
+                    },
+                    status: {
+                        type: 'string',
+                        enum: ['all', 'open', 'pending_fulfillment', 'partially_fulfilled', 'pending_billing', 'fully_billed', 'closed'],
+                        description: 'Filter by SO status (default: open)'
+                    },
+                    sales_rep_id: {
+                        type: 'number',
+                        description: 'Filter by sales rep'
+                    },
+                    class_id: {
+                        type: 'number',
+                        description: 'Filter by class'
+                    },
+                    subsidiary_id: {
+                        type: 'number',
+                        description: 'Filter by subsidiary'
+                    },
+                    min_amount: {
+                        type: 'number',
+                        description: 'Minimum SO amount'
+                    },
+                    limit: {
+                        type: 'number',
+                        description: 'Maximum SOs to return (default: 100)'
+                    }
+                },
+                required: []
+            },
+            execute: function(args) {
+                const limit = Math.min(args.limit || 100, 200);
+                const status = args.status || 'open';
+
+                // Build period filter
+                let periodFilter;
+                if (args.period === 'all') {
+                    periodFilter = '1=1';
+                } else {
+                    periodFilter = buildPeriodFilter(args.period || 'ytd');
+                }
+
+                const customerFilter = args.customer_id ? `AND t.entity = ${args.customer_id}` : '';
+                const salesRepFilter = args.sales_rep_id ? `AND t.salesrep = ${args.sales_rep_id}` : '';
+                const classFilter = args.class_id ? `AND t.id IN (SELECT transaction FROM transactionline WHERE class = ${args.class_id})` : '';
+                const subsidiaryFilter = args.subsidiary_id ? `AND t.subsidiary = ${args.subsidiary_id}` : '';
+                const minAmountFilter = args.min_amount ? `AND t.foreigntotal >= ${args.min_amount}` : '';
+
+                let statusFilter = '';
+                if (status !== 'all') {
+                    if (status === 'open') {
+                        statusFilter = `AND t.status IN ('SalesOrd:A', 'SalesOrd:B', 'SalesOrd:D', 'SalesOrd:E', 'SalesOrd:F')`;
+                    } else if (status === 'pending_fulfillment') {
+                        statusFilter = `AND t.status = 'SalesOrd:B'`;
+                    } else if (status === 'partially_fulfilled') {
+                        statusFilter = `AND t.status = 'SalesOrd:D'`;
+                    } else if (status === 'pending_billing') {
+                        statusFilter = `AND t.status = 'SalesOrd:E'`;
+                    } else if (status === 'fully_billed') {
+                        statusFilter = `AND t.status = 'SalesOrd:F'`;
+                    } else if (status === 'closed') {
+                        statusFilter = `AND t.status = 'SalesOrd:H'`;
+                    }
+                }
+
+                const query = `
+                    SELECT
+                        t.id AS so_id,
+                        t.tranid AS so_number,
+                        t.trandate AS order_date,
+                        t.entity AS customer_id,
+                        BUILTIN.DF(t.entity) AS customer_name,
+                        t.subsidiary AS subsidiary_id,
+                        BUILTIN.DF(t.subsidiary) AS subsidiary_name,
+                        t.salesrep AS sales_rep_id,
+                        BUILTIN.DF(t.salesrep) AS sales_rep_name,
+                        t.foreigntotal AS total_amount,
+                        t.status AS status_code,
+                        BUILTIN.DF(t.status) AS status_name,
+                        t.shipdate AS expected_ship_date,
+                        TRUNC(SYSDATE) - TRUNC(t.trandate) AS days_since_created,
+                        t.memo
+                    FROM transaction t
+                    WHERE t.type = 'SalesOrd'
+                        AND t.voided = 'F'
+                        AND ${periodFilter}
+                        ${customerFilter}
+                        ${statusFilter}
+                        ${salesRepFilter}
+                        ${classFilter}
+                        ${subsidiaryFilter}
+                        ${minAmountFilter}
+                    ORDER BY t.trandate DESC
+                    FETCH FIRST ${limit} ROWS ONLY
+                `;
+
+                const result = QueryExecutor.executeQuery(query);
+                const formatted = formatResult(result, 'get_sales_orders', { limit: limit });
+
+                // Add summary
+                if (formatted.success && formatted.rows && formatted.rows.length > 0) {
+                    let totalAmount = 0;
+                    const statusCounts = {};
+                    formatted.rows.forEach(row => {
+                        totalAmount += parseFloat(row.total_amount) || 0;
+                        const s = row.status_name || 'Unknown';
+                        statusCounts[s] = (statusCounts[s] || 0) + 1;
+                    });
+                    formatted.summary = {
+                        total_backlog_amount: totalAmount,
+                        order_count: formatted.rows.length,
+                        status_breakdown: statusCounts
+                    };
+                }
+
+                return formatted;
+            },
+            displayName: function(args) {
+                return `Getting sales orders (${args.status || 'open'})...`;
+            }
+        },
+
+        get_inventory_status: {
+            name: 'get_inventory_status',
+            description: `Get inventory status including stock levels and reorder alerts.
+Use for: "inventory status", "stock levels", "low stock", "reorder items", "inventory value"
+
+Shows quantity on hand, available, on order, and reorder point status.
+Can filter by location, item type, and low stock alerts.`,
+            parameters: {
+                type: 'object',
+                properties: {
+                    location_id: {
+                        type: 'number',
+                        description: 'Filter by inventory location'
+                    },
+                    item_type: {
+                        type: 'string',
+                        enum: ['all', 'InvtPart', 'Assembly', 'Kit'],
+                        description: 'Filter by item type (default: all inventory items)'
+                    },
+                    low_stock_only: {
+                        type: 'boolean',
+                        description: 'Only show items at or below reorder point (default: false)'
+                    },
+                    subsidiary_id: {
+                        type: 'number',
+                        description: 'Filter by subsidiary'
+                    },
+                    min_value: {
+                        type: 'number',
+                        description: 'Minimum inventory value to include'
+                    },
+                    limit: {
+                        type: 'number',
+                        description: 'Maximum items to return (default: 100)'
+                    }
+                },
+                required: []
+            },
+            execute: function(args) {
+                const limit = Math.min(args.limit || 100, 200);
+
+                const locationFilter = args.location_id ? `AND ib.location = ${args.location_id}` : '';
+                const subsidiaryFilter = args.subsidiary_id ?
+                    `AND i.id IN (SELECT item FROM itemsubsidiary WHERE subsidiary = ${args.subsidiary_id})` : '';
+
+                let itemTypeFilter = '';
+                if (args.item_type && args.item_type !== 'all') {
+                    itemTypeFilter = `AND i.itemtype = '${escapeSql(args.item_type)}'`;
+                } else {
+                    itemTypeFilter = `AND i.itemtype IN ('InvtPart', 'Assembly', 'Kit')`;
+                }
+
+                const lowStockFilter = args.low_stock_only ?
+                    `AND ib.quantityavailable <= COALESCE(i.reorderpoint, 0)` : '';
+                const minValueFilter = args.min_value ?
+                    `HAVING SUM(ib.quantityonhand * COALESCE(i.averagecost, i.cost, 0)) >= ${args.min_value}` : '';
+
+                const query = `
+                    SELECT
+                        i.id AS item_id,
+                        i.itemid AS item_name,
+                        i.displayname AS display_name,
+                        i.itemtype AS item_type,
+                        ib.location AS location_id,
+                        BUILTIN.DF(ib.location) AS location_name,
+                        SUM(ib.quantityonhand) AS qty_on_hand,
+                        SUM(ib.quantityavailable) AS qty_available,
+                        SUM(ib.quantityonorder) AS qty_on_order,
+                        SUM(ib.quantitybackordered) AS qty_backordered,
+                        i.reorderpoint AS reorder_point,
+                        i.preferredstocklevel AS preferred_stock_level,
+                        COALESCE(i.averagecost, i.cost, 0) AS unit_cost,
+                        SUM(ib.quantityonhand * COALESCE(i.averagecost, i.cost, 0)) AS inventory_value,
+                        CASE
+                            WHEN SUM(ib.quantityavailable) <= 0 THEN 'OUT_OF_STOCK'
+                            WHEN SUM(ib.quantityavailable) <= COALESCE(i.reorderpoint, 0) THEN 'LOW_STOCK'
+                            ELSE 'IN_STOCK'
+                        END AS stock_status
+                    FROM item i
+                    INNER JOIN inventorybalance ib ON ib.item = i.id
+                    WHERE i.isinactive = 'F'
+                        ${itemTypeFilter}
+                        ${locationFilter}
+                        ${subsidiaryFilter}
+                        ${lowStockFilter}
+                    GROUP BY i.id, i.itemid, i.displayname, i.itemtype, ib.location, BUILTIN.DF(ib.location),
+                             i.reorderpoint, i.preferredstocklevel, COALESCE(i.averagecost, i.cost, 0)
+                    ${minValueFilter}
+                    ORDER BY inventory_value DESC
+                    FETCH FIRST ${limit} ROWS ONLY
+                `;
+
+                const result = QueryExecutor.executeQuery(query);
+                const formatted = formatResult(result, 'get_inventory_status', { limit: limit });
+
+                // Add summary
+                if (formatted.success && formatted.rows && formatted.rows.length > 0) {
+                    let totalValue = 0, lowStockCount = 0, outOfStockCount = 0;
+                    formatted.rows.forEach(row => {
+                        totalValue += parseFloat(row.inventory_value) || 0;
+                        if (row.stock_status === 'LOW_STOCK') lowStockCount++;
+                        if (row.stock_status === 'OUT_OF_STOCK') outOfStockCount++;
+                    });
+                    formatted.summary = {
+                        total_inventory_value: totalValue,
+                        item_count: formatted.rows.length,
+                        low_stock_items: lowStockCount,
+                        out_of_stock_items: outOfStockCount
+                    };
+                }
+
+                return formatted;
+            },
+            displayName: function(args) {
+                return args.low_stock_only ? 'Getting low stock items...' : 'Getting inventory status...';
+            }
+        },
+
+        get_journal_entries: {
+            name: 'get_journal_entries',
+            description: `Get journal entry analysis for adjustments, accruals, and manual entries.
+Use for: "journal entries", "adjusting entries", "accruals", "manual entries", "JE analysis"
+
+Shows journal entries with line details, amounts, and classifications.
+Can filter by period, memo text, account, and amount.`,
+            parameters: {
+                type: 'object',
+                properties: {
+                    period: {
+                        type: 'string',
+                        enum: [
+                            'this_month', 'last_month', 'this_quarter', 'last_quarter',
+                            'ytd', 'fytd', 'this_fiscal_year', 'last_fiscal_year',
+                            'last_30_days', 'last_90_days'
+                        ],
+                        description: 'Time period (default: this_month)'
+                    },
+                    account_id: {
+                        type: 'number',
+                        description: 'Filter by account'
+                    },
+                    memo_contains: {
+                        type: 'string',
+                        description: 'Filter by memo text (partial match)'
+                    },
+                    subsidiary_id: {
+                        type: 'number',
+                        description: 'Filter by subsidiary'
+                    },
+                    min_amount: {
+                        type: 'number',
+                        description: 'Minimum line amount'
+                    },
+                    created_by: {
+                        type: 'number',
+                        description: 'Filter by user who created the entry'
+                    },
+                    include_lines: {
+                        type: 'boolean',
+                        description: 'Include line-level detail (default: false, shows header summary)'
+                    },
+                    limit: {
+                        type: 'number',
+                        description: 'Maximum entries to return (default: 100)'
+                    }
+                },
+                required: []
+            },
+            execute: function(args) {
+                const periodFilter = buildPeriodFilter(args.period || 'this_month');
+                const limit = Math.min(args.limit || 100, 200);
+
+                const accountFilter = args.account_id ? `AND tal.account = ${args.account_id}` : '';
+                const memoFilter = args.memo_contains ?
+                    `AND (LOWER(t.memo) LIKE LOWER('%${escapeSqlLike(args.memo_contains)}%') ESCAPE '\\' OR LOWER(tl.memo) LIKE LOWER('%${escapeSqlLike(args.memo_contains)}%') ESCAPE '\\')` : '';
+                const subsidiaryFilter = args.subsidiary_id ? `AND t.subsidiary = ${args.subsidiary_id}` : '';
+                const minAmountFilter = args.min_amount ? `AND ABS(COALESCE(tal.debit, 0) - COALESCE(tal.credit, 0)) >= ${args.min_amount}` : '';
+                const createdByFilter = args.created_by ? `AND t.createdby = ${args.created_by}` : '';
+
+                let query;
+                if (args.include_lines) {
+                    // Line-level detail
+                    query = `
+                        SELECT
+                            t.id AS je_id,
+                            t.tranid AS je_number,
+                            t.trandate AS je_date,
+                            t.memo AS header_memo,
+                            tal.account AS account_id,
+                            BUILTIN.DF(tal.account) AS account_name,
+                            tl.memo AS line_memo,
+                            COALESCE(tal.debit, 0) AS debit,
+                            COALESCE(tal.credit, 0) AS credit,
+                            tl.department AS department_id,
+                            BUILTIN.DF(tl.department) AS department_name,
+                            tl.class AS class_id,
+                            BUILTIN.DF(tl.class) AS class_name,
+                            t.createdby AS created_by_id,
+                            BUILTIN.DF(t.createdby) AS created_by_name
+                        FROM transaction t
+                        INNER JOIN transactionaccountingline tal ON tal.transaction = t.id
+                        LEFT JOIN transactionline tl ON tl.transaction = t.id AND tl.id = tal.transactionline
+                        WHERE t.type = 'Journal'
+                            AND t.posting = 'T'
+                            AND t.voided = 'F'
+                            AND ${periodFilter}
+                            ${accountFilter}
+                            ${memoFilter}
+                            ${subsidiaryFilter}
+                            ${minAmountFilter}
+                            ${createdByFilter}
+                        ORDER BY t.trandate DESC, t.id, tal.id
+                        FETCH FIRST ${limit * 5} ROWS ONLY
+                    `;
+                } else {
+                    // Header summary
+                    query = `
+                        SELECT
+                            t.id AS je_id,
+                            t.tranid AS je_number,
+                            t.trandate AS je_date,
+                            t.memo,
+                            t.subsidiary AS subsidiary_id,
+                            BUILTIN.DF(t.subsidiary) AS subsidiary_name,
+                            SUM(COALESCE(tal.debit, 0)) AS total_debit,
+                            SUM(COALESCE(tal.credit, 0)) AS total_credit,
+                            COUNT(DISTINCT tal.account) AS account_count,
+                            t.createdby AS created_by_id,
+                            BUILTIN.DF(t.createdby) AS created_by_name,
+                            t.datecreated AS created_date
+                        FROM transaction t
+                        INNER JOIN transactionaccountingline tal ON tal.transaction = t.id
+                        LEFT JOIN transactionline tl ON tl.transaction = t.id AND tl.id = tal.transactionline
+                        WHERE t.type = 'Journal'
+                            AND t.posting = 'T'
+                            AND t.voided = 'F'
+                            AND ${periodFilter}
+                            ${accountFilter}
+                            ${memoFilter}
+                            ${subsidiaryFilter}
+                            ${createdByFilter}
+                        GROUP BY t.id, t.tranid, t.trandate, t.memo, t.subsidiary, BUILTIN.DF(t.subsidiary),
+                                 t.createdby, BUILTIN.DF(t.createdby), t.datecreated
+                        ${args.min_amount ? `HAVING SUM(COALESCE(tal.debit, 0)) >= ${args.min_amount}` : ''}
+                        ORDER BY t.trandate DESC
+                        FETCH FIRST ${limit} ROWS ONLY
+                    `;
+                }
+
+                const result = QueryExecutor.executeQuery(query);
+                const formatted = formatResult(result, 'get_journal_entries', { limit: limit });
+
+                // Add summary
+                if (formatted.success && formatted.rows && formatted.rows.length > 0) {
+                    let totalDebits = 0, totalCredits = 0;
+                    const uniqueJEs = new Set();
+                    formatted.rows.forEach(row => {
+                        totalDebits += parseFloat(row.total_debit || row.debit) || 0;
+                        totalCredits += parseFloat(row.total_credit || row.credit) || 0;
+                        uniqueJEs.add(row.je_id);
+                    });
+                    formatted.summary = {
+                        total_debits: totalDebits,
+                        total_credits: totalCredits,
+                        je_count: uniqueJEs.size,
+                        row_count: formatted.rows.length
+                    };
+                }
+
+                return formatted;
+            },
+            displayName: function(args) {
+                return `Getting journal entries (${args.period || 'this_month'})...`;
+            }
+        },
+
+        get_period_close_status: {
+            name: 'get_period_close_status',
+            description: `Get accounting period status showing which periods are open, closed, or locked.
+Use for: "period status", "which periods are open", "period close status", "can I post to", "locked periods"
+
+Shows all accounting periods with their current status for AR, AP, Payroll, and All.`,
+            parameters: {
+                type: 'object',
+                properties: {
+                    fiscal_year: {
+                        type: 'number',
+                        description: 'Filter by fiscal year (e.g., 2024)'
+                    },
+                    status_filter: {
+                        type: 'string',
+                        enum: ['all', 'open', 'closed', 'locked'],
+                        description: 'Filter by status (default: all)'
+                    },
+                    include_quarters: {
+                        type: 'boolean',
+                        description: 'Include quarter-level periods (default: false, only months)'
+                    },
+                    limit: {
+                        type: 'number',
+                        description: 'Maximum periods to return (default: 24)'
+                    }
+                },
+                required: []
+            },
+            execute: function(args) {
+                const limit = Math.min(args.limit || 24, 60);
+
+                const yearFilter = args.fiscal_year ? `AND ap.fiscalyear = ${args.fiscal_year}` : '';
+                const quarterFilter = args.include_quarters ? '' : `AND ap.isquarter = 'F'`;
+
+                let statusFilter = '';
+                if (args.status_filter && args.status_filter !== 'all') {
+                    if (args.status_filter === 'open') {
+                        statusFilter = `AND ap.closed = 'F' AND ap.alllocked = 'F'`;
+                    } else if (args.status_filter === 'closed') {
+                        statusFilter = `AND ap.closed = 'T'`;
+                    } else if (args.status_filter === 'locked') {
+                        statusFilter = `AND ap.alllocked = 'T'`;
+                    }
+                }
+
+                const query = `
+                    SELECT
+                        ap.id AS period_id,
+                        ap.periodname AS period_name,
+                        ap.startdate,
+                        ap.enddate,
+                        ap.fiscalyear AS fiscal_year,
+                        ap.isyear AS is_year,
+                        ap.isquarter AS is_quarter,
+                        ap.closed AS is_closed,
+                        ap.alllocked AS all_locked,
+                        ap.arlocked AS ar_locked,
+                        ap.aplocked AS ap_locked,
+                        CASE
+                            WHEN ap.alllocked = 'T' THEN 'LOCKED'
+                            WHEN ap.closed = 'T' THEN 'CLOSED'
+                            ELSE 'OPEN'
+                        END AS overall_status,
+                        CASE WHEN SYSDATE BETWEEN ap.startdate AND ap.enddate THEN 'Y' ELSE 'N' END AS is_current
+                    FROM accountingperiod ap
+                    WHERE ap.isyear = 'F'
+                        ${quarterFilter}
+                        ${yearFilter}
+                        ${statusFilter}
+                    ORDER BY ap.startdate DESC
+                    FETCH FIRST ${limit} ROWS ONLY
+                `;
+
+                const result = QueryExecutor.executeQuery(query);
+                const formatted = formatResult(result, 'get_period_close_status', { limit: limit });
+
+                // Add summary
+                if (formatted.success && formatted.rows && formatted.rows.length > 0) {
+                    let openCount = 0, closedCount = 0, lockedCount = 0, currentPeriod = null;
+                    formatted.rows.forEach(row => {
+                        if (row.overall_status === 'OPEN') openCount++;
+                        if (row.overall_status === 'CLOSED') closedCount++;
+                        if (row.overall_status === 'LOCKED') lockedCount++;
+                        if (row.is_current === 'Y') currentPeriod = row.period_name;
+                    });
+                    formatted.summary = {
+                        current_period: currentPeriod,
+                        open_periods: openCount,
+                        closed_periods: closedCount,
+                        locked_periods: lockedCount,
+                        total_periods: formatted.rows.length
+                    };
+                }
+
+                return formatted;
+            },
+            displayName: function(args) {
+                return 'Getting period close status...';
+            }
+        },
+
+        get_intercompany_balances: {
+            name: 'get_intercompany_balances',
+            description: `Get intercompany receivable/payable balances between subsidiaries.
+Use for: "intercompany balances", "IC balances", "intercompany receivables", "intercompany payables", "eliminate intercompany"
+
+Shows balances owed between subsidiaries for elimination and reconciliation.`,
+            parameters: {
+                type: 'object',
+                properties: {
+                    subsidiary_id: {
+                        type: 'number',
+                        description: 'Filter by specific subsidiary (shows both receivables and payables)'
+                    },
+                    as_of_date: {
+                        type: 'string',
+                        description: 'Balance as of date (YYYY-MM-DD format, default: today)'
+                    },
+                    min_balance: {
+                        type: 'number',
+                        description: 'Minimum absolute balance to include'
+                    },
+                    limit: {
+                        type: 'number',
+                        description: 'Maximum rows to return (default: 50)'
+                    }
+                },
+                required: []
+            },
+            execute: function(args) {
+                const limit = Math.min(args.limit || 50, 100);
+                const asOfDate = args.as_of_date || 'SYSDATE';
+                const dateFilter = args.as_of_date ?
+                    `AND t.trandate <= TO_DATE('${escapeSql(args.as_of_date)}', 'YYYY-MM-DD')` : '';
+
+                const subsidiaryFilter = args.subsidiary_id ?
+                    `AND (t.subsidiary = ${args.subsidiary_id} OR tl.subsidiary = ${args.subsidiary_id})` : '';
+                const minBalanceFilter = args.min_balance ?
+                    `HAVING ABS(SUM(COALESCE(tal.debit, 0) - COALESCE(tal.credit, 0))) >= ${args.min_balance}` : '';
+
+                // Query for intercompany account balances between subsidiaries
+                const query = `
+                    SELECT
+                        t.subsidiary AS from_subsidiary_id,
+                        BUILTIN.DF(t.subsidiary) AS from_subsidiary_name,
+                        acct.deferralaccount AS to_subsidiary_id,
+                        BUILTIN.DF(acct.deferralaccount) AS to_account_name,
+                        acct.acctnumber AS account_number,
+                        acct.accountsearchdisplayname AS account_name,
+                        SUM(COALESCE(tal.debit, 0)) AS total_debit,
+                        SUM(COALESCE(tal.credit, 0)) AS total_credit,
+                        SUM(COALESCE(tal.debit, 0) - COALESCE(tal.credit, 0)) AS balance,
+                        COUNT(DISTINCT t.id) AS transaction_count,
+                        MAX(t.trandate) AS last_activity
+                    FROM transactionaccountingline tal
+                    INNER JOIN transaction t ON tal.transaction = t.id
+                    INNER JOIN account acct ON tal.account = acct.id
+                    LEFT JOIN transactionline tl ON tl.transaction = t.id AND tl.id = tal.transactionline
+                    WHERE t.posting = 'T'
+                        AND t.voided = 'F'
+                        AND acct.accttype IN ('OthCurrAsset', 'OthCurrLiab')
+                        AND (LOWER(acct.accountsearchdisplayname) LIKE '%intercompany%'
+                             OR LOWER(acct.accountsearchdisplayname) LIKE '%interco%'
+                             OR LOWER(acct.accountsearchdisplayname) LIKE '%ic %'
+                             OR LOWER(acct.accountsearchdisplayname) LIKE '% ic'
+                             OR acct.eliminate = 'T')
+                        ${dateFilter}
+                        ${subsidiaryFilter}
+                    GROUP BY t.subsidiary, BUILTIN.DF(t.subsidiary), acct.deferralaccount,
+                             BUILTIN.DF(acct.deferralaccount), acct.acctnumber, acct.accountsearchdisplayname
+                    ${minBalanceFilter}
+                    ORDER BY ABS(SUM(COALESCE(tal.debit, 0) - COALESCE(tal.credit, 0))) DESC
+                    FETCH FIRST ${limit} ROWS ONLY
+                `;
+
+                const result = QueryExecutor.executeQuery(query);
+                const formatted = formatResult(result, 'get_intercompany_balances', { limit: limit });
+
+                // Add summary
+                if (formatted.success && formatted.rows && formatted.rows.length > 0) {
+                    let totalReceivables = 0, totalPayables = 0;
+                    formatted.rows.forEach(row => {
+                        const balance = parseFloat(row.balance) || 0;
+                        if (balance > 0) totalReceivables += balance;
+                        else totalPayables += Math.abs(balance);
+                    });
+                    formatted.summary = {
+                        total_ic_receivables: totalReceivables,
+                        total_ic_payables: totalPayables,
+                        net_ic_position: totalReceivables - totalPayables,
+                        relationship_count: formatted.rows.length
+                    };
+                }
+
+                return formatted;
+            },
+            displayName: function(args) {
+                return 'Getting intercompany balances...';
             }
         }
     };
@@ -4574,6 +5765,16 @@ Use this when user asks:
                             { name: 'get_recent_transactions', purpose: 'Recent transactions filtered by type/entity' },
                             { name: 'get_expense_breakdown', purpose: 'Expenses by category' },
                             { name: 'compare_periods', purpose: 'Period over period comparison' },
+                            { name: 'get_budget_variance', purpose: 'Actual vs budget comparison' },
+                            { name: 'get_project_profitability', purpose: 'Project P&L and margin analysis' },
+                            { name: 'get_department_profitability', purpose: 'Department-level P&L breakdown' },
+                            { name: 'get_employee_expenses', purpose: 'Expense report analysis by employee' },
+                            { name: 'get_purchase_orders', purpose: 'PO status and procurement pipeline' },
+                            { name: 'get_sales_orders', purpose: 'SO backlog and fulfillment status' },
+                            { name: 'get_inventory_status', purpose: 'Stock levels and reorder alerts' },
+                            { name: 'get_journal_entries', purpose: 'Journal entry analysis' },
+                            { name: 'get_period_close_status', purpose: 'Accounting period open/closed status' },
+                            { name: 'get_intercompany_balances', purpose: 'IC receivables/payables between subs' },
                             { name: 'find_anomalies', purpose: 'Detect outliers and unusual patterns' }
                         ]
                     },
