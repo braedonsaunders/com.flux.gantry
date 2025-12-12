@@ -889,16 +889,16 @@
             const configuredNames = settings.dashboardNames || {};
             const visibility = settings.dashboardVisibility || {};
 
-            // Icon mapping for each dashboard
+            // Icon mapping - must match sidebar icons exactly
             const iconMap = {
                 health: 'fa-heartbeat',
                 time: 'fa-clock',
                 integrity: 'fa-shield-alt',
                 customervalue: 'fa-users',
-                vendorperformance: 'fa-truck',
+                vendorperformance: 'fa-handshake',
                 spendvelocity: 'fa-tachometer-alt',
-                cashflow: 'fa-dollar-sign',
-                burden: 'fa-layer-group'
+                cashflow: 'fa-money-bill-wave',
+                burden: 'fa-weight-hanging'
             };
 
             let html = '';
@@ -1355,6 +1355,10 @@
             input.value = '';
             input.style.height = 'auto';
             this.clearFollowUpSuggestions();
+
+            // Hide health scores with animation
+            const healthScores = document.getElementById('health-scores-overview');
+            if (healthScores) healthScores.classList.add('hidden');
 
             // Hide welcome
             const welcome = document.getElementById('advisor-welcome-full');
@@ -4947,7 +4951,11 @@
                     welcome.style.display = '';
                 }
             }
-            
+
+            // Show health scores again with animation
+            const healthScores = document.getElementById('health-scores-overview');
+            if (healthScores) healthScores.classList.remove('hidden');
+
             // Re-bind suggestion chip events
             this.bindEvents();
         },
