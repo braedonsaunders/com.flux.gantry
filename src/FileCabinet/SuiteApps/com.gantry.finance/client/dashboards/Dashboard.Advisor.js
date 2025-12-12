@@ -1449,36 +1449,41 @@
             // Get settings data
             const settings = (window.SettingsController && SettingsController.data) ? SettingsController.data : {};
 
-            // Score-to-category mapping with display order
-            const scoreCategories = [
-                { dashboard: 'cashflow', category: 'cash', label: 'Cash Flow', icon: 'fa-money-bill-wave' },
-                { dashboard: 'health', category: 'revenue', label: 'Revenue', icon: 'fa-chart-line' },
-                { dashboard: 'spendvelocity', category: 'expenses', label: 'Expenses', icon: 'fa-receipt' },
-                { dashboard: 'burden', category: 'profitability', label: 'Margins', icon: 'fa-balance-scale' },
-                { dashboard: 'time', category: 'labor', label: 'Labor', icon: 'fa-user-clock' },
-                { dashboard: 'customervalue', category: 'customers', label: 'Customers', icon: 'fa-users' },
-                { dashboard: 'vendorperformance', category: 'vendors', label: 'Vendors', icon: 'fa-handshake' },
-                { dashboard: 'integrity', category: 'dataquality', label: 'Data Quality', icon: 'fa-shield-alt' }
-            ];
+            // Dashboard-to-category mapping
+            const dashboardCategoryMap = {
+                'cashflow': { category: 'cash', label: 'Cash Flow', icon: 'fa-money-bill-wave' },
+                'health': { category: 'revenue', label: 'Revenue', icon: 'fa-chart-line' },
+                'spendvelocity': { category: 'expenses', label: 'Expenses', icon: 'fa-receipt' },
+                'burden': { category: 'profitability', label: 'Margins', icon: 'fa-balance-scale' },
+                'time': { category: 'labor', label: 'Labor', icon: 'fa-user-clock' },
+                'customervalue': { category: 'customers', label: 'Customers', icon: 'fa-users' },
+                'vendorperformance': { category: 'vendors', label: 'Vendors', icon: 'fa-handshake' },
+                'integrity': { category: 'dataquality', label: 'Data Quality', icon: 'fa-shield-alt' }
+            };
 
-            // Get configured names and visibility
+            // Get configured order, names, and visibility
+            const dashboardOrder = settings.dashboardOrder || Object.keys(dashboardCategoryMap);
             const configuredNames = settings.dashboardNames || {};
             const visibility = settings.dashboardVisibility || {};
 
             let html = '';
 
-            scoreCategories.forEach(function(item) {
-                // Skip if not visible in settings
-                if (visibility[item.dashboard] === false) return;
+            // Render in configured order
+            dashboardOrder.forEach(function(dashboardId) {
+                const item = dashboardCategoryMap[dashboardId];
+                if (!item) return; // Skip if not a health score dashboard (e.g., advisor, settings)
 
-                const scoreData = scores[item.dashboard];
+                // Skip if not visible in settings
+                if (visibility[dashboardId] === false) return;
+
+                const scoreData = scores[dashboardId];
                 const score = scoreData ? scoreData.score : '--';
                 const grade = scoreData ? scoreData.grade : '';
-                const displayName = configuredNames[item.dashboard] || item.label;
+                const displayName = configuredNames[dashboardId] || item.label;
 
                 html += `
                     <div class="score-category-card"
-                         data-dashboard="${item.dashboard}"
+                         data-dashboard="${dashboardId}"
                          data-category="${item.category || ''}"
                          data-grade="${grade}">
                         <div class="card-icon">
