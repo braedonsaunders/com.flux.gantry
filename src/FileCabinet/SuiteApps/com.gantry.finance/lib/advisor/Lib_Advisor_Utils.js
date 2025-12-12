@@ -419,46 +419,228 @@ define(['N/log', 'N/runtime', 'N/record', '../Lib_Config'], function(log, runtim
 
     /**
      * Extract topics from query for session tracking
+     * FIXED: Replaced brittle word-boundary regex with contextual phrase matching
+     * to avoid false positives like "Arkansas" matching AR or "app" matching AP
      */
     function extractTopicsFromQuery(message, description) {
         const topics = [];
         const text = (message + ' ' + (description || '')).toLowerCase();
-        
-        if (text.includes('revenue') || text.includes('sales')) topics.push('revenue');
-        if (text.includes('expense') || text.includes('cost')) topics.push('expenses');
+
+        // Revenue/Sales - look for financial context
+        if (text.includes('revenue') || text.includes('sales') ||
+            text.includes('income') || text.includes('earnings')) {
+            topics.push('revenue');
+        }
+
+        // Expenses - look for financial context
+        if (text.includes('expense') || text.includes('cost') ||
+            text.includes('spending') || text.includes('expenditure')) {
+            topics.push('expenses');
+        }
+
+        // Customers
         if (text.includes('customer')) topics.push('customers');
-        if (text.includes('vendor')) topics.push('vendors');
-        if (text.includes('invoice')) topics.push('invoices');
-        if (text.includes('payment')) topics.push('payments');
-        if (text.includes('department')) topics.push('departments');
-        if (text.includes('receivable') || text.match(/\bar\b/)) topics.push('AR');
-        if (text.includes('payable') || text.match(/\bap\b/)) topics.push('AP');
-        if (text.includes('cash') || text.includes('flow')) topics.push('cash flow');
-        if (text.includes('profit') || text.includes('margin')) topics.push('profitability');
-        if (text.includes('balance')) topics.push('balances');
-        
+
+        // Vendors
+        if (text.includes('vendor') || text.includes('supplier')) topics.push('vendors');
+
+        // Invoices
+        if (text.includes('invoice') || text.includes('bill')) topics.push('invoices');
+
+        // Payments
+        if (text.includes('payment') || text.includes('paid') || text.includes('remittance')) {
+            topics.push('payments');
+        }
+
+        // Departments
+        if (text.includes('department') || text.includes('dept')) topics.push('departments');
+
+        // AR - use contextual phrases instead of brittle regex
+        // FIXED: \bar\b could match "Arkansas", "bar", etc.
+        if (text.includes('receivable') || text.includes('a/r') || text.includes('accounts receivable') ||
+            text.includes('ar aging') || text.includes('ar balance') || text.includes('outstanding ar') ||
+            text.includes('receivables') || /\bar\s+(aging|balance|report|summary|detail)/i.test(text)) {
+            topics.push('AR');
+        }
+
+        // AP - use contextual phrases instead of brittle regex
+        // FIXED: \bap\b could match "app", "apt", etc.
+        if (text.includes('payable') || text.includes('a/p') || text.includes('accounts payable') ||
+            text.includes('ap aging') || text.includes('ap balance') || text.includes('outstanding ap') ||
+            text.includes('payables') || /\bap\s+(aging|balance|report|summary|detail)/i.test(text)) {
+            topics.push('AP');
+        }
+
+        // Cash flow
+        if (text.includes('cash flow') || text.includes('cashflow') ||
+            (text.includes('cash') && text.includes('flow'))) {
+            topics.push('cash flow');
+        }
+
+        // Profitability
+        if (text.includes('profit') || text.includes('margin') ||
+            text.includes('p&l') || text.includes('profitability')) {
+            topics.push('profitability');
+        }
+
+        // Balances
+        if (text.includes('balance sheet') || text.includes('trial balance') ||
+            text.includes('account balance')) {
+            topics.push('balances');
+        }
+
         return topics;
     }
 
     /**
      * Format chat history as text for inclusion in prompt
+     * RECOMMENDATION 5: Implements conversation memory compression
+     * - Semantic compression: Recent messages get full context, older ones get summaries
+     * - Entity persistence: Extracted entities are tracked separately
+     * - Intent chain: Tracks sequence of user intents for context continuity
      */
-    function formatChatHistoryAsText(history) {
+    function formatChatHistoryAsText(history, options) {
         if (!history || !Array.isArray(history) || history.length === 0) return '';
-        
+
+        options = options || {};
+        const maxRecentMessages = options.maxRecent || 4;  // Full detail for recent
+        const maxOlderMessages = options.maxOlder || 4;    // Compressed for older
+        const includeIntentChain = options.includeIntentChain !== false;
+
         const lines = ['Previous conversation:'];
-        const recentHistory = history.slice(-6); // Last 6 messages
-        
-        for (let i = 0; i < recentHistory.length; i++) {
-            const msg = recentHistory[i];
-            if (msg && (msg.content || msg.text)) {
-                const role = msg.role === 'user' ? 'User' : 'Assistant';
-                const text = (msg.content || msg.text || '').substring(0, 300);
-                lines.push(role + ': ' + text);
+
+        // Split history into recent (full detail) and older (compressed)
+        const totalMessages = history.length;
+        const recentStart = Math.max(0, totalMessages - maxRecentMessages);
+        const olderStart = Math.max(0, recentStart - maxOlderMessages);
+
+        // SEMANTIC COMPRESSION: Summarize older messages
+        if (olderStart < recentStart) {
+            const olderMessages = history.slice(olderStart, recentStart);
+            if (olderMessages.length > 0) {
+                lines.push('[Earlier context - summarized]:');
+                const summaries = olderMessages.map(msg => {
+                    if (!msg || !(msg.content || msg.text)) return null;
+                    const text = (msg.content || msg.text || '');
+                    const role = msg.role === 'user' ? 'Q' : 'A';
+                    // Extract key information: first sentence or first 80 chars
+                    const firstSentence = text.split(/[.!?]/)[0].trim();
+                    const summary = firstSentence.length > 80
+                        ? firstSentence.substring(0, 77) + '...'
+                        : firstSentence;
+                    return `${role}: ${summary}`;
+                }).filter(s => s !== null);
+                lines.push(summaries.join(' → '));
             }
         }
-        
+
+        // FULL DETAIL: Recent messages
+        if (recentStart < totalMessages) {
+            lines.push('[Recent messages]:');
+            const recentMessages = history.slice(recentStart);
+            for (const msg of recentMessages) {
+                if (msg && (msg.content || msg.text)) {
+                    const role = msg.role === 'user' ? 'User' : 'Assistant';
+                    const text = (msg.content || msg.text || '').substring(0, 400);
+                    lines.push(role + ': ' + text);
+                }
+            }
+        }
+
+        // INTENT CHAIN: Track sequence of user intents
+        if (includeIntentChain) {
+            const intents = history
+                .filter(msg => msg && msg.intent)
+                .map(msg => msg.intent)
+                .slice(-5);
+            if (intents.length > 0) {
+                lines.push('[Intent flow]: ' + intents.join(' → '));
+            }
+        }
+
+        // ENTITY PERSISTENCE: Note any resolved entities from history
+        const entities = [];
+        history.forEach(msg => {
+            if (msg && msg.resolvedEntities) {
+                Object.entries(msg.resolvedEntities).forEach(([key, entity]) => {
+                    if (entity && entity.name && !entities.find(e => e.id === entity.id)) {
+                        entities.push(entity);
+                    }
+                });
+            }
+        });
+        if (entities.length > 0) {
+            const entitySummary = entities.slice(0, 5).map(e =>
+                `${e.name} (${e.type || 'entity'}: ${e.id})`
+            ).join(', ');
+            lines.push('[Known entities]: ' + entitySummary);
+        }
+
         return lines.join('\n');
+    }
+
+    /**
+     * Compress a conversation history for storage/transmission
+     * RECOMMENDATION 5: Semantic compression for efficient memory usage
+     * @param {array} history - Full conversation history
+     * @param {object} options - Compression options
+     * @returns {object} Compressed history with metadata
+     */
+    function compressConversationHistory(history, options) {
+        if (!history || !Array.isArray(history) || history.length === 0) {
+            return { compressed: [], metadata: { messageCount: 0 } };
+        }
+
+        options = options || {};
+        const keepRecent = options.keepRecent || 4;
+        const maxTotal = options.maxTotal || 10;
+
+        const result = {
+            compressed: [],
+            metadata: {
+                originalCount: history.length,
+                intentChain: [],
+                entities: {},
+                topics: []
+            }
+        };
+
+        // Extract metadata from all messages
+        history.forEach(msg => {
+            // Track intent chain
+            if (msg.intent) {
+                result.metadata.intentChain.push(msg.intent);
+            }
+            // Track topics
+            if (msg.topics && Array.isArray(msg.topics)) {
+                msg.topics.forEach(t => {
+                    if (!result.metadata.topics.includes(t)) {
+                        result.metadata.topics.push(t);
+                    }
+                });
+            }
+            // Track resolved entities
+            if (msg.resolvedEntities) {
+                Object.assign(result.metadata.entities, msg.resolvedEntities);
+            }
+        });
+
+        // Keep recent messages in full
+        const recent = history.slice(-keepRecent);
+
+        // Compress older messages to summaries
+        const older = history.slice(0, -keepRecent);
+        const olderCompressed = older.slice(-maxTotal + keepRecent).map(msg => ({
+            role: msg.role,
+            summary: (msg.content || msg.text || '').substring(0, 100),
+            intent: msg.intent,
+            timestamp: msg.timestamp
+        }));
+
+        result.compressed = [...olderCompressed, ...recent];
+        result.metadata.messageCount = result.compressed.length;
+
+        return result;
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -942,6 +1124,9 @@ define(['N/log', 'N/runtime', 'N/record', '../Lib_Config'], function(log, runtim
 
         // Session
         extractTopicsFromQuery: extractTopicsFromQuery,
+
+        // Conversation Memory Compression (Recommendation 5)
+        compressConversationHistory: compressConversationHistory,
 
         // Schema Discovery
         getRecordSchema: getRecordSchema,

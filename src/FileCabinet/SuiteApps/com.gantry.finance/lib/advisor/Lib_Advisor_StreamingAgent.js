@@ -58,10 +58,15 @@ define([
     // LIGHTWEIGHT PROMPTS
     // ═══════════════════════════════════════════════════════════════════════════
 
-    const INTENT_PROMPT = `Classify this financial question. Respond with JSON only.
+    /**
+     * INTENT_PROMPT - Semantic intent classification
+     * RECOMMENDATION 1: Uses LLM's semantic understanding instead of word lists
+     * The LLM determines intent, entities, and topics based on meaning, not pattern matching
+     */
+    const INTENT_PROMPT = `Classify this financial question semantically. Respond with JSON only.
 {date_context}
 {history_context}
-Categories:
+Categories (determine based on semantic meaning, not keywords):
 - entity_lookup: Finding a specific customer, vendor, employee, account
 - top_list: Top N customers, vendors, items by some metric
 - aging: AR aging, AP aging, overdue amounts
@@ -74,7 +79,13 @@ Categories:
 
 Question: "{question}"
 
-Response format: {"intent": "category", "entities": ["named items"], "time_scope": "ytd|mtd|last_30|custom|none", "needs_resolution": true|false, "references_previous": true|false}`;
+Analyze the SEMANTIC MEANING of the question. Extract:
+1. The primary intent category
+2. Any named entities mentioned (customer names, vendor names, account names, etc.)
+3. The time scope if mentioned
+4. Semantic topics - determine what financial domains this question relates to based on meaning (e.g., receivables, payables, revenue, expenses, cash management, profitability)
+
+Response format: {"intent": "category", "entities": ["named items"], "time_scope": "ytd|mtd|last_30|custom|none", "needs_resolution": true|false, "references_previous": true|false, "semantic_topics": ["topic1", "topic2"]}`;
 
     const SELECT_PROMPT = `Select tools to answer this {intent} question. Respond with JSON only.
 {date_context}
@@ -264,6 +275,72 @@ Response format (JSON only):
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
+    // RECOMMENDATION 6: PROACTIVE ERROR RECOVERY
+    // Maps tools to alternative tools that can provide similar data when failures occur
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Get alternative tools to try when a tool fails
+     * @param {string} toolName - The failed tool
+     * @returns {string[]} Array of alternative tool names to try
+     */
+    function getAlternativeTools(toolName) {
+        const alternatives = {
+            // AR tools - try related data sources
+            'get_ar_aging': ['dashboard_customervalue', 'get_recent_transactions'],
+            'get_customer_revenue': ['get_top_customers', 'dashboard_customervalue'],
+            'get_top_customers': ['get_customer_revenue', 'dashboard_customervalue'],
+
+            // AP tools - try related data sources
+            'get_ap_aging': ['dashboard_vendorperformance', 'get_recent_transactions'],
+            'get_vendor_spend': ['get_top_vendors', 'dashboard_vendorperformance'],
+            'get_top_vendors': ['get_vendor_spend', 'dashboard_vendorperformance'],
+
+            // Financial reporting - try related reports
+            'get_income_statement': ['get_trial_balance', 'get_gl_activity'],
+            'get_balance_sheet': ['get_trial_balance', 'get_cash_position'],
+            'get_trial_balance': ['get_gl_activity', 'get_income_statement'],
+            'get_gl_activity': ['get_trial_balance', 'get_recent_transactions'],
+
+            // Dashboards - try related dashboards
+            'dashboard_health': ['dashboard_cashflow', 'get_cash_position'],
+            'dashboard_cashflow': ['get_cash_position', 'dashboard_health'],
+            'dashboard_customervalue': ['get_top_customers', 'get_ar_aging'],
+            'dashboard_vendorperformance': ['get_top_vendors', 'get_ap_aging'],
+
+            // Entity resolution - try broader search
+            'resolve_entity': ['run_custom_query'],
+            'resolve_gl_account': ['get_trial_balance'],
+            'resolve_classification': ['run_custom_query'],
+
+            // Transactions
+            'get_transaction_detail': ['get_recent_transactions'],
+            'get_recent_transactions': ['run_custom_query']
+        };
+
+        return alternatives[toolName] || [];
+    }
+
+    /**
+     * Build a retry suggestion message for users when tools fail
+     * @param {string} toolName - The failed tool
+     * @param {string} error - The error message
+     * @returns {string} User-friendly suggestion
+     */
+    function buildRetrySuggestion(toolName, error) {
+        const suggestions = {
+            'resolve_entity': 'Try being more specific with the entity name, or check if the entity exists in the system.',
+            'get_ar_aging': 'Try asking about specific customers or recent invoices instead.',
+            'get_ap_aging': 'Try asking about specific vendors or recent bills instead.',
+            'get_customer_revenue': 'Try asking for top customers or customer value analysis.',
+            'get_vendor_spend': 'Try asking for top vendors or vendor performance metrics.',
+            'run_custom_query': 'Try rephrasing your question to use a specific report or analysis.'
+        };
+
+        return suggestions[toolName] || 'Try rephrasing your question or asking for different data.';
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
     // STATE MANAGEMENT
     // ═══════════════════════════════════════════════════════════════════════════
 
@@ -299,7 +376,10 @@ Response format (JSON only):
                 select: null,
                 analyze: null,
                 format: null
-            }
+            },
+            // RECOMMENDATION 6: Error recovery tracking
+            recoveryAttempts: {},     // Track which tools have been tried for recovery
+            alternativeToolsQueue: [] // Queue of alternative tools to try
         };
     }
 
@@ -787,7 +867,7 @@ Response format (JSON only):
             const duration = Date.now() - invokeStart;
             log.error('SCA Invoke phase failed', { tool: toolName, error: e.message, duration: duration });
             state.errors.push({ phase: 'invoke', tool: toolName, error: e.message, timestamp: Date.now() });
-            state.toolInvocations.push({ tool: toolName, error: e.message, duration: duration });
+            state.toolInvocations.push({ tool: toolName, error: e.message, duration: duration, failed: true });
 
             addToolCallStep(state, {
                 title: Tools.getToolDisplayName(toolName, {}),
@@ -799,6 +879,53 @@ Response format (JSON only):
                 duration: duration,
                 summary: 'Error: ' + e.message.substring(0, 50)
             });
+
+            // ═══════════════════════════════════════════════════════════════════════
+            // RECOMMENDATION 6: PROACTIVE ERROR RECOVERY
+            // When a tool fails, attempt alternative tools that may provide similar data
+            // ═══════════════════════════════════════════════════════════════════════
+
+            // Check if we haven't already tried recovery for this tool
+            if (!state.recoveryAttempts[toolName]) {
+                const alternatives = getAlternativeTools(toolName);
+
+                // Filter out tools we've already selected or invoked
+                const alreadyTried = [...state.selectedTools, ...state.toolInvocations.map(t => t.tool)];
+                const validAlternatives = alternatives.filter(alt =>
+                    !alreadyTried.includes(alt) && Tools.getTool(alt)
+                );
+
+                if (validAlternatives.length > 0) {
+                    // Mark that we've attempted recovery for this tool
+                    state.recoveryAttempts[toolName] = true;
+
+                    // Add the first alternative to the selected tools queue
+                    const alternativeTool = validAlternatives[0];
+                    state.selectedTools.push(alternativeTool);
+
+                    log.debug('SCA Proactive error recovery - trying alternative tool', {
+                        failedTool: toolName,
+                        alternativeTool: alternativeTool,
+                        error: e.message
+                    });
+
+                    // Add a recovery step to inform the user
+                    addToolCallStep(state, {
+                        title: `Trying alternative: ${Tools.getToolDisplayName(alternativeTool, {})}`,
+                        tool: alternativeTool,
+                        status: 'active',
+                        context: {
+                            recoveryFor: toolName,
+                            reason: 'Primary tool failed, attempting fallback'
+                        }
+                    });
+                } else {
+                    // No alternatives available - store retry suggestion for user
+                    const suggestion = buildRetrySuggestion(toolName, e.message);
+                    state.errors[state.errors.length - 1].suggestion = suggestion;
+                    log.debug('SCA No alternative tools available', { tool: toolName });
+                }
+            }
 
             return { success: true, nextPhase: PHASES.INVOKE }; // Continue with next tool
         }
@@ -1111,6 +1238,7 @@ Response format (JSON only):
     /**
      * Resolve {{tokens}} in a text string
      * Supports: {{data.rows[N].column}}, {{data.rows[N].column:currency}}, {{data.stats.X}}
+     * FIXED: Added explicit bounds checking for array index access (Bug 4 / Rec 3)
      */
     function resolveTokensInText(text, state) {
         if (!text) return '';
@@ -1141,11 +1269,25 @@ Response format (JSON only):
                     const rowIdx = parseInt(rowMatch[1], 10);
                     const column = rowMatch[2];
 
-                    if (data.rows && data.rows[rowIdx] !== undefined) {
-                        const value = data.rows[rowIdx][column];
-                        return formatResolvedValue(value, format, column);
+                    // FIXED: Add explicit bounds checking before array access
+                    if (!data.rows || !Array.isArray(data.rows)) {
+                        log.debug('Token resolution: no rows array', { expr: expr });
+                        return match;
                     }
-                    return match; // Keep original if not found
+                    if (rowIdx < 0 || rowIdx >= data.rows.length) {
+                        // Out of bounds - graceful degradation with informative fallback
+                        log.debug('Token resolution: index out of bounds', {
+                            expr: expr,
+                            rowIdx: rowIdx,
+                            availableRows: data.rows.length
+                        });
+                        return match; // Keep original token as fallback
+                    }
+                    if (data.rows[rowIdx] === null || data.rows[rowIdx] === undefined) {
+                        return match;
+                    }
+                    const value = data.rows[rowIdx][column];
+                    return formatResolvedValue(value, format, column);
                 }
 
                 // Handle data.stats.X - compute from schema
@@ -1957,18 +2099,59 @@ Response format (JSON only):
 
     /**
      * Build final response object
+     * FIXED: Enhanced error propagation to surface errors visibly to users
      */
     function buildFinalResponse(state) {
         const formatted = state.formattedResponse || {};
         const duration = Date.now() - state.startTime;
 
+        // Check if any tools failed
+        const failedTools = state.toolInvocations.filter(t => !t.success && t.error);
+        const successfulTools = state.toolInvocations.filter(t => t.success);
+        const hasPartialFailure = failedTools.length > 0 && successfulTools.length > 0;
+        const hasCompleteFailure = failedTools.length > 0 && successfulTools.length === 0;
+
+        // Build base response
+        let responseText = state.analysis?.analysis || formatted.summary || 'Analysis complete';
+        let richContent = formatted.blocks || [];
+
+        // FIXED: Surface errors visibly in the response
+        if (hasCompleteFailure) {
+            // All tools failed - add error context to response
+            const errorMessages = failedTools.map(t =>
+                `• ${getToolDisplayName(t.tool)}: ${t.error || 'Unknown error'}`
+            ).join('\n');
+            responseText = "I encountered issues retrieving the data needed to answer your question. " +
+                "Please try rephrasing your question or check that the requested entities exist.";
+            richContent = [{
+                type: 'text',
+                content: responseText
+            }, {
+                type: 'list',
+                title: 'Issues encountered',
+                items: failedTools.map(t => `${getToolDisplayName(t.tool)}: ${t.error || 'Unknown error'}`)
+            }];
+        } else if (hasPartialFailure && state.errors.length > 0) {
+            // Some tools failed - add warning note
+            const warningBlock = {
+                type: 'text',
+                content: '⚠️ Note: Some data sources were unavailable. Results may be incomplete.'
+            };
+            // Insert warning at the end of rich content
+            if (!richContent.some(b => b.content?.includes('unavailable'))) {
+                richContent = [...richContent, warningBlock];
+            }
+        }
+
         const response = {
-            text: state.analysis?.analysis || formatted.summary || 'Analysis complete',
-            richContent: formatted.blocks || [],
+            text: responseText,
+            richContent: richContent,
             title: formatted.title,
             summary: formatted.summary,
             sessionContext: {
-                resolvedEntities: state.resolvedEntities
+                resolvedEntities: state.resolvedEntities,
+                // RECOMMENDATION 1: Include LLM-extracted semantic topics (no word lists)
+                semanticTopics: state.intent?.semantic_topics || []
             },
             metadata: {
                 phases: {
@@ -1977,7 +2160,8 @@ Response format (JSON only):
                     toolResults: state.toolInvocations.map(t => ({
                         tool: t.tool,
                         success: t.success,
-                        rowCount: t.rowCount
+                        rowCount: t.rowCount,
+                        error: t.error // FIXED: Include error in tool results
                     })),
                     dataRefs: state.dataReferences.map(r => r.refId)
                 },
@@ -1988,7 +2172,9 @@ Response format (JSON only):
                     analyze: state.analyzeIterations,
                     format: state.formatIterations
                 },
-                errors: state.errors.length > 0 ? state.errors : undefined
+                errors: state.errors.length > 0 ? state.errors : undefined,
+                hasPartialFailure: hasPartialFailure || undefined,
+                hasCompleteFailure: hasCompleteFailure || undefined
             }
         };
 

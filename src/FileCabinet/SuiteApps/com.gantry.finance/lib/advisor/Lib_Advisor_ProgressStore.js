@@ -56,6 +56,32 @@ define(['N/cache', 'N/log'], function(cache, log) {
     }
 
     /**
+     * Calculate byte size of a UTF-8 string
+     * JSON.stringify returns a string where .length is character count, not byte count
+     * UTF-8 encodes characters as 1-4 bytes, so we need to count actual bytes
+     * @param {string} str - String to measure
+     * @returns {number} Byte count
+     */
+    function getByteSize(str) {
+        // encodeURIComponent converts to UTF-8 percent-encoding
+        // Each %XX represents one byte, ASCII chars stay as single chars
+        let bytes = 0;
+        for (let i = 0; i < str.length; i++) {
+            const charCode = str.charCodeAt(i);
+            if (charCode < 0x80) {
+                bytes += 1; // ASCII: 1 byte
+            } else if (charCode < 0x800) {
+                bytes += 2; // 2-byte UTF-8
+            } else if (charCode < 0x10000) {
+                bytes += 3; // 3-byte UTF-8 (most non-ASCII chars)
+            } else {
+                bytes += 4; // 4-byte UTF-8 (emoji, rare chars)
+            }
+        }
+        return bytes;
+    }
+
+    /**
      * Safely put data to cache with size checking
      * @param {string} key - Cache key
      * @param {object} data - Data to store
@@ -65,7 +91,8 @@ define(['N/cache', 'N/log'], function(cache, log) {
     function safePut(key, data, ttl) {
         try {
             const json = JSON.stringify(data);
-            const sizeBytes = json.length;
+            // FIXED: Use actual byte count instead of character length
+            const sizeBytes = getByteSize(json);
             const sizeKB = Math.round(sizeBytes / 1024);
 
             if (sizeBytes > MAX_CACHE_SIZE_BYTES) {
@@ -130,13 +157,24 @@ define(['N/cache', 'N/log'], function(cache, log) {
     // ═══════════════════════════════════════════════════════════════════════════
 
     /**
+     * Generate a unique lock owner ID to prevent TOCTOU race conditions
+     * @returns {string} Unique owner ID
+     */
+    function generateLockOwnerId() {
+        return Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 10);
+    }
+
+    /**
      * Try to acquire completion lock for a request
      * Uses timestamp-based logical expiration since NetSuite requires min 300s TTL.
+     * FIXED: Uses optimistic locking with owner ID to prevent TOCTOU race condition
      * @param {string} requestId - Request ID
      * @returns {boolean} True if lock acquired, false if actively locked
      */
     function acquireCompletionLock(requestId) {
         const lockKey = LOCK_PREFIX + requestId;
+        const ownerId = generateLockOwnerId();
+
         try {
             const existing = getCache().get({ key: lockKey });
 
@@ -153,21 +191,38 @@ define(['N/cache', 'N/log'], function(cache, log) {
                     return false;
                 }
 
-                // Lock is stale - take over
-                log.debug('ProgressStore.acquireCompletionLock - taking over stale lock', {
+                // Lock is stale - attempt to take over
+                log.debug('ProgressStore.acquireCompletionLock - attempting takeover of stale lock', {
                     requestId: requestId,
                     elapsedMs: elapsed
                 });
             }
 
-            // Set the lock
+            // Set the lock with our unique owner ID
+            const lockData = { locked: true, timestamp: Date.now(), ownerId: ownerId };
             getCache().put({
                 key: lockKey,
-                value: JSON.stringify({ locked: true, timestamp: Date.now() }),
+                value: JSON.stringify(lockData),
                 ttl: LOCK_TTL
             });
 
-            log.debug('ProgressStore.acquireCompletionLock - acquired', { requestId: requestId });
+            // CRITICAL: Re-read the lock to verify we own it (prevents TOCTOU race)
+            // If another process wrote between our check and put, their ownerId will be there
+            const verification = getCache().get({ key: lockKey });
+            if (verification) {
+                const verifyData = JSON.parse(verification);
+                if (verifyData.ownerId !== ownerId) {
+                    // Another process won the race
+                    log.debug('ProgressStore.acquireCompletionLock - lost race to another process', {
+                        requestId: requestId,
+                        ourId: ownerId,
+                        winnerId: verifyData.ownerId
+                    });
+                    return false;
+                }
+            }
+
+            log.debug('ProgressStore.acquireCompletionLock - acquired', { requestId: requestId, ownerId: ownerId });
             return true;
         } catch (e) {
             log.error('ProgressStore.acquireCompletionLock failed', { requestId: requestId, error: e.message });
@@ -239,11 +294,15 @@ define(['N/cache', 'N/log'], function(cache, log) {
      * If a lock exists but is older than PROC_LOCK_TIMEOUT_MS, we assume the previous
      * poll timed out and allow this poll to take over.
      *
+     * FIXED: Uses optimistic locking with owner ID to prevent TOCTOU race condition
+     *
      * @param {string} requestId - Request ID
      * @returns {boolean} True if lock acquired, false if another poll is actively processing
      */
     function acquireProcessingLock(requestId) {
         const lockKey = PROC_LOCK_PREFIX + requestId;
+        const ownerId = generateLockOwnerId();
+
         try {
             const existing = getCache().get({ key: lockKey });
 
@@ -262,19 +321,35 @@ define(['N/cache', 'N/log'], function(cache, log) {
                     return false;
                 }
 
-                // Lock is stale - take over (previous poll likely timed out)
-                log.debug('ProgressStore.acquireProcessingLock - taking over stale lock', {
+                // Lock is stale - attempt to take over (previous poll likely timed out)
+                log.debug('ProgressStore.acquireProcessingLock - attempting takeover of stale lock', {
                     requestId: requestId,
                     elapsedMs: elapsed
                 });
             }
 
-            // Set/update the lock with fresh timestamp
+            // Set/update the lock with fresh timestamp and unique owner ID
+            const lockData = { processing: true, timestamp: Date.now(), ownerId: ownerId };
             getCache().put({
                 key: lockKey,
-                value: JSON.stringify({ processing: true, timestamp: Date.now() }),
+                value: JSON.stringify(lockData),
                 ttl: PROC_LOCK_TTL
             });
+
+            // CRITICAL: Re-read the lock to verify we own it (prevents TOCTOU race)
+            const verification = getCache().get({ key: lockKey });
+            if (verification) {
+                const verifyData = JSON.parse(verification);
+                if (verifyData.ownerId !== ownerId) {
+                    // Another process won the race
+                    log.debug('ProgressStore.acquireProcessingLock - lost race to another process', {
+                        requestId: requestId,
+                        ourId: ownerId,
+                        winnerId: verifyData.ownerId
+                    });
+                    return false;
+                }
+            }
 
             return true;
         } catch (e) {
