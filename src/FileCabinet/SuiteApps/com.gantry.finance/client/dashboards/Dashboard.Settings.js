@@ -158,40 +158,6 @@
                 ]
             },
             {
-                id: 'appearance',
-                title: 'Appearance',
-                icon: 'fa-palette',
-                description: 'Customize the look and feel of the application.',
-                fields: [
-                    { id: 'darkMode', type: 'switch', label: 'Dark Mode', description: 'Use dark color scheme (also toggleable via moon icon in sidebar)', default: false, localStorage: true },
-                    { id: 'compactMode', type: 'switch', label: 'Compact Mode', description: 'Reduce spacing and padding throughout the interface', default: false },
-                    { id: 'showSparklines', type: 'switch', label: 'Show Sparklines', description: 'Display mini trend charts on dashboard cards', default: true },
-                    { id: 'defaultDateRange', type: 'select', label: 'Default Date Range', description: 'Default time period for dashboards', default: '30', 
-                      options: [{ value: '7', label: 'Last 7 Days' }, { value: '30', label: 'Last 30 Days' }, { value: '90', label: 'Last 90 Days' }, { value: '365', label: 'Last Year' }] }
-                ]
-            },
-            {
-                id: 'notifications',
-                title: 'Notifications',
-                icon: 'fa-bell',
-                description: 'Configure alert thresholds and notification preferences.',
-                fields: [
-                    { id: 'showAlerts', type: 'switch', label: 'Show Dashboard Alerts', description: 'Display warning alerts on dashboards', default: true },
-                    { id: 'alertSound', type: 'switch', label: 'Alert Sound', description: 'Play a sound for critical alerts', default: false }
-                ]
-            },
-            {
-                id: 'data',
-                title: 'Data & Performance',
-                icon: 'fa-database',
-                description: 'Control data loading and caching behavior.',
-                fields: [
-                    { id: 'autoRefresh', type: 'switch', label: 'Auto-Refresh Data', description: 'Automatically refresh dashboard data periodically', default: false },
-                    { id: 'refreshInterval', type: 'select', label: 'Refresh Interval', description: 'How often to refresh when auto-refresh is enabled', default: '5',
-                      options: [{ value: '1', label: 'Every 1 minute' }, { value: '5', label: 'Every 5 minutes' }, { value: '15', label: 'Every 15 minutes' }, { value: '30', label: 'Every 30 minutes' }] }
-                ]
-            },
-            {
                 id: 'rolePermissions',
                 title: 'Role Permissions',
                 icon: 'fa-user-shield',
