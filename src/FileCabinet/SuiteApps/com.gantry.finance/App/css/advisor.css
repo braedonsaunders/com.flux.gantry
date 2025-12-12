@@ -4098,8 +4098,8 @@ body.dark-mode .strategy-backups code {
     display: flex;
     flex-direction: column;
     gap: 0;
-    margin-bottom: 12px;
-    padding: 8px 0;
+    margin-bottom: 4px;
+    padding: 4px 0;
 }
 
 /* --- Nodes Row (horizontal chain with wrap) --- */
@@ -5073,6 +5073,177 @@ body.dark-mode .thinking-trail span {
 
 body.dark-mode .thought-node.expanded::before {
     border-bottom-color: #334155;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   PROGRESSIVE BLOCKS - Instant data rendering during SCA phases
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.progressive-blocks-container {
+    margin-top: 4px;
+}
+
+.progressive-block {
+    margin-bottom: 12px;
+    animation: blockFadeIn 0.3s ease-out;
+}
+
+@keyframes blockFadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(8px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.progressive-table-container {
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    overflow: hidden;
+    background: #fff;
+}
+
+.progressive-table-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 12px;
+    background: #f8fafc;
+    border-bottom: 1px solid #e5e7eb;
+}
+
+.progressive-table-title {
+    font-weight: 600;
+    font-size: 13px;
+    color: #1e293b;
+}
+
+.progressive-table-count {
+    font-size: 11px;
+    color: #64748b;
+}
+
+.progressive-table-scroll {
+    overflow-x: auto;
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+.progressive-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+}
+
+.progressive-table th {
+    padding: 8px 10px;
+    text-align: left;
+    font-weight: 600;
+    background: #f1f5f9;
+    color: #475569;
+    border-bottom: 1px solid #e5e7eb;
+    white-space: nowrap;
+    position: sticky;
+    top: 0;
+    z-index: 1;
+}
+
+.progressive-table td {
+    padding: 8px 10px;
+    border-bottom: 1px solid #f1f5f9;
+    color: #334155;
+}
+
+.progressive-table tbody tr:hover {
+    background: #f8fafc;
+}
+
+.progressive-metrics {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+}
+
+.progressive-metrics .metric-item {
+    flex: 1 1 120px;
+    min-width: 120px;
+    max-width: 200px;
+    padding: 12px;
+    background: #f8fafc;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+}
+
+.progressive-metrics .metric-label {
+    font-size: 11px;
+    color: #64748b;
+    margin-bottom: 4px;
+}
+
+.progressive-metrics .metric-value {
+    font-size: 18px;
+    font-weight: 600;
+    color: #1e293b;
+}
+
+.progressive-text {
+    font-size: 13px;
+    line-height: 1.6;
+    color: #334155;
+}
+
+/* Dark mode for progressive blocks */
+body.dark-mode .progressive-table-container {
+    border-color: #334155;
+    background: #1e293b;
+}
+
+body.dark-mode .progressive-table-header {
+    background: #0f172a;
+    border-bottom-color: #334155;
+}
+
+body.dark-mode .progressive-table-title {
+    color: #f1f5f9;
+}
+
+body.dark-mode .progressive-table-count {
+    color: #94a3b8;
+}
+
+body.dark-mode .progressive-table th {
+    background: #1e293b;
+    color: #94a3b8;
+    border-bottom-color: #334155;
+}
+
+body.dark-mode .progressive-table td {
+    border-bottom-color: #334155;
+    color: #e2e8f0;
+}
+
+body.dark-mode .progressive-table tbody tr:hover {
+    background: #334155;
+}
+
+body.dark-mode .progressive-metrics .metric-item {
+    background: #0f172a;
+    border-color: #334155;
+}
+
+body.dark-mode .progressive-metrics .metric-label {
+    color: #94a3b8;
+}
+
+body.dark-mode .progressive-metrics .metric-value {
+    color: #f1f5f9;
+}
+
+body.dark-mode .progressive-text {
+    color: #e2e8f0;
 }
 
 /* === REDUCED MOTION SUPPORT === */
