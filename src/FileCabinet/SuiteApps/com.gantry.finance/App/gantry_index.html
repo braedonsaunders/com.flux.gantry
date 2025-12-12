@@ -158,89 +158,82 @@
     <!-- 0. Advisor Dashboard (Full Page - Premium) -->
     <script type="text/template" id="tpl-advisor">
     <div class="advisor-page">
-        <!-- Chat Container - No Header -->
+        <!-- Chat Container -->
         <main class="advisor-chat-container">
             <!-- Scrollable Messages Area -->
             <div class="advisor-messages-scroll" id="advisor-messages-full">
-                
-                <!-- Dashboard Health Scores - Full Width Above Hero -->
-                <div class="health-scores-overview" id="health-scores-overview">
+
+                <!-- ═══════════════════════════════════════════════════════════════
+                     PREMIUM FINANCIAL COMMAND CENTER - Landing Experience
+                     ═══════════════════════════════════════════════════════════════ -->
+                <div class="command-center" id="health-scores-overview">
+
+                    <!-- Health Scores Grid - 4x2 Layout -->
                     <div class="scores-grid" id="scores-grid">
                         <!-- Score cards populated by JS -->
                     </div>
+
                 </div>
 
-                <!-- Welcome Hero -->
+                <!-- Welcome Hero Section -->
                 <div class="advisor-hero" id="advisor-welcome-full">
-                    <div class="hero-avatar">
-                        <i class="fas fa-magic"></i>
-                    </div>
-                    <h2>How can I help with your finances?</h2>
-                    <p class="hero-sub">I analyze NetSuite data in real-time—revenue, cash flow, AR/AP aging, department margins, and more.</p>
 
-                    <!-- Query Categories Section Header -->
-                    <div class="categories-header">
-                        <div class="categories-title">
-                            <i class="fas fa-lightbulb"></i>
-                            <span>Ask me about...</span>
+                    <!-- Animated AI Avatar -->
+                    <div class="hero-orb">
+                        <div class="orb-ring orb-ring-1"></div>
+                        <div class="orb-ring orb-ring-2"></div>
+                        <div class="orb-ring orb-ring-3"></div>
+                        <div class="orb-core">
+                            <i class="fas fa-brain"></i>
                         </div>
                     </div>
 
-                    <!-- Category Icons Grid -->
+                    <!-- Hero Text -->
+                    <h1 class="hero-title">Financial Intelligence</h1>
+                    <p class="hero-subtitle">Ask anything about your NetSuite data</p>
+
+                    <!-- Query Categories - Sleek Pills -->
                     <div class="query-categories" id="query-categories">
-                        <button class="query-category-btn" data-category="cash">
-                            <div class="category-icon" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%);">
-                                <i class="fas fa-coins"></i>
-                            </div>
-                            <span>Cash & Liquidity</span>
+                        <button class="category-pill" data-category="cash">
+                            <i class="fas fa-coins"></i>
+                            <span>Cash Flow</span>
                         </button>
-                        <button class="query-category-btn" data-category="revenue">
-                            <div class="category-icon" style="background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);">
-                                <i class="fas fa-chart-line"></i>
-                            </div>
-                            <span>Revenue & Sales</span>
+                        <button class="category-pill" data-category="revenue">
+                            <i class="fas fa-chart-line"></i>
+                            <span>Revenue</span>
                         </button>
-                        <button class="query-category-btn" data-category="expenses">
-                            <div class="category-icon" style="background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);">
-                                <i class="fas fa-receipt"></i>
-                            </div>
-                            <span>Expenses & AP</span>
+                        <button class="category-pill" data-category="expenses">
+                            <i class="fas fa-receipt"></i>
+                            <span>Expenses</span>
                         </button>
-                        <button class="query-category-btn" data-category="profitability">
-                            <div class="category-icon" style="background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%);">
-                                <i class="fas fa-balance-scale"></i>
-                            </div>
-                            <span>Margins & Profit</span>
+                        <button class="category-pill" data-category="profitability">
+                            <i class="fas fa-balance-scale"></i>
+                            <span>Margins</span>
                         </button>
-                        <button class="query-category-btn" data-category="labor">
-                            <div class="category-icon" style="background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);">
-                                <i class="fas fa-user-clock"></i>
-                            </div>
-                            <span>Labor & Time</span>
+                        <button class="category-pill" data-category="labor">
+                            <i class="fas fa-user-clock"></i>
+                            <span>Labor</span>
                         </button>
-                        <button class="query-category-btn" data-category="customers">
-                            <div class="category-icon" style="background: linear-gradient(135deg, #06b6d4 0%, #0891b2 100%);">
-                                <i class="fas fa-users"></i>
-                            </div>
-                            <span>Customers & AR</span>
+                        <button class="category-pill" data-category="customers">
+                            <i class="fas fa-users"></i>
+                            <span>Customers</span>
                         </button>
                     </div>
-                    
+
                     <!-- Expanded Query Panel (hidden by default) -->
                     <div class="query-panel" id="query-panel" style="display: none;">
                         <button class="query-panel-back" id="query-panel-back">
-                            <i class="fas fa-arrow-left"></i> Back to categories
+                            <i class="fas fa-arrow-left"></i> Back
                         </button>
                         <div class="query-panel-header">
                             <div class="query-panel-icon" id="query-panel-icon"></div>
                             <h3 id="query-panel-title"></h3>
                         </div>
-                        <div class="query-panel-grid" id="query-panel-grid">
-                            <!-- Queries populated by JS -->
-                        </div>
+                        <div class="query-panel-grid" id="query-panel-grid"></div>
                     </div>
+
                 </div>
-                
+
             </div>
 
             <!-- Fixed Input at Bottom -->

@@ -828,18 +828,16 @@
             
             const categories = this.queryCategories;
             let html = '';
-            
+
             for (const [id, cat] of Object.entries(categories)) {
                 html += `
-                    <button class="query-category-btn" data-category="${id}">
-                        <div class="category-icon" style="background: ${cat.color};">
-                            <i class="fas ${cat.icon}"></i>
-                        </div>
+                    <button class="category-pill" data-category="${id}">
+                        <i class="fas ${cat.icon}"></i>
                         <span>${this.escapeHtml(cat.name)}</span>
                     </button>
                 `;
             }
-            
+
             container.innerHTML = html;
         },
 
@@ -1040,7 +1038,7 @@
             }
             
             // Query category buttons
-            document.querySelectorAll('.query-category-btn').forEach(btn => {
+            document.querySelectorAll('.category-pill').forEach(btn => {
                 btn.addEventListener('click', () => {
                     const categoryId = btn.getAttribute('data-category');
                     self.showCategoryQueries(categoryId);
@@ -4892,10 +4890,14 @@
          */
         renderAllMessages: function() {
             if (messages.length === 0) return;
-            
+
+            // Hide health scores when restoring session with messages
+            const healthScores = document.getElementById('health-scores-overview');
+            if (healthScores) healthScores.classList.add('hidden');
+
             const welcome = document.getElementById('advisor-welcome-full');
             if (welcome) welcome.style.display = 'none';
-            
+
             // Track last user query for older messages without userQuery stored
             let lastUserQuery = '';
             messages.forEach(msg => {
