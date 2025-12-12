@@ -59,7 +59,8 @@ define([
     // ═══════════════════════════════════════════════════════════════════════════
 
     const INTENT_PROMPT = `Classify this financial question. Respond with JSON only.
-
+{date_context}
+{history_context}
 Categories:
 - entity_lookup: Finding a specific customer, vendor, employee, account
 - top_list: Top N customers, vendors, items by some metric
@@ -68,13 +69,15 @@ Categories:
 - dashboard: Health metrics, KPIs, trends
 - comparison: Compare periods, YoY, MoM
 - transaction: Specific transaction details
+- follow_up: Reference to previous question/data (e.g., "show that as a table", "more details")
 - general: General questions, greetings, help
 
 Question: "{question}"
 
-Response format: {"intent": "category", "entities": ["named items"], "time_scope": "ytd|mtd|last_30|custom|none", "needs_resolution": true|false}`;
+Response format: {"intent": "category", "entities": ["named items"], "time_scope": "ytd|mtd|last_30|custom|none", "needs_resolution": true|false, "references_previous": true|false}`;
 
     const SELECT_PROMPT = `Select tools to answer this {intent} question. Respond with JSON only.
+{date_context}
 
 AVAILABLE TOOLS:
 {tool_list}
@@ -82,22 +85,29 @@ AVAILABLE TOOLS:
 Question: "{question}"
 Intent: {intent}
 {entity_context}
+{history_context}
 
 Rules:
 - Pick 1-3 most relevant tools
 - For entity names, include resolve_entity first
 - Prefer specific tools over run_custom_query
+- For follow_up questions referencing previous data, you may select no tools if data is available
 - DO NOT select format_response - that's handled automatically
 
 Response format: {"tools": ["tool1", "tool2"], "reasoning": "brief explanation"}`;
 
     const INVOKE_PROMPT = `Call this tool. Respond with JSON only.
+{date_context}
 
 TOOL: {tool_name}
 {tool_schema}
 
 Question context: "{question}"
 {resolved_entities}
+
+IMPORTANT: When specifying periods, use current year ({current_year}). Valid formats:
+- For period params: "ytd", "this_month", "this_quarter", "last_12_months"
+- For date ranges: "{current_year}-01" to "{current_year}-12" (YYYY-MM format)
 
 Response format: {"tool": "{tool_name}", "args": {...}}`;
 
@@ -257,10 +267,17 @@ Response format (JSON only):
     // STATE MANAGEMENT
     // ═══════════════════════════════════════════════════════════════════════════
 
-    function initStreamingState(message, sessionContext, requestId) {
+    function initStreamingState(message, sessionContext, requestId, history) {
+        // Build recent history context (last 3 exchanges for context)
+        const recentHistory = (history || []).slice(-6).map(h => ({
+            role: h.role,
+            content: h.role === 'assistant' ? (h.text || h.content || '').substring(0, 200) : (h.text || h.content || '')
+        }));
+
         return {
             requestId: requestId,
             message: message,
+            history: recentHistory,  // Store recent history for context
             sessionContext: sessionContext || {},
             phase: PHASES.INIT,
             intent: null,
@@ -284,6 +301,30 @@ Response format (JSON only):
                 format: null
             }
         };
+    }
+
+    /**
+     * Build context string from recent history for prompts
+     */
+    function buildHistoryContext(state) {
+        if (!state.history || state.history.length === 0) return '';
+
+        const lines = state.history.map(h => {
+            const role = h.role === 'user' ? 'User' : 'Assistant';
+            return `${role}: ${h.content}`;
+        });
+
+        return `\nRECENT CONVERSATION:\n${lines.join('\n')}\n`;
+    }
+
+    /**
+     * Get current date context for prompts
+     */
+    function getDateContext() {
+        const now = new Date();
+        const months = ['January', 'February', 'March', 'April', 'May', 'June',
+                        'July', 'August', 'September', 'October', 'November', 'December'];
+        return `Today is ${months[now.getMonth()]} ${now.getDate()}, ${now.getFullYear()}.`;
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -409,7 +450,10 @@ Response format (JSON only):
      */
     function executeIntentPhase(state) {
         const phaseStart = Date.now();
-        const prompt = INTENT_PROMPT.replace('{question}', state.message);
+        const prompt = INTENT_PROMPT
+            .replace('{question}', state.message)
+            .replace('{date_context}', getDateContext())
+            .replace('{history_context}', buildHistoryContext(state));
 
         // Add thinking step
         upsertThinkingStep(state, 'intent', {
@@ -497,7 +541,9 @@ Response format (JSON only):
             .replace('{intent}', state.intent.intent)
             .replace('{tool_list}', getToolListForPrompt())
             .replace('{question}', state.message)
-            .replace('{entity_context}', entityContext);
+            .replace('{entity_context}', entityContext)
+            .replace('{date_context}', getDateContext())
+            .replace('{history_context}', buildHistoryContext(state));
 
         upsertThinkingStep(state, 'select', {
             title: 'Selecting analysis tools',
@@ -635,11 +681,14 @@ Response format (JSON only):
             .map(([name, entity]) => `  ${name} = ID ${entity.id} (${entity.type})`)
             .join('\n');
 
+        const currentYear = new Date().getFullYear();
         const prompt = INVOKE_PROMPT
             .replace('{tool_name}', toolName)
             .replace('{tool_schema}', schemaLines.join('\n') || 'No parameters required')
             .replace('{question}', state.message)
-            .replace('{resolved_entities}', resolvedContext ? `Resolved entities:\n${resolvedContext}` : '');
+            .replace('{resolved_entities}', resolvedContext ? `Resolved entities:\n${resolvedContext}` : '')
+            .replace('{date_context}', getDateContext())
+            .replace(/\{current_year\}/g, currentYear.toString());
 
         // Add step as active
         addToolCallStep(state, {
@@ -1814,8 +1863,8 @@ Response format (JSON only):
     /**
      * Initialize streaming agent state
      */
-    function initState(message, sessionContext, requestId) {
-        const state = initStreamingState(message, sessionContext, requestId);
+    function initState(message, sessionContext, requestId, history) {
+        const state = initStreamingState(message, sessionContext, requestId, history);
 
         // Import any existing resolved entities from session
         if (sessionContext && sessionContext.resolvedEntities) {

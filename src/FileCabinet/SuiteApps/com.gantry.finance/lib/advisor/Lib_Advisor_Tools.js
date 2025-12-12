@@ -1750,7 +1750,7 @@ ALWAYS use this for: "balance sheet", "assets and liabilities", "financial posit
                 properties: {
                     as_of_date: {
                         type: 'string',
-                        description: 'Optional: date for balance sheet (YYYY-MM-DD format). Default is today.'
+                        description: 'Optional: date for balance sheet in YYYY-MM-DD format. Use current year! Examples: "2025-12-31", "2025-06-30". Default is today.'
                     },
                     subsidiary_id: {
                         type: 'number',
@@ -2064,9 +2064,8 @@ Supports filtering by minimum revenue, subsidiary, class, and can include AR agi
                 const limit = args.limit || 10;
                 const period = args.period || 'ytd';
 
-                // Build filters
-                const deptFilter = args.department_id ? `AND tl.department = ${args.department_id}` : '';
-                const classFilter = args.class_id ? `AND tl.class = ${args.class_id}` : '';
+                // Build filters - only use line-level filters when needed
+                const needsLineJoin = args.department_id || args.class_id;
                 const subsidiaryFilter = args.subsidiary_id ? `AND t.subsidiary = ${args.subsidiary_id}` : '';
                 const salesRepFilter = args.sales_rep_id ? `AND t.salesrep = ${args.sales_rep_id}` : '';
 
@@ -2112,34 +2111,72 @@ Supports filtering by minimum revenue, subsidiary, class, and can include AR agi
                     arAgingGroupBy = ', ar.current_bucket, ar.days_1_30, ar.days_31_60, ar.days_61_90, ar.days_over_90';
                 }
 
-                const query = `
-                    SELECT
-                        BUILTIN.DF(t.entity) AS customer_name,
-                        t.entity AS customer_id,
-                        COUNT(DISTINCT t.id) AS invoice_count,
-                        SUM(t.foreigntotal) AS total_revenue,
-                        SUM(t.foreignamountunpaid) AS outstanding_ar,
-                        MIN(t.trandate) AS first_invoice,
-                        MAX(t.trandate) AS last_invoice
-                        ${arAgingSelect}
-                    FROM transaction t
-                    INNER JOIN accountingperiod ap ON t.postingperiod = ap.id
-                    LEFT JOIN transactionline tl ON tl.transaction = t.id AND tl.mainline = 'F'
-                    ${arAgingJoin}
-                    WHERE t.type = 'CustInvc'
-                        AND t.posting = 'T'
-                        AND t.voided = 'F'
-                        AND ap.isyear = 'F' AND ap.isquarter = 'F'
-                        ${dateFilter}
-                        ${deptFilter}
-                        ${classFilter}
-                        ${subsidiaryFilter}
-                        ${salesRepFilter}
-                    GROUP BY t.entity, BUILTIN.DF(t.entity)${arAgingGroupBy}
-                    ${havingClause}
-                    ORDER BY ${orderBy}
-                    FETCH FIRST ${limit} ROWS ONLY
-                `;
+                let query;
+                if (needsLineJoin) {
+                    // Use subquery with line-level filtering to avoid double-counting
+                    const deptFilter = args.department_id ? `AND tl.department = ${args.department_id}` : '';
+                    const classFilter = args.class_id ? `AND tl.class = ${args.class_id}` : '';
+
+                    query = `
+                        SELECT
+                            BUILTIN.DF(t.entity) AS customer_name,
+                            t.entity AS customer_id,
+                            COUNT(DISTINCT t.id) AS invoice_count,
+                            SUM(t.foreigntotal) AS total_revenue,
+                            SUM(t.foreignamountunpaid) AS outstanding_ar,
+                            MIN(t.trandate) AS first_invoice,
+                            MAX(t.trandate) AS last_invoice
+                            ${arAgingSelect}
+                        FROM transaction t
+                        INNER JOIN accountingperiod ap ON t.postingperiod = ap.id
+                        ${arAgingJoin}
+                        WHERE t.type = 'CustInvc'
+                            AND t.posting = 'T'
+                            AND t.voided = 'F'
+                            AND ap.isyear = 'F' AND ap.isquarter = 'F'
+                            ${dateFilter}
+                            ${subsidiaryFilter}
+                            ${salesRepFilter}
+                            AND t.id IN (
+                                SELECT DISTINCT tl.transaction
+                                FROM transactionline tl
+                                WHERE tl.mainline = 'F'
+                                ${deptFilter}
+                                ${classFilter}
+                            )
+                        GROUP BY t.entity, BUILTIN.DF(t.entity)${arAgingGroupBy}
+                        ${havingClause}
+                        ORDER BY ${orderBy}
+                        FETCH FIRST ${limit} ROWS ONLY
+                    `;
+                } else {
+                    // Simple query without line join - no risk of double-counting
+                    query = `
+                        SELECT
+                            BUILTIN.DF(t.entity) AS customer_name,
+                            t.entity AS customer_id,
+                            COUNT(DISTINCT t.id) AS invoice_count,
+                            SUM(t.foreigntotal) AS total_revenue,
+                            SUM(t.foreignamountunpaid) AS outstanding_ar,
+                            MIN(t.trandate) AS first_invoice,
+                            MAX(t.trandate) AS last_invoice
+                            ${arAgingSelect}
+                        FROM transaction t
+                        INNER JOIN accountingperiod ap ON t.postingperiod = ap.id
+                        ${arAgingJoin}
+                        WHERE t.type = 'CustInvc'
+                            AND t.posting = 'T'
+                            AND t.voided = 'F'
+                            AND ap.isyear = 'F' AND ap.isquarter = 'F'
+                            ${dateFilter}
+                            ${subsidiaryFilter}
+                            ${salesRepFilter}
+                        GROUP BY t.entity, BUILTIN.DF(t.entity)${arAgingGroupBy}
+                        ${havingClause}
+                        ORDER BY ${orderBy}
+                        FETCH FIRST ${limit} ROWS ONLY
+                    `;
+                }
 
                 const result = QueryExecutor.executeQuery(query);
                 return formatResult(result, 'get_top_customers');
@@ -2663,7 +2700,13 @@ Use when you need to drill into a specific transaction.`,
         compare_periods: {
             name: 'compare_periods',
             description: `Compare a metric between two periods to find variance.
-Use for: "variance analysis", "compare to last month", "YoY change", "period comparison"`,
+Use for: "variance analysis", "compare to last month", "YoY change", "period comparison"
+
+CRITICAL: Always use CURRENT YEAR from date context. Never use old years like 2023/2024 unless user explicitly requests historical data.
+Example period formats (assuming current date is Dec 2025):
+- "compare to last month" → period1="2025-11", period2="2025-12"
+- "YoY this month" → period1="2024-12", period2="2025-12"
+- "Q3 vs Q2" → use get_revenue_by_month instead`,
             parameters: {
                 type: 'object',
                 properties: {
@@ -2674,11 +2717,11 @@ Use for: "variance analysis", "compare to last month", "YoY change", "period com
                     },
                     period1: {
                         type: 'string',
-                        description: 'First period in YYYY-MM format (e.g., "2024-10")'
+                        description: 'Earlier period in YYYY-MM format. Use current year! Format: "2025-01" for Jan 2025, "2025-11" for Nov 2025'
                     },
                     period2: {
                         type: 'string',
-                        description: 'Second period in YYYY-MM format (e.g., "2024-11")'
+                        description: 'Later period in YYYY-MM format. Use current year! Format: "2025-12" for Dec 2025, "2025-06" for Jun 2025'
                     },
                     account_id: {
                         type: 'number',
@@ -2773,6 +2816,97 @@ Use for: "variance analysis", "compare to last month", "YoY change", "period com
             },
             displayName: function(args) {
                 return `Comparing ${args.metric} between periods...`;
+            }
+        },
+
+        get_revenue_by_month: {
+            name: 'get_revenue_by_month',
+            description: `Get monthly revenue breakdown showing trend over time.
+ALWAYS use this for: "revenue trend", "monthly revenue", "revenue by month", "revenue over time", "sales trend"
+
+Returns revenue for each month with optional year-over-year comparison.`,
+            parameters: {
+                type: 'object',
+                properties: {
+                    months: {
+                        type: 'number',
+                        description: 'Number of months to show (default: 12, max: 24)'
+                    },
+                    include_yoy: {
+                        type: 'boolean',
+                        description: 'Include year-over-year comparison (default: false)'
+                    },
+                    customer_id: {
+                        type: 'number',
+                        description: 'Filter by specific customer'
+                    },
+                    subsidiary_id: {
+                        type: 'number',
+                        description: 'Filter by subsidiary'
+                    },
+                    class_id: {
+                        type: 'number',
+                        description: 'Filter by class'
+                    }
+                },
+                required: []
+            },
+            execute: function(args) {
+                const months = Math.min(args.months || 12, 24);
+                const customerFilter = args.customer_id ? `AND t.entity = ${args.customer_id}` : '';
+                const subsidiaryFilter = args.subsidiary_id ? `AND t.subsidiary = ${args.subsidiary_id}` : '';
+                const classFilter = args.class_id ? `AND t.id IN (SELECT transaction FROM transactionline WHERE class = ${args.class_id})` : '';
+
+                let query;
+                if (args.include_yoy) {
+                    // Include year-over-year comparison
+                    query = `
+                        SELECT
+                            TO_CHAR(t.trandate, 'YYYY-MM') AS month,
+                            TO_CHAR(t.trandate, 'Mon YYYY') AS month_label,
+                            SUM(t.foreigntotal) AS revenue,
+                            COUNT(DISTINCT t.id) AS invoice_count,
+                            LAG(SUM(t.foreigntotal), 12) OVER (ORDER BY TO_CHAR(t.trandate, 'YYYY-MM')) AS prior_year_revenue
+                        FROM transaction t
+                        WHERE t.type = 'CustInvc'
+                            AND t.posting = 'T'
+                            AND t.voided = 'F'
+                            AND t.trandate >= ADD_MONTHS(TRUNC(SYSDATE, 'MM'), -${months + 12})
+                            ${customerFilter}
+                            ${subsidiaryFilter}
+                            ${classFilter}
+                        GROUP BY TO_CHAR(t.trandate, 'YYYY-MM'), TO_CHAR(t.trandate, 'Mon YYYY')
+                        ORDER BY month DESC
+                        FETCH FIRST ${months} ROWS ONLY
+                    `;
+                } else {
+                    // Simple monthly breakdown
+                    query = `
+                        SELECT
+                            TO_CHAR(t.trandate, 'YYYY-MM') AS month,
+                            TO_CHAR(t.trandate, 'Mon YYYY') AS month_label,
+                            SUM(t.foreigntotal) AS revenue,
+                            COUNT(DISTINCT t.id) AS invoice_count,
+                            AVG(t.foreigntotal) AS avg_invoice_amount
+                        FROM transaction t
+                        WHERE t.type = 'CustInvc'
+                            AND t.posting = 'T'
+                            AND t.voided = 'F'
+                            AND t.trandate >= ADD_MONTHS(TRUNC(SYSDATE, 'MM'), -${months})
+                            ${customerFilter}
+                            ${subsidiaryFilter}
+                            ${classFilter}
+                        GROUP BY TO_CHAR(t.trandate, 'YYYY-MM'), TO_CHAR(t.trandate, 'Mon YYYY')
+                        ORDER BY month DESC
+                    `;
+                }
+
+                const result = QueryExecutor.executeQuery(query);
+                return formatResult(result, 'get_revenue_by_month');
+            },
+            displayName: function(args) {
+                const months = args.months || 12;
+                return `Getting ${months}-month revenue trend...`;
             }
         },
 
@@ -4849,6 +4983,7 @@ ALWAYS use this tool for your final response instead of plain text.
 
             // Analysis
             compare_periods: "Compare two time periods (YoY, MoM, etc.)",
+            get_revenue_by_month: "Monthly revenue trend with optional YoY comparison",
             find_anomalies: "Find unusual transactions or patterns",
             get_cash_position: "Current cash and bank account balances",
             get_expense_breakdown: "Expenses by category or account",
