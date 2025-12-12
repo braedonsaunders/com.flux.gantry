@@ -621,7 +621,7 @@ body.dark-mode .typing-indicator span {
     display: flex;
     flex-wrap: wrap;
     gap: 6px;
-    margin-bottom: 6px;
+    margin-bottom: 4px;
 }
 
 .tool-call {
@@ -696,6 +696,11 @@ body.dark-mode .typing-indicator span {
     border: 1px solid #fecaca;
 }
 
+.tool-call.stopped:not([open]) {
+    background: #fffbeb;
+    border: 1px solid #fde68a;
+}
+
 .tool-call-icon {
     width: 14px;
     height: 14px;
@@ -715,6 +720,10 @@ body.dark-mode .typing-indicator span {
 
 .tool-call.error .tool-call-icon {
     color: var(--danger);
+}
+
+.tool-call.stopped .tool-call-icon {
+    color: #d97706;
 }
 
 .tool-call.running .tool-call-icon {
@@ -760,6 +769,11 @@ body.dark-mode .typing-indicator span {
 .tool-call-status.status-running {
     background: var(--primary-soft);
     color: var(--primary);
+}
+
+.tool-call-status.status-stopped {
+    background: #fef3c7;
+    color: #d97706;
 }
 
 /* Hide attempt badge when collapsed */
@@ -2693,6 +2707,13 @@ body.dark-mode .message-text .md-heading {
     transition: all 0.25s ease;
 }
 
+/* Action buttons container - inline row */
+.advisor-action-btns {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
 /* New Chat button - subtle below input */
 .advisor-clear-btn {
     background: transparent;
@@ -2713,6 +2734,37 @@ body.dark-mode .message-text .md-heading {
 }
 
 .advisor-clear-btn i {
+    font-size: 9px;
+    margin-right: 4px;
+}
+
+/* Stop button - red accent for stopping response */
+.advisor-stop-btn {
+    background: transparent;
+    border: none;
+    color: #ef4444;
+    font-size: 11px;
+    font-weight: 500;
+    padding: 4px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    opacity: 0.8;
+    transition: all 0.2s ease;
+}
+
+.advisor-stop-btn:hover {
+    opacity: 1;
+    background: rgba(239, 68, 68, 0.1);
+}
+
+.advisor-stop-btn.disabled {
+    color: var(--text-muted);
+    opacity: 0.3;
+    cursor: default;
+    pointer-events: none;
+}
+
+.advisor-stop-btn i {
     font-size: 9px;
     margin-right: 4px;
 }
@@ -3134,7 +3186,7 @@ body.dark-mode .advisor-alert.error {
 
 /* In blocks format, text should extend like other rich content */
 .advisor-message.assistant .message-bubble > .message-text {
-    margin-top: 16px;
+    margin-top: 6px;
 }
 
 /* Response text blocks - inline text within rich content flow */
@@ -5220,5 +5272,348 @@ body.dark-mode .progressive-text {
 
     .synapse-line {
         stroke-dashoffset: 0;
+    }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   HEALTH SCORES OVERVIEW - World Class Dashboard Display
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.health-scores-overview {
+    width: 100%;
+    max-width: 900px;
+    margin: 0 auto 20px;
+    padding: 0 16px;
+}
+
+.scores-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+}
+
+.scores-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-dark);
+}
+
+.scores-title i {
+    color: var(--primary);
+    font-size: 14px;
+}
+
+.scores-timestamp {
+    font-size: 10px;
+    color: var(--text-muted);
+    font-weight: 500;
+}
+
+.scores-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
+}
+
+@media (max-width: 800px) {
+    .scores-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}
+
+@media (max-width: 500px) {
+    .scores-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* Score Card - Ultra Compact */
+.score-card {
+    position: relative;
+    border-radius: 10px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-light);
+    overflow: hidden;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.score-card:hover {
+    border-color: var(--score-color, var(--primary));
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+}
+
+.score-card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 3px;
+    height: 100%;
+    background: var(--score-color, var(--primary));
+    opacity: 0.7;
+}
+
+.score-card:hover::before {
+    opacity: 1;
+}
+
+.score-card-inner {
+    padding: 8px 10px;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 10px;
+}
+
+/* Score Icon */
+.score-card .score-icon {
+    width: 28px;
+    height: 28px;
+    min-width: 28px;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    color: white;
+    background: var(--score-color, var(--primary));
+    box-shadow: none;
+    transition: none;
+}
+
+.score-card:hover .score-icon {
+    transform: none;
+}
+
+/* Score Name */
+.score-card .score-name {
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* Score Value Container */
+.score-value-container {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-left: auto;
+}
+
+.score-card .score-number {
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--text-dark);
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+}
+
+.score-card .score-grade {
+    font-size: 10px;
+    font-weight: 700;
+    padding: 2px 5px;
+    border-radius: 4px;
+    background: var(--grade-bg, rgba(76, 175, 80, 0.12));
+    color: var(--grade-color, #4CAF50);
+}
+
+/* Grade Colors */
+.score-card[data-grade="A+"] .score-grade,
+.score-card[data-grade="A"] .score-grade {
+    --grade-bg: rgba(76, 175, 80, 0.12);
+    --grade-color: #4CAF50;
+}
+
+.score-card[data-grade="B"] .score-grade {
+    --grade-bg: rgba(33, 150, 243, 0.12);
+    --grade-color: #2196F3;
+}
+
+.score-card[data-grade="C"] .score-grade {
+    --grade-bg: rgba(255, 152, 0, 0.12);
+    --grade-color: #FF9800;
+}
+
+.score-card[data-grade="D"] .score-grade,
+.score-card[data-grade="F"] .score-grade {
+    --grade-bg: rgba(244, 67, 54, 0.12);
+    --grade-color: #F44336;
+}
+
+/* Score Label & Trend - Hidden in compact mode */
+.score-meta {
+    display: none;
+}
+
+.score-card .score-label {
+    display: none;
+}
+
+.score-card .score-trend {
+    display: none;
+}
+
+/* Skeleton Loading - Compact */
+.score-card.skeleton .score-card-inner {
+    gap: 10px;
+}
+
+.skeleton-pulse {
+    background: linear-gradient(90deg, var(--bg-muted) 25%, var(--bg-card) 50%, var(--bg-muted) 75%);
+    background-size: 200% 100%;
+    animation: skeleton-shimmer 1.5s infinite;
+    border-radius: 4px;
+}
+
+.score-card.skeleton .score-icon {
+    width: 28px;
+    height: 28px;
+    min-width: 28px;
+    background: var(--bg-muted);
+}
+
+.score-card.skeleton .score-name {
+    height: 10px;
+    width: 60px;
+    flex: 1;
+}
+
+.score-card.skeleton .score-value {
+    height: 18px;
+    width: 40px;
+}
+
+@keyframes skeleton-shimmer {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+}
+
+/* Categories Header */
+.categories-header {
+    width: 100%;
+    max-width: 900px;
+    margin: 0 auto 16px;
+    padding: 0 16px;
+}
+
+.categories-title {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-dark);
+}
+
+.categories-title i {
+    color: #f59e0b;
+    font-size: 16px;
+}
+
+/* Enhanced Score Card Hover - Subtle */
+.score-card:hover {
+    background: var(--bg-hover, #fafafa);
+}
+
+/* Score Card Color Themes */
+.score-card[data-dashboard="health"] {
+    --score-color: #4CAF50;
+    --score-shadow: rgba(76, 175, 80, 0.3);
+}
+
+.score-card[data-dashboard="time"] {
+    --score-color: #2196F3;
+    --score-shadow: rgba(33, 150, 243, 0.3);
+}
+
+.score-card[data-dashboard="integrity"] {
+    --score-color: #9C27B0;
+    --score-shadow: rgba(156, 39, 176, 0.3);
+}
+
+.score-card[data-dashboard="customervalue"] {
+    --score-color: #FF9800;
+    --score-shadow: rgba(255, 152, 0, 0.3);
+}
+
+.score-card[data-dashboard="vendorperformance"] {
+    --score-color: #00BCD4;
+    --score-shadow: rgba(0, 188, 212, 0.3);
+}
+
+.score-card[data-dashboard="spendvelocity"] {
+    --score-color: #F44336;
+    --score-shadow: rgba(244, 67, 54, 0.3);
+}
+
+.score-card[data-dashboard="cashflow"] {
+    --score-color: #009688;
+    --score-shadow: rgba(0, 150, 136, 0.3);
+}
+
+.score-card[data-dashboard="burden"] {
+    --score-color: #795548;
+    --score-shadow: rgba(121, 85, 72, 0.3);
+}
+
+/* Subtle fade in for score cards */
+.score-card {
+    opacity: 0;
+    animation: score-card-fade 0.3s ease forwards;
+}
+
+.score-card:nth-child(1) { animation-delay: 0.05s; }
+.score-card:nth-child(2) { animation-delay: 0.1s; }
+.score-card:nth-child(3) { animation-delay: 0.15s; }
+.score-card:nth-child(4) { animation-delay: 0.2s; }
+.score-card:nth-child(5) { animation-delay: 0.25s; }
+.score-card:nth-child(6) { animation-delay: 0.3s; }
+.score-card:nth-child(7) { animation-delay: 0.35s; }
+.score-card:nth-child(8) { animation-delay: 0.4s; }
+
+@keyframes score-card-fade {
+    to {
+        opacity: 1;
+    }
+}
+
+/* No animation on hover */
+.score-card .score-number {
+    transition: none;
+}
+
+.score-card:hover .score-number {
+    transform: none;
+}
+
+/* Tooltip hidden - compact design */
+.score-card .score-tooltip {
+    display: none;
+}
+
+/* Responsive adjustments */
+@media (max-width: 600px) {
+    .health-scores-overview {
+        margin-bottom: 16px;
+    }
+
+    .scores-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 6px;
+    }
+
+    .score-card .score-number {
+        font-size: 16px;
     }
 }

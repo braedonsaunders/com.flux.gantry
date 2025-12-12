@@ -12,7 +12,7 @@
  * - Operating metrics and benchmarks
  * - Transaction-level drill-downs
  */
-define(["N/search", "N/query", "N/log", "./Lib_Shared", "./Lib_Config"], function (search, query, log, Shared, ConfigLib) {
+define(["N/search", "N/query", "N/log", "./Lib_Core", "./Lib_Config"], function (search, query, log, Core, ConfigLib) {
 
     // Timezone-safe date parsing (avoids UTC offset issues with date strings like "2025-01-15")
     function parseLocalDate(dateStr) {
@@ -27,12 +27,12 @@ define(["N/search", "N/query", "N/log", "./Lib_Shared", "./Lib_Config"], functio
     function roundMetrics(metrics) {
         if (!metrics) return metrics;
         return {
-            revenue: Shared.round2(metrics.revenue),
-            cogs: Shared.round2(metrics.cogs),
-            opex: Shared.round2(metrics.opex),
-            gm: Shared.round2(metrics.gm),
-            opInc: Shared.round2(metrics.opInc),
-            gmPct: Shared.round2(metrics.gmPct)
+            revenue: Core.round2(metrics.revenue),
+            cogs: Core.round2(metrics.cogs),
+            opex: Core.round2(metrics.opex),
+            gm: Core.round2(metrics.gm),
+            opInc: Core.round2(metrics.opInc),
+            gmPct: Core.round2(metrics.gmPct)
         };
     }
 
@@ -107,10 +107,10 @@ define(["N/search", "N/query", "N/log", "./Lib_Shared", "./Lib_Config"], functio
             priorYearEnd.setFullYear(priorYearEnd.getFullYear() - 1);
 
             const periods = {
-                range: { start: Shared.formatDateYMD(rangeStart), end: Shared.formatDateYMD(rangeEnd) },
-                currentMonth: { start: Shared.formatDateYMD(currentMonthStart), end: Shared.formatDateYMD(currentMonthEnd) },
-                previousMonth: { start: Shared.formatDateYMD(prevMonthStart), end: Shared.formatDateYMD(prevMonthEnd) },
-                priorYearRange: { start: Shared.formatDateYMD(priorYearStart), end: Shared.formatDateYMD(priorYearEnd) }
+                range: { start: Core.formatDateForQuery(rangeStart), end: Core.formatDateForQuery(rangeEnd) },
+                currentMonth: { start: Core.formatDateForQuery(currentMonthStart), end: Core.formatDateForQuery(currentMonthEnd) },
+                previousMonth: { start: Core.formatDateForQuery(prevMonthStart), end: Core.formatDateForQuery(prevMonthEnd) },
+                priorYearRange: { start: Core.formatDateForQuery(priorYearStart), end: Core.formatDateForQuery(priorYearEnd) }
             };
 
             // 2. Fetch Data
@@ -183,10 +183,10 @@ define(["N/search", "N/query", "N/log", "./Lib_Shared", "./Lib_Config"], functio
                 return {
                     department: { netsuiteId: dept.id, name: dept.name },
                     metrics: roundAllPeriodMetrics(metrics),
-                    averages: { rangeAvgMonthlyRevenue: Shared.round2(dAvgRev), rangeAvgMonthlyOpEx: Shared.round2(dAvgOpex) },
-                    breakeven: { targetGMPct: Shared.round2(dTargetGM), breakevenMonthlyRevenue: dBreakeven ? Shared.round2(dBreakeven) : null },
-                    forecast: { runRateRevenueFy: Shared.round2(dRunRate) },
-                    yoy: { revenueDeltaPct: dYoy ? Shared.round2(dYoy) : null },
+                    averages: { rangeAvgMonthlyRevenue: Core.round2(dAvgRev), rangeAvgMonthlyOpEx: Core.round2(dAvgOpex) },
+                    breakeven: { targetGMPct: Core.round2(dTargetGM), breakevenMonthlyRevenue: dBreakeven ? Core.round2(dBreakeven) : null },
+                    forecast: { runRateRevenueFy: Core.round2(dRunRate) },
+                    yoy: { revenueDeltaPct: dYoy ? Core.round2(dYoy) : null },
                     healthScore: dScore,
                     analysis: narrative,
                     accounts: { current: dAcctsCurr, prior: dAcctsPrior }
@@ -217,13 +217,13 @@ define(["N/search", "N/query", "N/log", "./Lib_Shared", "./Lib_Config"], functio
             return {
                 meta: {
                     fiscal: { 
-                        start: Shared.formatDateYMD(fyStart), 
-                        end: Shared.formatDateYMD(fyEnd), 
+                        start: Core.formatDateForQuery(fyStart), 
+                        end: Core.formatDateForQuery(fyEnd), 
                         percentComplete: percentFY,
                         startMonth: fiscalYearStartMonth,
                         detectedFrom: fiscalCalendar.detectedFrom
                     },
-                    range: { start: Shared.formatDateYMD(rangeStart), end: Shared.formatDateYMD(rangeEnd), monthsInRange: monthsInRange, daysInRange: daysInRange },
+                    range: { start: Core.formatDateForQuery(rangeStart), end: Core.formatDateForQuery(rangeEnd), monthsInRange: monthsInRange, daysInRange: daysInRange },
                     config: {
                         gmWarningThresholds: config.gmWarningThresholds,
                         opexToRevenueWarningThreshold: config.opexToRevenueWarningThreshold,
@@ -232,10 +232,10 @@ define(["N/search", "N/query", "N/log", "./Lib_Shared", "./Lib_Config"], functio
                 },
                 company: {
                     metrics: roundAllPeriodMetrics(companyMetrics),
-                    averages: { rangeAvgMonthlyRevenue: Shared.round2(avgMonthlyRev), rangeAvgMonthlyOpEx: Shared.round2(avgMonthlyOpex) },
-                    breakeven: { targetGMPct: Shared.round2(compTargetGM), breakevenMonthlyRevenue: compBreakeven ? Shared.round2(compBreakeven) : null },
-                    forecast: { runRateRevenueFy: Shared.round2(compRunRate) },
-                    yoy: { revenueDeltaPct: compYoyRevPct ? Shared.round2(compYoyRevPct) : null },
+                    averages: { rangeAvgMonthlyRevenue: Core.round2(avgMonthlyRev), rangeAvgMonthlyOpEx: Core.round2(avgMonthlyOpex) },
+                    breakeven: { targetGMPct: Core.round2(compTargetGM), breakevenMonthlyRevenue: compBreakeven ? Core.round2(compBreakeven) : null },
+                    forecast: { runRateRevenueFy: Core.round2(compRunRate) },
+                    yoy: { revenueDeltaPct: compYoyRevPct ? Core.round2(compYoyRevPct) : null },
                     healthScore: compHealthScore,
                     analysis: compNarrative,
                     accounts: { current: companyAccountsCurrent, prior: companyAccountsPrior }
@@ -535,7 +535,7 @@ define(["N/search", "N/query", "N/log", "./Lib_Shared", "./Lib_Config"], functio
             FETCH FIRST 2000 ROWS ONLY
         `;
         
-        const results = Shared.runSuiteQL(sql);
+        const results = Core.runQuery(sql);
         
         return results.map(r => ({
             transactionId: r.transaction_id,
@@ -593,7 +593,7 @@ define(["N/search", "N/query", "N/log", "./Lib_Shared", "./Lib_Config"], functio
                 ${segmentField}, BUILTIN.DF(${segmentField}), a.accttype
         `;
         
-        const results = Shared.runSuiteQL(sql);
+        const results = Core.runQuery(sql);
         
         // Aggregate by segment
         const segments = {};
@@ -627,19 +627,19 @@ define(["N/search", "N/query", "N/log", "./Lib_Shared", "./Lib_Config"], functio
             return {
                 id: s.id,
                 name: s.name,
-                revenue: Shared.round2(s.revenue),
-                cogs: Shared.round2(s.cogs),
-                grossMargin: Shared.round2(gm),
-                gmPercent: s.revenue > 0 ? Shared.round2(gm / s.revenue) : 0,
-                opex: Shared.round2(s.opex),
-                operatingIncome: Shared.round2(opInc),
-                opMarginPercent: s.revenue > 0 ? Shared.round2(opInc / s.revenue) : 0
+                revenue: Core.round2(s.revenue),
+                cogs: Core.round2(s.cogs),
+                grossMargin: Core.round2(gm),
+                gmPercent: s.revenue > 0 ? Core.round2(gm / s.revenue) : 0,
+                opex: Core.round2(s.opex),
+                operatingIncome: Core.round2(opInc),
+                opMarginPercent: s.revenue > 0 ? Core.round2(opInc / s.revenue) : 0
             };
         });
         
         // Add contribution %
         segmentList.forEach(s => {
-            s.contribution = totalRevenue > 0 ? Shared.round2(s.revenue / totalRevenue) : 0;
+            s.contribution = totalRevenue > 0 ? Core.round2(s.revenue / totalRevenue) : 0;
         });
         
         // Sort by revenue descending
@@ -649,7 +649,7 @@ define(["N/search", "N/query", "N/log", "./Lib_Shared", "./Lib_Config"], functio
             segmentType: segmentType,
             segments: segmentList,
             totals: {
-                revenue: Shared.round2(totalRevenue),
+                revenue: Core.round2(totalRevenue),
                 segments: segmentList.length
             }
         };
@@ -697,23 +697,23 @@ define(["N/search", "N/query", "N/log", "./Lib_Shared", "./Lib_Config"], functio
                 period: i,
                 monthLabel: forecastDate.toLocaleDateString('en-US', { month: 'short', year: '2-digit' }),
                 revenue: {
-                    projected: Math.max(0, Shared.round2(projRevenue)),
-                    low: Math.max(0, Shared.round2(projRevenue - bandWidth)),
-                    high: Shared.round2(projRevenue + bandWidth)
+                    projected: Math.max(0, Core.round2(projRevenue)),
+                    low: Math.max(0, Core.round2(projRevenue - bandWidth)),
+                    high: Core.round2(projRevenue + bandWidth)
                 },
                 expenses: {
-                    projected: Math.max(0, Shared.round2(projExpense)),
-                    low: Math.max(0, Shared.round2(projExpense - bandWidth * 0.5)),
-                    high: Shared.round2(projExpense + bandWidth * 0.5)
+                    projected: Math.max(0, Core.round2(projExpense)),
+                    low: Math.max(0, Core.round2(projExpense - bandWidth * 0.5)),
+                    high: Core.round2(projExpense + bandWidth * 0.5)
                 },
                 // Note: This is Operating Income (Revenue - Expenses), not true Net Income
                 // True Net Income would require Interest Expense and Tax calculations
                 operatingIncome: {
-                    projected: Shared.round2(projNetIncome),
-                    low: Shared.round2(projRevenue - bandWidth - projExpense),
-                    high: Shared.round2(projRevenue + bandWidth - projExpense)
+                    projected: Core.round2(projNetIncome),
+                    low: Core.round2(projRevenue - bandWidth - projExpense),
+                    high: Core.round2(projRevenue + bandWidth - projExpense)
                 },
-                confidence: Shared.round2(confidence)
+                confidence: Core.round2(confidence)
             });
         }
         
@@ -721,8 +721,8 @@ define(["N/search", "N/query", "N/log", "./Lib_Shared", "./Lib_Config"], functio
             historical: historical,
             forecasts: forecasts,
             model: {
-                revenueGrowthRate: revTrend.slope > 0 ? Shared.round2(revTrend.slope / (revenues[0] || 1)) : 0,
-                expenseGrowthRate: expTrend.slope > 0 ? Shared.round2(expTrend.slope / (expenses[0] || 1)) : 0
+                revenueGrowthRate: revTrend.slope > 0 ? Core.round2(revTrend.slope / (revenues[0] || 1)) : 0,
+                expenseGrowthRate: expTrend.slope > 0 ? Core.round2(expTrend.slope / (expenses[0] || 1)) : 0
             }
         };
     }
@@ -791,19 +791,19 @@ define(["N/search", "N/query", "N/log", "./Lib_Shared", "./Lib_Config"], functio
                 const newOpInc = newGM - currentOpex;
                 
                 result.projected = {
-                    revenue: Shared.round2(newRevenue),
-                    cogs: Shared.round2(newCogs),
-                    grossMargin: Shared.round2(newGM),
+                    revenue: Core.round2(newRevenue),
+                    cogs: Core.round2(newCogs),
+                    grossMargin: Core.round2(newGM),
                     opex: currentOpex,
-                    operatingIncome: Shared.round2(newOpInc),
-                    netIncome: Shared.round2(newOpInc) // Legacy alias
+                    operatingIncome: Core.round2(newOpInc),
+                    netIncome: Core.round2(newOpInc) // Legacy alias
                 };
                 result.impact = {
-                    revenueChange: Shared.round2(newRevenue - currentRevenue),
-                    operatingIncomeChange: Shared.round2(newOpInc - currentNetIncome),
-                    netIncomeChange: Shared.round2(newOpInc - currentNetIncome) // Legacy alias
+                    revenueChange: Core.round2(newRevenue - currentRevenue),
+                    operatingIncomeChange: Core.round2(newOpInc - currentNetIncome),
+                    netIncomeChange: Core.round2(newOpInc - currentNetIncome) // Legacy alias
                 };
-                result.insight = `A ${changePercent}% revenue change results in ${newOpInc > currentNetIncome ? 'an increase' : 'a decrease'} of ${Math.abs(Shared.round2(newOpInc - currentNetIncome))} in operating income.`;
+                result.insight = `A ${changePercent}% revenue change results in ${newOpInc > currentNetIncome ? 'an increase' : 'a decrease'} of ${Math.abs(Core.round2(newOpInc - currentNetIncome))} in operating income.`;
                 break;
             }
             
@@ -816,16 +816,16 @@ define(["N/search", "N/query", "N/log", "./Lib_Shared", "./Lib_Config"], functio
                     revenue: currentRevenue,
                     cogs: currentCogs,
                     grossMargin: currentGM,
-                    opex: Shared.round2(newOpex),
-                    operatingIncome: Shared.round2(newOpInc),
-                    netIncome: Shared.round2(newOpInc) // Legacy alias
+                    opex: Core.round2(newOpex),
+                    operatingIncome: Core.round2(newOpInc),
+                    netIncome: Core.round2(newOpInc) // Legacy alias
                 };
                 result.impact = {
-                    opexChange: Shared.round2(newOpex - currentOpex),
-                    operatingIncomeChange: Shared.round2(newOpInc - currentNetIncome),
-                    netIncomeChange: Shared.round2(newOpInc - currentNetIncome) // Legacy alias
+                    opexChange: Core.round2(newOpex - currentOpex),
+                    operatingIncomeChange: Core.round2(newOpInc - currentNetIncome),
+                    netIncomeChange: Core.round2(newOpInc - currentNetIncome) // Legacy alias
                 };
-                result.insight = `A ${changePercent}% OpEx change directly impacts operating income by ${Shared.round2(currentNetIncome - newOpInc)}.`;
+                result.insight = `A ${changePercent}% OpEx change directly impacts operating income by ${Core.round2(currentNetIncome - newOpInc)}.`;
                 break;
             }
             
@@ -835,11 +835,11 @@ define(["N/search", "N/query", "N/log", "./Lib_Shared", "./Lib_Config"], functio
                 const marginOfSafety = currentRevenue > 0 ? (currentRevenue - breakevenRevenue) / currentRevenue : 0;
                 
                 result.projected = {
-                    breakevenRevenue: Shared.round2(breakevenRevenue),
-                    marginOfSafety: Shared.round2(marginOfSafety),
-                    revenueAboveBreakeven: Shared.round2(currentRevenue - breakevenRevenue)
+                    breakevenRevenue: Core.round2(breakevenRevenue),
+                    marginOfSafety: Core.round2(marginOfSafety),
+                    revenueAboveBreakeven: Core.round2(currentRevenue - breakevenRevenue)
                 };
-                result.insight = `Breakeven revenue is ${Shared.round2(breakevenRevenue)}. Current revenue is ${marginOfSafety > 0 ? Shared.round2(marginOfSafety * 100) + '% above' : 'below'} breakeven.`;
+                result.insight = `Breakeven revenue is ${Core.round2(breakevenRevenue)}. Current revenue is ${marginOfSafety > 0 ? Core.round2(marginOfSafety * 100) + '% above' : 'below'} breakeven.`;
                 break;
             }
             
@@ -871,7 +871,7 @@ define(["N/search", "N/query", "N/log", "./Lib_Shared", "./Lib_Config"], functio
                     severity: decline > 5 ? 'high' : 'medium',
                     title: 'Margin Decline Detected',
                     description: `Gross margin has declined ${decline.toFixed(1)}pp over the last 3 months`,
-                    metric: Shared.round2(decline)
+                    metric: Core.round2(decline)
                 });
             }
         }
@@ -919,14 +919,14 @@ define(["N/search", "N/query", "N/log", "./Lib_Shared", "./Lib_Config"], functio
         
         return {
             headcount: headcount,
-            revenuePerEmployee: Shared.round2(revenuePerEmployee),
-            grossMarginPerEmployee: Shared.round2(gmPerEmployee),
-            netIncomePerEmployee: Shared.round2(opIncPerEmployee),
-            opexAsPercentOfRevenue: Shared.round2(opexRatio),
-            cogsAsPercentOfRevenue: Shared.round2(cogsRatio),
+            revenuePerEmployee: Core.round2(revenuePerEmployee),
+            grossMarginPerEmployee: Core.round2(gmPerEmployee),
+            netIncomePerEmployee: Core.round2(opIncPerEmployee),
+            opexAsPercentOfRevenue: Core.round2(opexRatio),
+            cogsAsPercentOfRevenue: Core.round2(cogsRatio),
             monthsInRange: monthsInRange,
-            annualizedRevenue: Shared.round2(metrics.revenue * (12 / monthsInRange)),
-            annualizedNetIncome: Shared.round2(metrics.opInc * (12 / monthsInRange))
+            annualizedRevenue: Core.round2(metrics.revenue * (12 / monthsInRange)),
+            annualizedNetIncome: Core.round2(metrics.opInc * (12 / monthsInRange))
         };
     }
     
@@ -948,7 +948,7 @@ define(["N/search", "N/query", "N/log", "./Lib_Shared", "./Lib_Config"], functio
                 ${subsidiaryId ? `AND e.subsidiary = ${subsidiaryId}` : ''}
                 ${excludeClause}
             `;
-            const results = Shared.runSuiteQL(sql);
+            const results = Core.runQuery(sql);
             return results.length > 0 ? parseInt(results[0].headcount) || 0 : 0;
         } catch (e) {
             return 0;
@@ -992,10 +992,10 @@ define(["N/search", "N/query", "N/log", "./Lib_Shared", "./Lib_Config"], functio
                     accountId: id,
                     accountName: (curr || prev).accountName,
                     accountType: (curr || prev).type,
-                    currentAmount: Shared.round2(currAmt),
-                    priorAmount: Shared.round2(prevAmt),
-                    change: Shared.round2(change),
-                    changePercent: Shared.round2(changePct),
+                    currentAmount: Core.round2(currAmt),
+                    priorAmount: Core.round2(prevAmt),
+                    change: Core.round2(change),
+                    changePercent: Core.round2(changePct),
                     direction: change > 0 ? 'increase' : 'decrease'
                 });
             }
@@ -1041,15 +1041,15 @@ define(["N/search", "N/query", "N/log", "./Lib_Shared", "./Lib_Config"], functio
             FETCH FIRST 50 ROWS ONLY
         `;
         
-        const results = Shared.runSuiteQL(sql);
+        const results = Core.runQuery(sql);
         const totalRevenue = results.reduce((sum, r) => sum + (parseFloat(r.revenue) || 0), 0);
         
         return results.map(r => ({
             customerId: r.customer_id,
             customerName: r.customer_name || 'Unknown',
-            revenue: Shared.round2(parseFloat(r.revenue) || 0),
+            revenue: Core.round2(parseFloat(r.revenue) || 0),
             transactionCount: parseInt(r.transaction_count) || 0,
-            shareOfRevenue: totalRevenue > 0 ? Shared.round2((parseFloat(r.revenue) || 0) / totalRevenue) : 0
+            shareOfRevenue: totalRevenue > 0 ? Core.round2((parseFloat(r.revenue) || 0) / totalRevenue) : 0
         }));
     }
 
@@ -1101,7 +1101,7 @@ define(["N/search", "N/query", "N/log", "./Lib_Shared", "./Lib_Config"], functio
                     GROUP BY 
                         b.account, BUILTIN.DF(b.account), a.accttype
                 `;
-                budgetData = Shared.runSuiteQL(budgetSql);
+                budgetData = Core.runQuery(budgetSql);
             } catch (e) {
                 // Budget records may not exist
                 log.debug('Budget query failed', e.message);
@@ -1140,10 +1140,10 @@ define(["N/search", "N/query", "N/log", "./Lib_Shared", "./Lib_Config"], functio
                     accountId: accId,
                     accountName: b.account_name || accountMap[accId]?.acctName || 'Unknown',
                     accountType: type,
-                    budget: Shared.round2(budgetAmt),
-                    actual: Shared.round2(actualAmt),
-                    variance: Shared.round2(variance),
-                    variancePercent: Shared.round2(variancePct),
+                    budget: Core.round2(budgetAmt),
+                    actual: Core.round2(actualAmt),
+                    variance: Core.round2(variance),
+                    variancePercent: Core.round2(variancePct),
                     status: isGood ? 'good' : (Math.abs(variancePct) > 0.1 ? 'critical' : 'warning')
                 });
 
@@ -1179,8 +1179,8 @@ define(["N/search", "N/query", "N/log", "./Lib_Shared", "./Lib_Config"], functio
                     accountName: meta.acctName || 'Unknown',
                     accountType: type,
                     budget: 0,
-                    actual: Shared.round2(actualAmt),
-                    variance: Shared.round2(actualAmt), // Variance is full amount when no budget
+                    actual: Core.round2(actualAmt),
+                    variance: Core.round2(actualAmt), // Variance is full amount when no budget
                     variancePercent: 0,
                     status: 'no-budget'
                 });
@@ -1259,8 +1259,8 @@ define(["N/search", "N/query", "N/log", "./Lib_Shared", "./Lib_Config"], functio
                 accountName: meta.acctName || 'Unknown',
                 accountType: type,
                 budget: 0,
-                actual: Shared.round2(amt),
-                variance: Shared.round2(amt),
+                actual: Core.round2(amt),
+                variance: Core.round2(amt),
                 variancePercent: 1,
                 status: 'no-budget'
             });
@@ -1313,15 +1313,15 @@ define(["N/search", "N/query", "N/log", "./Lib_Shared", "./Lib_Config"], functio
             FETCH FIRST 20 ROWS ONLY
         `;
         
-        const results = Shared.runSuiteQL(sql);
+        const results = Core.runQuery(sql);
         const total = results.reduce((sum, r) => sum + Math.abs(parseFloat(r.amount) || 0), 0);
         
         return results.map(r => ({
             vendorId: r.vendor_id,
             vendorName: r.vendor_name || 'Unknown',
-            amount: Shared.round2(parseFloat(r.amount) || 0),
+            amount: Core.round2(parseFloat(r.amount) || 0),
             transactionCount: parseInt(r.transaction_count) || 0,
-            percentOfTotal: total > 0 ? Shared.round2(Math.abs(parseFloat(r.amount) || 0) / total) : 0
+            percentOfTotal: total > 0 ? Core.round2(Math.abs(parseFloat(r.amount) || 0) / total) : 0
         }));
     }
 
@@ -1355,15 +1355,15 @@ define(["N/search", "N/query", "N/log", "./Lib_Shared", "./Lib_Config"], functio
             FETCH FIRST 20 ROWS ONLY
         `;
         
-        const results = Shared.runSuiteQL(sql);
+        const results = Core.runQuery(sql);
         const total = results.reduce((sum, r) => sum + Math.abs(parseFloat(r.amount) || 0), 0);
         
         return results.map(r => ({
             employeeId: r.employee_id,
             employeeName: r.employee_name || 'Unknown',
-            amount: Shared.round2(parseFloat(r.amount) || 0),
+            amount: Core.round2(parseFloat(r.amount) || 0),
             transactionCount: parseInt(r.transaction_count) || 0,
-            percentOfTotal: total > 0 ? Shared.round2(Math.abs(parseFloat(r.amount) || 0) / total) : 0
+            percentOfTotal: total > 0 ? Core.round2(Math.abs(parseFloat(r.amount) || 0) / total) : 0
         }));
     }
 
@@ -1390,17 +1390,17 @@ define(["N/search", "N/query", "N/log", "./Lib_Shared", "./Lib_Config"], functio
                     t.posting = 'T'
                     AND tal.posting = 'T'
                     AND tal.account = ${accountId}
-                    AND t.trandate >= TO_DATE('${Shared.formatDateYMD(monthStart)}', 'YYYY-MM-DD')
-                    AND t.trandate <= TO_DATE('${Shared.formatDateYMD(monthEnd)}', 'YYYY-MM-DD')
+                    AND t.trandate >= TO_DATE('${Core.formatDateForQuery(monthStart)}', 'YYYY-MM-DD')
+                    AND t.trandate <= TO_DATE('${Core.formatDateForQuery(monthEnd)}', 'YYYY-MM-DD')
                     ${subsidiaryId ? `AND t.subsidiary = ${subsidiaryId}` : ''}
             `;
             
-            const rows = Shared.runSuiteQL(sql);
+            const rows = Core.runQuery(sql);
             const amt = rows.length > 0 ? parseFloat(rows[0].amount) || 0 : 0;
             
             results.push({
                 monthLabel: monthStart.toLocaleDateString('en-US', { month: 'short', year: '2-digit' }),
-                amount: Shared.round2(amt)
+                amount: Core.round2(amt)
             });
         }
         
@@ -1528,7 +1528,7 @@ define(["N/search", "N/query", "N/log", "./Lib_Shared", "./Lib_Config"], functio
             ${subsidiaryId ? `AND t.subsidiary = ${subsidiaryId}` : ''}
         `;
         
-        const accounts = Shared.runSuiteQL(accountSql);
+        const accounts = Core.runQuery(accountSql);
         
         accounts.forEach(acc => {
             // Get monthly totals for this account
@@ -1544,12 +1544,12 @@ define(["N/search", "N/query", "N/log", "./Lib_Shared", "./Lib_Config"], functio
                     JOIN TransactionAccountingLine tal ON t.id = tal.transaction
                     WHERE t.posting = 'T' AND tal.posting = 'T'
                     AND tal.account = ${acc.account}
-                    AND t.trandate >= TO_DATE('${Shared.formatDateYMD(monthStart)}', 'YYYY-MM-DD')
-                    AND t.trandate <= TO_DATE('${Shared.formatDateYMD(monthEnd)}', 'YYYY-MM-DD')
+                    AND t.trandate >= TO_DATE('${Core.formatDateForQuery(monthStart)}', 'YYYY-MM-DD')
+                    AND t.trandate <= TO_DATE('${Core.formatDateForQuery(monthEnd)}', 'YYYY-MM-DD')
                     ${subsidiaryId ? `AND t.subsidiary = ${subsidiaryId}` : ''}
                 `;
                 
-                const rows = Shared.runSuiteQL(sql);
+                const rows = Core.runQuery(sql);
                 const amt = rows.length > 0 ? parseFloat(rows[0].amount) || 0 : 0;
                 monthlyData.push(amt);
             }
@@ -1572,10 +1572,10 @@ define(["N/search", "N/query", "N/log", "./Lib_Shared", "./Lib_Config"], functio
                             accountId: acc.account,
                             accountName: acc.account_name,
                             accountType: acc.accttype,
-                            currentAmount: Shared.round2(current),
-                            historicalMean: Shared.round2(mean),
-                            standardDeviation: Shared.round2(stdDev),
-                            zScore: Shared.round2(zScore),
+                            currentAmount: Core.round2(current),
+                            historicalMean: Core.round2(mean),
+                            standardDeviation: Core.round2(stdDev),
+                            zScore: Core.round2(zScore),
                             severity: Math.abs(zScore) >= 3 ? 'critical' : 'warning',
                             direction: zScore > 0 ? 'spike' : 'drop',
                             description: zScore > 0 
@@ -1685,7 +1685,7 @@ define(["N/search", "N/query", "N/log", "./Lib_Shared", "./Lib_Config"], functio
                 BUILTIN.DF(${segmentField}), a.accttype
         `;
         
-        const results = Shared.runSuiteQL(sql);
+        const results = Core.runQuery(sql);
         
         if (results.length === 0) return null;
         
@@ -1708,13 +1708,13 @@ define(["N/search", "N/query", "N/log", "./Lib_Shared", "./Lib_Config"], functio
         return {
             id: segmentId,
             name: segmentName,
-            revenue: Shared.round2(revenue),
-            cogs: Shared.round2(cogs),
-            grossMargin: Shared.round2(gm),
-            gmPercent: revenue > 0 ? Shared.round2(gm / revenue) : 0,
-            opex: Shared.round2(opex),
-            operatingIncome: Shared.round2(opInc),
-            opMarginPercent: revenue > 0 ? Shared.round2(opInc / revenue) : 0
+            revenue: Core.round2(revenue),
+            cogs: Core.round2(cogs),
+            grossMargin: Core.round2(gm),
+            gmPercent: revenue > 0 ? Core.round2(gm / revenue) : 0,
+            opex: Core.round2(opex),
+            operatingIncome: Core.round2(opInc),
+            opMarginPercent: revenue > 0 ? Core.round2(opInc / revenue) : 0
         };
     }
 
@@ -1804,18 +1804,18 @@ define(["N/search", "N/query", "N/log", "./Lib_Shared", "./Lib_Config"], functio
                 itemAnalysis.push({
                     itemId: itemId,
                     itemName: current.itemName || prior.itemName,
-                    priorRevenue: Shared.round2(prior.revenue),
-                    currentRevenue: Shared.round2(current.revenue),
-                    revenueChange: Shared.round2(revChange),
+                    priorRevenue: Core.round2(prior.revenue),
+                    currentRevenue: Core.round2(current.revenue),
+                    revenueChange: Core.round2(revChange),
                     priorQuantity: prior.quantity,
                     currentQuantity: current.quantity,
                     quantityChange: qtyChange,
-                    priorPrice: Shared.round2(prior.avgPrice),
-                    currentPrice: Shared.round2(current.avgPrice),
-                    priceChange: Shared.round2(priceChange),
-                    priceEffect: Shared.round2(itemPriceEffect),
-                    volumeEffect: Shared.round2(itemVolumeEffect),
-                    mixEffect: Shared.round2(itemMixEffect)
+                    priorPrice: Core.round2(prior.avgPrice),
+                    currentPrice: Core.round2(current.avgPrice),
+                    priceChange: Core.round2(priceChange),
+                    priceEffect: Core.round2(itemPriceEffect),
+                    volumeEffect: Core.round2(itemVolumeEffect),
+                    mixEffect: Core.round2(itemMixEffect)
                 });
             }
         });
@@ -1831,27 +1831,27 @@ define(["N/search", "N/query", "N/log", "./Lib_Shared", "./Lib_Config"], functio
         return {
             available: true,
             summary: {
-                priorRevenue: Shared.round2(totalPriorRevenue),
-                currentRevenue: Shared.round2(totalCurrentRevenue),
-                totalChange: Shared.round2(totalChange),
-                totalChangePct: totalPriorRevenue > 0 ? Shared.round2(totalChange / totalPriorRevenue) : 0,
+                priorRevenue: Core.round2(totalPriorRevenue),
+                currentRevenue: Core.round2(totalCurrentRevenue),
+                totalChange: Core.round2(totalChange),
+                totalChangePct: totalPriorRevenue > 0 ? Core.round2(totalChange / totalPriorRevenue) : 0,
                 
-                priceEffect: Shared.round2(priceEffect),
-                priceEffectPct: Shared.round2(pricePct),
+                priceEffect: Core.round2(priceEffect),
+                priceEffectPct: Core.round2(pricePct),
                 
-                volumeEffect: Shared.round2(volumeEffect),
-                volumeEffectPct: Shared.round2(volumePct),
+                volumeEffect: Core.round2(volumeEffect),
+                volumeEffectPct: Core.round2(volumePct),
                 
-                mixEffect: Shared.round2(mixEffect),
-                mixEffectPct: Shared.round2(mixPct),
+                mixEffect: Core.round2(mixEffect),
+                mixEffectPct: Core.round2(mixPct),
                 
-                priorAvgPrice: Shared.round2(priorAvgPrice),
-                currentAvgPrice: Shared.round2(currentAvgPrice),
-                priceChangePct: priorAvgPrice > 0 ? Shared.round2((currentAvgPrice - priorAvgPrice) / priorAvgPrice) : 0,
+                priorAvgPrice: Core.round2(priorAvgPrice),
+                currentAvgPrice: Core.round2(currentAvgPrice),
+                priceChangePct: priorAvgPrice > 0 ? Core.round2((currentAvgPrice - priorAvgPrice) / priorAvgPrice) : 0,
                 
                 priorTotalQty: totalPriorQty,
                 currentTotalQty: totalCurrentQty,
-                volumeChangePct: totalPriorQty > 0 ? Shared.round2((totalCurrentQty - totalPriorQty) / totalPriorQty) : 0
+                volumeChangePct: totalPriorQty > 0 ? Core.round2((totalCurrentQty - totalPriorQty) / totalPriorQty) : 0
             },
             items: itemAnalysis,
             methodology: 'Price Effect = ΔPrice × Prior Qty | Volume Effect = ΔQty × Prior Price | Mix Effect = Residual'
@@ -1889,7 +1889,7 @@ define(["N/search", "N/query", "N/log", "./Lib_Shared", "./Lib_Config"], functio
         `;
         
         try {
-            const results = Shared.runSuiteQL(sql);
+            const results = Core.runQuery(sql);
             return results.map(r => ({
                 itemId: r.item_id,
                 itemName: r.item_name || 'Unknown',
@@ -1932,7 +1932,7 @@ define(["N/search", "N/query", "N/log", "./Lib_Shared", "./Lib_Config"], functio
             GROUP BY 
                 tal.account, tl.department, a.accttype
         `;
-        return Shared.runSuiteQL(sql);
+        return Core.runQuery(sql);
     }
 
     function getAccountMetadata(ids) {
@@ -2085,7 +2085,7 @@ define(["N/search", "N/query", "N/log", "./Lib_Shared", "./Lib_Config"], functio
         const breakeven = avgMonthlyOpex / targetGMPct;
         
         return {
-            value: Shared.round2(breakeven),
+            value: Core.round2(breakeven),
             status: 'calculated',
             reason: null,
             message: null
@@ -2174,8 +2174,8 @@ define(["N/search", "N/query", "N/log", "./Lib_Shared", "./Lib_Config"], functio
             const monthEnd = new Date(end.getFullYear(), end.getMonth() - i + 1, 0);
             const monthStart = new Date(monthEnd.getFullYear(), monthEnd.getMonth(), 1);
             
-            const startStr = Shared.formatDateYMD(monthStart);
-            const endStr = Shared.formatDateYMD(monthEnd);
+            const startStr = Core.formatDateForQuery(monthStart);
+            const endStr = Core.formatDateForQuery(monthEnd);
             
             const rows = fetchPLRange(startStr, endStr, subsidiaryId);
             const accountMap = {};
@@ -2212,11 +2212,101 @@ define(["N/search", "N/query", "N/log", "./Lib_Shared", "./Lib_Config"], functio
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
+    // SCORE-ONLY FUNCTION - Lightweight score computation for dashboard overview
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Get health score only - minimal queries for fast app load
+     * Uses existing computeHealthScore formula: 60% revenue coverage + 40% GM ratio
+     * @returns {Object} { score: 0-100, grade: 'A'-'F', label: string, trend: string }
+     */
+    function getScoreOnly() {
+        try {
+            // Get last 3 months of P&L data (minimal query)
+            var today = new Date();
+            var endDate = new Date(today.getFullYear(), today.getMonth(), 0);
+            var startDate = new Date(endDate.getFullYear(), endDate.getMonth() - 2, 1);
+            var start = Core.formatDateForQuery(startDate);
+            var end = Core.formatDateForQuery(endDate);
+            var months = 3;
+
+            var revenue = 0, cogs = 0, opex = 0;
+
+            try {
+                var sql = "SELECT " +
+                    "SUM(CASE WHEN a.accttype IN ('Income', 'OthIncome') THEN -tl.amount ELSE 0 END) as revenue, " +
+                    "SUM(CASE WHEN a.accttype = 'COGS' THEN tl.amount ELSE 0 END) as cogs, " +
+                    "SUM(CASE WHEN a.accttype IN ('Expense', 'OthExpense') THEN tl.amount ELSE 0 END) as opex " +
+                    "FROM transactionline tl " +
+                    "JOIN transaction t ON t.id = tl.transaction " +
+                    "JOIN account a ON a.id = tl.account " +
+                    "WHERE t.trandate BETWEEN TO_DATE('" + start + "', 'YYYY-MM-DD') AND TO_DATE('" + end + "', 'YYYY-MM-DD') " +
+                    "AND t.posting = 'T' AND tl.mainline = 'F'";
+                var result = Core.runQuery(sql);
+                if (result && result.length > 0) {
+                    revenue = parseFloat(result[0].revenue) || 0;
+                    cogs = parseFloat(result[0].cogs) || 0;
+                    opex = parseFloat(result[0].opex) || 0;
+                }
+            } catch (e) {
+                log.debug('Health P&L Query Error', e.message);
+            }
+
+            var gm = revenue - cogs;
+            var gmPct = revenue > 0 ? gm / revenue : 0;
+            var avgMonthlyRevenue = revenue / months;
+            var avgMonthlyOpex = opex / months;
+
+            var targetGM = 0.35;
+            try {
+                var config = ConfigLib.getStoredConfiguration('health');
+                if (config && config.targetGrossMargin) {
+                    targetGM = config.targetGrossMargin;
+                }
+            } catch (e) {}
+
+            var breakeven = targetGM > 0 ? avgMonthlyOpex / targetGM : 0;
+            var score = computeHealthScore(avgMonthlyRevenue, breakeven, gmPct, targetGM);
+
+            var grade = 'A';
+            var label = 'Excellent';
+            if (score < 40) { grade = 'F'; label = 'Critical'; }
+            else if (score < 50) { grade = 'D'; label = 'Poor'; }
+            else if (score < 60) { grade = 'C'; label = 'Fair'; }
+            else if (score < 70) { grade = 'B'; label = 'Good'; }
+            else if (score < 85) { grade = 'A'; label = 'Very Good'; }
+            else { grade = 'A+'; label = 'Excellent'; }
+
+            var coverage = breakeven > 0 ? avgMonthlyRevenue / breakeven : 1;
+            var trend = 'stable';
+            if (coverage < 0.8) trend = 'down';
+            else if (coverage > 1.2) trend = 'up';
+
+            return {
+                score: Math.round(score),
+                grade: grade,
+                label: label,
+                trend: trend,
+                details: {
+                    avgMonthlyRevenue: Core.round2(avgMonthlyRevenue),
+                    breakeven: Core.round2(breakeven),
+                    gmPct: Core.round2(gmPct * 100),
+                    coverage: Core.round2(coverage)
+                }
+            };
+        } catch (e) {
+            log.error('Health getScoreOnly Error', e.message);
+            return { score: 50, grade: 'C', label: 'Unknown', trend: 'stable', error: e.message };
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
     // EXPORT
     // ═══════════════════════════════════════════════════════════════════════════
 
     return {
         getData: getData,
-        handleRequest: handleRequest
+        handleRequest: handleRequest,
+        getScoreOnly: getScoreOnly
     };
 });

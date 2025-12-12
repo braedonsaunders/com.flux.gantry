@@ -355,6 +355,73 @@ body {
     color: #1a1a1a;
 }
 
+/* --- SIDEBAR HEALTH SCORE BADGES --- */
+.nav-score-badge {
+    margin-left: auto;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.15);
+    color: rgba(255, 255, 255, 0.9);
+    font-variant-numeric: tabular-nums;
+}
+
+.nav-score-badge[data-grade="A+"],
+.nav-score-badge[data-grade="A"] {
+    background: rgba(76, 175, 80, 0.2);
+    color: #81c784;
+}
+
+.nav-score-badge[data-grade="B"] {
+    background: rgba(33, 150, 243, 0.2);
+    color: #64b5f6;
+}
+
+.nav-score-badge[data-grade="C"] {
+    background: rgba(255, 152, 0, 0.2);
+    color: #ffb74d;
+}
+
+.nav-score-badge[data-grade="D"],
+.nav-score-badge[data-grade="F"] {
+    background: rgba(244, 67, 54, 0.2);
+    color: #e57373;
+}
+
+/* Hide badge when sidebar collapsed */
+.gantry-sidebar.collapsed .nav-score-badge {
+    display: none;
+}
+
+/* Light theme sidebar badges */
+.gantry-sidebar.light-theme .nav-score-badge {
+    background: rgba(0, 0, 0, 0.08);
+    color: rgba(0, 0, 0, 0.7);
+}
+
+.gantry-sidebar.light-theme .nav-score-badge[data-grade="A+"],
+.gantry-sidebar.light-theme .nav-score-badge[data-grade="A"] {
+    background: rgba(76, 175, 80, 0.15);
+    color: #388e3c;
+}
+
+.gantry-sidebar.light-theme .nav-score-badge[data-grade="B"] {
+    background: rgba(33, 150, 243, 0.15);
+    color: #1976d2;
+}
+
+.gantry-sidebar.light-theme .nav-score-badge[data-grade="C"] {
+    background: rgba(255, 152, 0, 0.15);
+    color: #f57c00;
+}
+
+.gantry-sidebar.light-theme .nav-score-badge[data-grade="D"],
+.gantry-sidebar.light-theme .nav-score-badge[data-grade="F"] {
+    background: rgba(244, 67, 54, 0.15);
+    color: #d32f2f;
+}
+
 .gantry-main {
     flex: 1;
     padding: 16px;

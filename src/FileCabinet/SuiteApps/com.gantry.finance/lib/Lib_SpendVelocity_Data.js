@@ -2681,6 +2681,105 @@ define(['N/query', 'N/log', './Lib_Core'], function(query, log, Core) {
         });
     }
     
+    // ═══════════════════════════════════════════════════════════════════════════
+    // SCORE-ONLY FUNCTION - Lightweight score computation for dashboard overview
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Get spend velocity score only - minimal queries for fast app load
+     * Score starts at 100, deducts for: high velocity accounts, anomalies, acceleration
+     * @returns {Object} { score: 0-100, grade: 'A'-'F', label: string, trend: string }
+     */
+    function getScoreOnly() {
+        try {
+            var score = 100;
+            var deductions = { velocity: 0, anomalies: 0, acceleration: 0 };
+
+            // Get last 6 months of expense data aggregated
+            var today = new Date();
+            var endDate = new Date(today.getFullYear(), today.getMonth(), 0); // End of last month
+            var startDate = new Date(endDate.getFullYear(), endDate.getMonth() - 5, 1); // 6 months back
+            var start = formatDateYMD(startDate);
+            var end = formatDateYMD(endDate);
+
+            var accountsWithHighVelocity = 0;
+            var acceleratingAccounts = 0;
+            var totalAccounts = 0;
+
+            // Single query: Get expense growth metrics by account
+            try {
+                var sql = "SELECT " +
+                    "a.id as account_id, " +
+                    "SUM(CASE WHEN t.trandate >= ADD_MONTHS(TRUNC(SYSDATE), -3) THEN ABS(tl.amount) ELSE 0 END) as recent_spend, " +
+                    "SUM(CASE WHEN t.trandate < ADD_MONTHS(TRUNC(SYSDATE), -3) THEN ABS(tl.amount) ELSE 0 END) as prior_spend " +
+                    "FROM transactionline tl " +
+                    "JOIN transaction t ON t.id = tl.transaction " +
+                    "JOIN account a ON a.id = tl.account " +
+                    "WHERE a.accttype IN ('Expense', 'OthExpense') " +
+                    "AND t.trandate BETWEEN TO_DATE('" + start + "', 'YYYY-MM-DD') AND TO_DATE('" + end + "', 'YYYY-MM-DD') " +
+                    "AND t.posting = 'T' AND tl.mainline = 'F' " +
+                    "GROUP BY a.id " +
+                    "HAVING SUM(ABS(tl.amount)) > 1000";
+                var results = safeQuery(sql, 'scoreVelocity');
+
+                if (!isQueryError(results)) {
+                    totalAccounts = results.length;
+                    results.forEach(function(r) {
+                        var recent = parseFloat(r.recent_spend) || 0;
+                        var prior = parseFloat(r.prior_spend) || 0;
+                        if (prior > 0) {
+                            var growth = ((recent - prior) / prior) * 100;
+                            if (growth > 15) accountsWithHighVelocity++;
+                            if (growth > 25) acceleratingAccounts++;
+                        }
+                    });
+                }
+            } catch (e) { log.debug('Velocity Query', e.message); }
+
+            // Velocity deductions (max -30)
+            if (accountsWithHighVelocity > 10) deductions.velocity = 30;
+            else if (accountsWithHighVelocity > 7) deductions.velocity = 20;
+            else if (accountsWithHighVelocity > 4) deductions.velocity = 12;
+            else if (accountsWithHighVelocity > 2) deductions.velocity = 6;
+
+            // Acceleration deductions (max -25)
+            if (acceleratingAccounts > 5) deductions.acceleration = 25;
+            else if (acceleratingAccounts > 3) deductions.acceleration = 15;
+            else if (acceleratingAccounts > 1) deductions.acceleration = 8;
+
+            score = Math.max(0, 100 - deductions.velocity - deductions.acceleration - deductions.anomalies);
+
+            var grade = 'A';
+            var label = 'Controlled';
+            if (score < 50) { grade = 'F'; label = 'Critical'; }
+            else if (score < 60) { grade = 'D'; label = 'High Risk'; }
+            else if (score < 70) { grade = 'C'; label = 'Elevated'; }
+            else if (score < 80) { grade = 'B'; label = 'Moderate'; }
+            else if (score < 90) { grade = 'A'; label = 'Controlled'; }
+            else { grade = 'A+'; label = 'Excellent'; }
+
+            var trend = 'stable';
+            if (acceleratingAccounts > 3) trend = 'down';
+            else if (accountsWithHighVelocity === 0) trend = 'up';
+
+            return {
+                score: Math.round(score),
+                grade: grade,
+                label: label,
+                trend: trend,
+                details: {
+                    totalAccounts: totalAccounts,
+                    highVelocityCount: accountsWithHighVelocity,
+                    acceleratingCount: acceleratingAccounts,
+                    deductions: deductions
+                }
+            };
+        } catch (e) {
+            log.error('SpendVelocity getScoreOnly Error', e.message);
+            return { score: 80, grade: 'A', label: 'Unknown', trend: 'stable', error: e.message };
+        }
+    }
+
     // ==========================================
     // PUBLIC API
     // ==========================================
@@ -2696,6 +2795,7 @@ define(['N/query', 'N/log', './Lib_Core'], function(query, log, Core) {
         getVendorTransactions: getVendorTransactions,
         getCategoryTransactions: getCategoryTransactions,
         // Router delegate
-        handleRequest: handleRequest
+        handleRequest: handleRequest,
+        getScoreOnly: getScoreOnly
     };
 });

@@ -314,6 +314,25 @@ function(query, search, runtime, format, log) {
     }
 
     /**
+     * Round to 2 decimal places
+     * @param {number} n - Number to round
+     * @returns {number}
+     */
+    function round2(n) {
+        return Math.round((parseFloat(n) || 0) * 100) / 100;
+    }
+
+    /**
+     * Safe division avoiding divide by zero
+     * @param {number} n - Numerator
+     * @param {number} d - Denominator
+     * @returns {number}
+     */
+    function safeDiv(n, d) {
+        return d !== 0 ? n / d : 0.0;
+    }
+
+    /**
      * Calculate percentage
      * @param {number} numerator
      * @param {number} denominator
@@ -497,6 +516,8 @@ function(query, search, runtime, format, log) {
         
         // Number utilities
         toNumber: toNumber,
+        round2: round2,
+        safeDiv: safeDiv,
         percentage: percentage,
         ratio: ratio,
         variance: variance,

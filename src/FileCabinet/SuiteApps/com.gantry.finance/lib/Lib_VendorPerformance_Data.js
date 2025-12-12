@@ -19,11 +19,11 @@
  * @NApiVersion 2.1
  * @NModuleScope Public
  */
-define(['N/query', 'N/record', 'N/search', 'N/runtime', 'N/format', 'N/log', './Lib_Shared', './advisor/Lib_Advisor_Utils'],
-function(query, record, search, runtime, format, log, Shared, Utils) {
+define(['N/query', 'N/record', 'N/search', 'N/runtime', 'N/format', 'N/log', './Lib_Core', './advisor/Lib_Advisor_Utils'],
+function(query, record, search, runtime, format, log, Core, Utils) {
     'use strict';
-    
-    const runSuiteQL = Shared.runSuiteQL;
+
+    const runSuiteQL = Core.runQuery;
     
     // ==========================================
     // CONSTANTS
@@ -1343,6 +1343,107 @@ function(query, record, search, runtime, format, log, Shared, Utils) {
         });
     }
     
+    // ═══════════════════════════════════════════════════════════════════════════
+    // SCORE-ONLY FUNCTION - Lightweight score computation for dashboard overview
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Get vendor performance score only - minimal queries for fast app load
+     * Score based on: on-time delivery %, price variance, concentration risk
+     * @returns {Object} { score: 0-100, grade: 'A'-'F', label: string, trend: string }
+     */
+    function getScoreOnly() {
+        try {
+            var today = new Date();
+            var endDate = today.toISOString().split('T')[0];
+            var startDate = new Date(today.getFullYear(), today.getMonth() - 6, today.getDate()).toISOString().split('T')[0];
+
+            var totalBills = 0, lateBills = 0, topVendorPct = 0;
+            var totalSpend = 0, topVendorSpend = 0;
+
+            // 1. On-time payment analysis (single query)
+            try {
+                var otifSql = "SELECT " +
+                    "COUNT(*) as total_bills, " +
+                    "COUNT(CASE WHEN t.trandate > t.duedate AND t.duedate IS NOT NULL THEN 1 END) as late_bills " +
+                    "FROM transaction t " +
+                    "WHERE t.type = 'VendBill' AND t.mainline = 'T' " +
+                    "AND t.trandate >= TO_DATE('" + startDate + "', 'YYYY-MM-DD')";
+                var otifResult = Core.runQuery(otifSql);
+                if (otifResult && otifResult.length > 0) {
+                    totalBills = parseInt(otifResult[0].total_bills) || 0;
+                    lateBills = parseInt(otifResult[0].late_bills) || 0;
+                }
+            } catch (e) { log.debug('OTIF Query', e.message); }
+
+            // 2. Vendor concentration (single query)
+            try {
+                var concSql = "SELECT " +
+                    "SUM(ABS(t.foreigntotal)) as total_spend, " +
+                    "MAX(vendor_spend) as top_vendor " +
+                    "FROM transaction t, " +
+                    "(SELECT SUM(ABS(foreigntotal)) as vendor_spend FROM transaction " +
+                    "WHERE type = 'VendBill' AND trandate >= TO_DATE('" + startDate + "', 'YYYY-MM-DD') " +
+                    "GROUP BY entity ORDER BY vendor_spend DESC FETCH FIRST 1 ROW ONLY) " +
+                    "WHERE t.type = 'VendBill' AND t.trandate >= TO_DATE('" + startDate + "', 'YYYY-MM-DD')";
+                var concResult = Core.runQuery(concSql);
+                if (concResult && concResult.length > 0) {
+                    totalSpend = parseFloat(concResult[0].total_spend) || 0;
+                    topVendorSpend = parseFloat(concResult[0].top_vendor) || 0;
+                }
+            } catch (e) { log.debug('Concentration Query', e.message); }
+
+            // Calculate score components
+            var score = 100;
+            var deductions = { onTime: 0, concentration: 0 };
+
+            // On-time deductions (max -40)
+            var onTimePct = totalBills > 0 ? ((totalBills - lateBills) / totalBills) * 100 : 100;
+            if (onTimePct < 70) deductions.onTime = 40;
+            else if (onTimePct < 80) deductions.onTime = 25;
+            else if (onTimePct < 90) deductions.onTime = 15;
+            else if (onTimePct < 95) deductions.onTime = 8;
+
+            // Concentration deductions (max -30)
+            topVendorPct = totalSpend > 0 ? (topVendorSpend / totalSpend) * 100 : 0;
+            if (topVendorPct > 50) deductions.concentration = 30;
+            else if (topVendorPct > 40) deductions.concentration = 20;
+            else if (topVendorPct > 30) deductions.concentration = 10;
+            else if (topVendorPct > 20) deductions.concentration = 5;
+
+            score = Math.max(0, 100 - deductions.onTime - deductions.concentration);
+
+            var grade = 'A';
+            var label = 'Strong';
+            if (score < 50) { grade = 'F'; label = 'Critical'; }
+            else if (score < 60) { grade = 'D'; label = 'Weak'; }
+            else if (score < 70) { grade = 'C'; label = 'Fair'; }
+            else if (score < 80) { grade = 'B'; label = 'Good'; }
+            else if (score < 90) { grade = 'A'; label = 'Strong'; }
+            else { grade = 'A+'; label = 'Excellent'; }
+
+            var trend = 'stable';
+            if (onTimePct < 80 || topVendorPct > 40) trend = 'down';
+            else if (onTimePct > 95 && topVendorPct < 20) trend = 'up';
+
+            return {
+                score: Math.round(score),
+                grade: grade,
+                label: label,
+                trend: trend,
+                details: {
+                    totalBills: totalBills,
+                    onTimePct: Core.round2(onTimePct),
+                    topVendorPct: Core.round2(topVendorPct),
+                    deductions: deductions
+                }
+            };
+        } catch (e) {
+            log.error('VendorPerformance getScoreOnly Error', e.message);
+            return { score: 75, grade: 'B', label: 'Unknown', trend: 'stable', error: e.message };
+        }
+    }
+
     // ==========================================
     // PUBLIC API
     // ==========================================
@@ -1350,6 +1451,7 @@ function(query, record, search, runtime, format, log, Shared, Utils) {
         analyze: analyzeVendorPerformance,
         getConfig: getConfigForApi,
         getDefaultConfig: getDefaultConfig,
-        handleRequest: handleRequest
+        handleRequest: handleRequest,
+        getScoreOnly: getScoreOnly
     };
 });

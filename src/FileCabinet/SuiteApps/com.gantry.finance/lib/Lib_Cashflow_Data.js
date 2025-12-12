@@ -1,12 +1,12 @@
 /**
  * @NApiVersion 2.1
  */
-define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Config", "./advisor/Lib_Advisor_Utils"], function (
+define(["N/search", "N/query", "N/format", "N/log", "./Lib_Core", "./Lib_Config", "./advisor/Lib_Advisor_Utils"], function (
   search,
   query,
   format,
   log,
-  Shared,
+  Core,
   ConfigLib,
   Utils
 ) {
@@ -182,9 +182,9 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
 
     const result = {
       meta: {
-        asOfDate: Shared.formatDateYMD(timeline.asOfDate),
-        rangeStart: Shared.formatDateYMD(timeline.start),
-        rangeEnd: Shared.formatDateYMD(timeline.end),
+        asOfDate: Core.formatDateForQuery(timeline.asOfDate),
+        rangeStart: Core.formatDateForQuery(timeline.start),
+        rangeEnd: Core.formatDateForQuery(timeline.end),
         range: { days: timeline.days },
         horizonWeeks: config.horizonWeeks,
         activeConfig: config,
@@ -311,11 +311,11 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
     }
 
     return {
-      weeksRunway: Shared.round2(Math.min(weeksRunway, 999)),
-      avgWeeklyBurn: Shared.round2(avgWeeklyBurn),
-      avgWeeklyInflow: Shared.round2(avgWeeklyInflow),
-      netWeeklyChange: Shared.round2(netWeeklyChange),
-      currentCash: Shared.round2(currentBalance || 0),
+      weeksRunway: Core.round2(Math.min(weeksRunway, 999)),
+      avgWeeklyBurn: Core.round2(avgWeeklyBurn),
+      avgWeeklyInflow: Core.round2(avgWeeklyInflow),
+      netWeeklyChange: Core.round2(netWeeklyChange),
+      currentCash: Core.round2(currentBalance || 0),
       status: status,
       criticalWeeks: criticalWeeks
     };
@@ -369,7 +369,7 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
         const rawAmt = parseFloat(res.getValue("amount")) || 0;
         const amt = config.useNetAmt === true ? rawAmt : Math.abs(rawAmt);
         const date = parseNsDate(res.getValue("trandate"));
-        const wkKey = Shared.formatDateYMD(getWeekStart(date));
+        const wkKey = Core.formatDateForQuery(getWeekStart(date));
         const acct = res.getText("account");
 
         if (!weeklyHistory[wkKey]) weeklyHistory[wkKey] = 0;
@@ -383,7 +383,7 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
     });
 
     Object.keys(weeklyHistory).forEach((k) => {
-      if (k < Shared.formatDateYMD(timeline.start)) {
+      if (k < Core.formatDateForQuery(timeline.start)) {
         totalHistory += weeklyHistory[k];
         weeksCounted++;
       }
@@ -401,29 +401,29 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
     let curr = new Date(timeline.start);
 
     while (curr <= timeline.end) {
-      const k = Shared.formatDateYMD(curr);
+      const k = Core.formatDateForQuery(curr);
       let amount = weeklyHistory[k] > 0 ? weeklyHistory[k] : forecastAmount;
       const factor = getProrationFactor(curr, asOfDate, config.expectedDay, config.expectedWeek);
       amount = amount * factor;
-      weeklyAmounts[k] = Shared.round2(amount);
+      weeklyAmounts[k] = Core.round2(amount);
       projectedTotal += amount;
       curr = addDays(curr, 7);
     }
 
     return {
-      total: Shared.round2(projectedTotal),
+      total: Core.round2(projectedTotal),
       weeklyAmounts: weeklyAmounts,
       meta: {
         method: "GL Average",
-        sourceTotal: Shared.round2(totalHistory),
+        sourceTotal: Core.round2(totalHistory),
         weeksUsed: divisor,
-        rawAverage: Shared.round2(totalHistory / divisor),
+        rawAverage: Core.round2(totalHistory / divisor),
         adjustment: adjustmentPct,
-        finalAverage: Shared.round2(weeklyAvg),
+        finalAverage: Core.round2(weeklyAvg),
         expectedWeek: config.expectedWeek,
       },
       breakdown: Object.entries(accountBreakdown).map(([k, v]) => ({
-        name: k, amount: Shared.round2(v), type: "Source Data",
+        name: k, amount: Core.round2(v), type: "Source Data",
       })),
     };
   }
@@ -474,25 +474,25 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
     let curr = new Date(timeline.start);
 
     while (curr <= timeline.end) {
-      const k = Shared.formatDateYMD(curr);
+      const k = Core.formatDateForQuery(curr);
       let amount = baseAmount * getProrationFactor(curr, asOfDate, config.expectedDay, config.expectedWeek);
-      weeklyAmounts[k] = Shared.round2(amount);
+      weeklyAmounts[k] = Core.round2(amount);
       total += amount;
       curr = addDays(curr, 7);
     }
 
     const breakdown = Object.entries(monthTotals)
-      .map(([k, v]) => ({ name: k, amount: Shared.round2(v), type: "Source Month" }))
+      .map(([k, v]) => ({ name: k, amount: Core.round2(v), type: "Source Month" }))
       .sort((a, b) => a.name.localeCompare(b.name));
 
     return {
-      total: Shared.round2(total),
+      total: Core.round2(total),
       weeklyAmounts: weeklyAmounts,
       meta: {
         method: "Vendor History (Median)",
-        monthlyMedian: Shared.round2(monthlyEst),
+        monthlyMedian: Core.round2(monthlyEst),
         adjustment: adjustmentPct,
-        finalWeekly: Shared.round2(weeklyEst),
+        finalWeekly: Core.round2(weeklyEst),
       },
       breakdown: breakdown,
     };
@@ -542,7 +542,7 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
         const debit = parseFloat(res.getValue("debitamount")) || 0;
         const dateStr = res.getValue("trandate");
         const dateObj = parseNsDate(dateStr);
-        const dateKey = Shared.formatDateYMD(dateObj);
+        const dateKey = Core.formatDateForQuery(dateObj);
 
         if (!dailyTotals[dateKey]) {
           dailyTotals[dateKey] = { date: dateObj, debits: 0, credits: 0 };
@@ -597,7 +597,7 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
       }))
       .sort((a, b) => a.month.localeCompare(b.month));
 
-    const currentMonth = Shared.formatDateYMD(asOfDate).substring(0, 7);
+    const currentMonth = Core.formatDateForQuery(asOfDate).substring(0, 7);
     const dayOfMonth = asOfDate.getDate();
 
     const completedMonths = monthlyTotals.filter((m) => {
@@ -696,7 +696,7 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
       .sort((a, b) => b.date - a.date);
 
     const lastPaymentDate = significantPayments.length > 0 ? significantPayments[0].date : null;
-    const lastPaymentDateStr = lastPaymentDate ? Shared.formatDateYMD(lastPaymentDate) : null;
+    const lastPaymentDateStr = lastPaymentDate ? Core.formatDateForQuery(lastPaymentDate) : null;
     const daysSinceLastPayment = lastPaymentDate
       ? Math.ceil((asOfDate - lastPaymentDate) / (1000 * 60 * 60 * 24))
       : 30;
@@ -709,7 +709,7 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
       nextPaymentDate.setDate(Math.min(detectedPaymentDay, getDaysInMonth(nextPaymentDate)));
     }
     nextPaymentDate = adjustToBusinessDay(nextPaymentDate);
-    const nextPaymentDateStr = Shared.formatDateYMD(nextPaymentDate);
+    const nextPaymentDateStr = Core.formatDateForQuery(nextPaymentDate);
 
     const daysUntilPayment = Math.ceil((nextPaymentDate - asOfDate) / (1000 * 60 * 60 * 24));
 
@@ -751,7 +751,7 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
       const monthName = monthDate.toLocaleString("default", { month: "short", year: "numeric" });
       breakdown.push({
         name: monthName,
-        amount: Shared.round2(m.total),
+        amount: Core.round2(m.total),
         type: "Historical",
         details: m.paymentCount + " payment(s), Day " + m.largestPaymentDay,
       });
@@ -761,8 +761,8 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
     let isFirstPayment = true;
 
     while (paymentDate <= timeline.end) {
-      const weekKey = Shared.formatDateYMD(getWeekStart(paymentDate));
-      const amountToPay = Shared.round2(isFirstPayment ? projectedPayment : medianPayment);
+      const weekKey = Core.formatDateForQuery(getWeekStart(paymentDate));
+      const amountToPay = Core.round2(isFirstPayment ? projectedPayment : medianPayment);
 
       weeklyAmounts[weekKey] = (weeklyAmounts[weekKey] || 0) + amountToPay;
       totalProjected += amountToPay;
@@ -771,7 +771,7 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
         breakdown.unshift({
           name: "Next Payment",
           amount: amountToPay,
-          date: Shared.formatDateYMD(paymentDate),
+          date: Core.formatDateForQuery(paymentDate),
           type: "Projection",
           details: projectionMethod,
         });
@@ -785,31 +785,31 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
 
     breakdown.push({
       name: "Current Balance",
-      amount: Shared.round2(totalCurrentBalance),
+      amount: Core.round2(totalCurrentBalance),
       type: "Info",
       details: daysSinceLastPayment + " days since last payment",
     });
 
     return {
-      total: Shared.round2(totalProjected),
+      total: Core.round2(totalProjected),
       weeklyAmounts: weeklyAmounts,
       meta: {
         method: "Credit Card Cycle",
         detectedPaymentDay: detectedPaymentDay,
-        medianPayment: Shared.round2(medianPayment),
-        avgPayment: Shared.round2(avgPayment),
-        currentBalance: Shared.round2(totalCurrentBalance),
+        medianPayment: Core.round2(medianPayment),
+        avgPayment: Core.round2(avgPayment),
+        currentBalance: Core.round2(totalCurrentBalance),
         daysSinceLastPayment: daysSinceLastPayment,
-        dailyBurnRate: Shared.round2(dailyBurnRate),
-        monthlySpendRate: Shared.round2(dailyBurnRate * 30),
-        paymentTrend: Shared.round2(paymentTrend) + "%",
+        dailyBurnRate: Core.round2(dailyBurnRate),
+        monthlySpendRate: Core.round2(dailyBurnRate * 30),
+        paymentTrend: Core.round2(paymentTrend) + "%",
         monthsAnalyzed: completedMonths.length,
         accountsIncluded: accountIds.length,
         lastPaymentDate: lastPaymentDateStr,
-        outstanding: Shared.round2(totalCurrentBalance),
-        projectedGrowth: Shared.round2(adjustedProjectedGrowth),
+        outstanding: Core.round2(totalCurrentBalance),
+        projectedGrowth: Core.round2(adjustedProjectedGrowth),
         nextPaymentDate: nextPaymentDateStr,
-        estimatedMonthly: Shared.round2(medianPayment),
+        estimatedMonthly: Core.round2(medianPayment),
       },
       breakdown: breakdown,
     };
@@ -829,7 +829,7 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
     let curr = new Date(timeline.start);
 
     while (curr <= timeline.end) {
-      const wkKey = Shared.formatDateYMD(getWeekStart(curr));
+      const wkKey = Core.formatDateForQuery(getWeekStart(curr));
       let currentAmount = amount;
       if (frequency === "weekly") {
         const factor = getProrationFactor(curr, asOfDate, null);
@@ -843,7 +843,7 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
       else curr = addDays(curr, 7);
     }
     return {
-      total: Shared.round2(total), weeklyAmounts: weeklyAmounts,
+      total: Core.round2(total), weeklyAmounts: weeklyAmounts,
       breakdown: [{ name: `Manual (${frequency})`, amount: amount }],
       meta: { method: "Manual Recurring", amount: amount, frequency: frequency },
     };
@@ -870,7 +870,7 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
     const globalStartCash = contextData.cashStart || 0;
 
     while (curr <= timeline.end) {
-      const k = Shared.formatDateYMD(curr);
+      const k = Core.formatDateForQuery(curr);
       const val_AR = contextData && contextData.ar ? contextData.ar[k] || 0 : 0;
       const val_AP = contextData && contextData.ap ? contextData.ap[k] || 0 : 0;
       const val_Net = val_AR - val_AP;
@@ -917,13 +917,13 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
         if (!isFinite(result)) result = 0;
       } catch (e) { result = 0; }
 
-      weeklyAmounts[k] = Shared.round2(result);
+      weeklyAmounts[k] = Core.round2(result);
       total += result;
       curr = addDays(curr, 7);
       weekIndex++;
     }
     return {
-      total: Shared.round2(total), weeklyAmounts: weeklyAmounts,
+      total: Core.round2(total), weeklyAmounts: weeklyAmounts,
       meta: { method: "Calculated Formula", formula: config.formula },
       breakdown: [{ name: "Computed via Formula", amount: total }],
     };
@@ -1002,22 +1002,22 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
     while (nextDate < today) { nextDate = addDays(nextDate, nextIntervalDays); }
 
     while (nextDate <= timeline.end) {
-      const wkKey = Shared.formatDateYMD(getWeekStart(nextDate));
-      weeklyAmounts[wkKey] = (weeklyAmounts[wkKey] || 0) + Shared.round2(avgAmount);
+      const wkKey = Core.formatDateForQuery(getWeekStart(nextDate));
+      weeklyAmounts[wkKey] = (weeklyAmounts[wkKey] || 0) + Core.round2(avgAmount);
       total += avgAmount;
       nextDate = addDays(nextDate, nextIntervalDays);
     }
 
     const historyBreakdown = events.map((e) => ({
-      name: "Historical Payment", amount: Shared.round2(e.amount),
-      date: Shared.formatDateYMD(e.date), type: "Source Data",
+      name: "Historical Payment", amount: Core.round2(e.amount),
+      date: Core.formatDateForQuery(e.date), type: "Source Data",
     }));
 
     return {
-      total: Shared.round2(total), weeklyAmounts: weeklyAmounts,
+      total: Core.round2(total), weeklyAmounts: weeklyAmounts,
       meta: {
         method: "Vendor Recurring (Auto)", frequency: frequencyLabel,
-        avgAmount: Shared.round2(avgAmount), samples: events.length, interval: medianInterval,
+        avgAmount: Core.round2(avgAmount), samples: events.length, interval: medianInterval,
       },
       breakdown: historyBreakdown,
     };
@@ -1031,8 +1031,8 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
     if (bankIds.length === 0) return { total: 0, weeklyAmounts: {}, meta: { error: "Configuration Error: No Bank Account IDs selected." } };
 
     const historyStartDate = addDays(timeline.start, -(historyWeeks * 7));
-    const startStr = Shared.formatDateYMD(historyStartDate);
-    const endStr = Shared.formatDateYMD(timeline.end);
+    const startStr = Core.formatDateForQuery(historyStartDate);
+    const endStr = Core.formatDateForQuery(timeline.end);
 
     let typeList = [];
     if (config.includeTransfers !== false) { typeList.push("'Transfer'"); typeList.push("'Trnfr'"); }
@@ -1083,7 +1083,7 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
             if (absAmount === 0) return;
             const date = parseNsDate(res.trandate); 
             if (!date) return; 
-            const wkKey = Shared.formatDateYMD(getWeekStart(date));
+            const wkKey = Core.formatDateForQuery(getWeekStart(date));
             if (!weeklyHistory[wkKey]) weeklyHistory[wkKey] = 0;
             weeklyHistory[wkKey] += absAmount;
             
@@ -1092,10 +1092,10 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
             const isCurrentWeek = date >= currentWeekStartForBreakdown && date < addDays(currentWeekStartForBreakdown, 7);
             if (date < timeline.start || isCurrentWeek) {
                 breakdown.push({
-                    name: `${Shared.formatDateYMD(date)} ${res.type} ${res.entity_name || ''} ${res.tranid ? '('+res.tranid+')' : ''}`,
-                    memo: res.header_memo || "", amount: Shared.round2(absAmount),
+                    name: `${Core.formatDateForQuery(date)} ${res.type} ${res.entity_name || ''} ${res.tranid ? '('+res.tranid+')' : ''}`,
+                    memo: res.header_memo || "", amount: Core.round2(absAmount),
                     type: isCurrentWeek ? "This Week (Applied)" : "Bank Register", 
-                    date: Shared.formatDateYMD(date),
+                    date: Core.formatDateForQuery(date),
                     internalId: res.id, tranId: res.tranid
                 });
             }
@@ -1104,7 +1104,7 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
         return { total: 0, weeklyAmounts: {}, meta: { error: "SuiteQL Error", details: e.message } };
     }
 
-    const startKey = Shared.formatDateYMD(timeline.start);
+    const startKey = Core.formatDateForQuery(timeline.start);
     Object.keys(weeklyHistory).forEach((k) => {
       if (k < startKey) { totalHistory += weeklyHistory[k]; weeksCounted++; }
     });
@@ -1118,10 +1118,10 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
     let curr = new Date(timeline.start);
     
     // Determine current week key for special handling
-    const currentWeekKey = Shared.formatDateYMD(getWeekStart(asOfDate));
+    const currentWeekKey = Core.formatDateForQuery(getWeekStart(asOfDate));
 
     while (curr <= timeline.end) {
-      const k = Shared.formatDateYMD(curr);
+      const k = Core.formatDateForQuery(curr);
       const actualThisWeek = weeklyHistory[k] || 0;
       let amount;
       
@@ -1139,7 +1139,7 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
       
       const factor = getProrationFactor(curr, asOfDate, config.expectedDay, config.expectedWeek);
       amount = amount * factor;
-      weeklyAmounts[k] = Shared.round2(amount);
+      weeklyAmounts[k] = Core.round2(amount);
       projectedTotal += amount;
       curr = addDays(curr, 7);
     }
@@ -1148,13 +1148,13 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
     const currentWeekApplied = weeklyHistory[currentWeekKey] || 0;
 
     return {
-      total: Shared.round2(projectedTotal), weeklyAmounts: weeklyAmounts,
+      total: Core.round2(projectedTotal), weeklyAmounts: weeklyAmounts,
       meta: {
         method: "Bank Register History", bankAccounts: bankIds,
         historyWeeks: historyWeeks, memoKeywords: config.memoKeywords,
-        rawAverage: Shared.round2(totalHistory / divisor || 0),
-        finalAverage: Shared.round2(weeklyAvg), weeksUsed: divisor,
-        currentWeekApplied: Shared.round2(currentWeekApplied)
+        rawAverage: Core.round2(totalHistory / divisor || 0),
+        finalAverage: Core.round2(weeklyAvg), weeksUsed: divisor,
+        currentWeekApplied: Core.round2(currentWeekApplied)
       },
       breakdown: breakdown,
     };
@@ -1257,7 +1257,7 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
         predictedDate = adjustToBusinessDay(predictedDate);
 
         if (predictedDate >= timeline.start && predictedDate <= timeline.end) {
-          const wkKey = Shared.formatDateYMD(getWeekStart(predictedDate));
+          const wkKey = Core.formatDateForQuery(getWeekStart(predictedDate));
           weeklyMap[wkKey] = (weeklyMap[wkKey] || 0) + amt;
           // Use configurable volatility thresholds
           let volLabel = "Avg";
@@ -1273,11 +1273,11 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
             entityName: entityName,
             entity: entityName, // backward compat
             amount: amt,
-            tranDate: Shared.formatDateYMD(trandate),
-            dueDate: duedate ? Shared.formatDateYMD(duedate) : "-",
-            duedate: duedate ? Shared.formatDateYMD(duedate) : "-", // backward compat
-            predictedDate: Shared.formatDateYMD(predictedDate),
-            date: Shared.formatDateYMD(predictedDate), // backward compat
+            tranDate: Core.formatDateForQuery(trandate),
+            dueDate: duedate ? Core.formatDateForQuery(duedate) : "-",
+            duedate: duedate ? Core.formatDateForQuery(duedate) : "-", // backward compat
+            predictedDate: Core.formatDateForQuery(predictedDate),
+            date: Core.formatDateForQuery(predictedDate), // backward compat
             weekStart: wkKey,
             volatility: volLabel,
             daysOverDue: daysOverDue,
@@ -1294,13 +1294,13 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
 
     return {
       summary: {
-        outstandingTotal: Shared.round2(totalOutstanding),
-        totalOutstanding: Shared.round2(totalOutstanding),
+        outstandingTotal: Core.round2(totalOutstanding),
+        totalOutstanding: Core.round2(totalOutstanding),
         avgDaysToPay: statsData.globalAvg,
         avgDaysUsed: statsData.globalAvg,
-        pctCurrent: Shared.round2(pctCurrentAR),
+        pctCurrent: Core.round2(pctCurrentAR),
         invoices: invoices,
-        buckets: Object.entries(buckets).map(([k, v]) => ({ label: k, amount: Shared.round2(v) })),
+        buckets: Object.entries(buckets).map(([k, v]) => ({ label: k, amount: Core.round2(v) })),
       },
       weeklyMap: weeklyMap,
     };
@@ -1424,7 +1424,7 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
         predictedDate = adjustToBusinessDay(predictedDate);
 
         if (predictedDate >= timeline.start && predictedDate <= timeline.end) {
-          const wkKey = Shared.formatDateYMD(getWeekStart(predictedDate));
+          const wkKey = Core.formatDateForQuery(getWeekStart(predictedDate));
           weeklyMap[wkKey] = (weeklyMap[wkKey] || 0) + amt;
           bills.push({
             internalId: res.id,
@@ -1434,12 +1434,12 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
             entityName: entityName,
             entity: entityName, // backward compat
             amount: amt,
-            tranDate: Shared.formatDateYMD(trandate),
-            dueDate: duedate ? Shared.formatDateYMD(duedate) : "-",
-            duedate: duedate ? Shared.formatDateYMD(duedate) : "-", // backward compat
+            tranDate: Core.formatDateForQuery(trandate),
+            dueDate: duedate ? Core.formatDateForQuery(duedate) : "-",
+            duedate: duedate ? Core.formatDateForQuery(duedate) : "-", // backward compat
             dueDateObj: duedate || predictedDate,
-            predictedDate: Shared.formatDateYMD(predictedDate),
-            date: Shared.formatDateYMD(predictedDate), // backward compat
+            predictedDate: Core.formatDateForQuery(predictedDate),
+            date: Core.formatDateForQuery(predictedDate), // backward compat
             weekStart: wkKey,
             vendorCat: String(vendorCat || ""),
             isPriority: false,
@@ -1457,12 +1457,12 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
 
     return {
       summary: {
-        outstandingTotal: Shared.round2(totalOutstanding),
-        totalOutstanding: Shared.round2(totalOutstanding),
+        outstandingTotal: Core.round2(totalOutstanding),
+        totalOutstanding: Core.round2(totalOutstanding),
         avgDaysToPay: statsData.globalAvg,
         avgDaysUsed: statsData.globalAvg,
-        pctCurrent: Shared.round2(pctCurrentAP),
-        buckets: Object.entries(buckets).map(([k, v]) => ({ label: k, amount: Shared.round2(v) })),
+        pctCurrent: Core.round2(pctCurrentAP),
+        buckets: Object.entries(buckets).map(([k, v]) => ({ label: k, amount: Core.round2(v) })),
         bills: bills,
       },
       weeklyMap: weeklyMap,
@@ -1535,7 +1535,7 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
     const defaultDays = defaultDaysToPay || 45;
     const today = new Date();
     const historyStart = addDays(today, -historyDays);
-    const startStr = Shared.formatDateYMD(historyStart);
+    const startStr = Core.formatDateForQuery(historyStart);
 
     // Single SuiteQL query for both AR (CustInvc) and AP (VendBill) payment history
     // Use explicit aliases to ensure consistent column names in results
@@ -1651,7 +1651,7 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
     const scheduledBills = [];
 
     while (curr <= timeline.end) {
-      const k = Shared.formatDateYMD(curr);
+      const k = Core.formatDateForQuery(curr);
       const end = addDays(curr, 6);
       const inAR = arMap[k] || 0;
       const inDyn = dynIn[k] || 0;
@@ -1693,11 +1693,11 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
       const deferredTotal = billBacklog.reduce((sum, b) => sum + b.amount, 0);
 
       weeks.push({
-        weekStart: k, weekEnd: Shared.formatDateYMD(end),
-        startingCash: Shared.round2(runningCash), safeApCapacity: Shared.round2(safeApCapacity),
-        inflows: { ar: Shared.round2(inAR), other: Shared.round2(inDyn), total: Shared.round2(weekTotalIn) },
-        outflows: { ap: Shared.round2(apPaidThisWeek), other: Shared.round2(outDyn), total: Shared.round2(weekTotalOut), deferred: Shared.round2(deferredTotal) },
-        netChange: Shared.round2(net), endingCash: Shared.round2(runningCash + net),
+        weekStart: k, weekEnd: Core.formatDateForQuery(end),
+        startingCash: Core.round2(runningCash), safeApCapacity: Core.round2(safeApCapacity),
+        inflows: { ar: Core.round2(inAR), other: Core.round2(inDyn), total: Core.round2(weekTotalIn) },
+        outflows: { ap: Core.round2(apPaidThisWeek), other: Core.round2(outDyn), total: Core.round2(weekTotalOut), deferred: Core.round2(deferredTotal) },
+        netChange: Core.round2(net), endingCash: Core.round2(runningCash + net),
       });
 
       runningCash += net;
@@ -1709,9 +1709,9 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
     return {
       weeks: weeks, scheduledBills: scheduledBills,
       summary: {
-        startingCash: Shared.round2(startCash), projectedEnd: Shared.round2(runningCash),
-        totalInflows: Shared.round2(totalIn), totalOutflows: Shared.round2(totalOut),
-        netChange: Shared.round2(totalIn - totalOut),
+        startingCash: Core.round2(startCash), projectedEnd: Core.round2(runningCash),
+        totalInflows: Core.round2(totalIn), totalOutflows: Core.round2(totalOut),
+        netChange: Core.round2(totalIn - totalOut),
       },
     };
   }
@@ -1944,8 +1944,8 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
       transactions: transactions,
       summary: {
         count: transactions.length,
-        totalAmount: Shared.round2(totalAmount),
-        avgAmount: Shared.round2(avgAmount)
+        totalAmount: Core.round2(totalAmount),
+        avgAmount: Core.round2(avgAmount)
       }
     };
   }
@@ -2004,8 +2004,8 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
             internalId: res.getValue("internalid"),
             tranId: res.getValue("tranid"),
             amount: amount,
-            tranDate: Shared.formatDateYMD(trandate),
-            closeDate: Shared.formatDateYMD(closedate),
+            tranDate: Core.formatDateForQuery(trandate),
+            closeDate: Core.formatDateForQuery(closedate),
             daysToPay: daysToPay,
             memo: res.getValue("memo") || ''
           });
@@ -2039,8 +2039,8 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
           internalId: res.getValue("internalid"),
           tranId: res.getValue("tranid"),
           amount: parseFloat(res.getValue("amountremaining")) || 0,
-          tranDate: Shared.formatDateYMD(parseNsDate(res.getValue("trandate"))),
-          dueDate: duedate ? Shared.formatDateYMD(duedate) : null,
+          tranDate: Core.formatDateForQuery(parseNsDate(res.getValue("trandate"))),
+          dueDate: duedate ? Core.formatDateForQuery(duedate) : null,
           daysOverDue: daysOverDue,
           memo: res.getValue("memo") || ''
         });
@@ -2069,14 +2069,14 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
         entityType: entityType,
         summary: {
           avgDaysToPay: avgDaysToPay,
-          totalPaid: Shared.round2(payments.reduce((sum, p) => sum + p.amount, 0)),
+          totalPaid: Core.round2(payments.reduce((sum, p) => sum + p.amount, 0)),
           paymentCount: count,
           openCount: openInvoices.length,
-          totalOpen: Shared.round2(totalOpen),
+          totalOpen: Core.round2(totalOpen),
           reliabilityScore: reliabilityScore
         },
         monthlyTrend: Object.entries(monthlyTotals)
-          .map(([month, amount]) => ({ month, amount: Shared.round2(amount) }))
+          .map(([month, amount]) => ({ month, amount: Core.round2(amount) }))
           .sort((a, b) => a.month.localeCompare(b.month)),
         recentPayments: payments.slice(0, 20),
         openItems: openInvoices
@@ -2111,7 +2111,7 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
             internalId: res.getValue("internalid"),
             tranId: res.getValue("tranid"),
             amount: amount,
-            tranDate: Shared.formatDateYMD(trandate),
+            tranDate: Core.formatDateForQuery(trandate),
             type: res.getText("type"),
             memo: res.getValue("memo") || ''
           });
@@ -2144,8 +2144,8 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
           internalId: res.getValue("internalid"),
           tranId: res.getValue("tranid"),
           amount: parseFloat(res.getValue("amountremaining")) || 0,
-          tranDate: Shared.formatDateYMD(parseNsDate(res.getValue("trandate"))),
-          dueDate: duedate ? Shared.formatDateYMD(duedate) : null,
+          tranDate: Core.formatDateForQuery(parseNsDate(res.getValue("trandate"))),
+          dueDate: duedate ? Core.formatDateForQuery(duedate) : null,
           daysOverDue: daysOverDue,
           memo: res.getValue("memo") || ''
         });
@@ -2161,14 +2161,14 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
         entityId: entityId,
         entityType: entityType,
         summary: {
-          totalPaid: Shared.round2(totalPaid),
+          totalPaid: Core.round2(totalPaid),
           paymentCount: payments.length,
-          avgPayment: Shared.round2(avgPayment),
+          avgPayment: Core.round2(avgPayment),
           openCount: openBills.length,
-          totalOpen: Shared.round2(totalOpen)
+          totalOpen: Core.round2(totalOpen)
         },
         monthlyTrend: Object.entries(monthlyTotals)
-          .map(([month, amount]) => ({ month, amount: Shared.round2(amount) }))
+          .map(([month, amount]) => ({ month, amount: Core.round2(amount) }))
           .sort((a, b) => a.month.localeCompare(b.month)),
         recentPayments: payments.slice(0, 20),
         openItems: openBills
@@ -2253,9 +2253,9 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
               entityId: res.getValue("entity"),
               entityName: res.getText("entity"),
               amount: parseFloat(res.getValue("amountremaining")) || 0,
-              tranDate: Shared.formatDateYMD(parseNsDate(res.getValue("trandate"))),
-              dueDate: duedate ? Shared.formatDateYMD(duedate) : null,
-              predictedDate: duedate ? Shared.formatDateYMD(duedate) : "-",
+              tranDate: Core.formatDateForQuery(parseNsDate(res.getValue("trandate"))),
+              dueDate: duedate ? Core.formatDateForQuery(duedate) : null,
+              predictedDate: duedate ? Core.formatDateForQuery(duedate) : "-",
               daysOverDue: daysOverDue,
               predictionMethod: "DueDate",
               predictionDetail: "Based on invoice due date"
@@ -2294,9 +2294,9 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
               entityId: res.getValue("entity"),
               entityName: res.getText("entity"),
               amount: parseFloat(res.getValue("amountremaining")) || 0,
-              tranDate: Shared.formatDateYMD(parseNsDate(res.getValue("trandate"))),
-              dueDate: duedate ? Shared.formatDateYMD(duedate) : null,
-              predictedDate: duedate ? Shared.formatDateYMD(duedate) : "-",
+              tranDate: Core.formatDateForQuery(parseNsDate(res.getValue("trandate"))),
+              dueDate: duedate ? Core.formatDateForQuery(duedate) : null,
+              predictedDate: duedate ? Core.formatDateForQuery(duedate) : "-",
               daysOverDue: daysOverDue,
               predictionMethod: "DueDate",
               predictionDetail: "Based on bill due date"
@@ -2318,33 +2318,167 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Shared", "./Lib_Confi
       items: items,
       summary: {
         count: items.length,
-        totalAmount: Shared.round2(totalAmount)
+        totalAmount: Core.round2(totalAmount)
       }
     };
   }
 
-  return { 
+  // ═══════════════════════════════════════════════════════════════════════════
+  // SCORE-ONLY FUNCTION - Lightweight score computation for dashboard overview
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Get cashflow health score only - minimal queries for fast app load
+   * Score is based on: runway weeks, AR aging quality, burn rate trend
+   * @returns {Object} { score: 0-100, grade: 'A'-'F', label: string, trend: string }
+   */
+  function getScoreOnly() {
+    try {
+      var score = 100;
+      var deductions = { runway: 0, arAging: 0, apAging: 0 };
+
+      // 1. Get bank balance (single query)
+      var bank = computeBankBalance();
+      var currentCash = bank.balance || 0;
+
+      // 2. Get AR aging buckets (single query)
+      var arBuckets = { current: 0, overdue30: 0, overdue60: 0, overdue90: 0 };
+      var arTotal = 0;
+      try {
+        var arSql = "SELECT " +
+          "SUM(CASE WHEN TRUNC(SYSDATE) - TRUNC(t.duedate) <= 0 THEN t.foreignamountunpaid ELSE 0 END) as current_amt, " +
+          "SUM(CASE WHEN TRUNC(SYSDATE) - TRUNC(t.duedate) BETWEEN 1 AND 30 THEN t.foreignamountunpaid ELSE 0 END) as overdue_30, " +
+          "SUM(CASE WHEN TRUNC(SYSDATE) - TRUNC(t.duedate) BETWEEN 31 AND 60 THEN t.foreignamountunpaid ELSE 0 END) as overdue_60, " +
+          "SUM(CASE WHEN TRUNC(SYSDATE) - TRUNC(t.duedate) > 60 THEN t.foreignamountunpaid ELSE 0 END) as overdue_90, " +
+          "SUM(t.foreignamountunpaid) as total " +
+          "FROM transaction t " +
+          "WHERE t.type = 'CustInvc' AND t.status != 'paidInFull' AND t.mainline = 'T' AND t.foreignamountunpaid > 0";
+        var arResult = query.runSuiteQL({ query: arSql }).asMappedResults();
+        if (arResult && arResult.length > 0) {
+          arBuckets.current = parseFloat(arResult[0].current_amt) || 0;
+          arBuckets.overdue30 = parseFloat(arResult[0].overdue_30) || 0;
+          arBuckets.overdue60 = parseFloat(arResult[0].overdue_60) || 0;
+          arBuckets.overdue90 = parseFloat(arResult[0].overdue_90) || 0;
+          arTotal = parseFloat(arResult[0].total) || 0;
+        }
+      } catch (e) {
+        debugLog('AR Aging Query Error', e.message);
+      }
+
+      // 3. Get AP total and monthly burn (single query)
+      var apTotal = 0;
+      var monthlyBurn = 0;
+      try {
+        var apSql = "SELECT " +
+          "SUM(CASE WHEN t.type = 'VendBill' AND t.status != 'paidInFull' AND t.mainline = 'T' THEN ABS(t.foreignamountunpaid) ELSE 0 END) as ap_total, " +
+          "SUM(CASE WHEN t.type IN ('VendBill', 'Check') AND t.trandate >= ADD_MONTHS(TRUNC(SYSDATE), -1) AND t.mainline = 'T' THEN ABS(t.foreigntotal) ELSE 0 END) as monthly_outflow " +
+          "FROM transaction t " +
+          "WHERE t.type IN ('VendBill', 'Check')";
+        var apResult = query.runSuiteQL({ query: apSql }).asMappedResults();
+        if (apResult && apResult.length > 0) {
+          apTotal = parseFloat(apResult[0].ap_total) || 0;
+          monthlyBurn = parseFloat(apResult[0].monthly_outflow) || 0;
+        }
+      } catch (e) {
+        debugLog('AP Query Error', e.message);
+      }
+
+      // 4. Calculate runway (weeks)
+      var weeklyBurn = monthlyBurn / 4.33;
+      var weeksRunway = weeklyBurn > 0 ? currentCash / weeklyBurn : 999;
+
+      // DEDUCTIONS
+
+      // Runway deductions (max -40)
+      if (weeksRunway < 4) {
+        deductions.runway = 40; // Critical
+      } else if (weeksRunway < 8) {
+        deductions.runway = 30; // Warning
+      } else if (weeksRunway < 12) {
+        deductions.runway = 15; // Watch
+      } else if (weeksRunway < 20) {
+        deductions.runway = 5; // OK
+      }
+
+      // AR Aging deductions (max -30)
+      if (arTotal > 0) {
+        var pct60Plus = ((arBuckets.overdue60 + arBuckets.overdue90) / arTotal) * 100;
+        var pct90Plus = (arBuckets.overdue90 / arTotal) * 100;
+        if (pct90Plus > 20) deductions.arAging = 30;
+        else if (pct90Plus > 10) deductions.arAging = 20;
+        else if (pct60Plus > 30) deductions.arAging = 15;
+        else if (pct60Plus > 15) deductions.arAging = 10;
+        else if (pct60Plus > 5) deductions.arAging = 5;
+      }
+
+      // AP concentration deductions (max -15)
+      if (currentCash > 0 && apTotal > currentCash * 0.8) {
+        deductions.apAging = 15; // AP exceeds 80% of cash
+      } else if (currentCash > 0 && apTotal > currentCash * 0.5) {
+        deductions.apAging = 8;
+      }
+
+      // Calculate final score
+      var totalDeductions = deductions.runway + deductions.arAging + deductions.apAging;
+      score = Math.max(0, Math.min(100, 100 - totalDeductions));
+
+      // Determine grade
+      var grade = 'A';
+      var label = 'Excellent';
+      if (score < 50) { grade = 'F'; label = 'Critical'; }
+      else if (score < 60) { grade = 'D'; label = 'Poor'; }
+      else if (score < 70) { grade = 'C'; label = 'Fair'; }
+      else if (score < 80) { grade = 'B'; label = 'Good'; }
+      else if (score < 90) { grade = 'A'; label = 'Very Good'; }
+      else { grade = 'A+'; label = 'Excellent'; }
+
+      // Determine trend based on runway
+      var trend = 'stable';
+      if (weeksRunway < 8) trend = 'down';
+      else if (weeksRunway > 20) trend = 'up';
+
+      return {
+        score: Math.round(score),
+        grade: grade,
+        label: label,
+        trend: trend,
+        details: {
+          currentCash: Core.round2(currentCash),
+          weeksRunway: Core.round2(Math.min(weeksRunway, 999)),
+          arTotal: Core.round2(arTotal),
+          apTotal: Core.round2(apTotal),
+          deductions: deductions
+        }
+      };
+    } catch (e) {
+      log.error('Cashflow getScoreOnly Error', e.message);
+      return { score: 50, grade: 'C', label: 'Unknown', trend: 'stable', error: e.message };
+    }
+  }
+
+  return {
     getData,
     getWeekTransactions,
     getEntityHistory,
     getAgingBucketDetail,
-    
+    getScoreOnly,
+
     /**
      * Handle POST requests with subActions for lazy-loaded flyout data
      */
     handleRequest: function(context) {
       const subAction = context.subAction;
-      
+
       switch (subAction) {
         case 'week_transactions':
           return getWeekTransactions(context);
-          
+
         case 'entity_history':
           return getEntityHistory(context);
-          
+
         case 'aging_bucket_detail':
           return getAgingBucketDetail(context);
-          
+
         default:
           // No subAction - return main dashboard data
           return getData(context);

@@ -15,12 +15,12 @@
  * @NApiVersion 2.1
  * @NModuleScope Public
  */
-define(['N/query', 'N/record', 'N/search', 'N/runtime', 'N/format', './Lib_Shared', './advisor/Lib_Advisor_Utils'],
-function(query, record, search, runtime, format, Shared, Utils) {
+define(['N/query', 'N/record', 'N/search', 'N/runtime', 'N/format', './Lib_Core', './advisor/Lib_Advisor_Utils'],
+function(query, record, search, runtime, format, Core, Utils) {
     'use strict';
-    
-    // Use shared runSuiteQL
-    const runSuiteQL = Shared.runSuiteQL;
+
+    // Use core runQuery
+    const runSuiteQL = Core.runQuery;
 
     // ==========================================
     // CONSTANTS
@@ -2432,7 +2432,7 @@ function(query, record, search, runtime, format, Shared, Utils) {
     // UTILITIES
     // ==========================================
     
-    // Note: runSuiteQL is imported from Lib_Shared
+    // Note: runSuiteQL is imported from Lib_Core
     
     function getDefaultStartDate() {
         const d = new Date();
@@ -2808,6 +2808,99 @@ function(query, record, search, runtime, format, Shared, Utils) {
         }
     }
 
+    // ═══════════════════════════════════════════════════════════════════════════
+    // SCORE-ONLY FUNCTION - Lightweight score computation for dashboard overview
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Get integrity score only - minimal queries for fast app load
+     * Score is INVERTED (100 = clean, 0 = many issues) unlike internal risk score
+     * @returns {Object} { score: 0-100, grade: 'A'-'F', label: string, trend: string }
+     */
+    function getScoreOnly() {
+        try {
+            var riskScore = 0;
+            var today = new Date();
+            var endDate = today.toISOString().split('T')[0];
+            var startDate = new Date(today.getFullYear(), today.getMonth() - 3, today.getDate()).toISOString().split('T')[0];
+
+            // Count key risk indicators with minimal queries
+            var duplicateCount = 0, weekendCount = 0, ghostCount = 0;
+
+            // 1. Potential duplicates (single query)
+            try {
+                var dupSql = "SELECT COUNT(*) as cnt FROM ( " +
+                    "SELECT t1.id FROM transaction t1 " +
+                    "JOIN transaction t2 ON t1.id < t2.id AND t1.entity = t2.entity " +
+                    "AND ABS(t1.foreigntotal) = ABS(t2.foreigntotal) AND ABS(t1.foreigntotal) > 100 " +
+                    "AND ABS(TRUNC(t1.trandate) - TRUNC(t2.trandate)) <= 30 " +
+                    "AND t1.type IN ('VendBill', 'Check') AND t2.type IN ('VendBill', 'Check') " +
+                    "AND t1.trandate >= TO_DATE('" + startDate + "', 'YYYY-MM-DD') " +
+                    "FETCH FIRST 50 ROWS ONLY)";
+                var dupResult = Core.runQuery(dupSql);
+                if (dupResult && dupResult.length > 0) {
+                    duplicateCount = parseInt(dupResult[0].cnt) || 0;
+                }
+            } catch (e) { log.debug('Dup Query', e.message); }
+
+            // 2. Weekend entries (single query)
+            try {
+                var wkndSql = "SELECT COUNT(*) as cnt FROM transaction " +
+                    "WHERE type IN ('VendBill', 'Check', 'ExpRept') " +
+                    "AND trandate >= TO_DATE('" + startDate + "', 'YYYY-MM-DD') " +
+                    "AND TO_CHAR(trandate, 'DY') IN ('SAT', 'SUN') " +
+                    "AND ABS(foreigntotal) > 1000";
+                var wkndResult = Core.runQuery(wkndSql);
+                if (wkndResult && wkndResult.length > 0) {
+                    weekendCount = parseInt(wkndResult[0].cnt) || 0;
+                }
+            } catch (e) { log.debug('Weekend Query', e.message); }
+
+            // Calculate risk score using simplified formula
+            if (duplicateCount > 10) riskScore += 15;
+            else if (duplicateCount > 5) riskScore += 10;
+            else if (duplicateCount > 0) riskScore += 5;
+
+            if (weekendCount > 20) riskScore += 15;
+            else if (weekendCount > 10) riskScore += 10;
+            else if (weekendCount > 5) riskScore += 5;
+
+            // Cap at 100
+            riskScore = Math.min(100, riskScore);
+
+            // INVERT: Integrity score = 100 - risk score (higher is better)
+            var score = 100 - riskScore;
+
+            var grade = 'A';
+            var label = 'Clean';
+            if (score < 50) { grade = 'F'; label = 'High Risk'; }
+            else if (score < 60) { grade = 'D'; label = 'Elevated Risk'; }
+            else if (score < 70) { grade = 'C'; label = 'Moderate Risk'; }
+            else if (score < 80) { grade = 'B'; label = 'Low Risk'; }
+            else if (score < 95) { grade = 'A'; label = 'Very Clean'; }
+            else { grade = 'A+'; label = 'Excellent'; }
+
+            var trend = 'stable';
+            if (duplicateCount > 10 || weekendCount > 15) trend = 'down';
+            else if (duplicateCount === 0 && weekendCount < 3) trend = 'up';
+
+            return {
+                score: Math.round(score),
+                grade: grade,
+                label: label,
+                trend: trend,
+                details: {
+                    riskScore: riskScore,
+                    duplicateCount: duplicateCount,
+                    weekendCount: weekendCount
+                }
+            };
+        } catch (e) {
+            log.error('Integrity getScoreOnly Error', e.message);
+            return { score: 85, grade: 'A', label: 'Unknown', trend: 'stable', error: e.message };
+        }
+    }
+
     return {
         getData,  // Router expects this
         handleRequest,  // For flyout/drilldown sub-actions
@@ -2826,6 +2919,7 @@ function(query, record, search, runtime, format, Shared, Utils) {
         getVendorTransactions,
         getUserTransactions,
         getWeekendUserEntries,
-        getSequentialDetail
+        getSequentialDetail,
+        getScoreOnly
     };
 });

@@ -15,11 +15,11 @@
  * @NApiVersion 2.1
  * @NModuleScope Public
  */
-define(['N/query', 'N/runtime', 'N/search', 'N/log', './Lib_Shared'], function(query, runtime, search, log, Shared) {
+define(['N/query', 'N/runtime', 'N/search', 'N/log', './Lib_Core'], function(query, runtime, search, log, Core) {
     'use strict';
 
-    // Use shared utilities
-    const runSuiteQL = Shared.runSuiteQL;
+    // Use core utilities
+    const runSuiteQL = Core.runQuery;
 
     // ==========================================
     // DEFAULT CONFIGURATION
@@ -2568,6 +2568,122 @@ define(['N/query', 'N/runtime', 'N/search', 'N/log', './Lib_Shared'], function(q
         };
     }
 
+    // ═══════════════════════════════════════════════════════════════════════════
+    // SCORE-ONLY FUNCTION - Lightweight score computation for dashboard overview
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Get customer value score only - minimal queries for fast app load
+     * Score based on: customer health distribution, churn risk, payment behavior
+     * @returns {Object} { score: 0-100, grade: 'A'-'F', label: string, trend: string }
+     */
+    function getScoreOnly() {
+        try {
+            var today = new Date();
+            var endDate = today.toISOString().split('T')[0];
+            var startDate = new Date(today.getFullYear() - 1, today.getMonth(), today.getDate()).toISOString().split('T')[0];
+
+            var totalCustomers = 0, activeCustomers = 0, atRiskCustomers = 0;
+            var avgDaysToPay = 30, overdueCount = 0;
+
+            // 1. Customer activity and recency (single query)
+            try {
+                var custSql = "SELECT " +
+                    "COUNT(DISTINCT t.entity) as total_customers, " +
+                    "COUNT(DISTINCT CASE WHEN TRUNC(SYSDATE) - TRUNC(MAX(t.trandate)) <= 90 THEN t.entity END) as active_customers, " +
+                    "COUNT(DISTINCT CASE WHEN TRUNC(SYSDATE) - TRUNC(MAX(t.trandate)) > 180 THEN t.entity END) as at_risk " +
+                    "FROM transaction t " +
+                    "WHERE t.type IN ('CustInvc', 'SalesOrd') " +
+                    "AND t.trandate >= TO_DATE('" + startDate + "', 'YYYY-MM-DD') " +
+                    "GROUP BY t.entity";
+                // Actually run aggregate
+                var custSql2 = "SELECT " +
+                    "COUNT(DISTINCT entity) as total, " +
+                    "SUM(CASE WHEN last_txn <= 90 THEN 1 ELSE 0 END) as active, " +
+                    "SUM(CASE WHEN last_txn > 180 THEN 1 ELSE 0 END) as at_risk " +
+                    "FROM (SELECT entity, TRUNC(SYSDATE) - TRUNC(MAX(trandate)) as last_txn " +
+                    "FROM transaction WHERE type IN ('CustInvc', 'SalesOrd') " +
+                    "AND trandate >= TO_DATE('" + startDate + "', 'YYYY-MM-DD') GROUP BY entity)";
+                var custResult = runSuiteQL(custSql2);
+                if (custResult && custResult.length > 0) {
+                    totalCustomers = parseInt(custResult[0].total) || 0;
+                    activeCustomers = parseInt(custResult[0].active) || 0;
+                    atRiskCustomers = parseInt(custResult[0].at_risk) || 0;
+                }
+            } catch (e) { log.debug('Customer Query', e.message); }
+
+            // 2. Payment behavior (single query)
+            try {
+                var pmtSql = "SELECT " +
+                    "AVG(TRUNC(t.closedate) - TRUNC(t.trandate)) as avg_days, " +
+                    "COUNT(CASE WHEN t.duedate < TRUNC(SYSDATE) AND t.status != 'paidInFull' THEN 1 END) as overdue " +
+                    "FROM transaction t " +
+                    "WHERE t.type = 'CustInvc' AND t.closedate IS NOT NULL " +
+                    "AND t.trandate >= TO_DATE('" + startDate + "', 'YYYY-MM-DD')";
+                var pmtResult = runSuiteQL(pmtSql);
+                if (pmtResult && pmtResult.length > 0) {
+                    avgDaysToPay = parseFloat(pmtResult[0].avg_days) || 30;
+                    overdueCount = parseInt(pmtResult[0].overdue) || 0;
+                }
+            } catch (e) { log.debug('Payment Query', e.message); }
+
+            // Calculate score components
+            var score = 100;
+            var deductions = { activity: 0, churn: 0, payment: 0 };
+
+            // Activity deduction (max -30)
+            var activePct = totalCustomers > 0 ? (activeCustomers / totalCustomers) * 100 : 100;
+            if (activePct < 50) deductions.activity = 30;
+            else if (activePct < 60) deductions.activity = 20;
+            else if (activePct < 70) deductions.activity = 10;
+            else if (activePct < 80) deductions.activity = 5;
+
+            // Churn risk deduction (max -30)
+            var churnPct = totalCustomers > 0 ? (atRiskCustomers / totalCustomers) * 100 : 0;
+            if (churnPct > 30) deductions.churn = 30;
+            else if (churnPct > 20) deductions.churn = 20;
+            else if (churnPct > 10) deductions.churn = 10;
+            else if (churnPct > 5) deductions.churn = 5;
+
+            // Payment behavior deduction (max -25)
+            if (avgDaysToPay > 60) deductions.payment = 25;
+            else if (avgDaysToPay > 45) deductions.payment = 15;
+            else if (avgDaysToPay > 30) deductions.payment = 8;
+
+            score = Math.max(0, 100 - deductions.activity - deductions.churn - deductions.payment);
+
+            var grade = 'A';
+            var label = 'Strong';
+            if (score < 50) { grade = 'F'; label = 'Critical'; }
+            else if (score < 60) { grade = 'D'; label = 'Weak'; }
+            else if (score < 70) { grade = 'C'; label = 'Fair'; }
+            else if (score < 80) { grade = 'B'; label = 'Good'; }
+            else if (score < 90) { grade = 'A'; label = 'Strong'; }
+            else { grade = 'A+'; label = 'Excellent'; }
+
+            var trend = 'stable';
+            if (churnPct > 20) trend = 'down';
+            else if (activePct > 80 && avgDaysToPay < 30) trend = 'up';
+
+            return {
+                score: Math.round(score),
+                grade: grade,
+                label: label,
+                trend: trend,
+                details: {
+                    totalCustomers: totalCustomers,
+                    activeCustomers: activeCustomers,
+                    atRiskCustomers: atRiskCustomers,
+                    avgDaysToPay: Math.round(avgDaysToPay),
+                    deductions: deductions
+                }
+            };
+        } catch (e) {
+            log.error('CustomerValue getScoreOnly Error', e.message);
+            return { score: 70, grade: 'B', label: 'Unknown', trend: 'stable', error: e.message };
+        }
+    }
+
     // ==========================================
     // PUBLIC API
     // ==========================================
@@ -2576,6 +2692,7 @@ define(['N/query', 'N/runtime', 'N/search', 'N/log', './Lib_Shared'], function(q
         getConfig: getConfigForApi,
         getDefaultConfig: getDefaultConfig,
         getProfitabilityExploration: getProfitabilityExploration,
-        handleRequest: handleRequest
+        handleRequest: handleRequest,
+        getScoreOnly: getScoreOnly
     };
 });

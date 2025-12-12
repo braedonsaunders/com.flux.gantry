@@ -13,7 +13,8 @@
     'use strict';
 
     // Constants
-    const STORAGE_KEY = 'gantry_advisor_session';
+    const STORAGE_KEY = 'gantry_advisor_session';           // localStorage - persists across reloads
+    const ACTIVE_REQUEST_KEY = 'gantry_advisor_active_req'; // sessionStorage - cleared on reload
     const MAX_HISTORY = 50;
     
     // State
@@ -26,6 +27,7 @@
         queryHistory: []      // Recent query history
     };  // Persists entity resolutions and context across messages
     let activeRequest = null;  // Tracks in-flight request for resume on navigation
+    let currentPollingId = null;  // Unique ID for current polling loop to detect stale loops
 
     /**
      * Advisor Controller
@@ -59,6 +61,7 @@
 
             this.loadSession();
             this.renderCategories(); // Render category buttons dynamically
+            this.fetchDashboardScores(); // Fetch and render health scores
             this.bindEvents();
             this.renderAllMessages();
 
@@ -839,7 +842,149 @@
             
             container.innerHTML = html;
         },
-        
+
+        /**
+         * Fetch dashboard health scores from unified API endpoint
+         */
+        fetchDashboardScores: function() {
+            const self = this;
+            const grid = document.getElementById('scores-grid');
+            const timestamp = document.getElementById('scores-timestamp');
+
+            if (!grid) return;
+
+            // Show loading skeleton (already in HTML)
+            API.get('dashboard_scores')
+                .then(function(response) {
+                    if (response && response.scores) {
+                        self.renderDashboardScores(response.scores);
+                        if (timestamp && response.computedAt) {
+                            const date = new Date(response.computedAt);
+                            timestamp.textContent = 'Updated ' + self.formatRelativeTime(date);
+                        }
+                    }
+                })
+                .catch(function(error) {
+                    console.error('[Advisor] Failed to fetch dashboard scores:', error);
+                    // Show error state
+                    grid.innerHTML = '<div class="scores-error">Unable to load health scores</div>';
+                });
+        },
+
+        /**
+         * Render dashboard health score cards - compact horizontal layout
+         */
+        renderDashboardScores: function(scores) {
+            const grid = document.getElementById('scores-grid');
+            if (!grid) return;
+
+            // Define display order for dashboards
+            const displayOrder = ['health', 'time', 'integrity', 'customervalue', 'vendorperformance', 'spendvelocity', 'cashflow', 'burden'];
+
+            // Icon mapping for each dashboard
+            const iconMap = {
+                health: 'fa-heartbeat',
+                time: 'fa-clock',
+                integrity: 'fa-shield-alt',
+                customervalue: 'fa-users',
+                vendorperformance: 'fa-truck',
+                spendvelocity: 'fa-tachometer-alt',
+                cashflow: 'fa-dollar-sign',
+                burden: 'fa-layer-group'
+            };
+
+            // Get configurable dashboard names from settings if available
+            const configuredNames = (window.SettingsController && SettingsController.data && SettingsController.data.dashboardNames)
+                ? SettingsController.data.dashboardNames
+                : {};
+
+            let html = '';
+
+            displayOrder.forEach(function(dashboardId) {
+                const scoreData = scores[dashboardId];
+                if (!scoreData) return;
+
+                const icon = iconMap[dashboardId] || 'fa-chart-bar';
+                // Use configured name first, then API name, then default
+                const displayName = configuredNames[dashboardId] || scoreData.name || dashboardId;
+
+                html += `
+                    <div class="score-card" data-dashboard="${dashboardId}" data-grade="${scoreData.grade}" onclick="GantryApp.navigate('${dashboardId}')">
+                        <div class="score-card-inner">
+                            <div class="score-icon">
+                                <i class="fas ${icon}"></i>
+                            </div>
+                            <div class="score-name">${displayName}</div>
+                            <div class="score-value-container">
+                                <span class="score-number">${scoreData.score}</span>
+                                <span class="score-grade">${scoreData.grade}</span>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            });
+
+            grid.innerHTML = html;
+
+            // Also update sidebar scores if available
+            this.updateSidebarScores(scores);
+        },
+
+        /**
+         * Update sidebar with health scores beside each dashboard name
+         */
+        updateSidebarScores: function(scores) {
+            const nav = document.querySelector('.gantry-nav');
+            if (!nav) return;
+
+            // Route to dashboard ID mapping
+            const routeMap = {
+                'health': 'health',
+                'time': 'time',
+                'integrity': 'integrity',
+                'customervalue': 'customervalue',
+                'vendorperformance': 'vendorperformance',
+                'spendvelocity': 'spendvelocity',
+                'cashflow': 'cashflow',
+                'burden': 'burden'
+            };
+
+            Object.keys(routeMap).forEach(function(route) {
+                const dashboardId = routeMap[route];
+                const scoreData = scores[dashboardId];
+                if (!scoreData) return;
+
+                const navLink = nav.querySelector(`[data-route="${route}"]`);
+                if (!navLink) return;
+
+                // Remove existing score badge if present
+                const existingBadge = navLink.querySelector('.nav-score-badge');
+                if (existingBadge) existingBadge.remove();
+
+                // Add score badge
+                const badge = document.createElement('span');
+                badge.className = 'nav-score-badge';
+                badge.setAttribute('data-grade', scoreData.grade);
+                badge.textContent = scoreData.score;
+                navLink.appendChild(badge);
+            });
+        },
+
+        /**
+         * Format date as relative time (e.g., "5 min ago")
+         */
+        formatRelativeTime: function(date) {
+            const now = new Date();
+            const diffMs = now - date;
+            const diffMin = Math.floor(diffMs / 60000);
+            const diffHrs = Math.floor(diffMs / 3600000);
+
+            if (diffMin < 1) return 'just now';
+            if (diffMin < 60) return diffMin + ' min ago';
+            if (diffHrs < 24) return diffHrs + ' hr ago';
+            return date.toLocaleDateString();
+        },
+
         /**
          * Cleanup when leaving advisor
          * Saves session state so active requests can be resumed on return
@@ -921,6 +1066,12 @@
             const clearBtn = document.getElementById('advisorClearChat');
             if (clearBtn) {
                 clearBtn.addEventListener('click', () => self.clearChat());
+            }
+
+            // Stop polling button
+            const stopBtn = document.getElementById('advisorStopPolling');
+            if (stopBtn) {
+                stopBtn.addEventListener('click', () => self.stopPolling());
             }
         },
         
@@ -1271,6 +1422,10 @@
                 let consecutiveErrors = 0;
                 const MAX_CONSECUTIVE_ERRORS = 5;
 
+                // Set unique polling ID to detect if another loop takes over
+                const myPollingId = 'poll-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
+                currentPollingId = myPollingId;
+
                 // Store active request for resume on navigation
                 activeRequest = {
                     requestId: requestId,
@@ -1284,9 +1439,9 @@
 
                 // Poll for updates
                 while (true) {
-                    // Check if polling was aborted (user navigated away and back)
-                    if (!activeRequest || activeRequest.requestId !== requestId) {
-                        console.log('[Advisor Polling] Polling aborted - request no longer active');
+                    // Check if this polling loop has been superseded by another (e.g., resumed after navigation)
+                    if (currentPollingId !== myPollingId) {
+                        console.log('[Advisor Polling] Polling loop superseded by newer instance, exiting');
                         return;
                     }
 
@@ -1396,6 +1551,10 @@
 
             console.log('[Advisor] Resuming active request:', savedRequest.requestId);
 
+            // Set new polling ID - this will cause any old polling loop to exit
+            const myPollingId = 'resume-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
+            currentPollingId = myPollingId;
+
             isProcessing = true;
             this.updateSendButton(true);
 
@@ -1417,9 +1576,9 @@
             try {
                 // Resume polling
                 while (true) {
-                    // Check if polling was aborted
-                    if (!activeRequest || activeRequest.requestId !== requestId) {
-                        console.log('[Advisor Polling] Resume polling aborted - request no longer active');
+                    // Check if this polling loop has been superseded
+                    if (currentPollingId !== myPollingId) {
+                        console.log('[Advisor Resume Polling] Polling loop superseded, exiting');
                         return;
                     }
 
@@ -1987,22 +2146,101 @@
         },
 
         /**
+         * Stop current polling and cancel the in-flight request
+         * Prevents resume after page reload
+         */
+        stopPolling: function() {
+            if (!isProcessing) return;
+
+            console.log('[Advisor] Stopping polling...');
+
+            // Generate new polling ID to cause current loop to exit
+            currentPollingId = 'stopped-' + Date.now();
+
+            // Clear active request to prevent resume after reload
+            activeRequest = null;
+
+            // Update the progressive message to show it was stopped
+            const progressiveMsg = document.querySelector('.advisor-message.progressive-loading');
+            if (progressiveMsg) {
+                const msgId = progressiveMsg.id;
+                progressiveMsg.classList.remove('progressive-loading');
+                progressiveMsg.classList.add('was-stopped');
+
+                const stepsContainer = document.getElementById(msgId + '-steps');
+                if (stepsContainer) {
+                    // Remove thinking indicator
+                    const thinking = stepsContainer.querySelector('.progressive-thinking');
+                    if (thinking) thinking.remove();
+
+                    // Add stopped step to the chain
+                    const stoppedStep = {
+                        type: 'stopped',
+                        title: 'Stopped',
+                        content: 'Response was stopped by user',
+                        status: 'stopped'
+                    };
+
+                    const existingChain = stepsContainer.querySelector('.thought-chain');
+                    if (existingChain && existingChain._stepsData) {
+                        const allSteps = [...existingChain._stepsData, stoppedStep];
+                        const chainHtml = this.renderSteps(allSteps);
+                        const tempDiv = document.createElement('div');
+                        tempDiv.innerHTML = chainHtml;
+                        const newChain = tempDiv.firstElementChild;
+                        if (newChain) {
+                            newChain._stepsData = allSteps.map((s, i) => ({...s, _chainId: newChain.getAttribute('data-chain-id')}));
+                            existingChain.replaceWith(newChain);
+                        }
+                    } else {
+                        const chainHtml = this.renderSteps([stoppedStep]);
+                        const tempDiv = document.createElement('div');
+                        tempDiv.innerHTML = chainHtml;
+                        const newChain = tempDiv.firstElementChild;
+                        if (newChain) {
+                            newChain._stepsData = [stoppedStep].map((s, i) => ({...s, _chainId: newChain.getAttribute('data-chain-id')}));
+                            stepsContainer.appendChild(newChain);
+                        }
+                    }
+                }
+            }
+
+            // Reset processing state
+            isProcessing = false;
+            this.updateSendButton(false);
+
+            // Save session to persist the stopped state (no activeRequest)
+            this.saveSession();
+
+            console.log('[Advisor] Polling stopped');
+        },
+
+        /**
          * Sleep helper for polling
          */
         sleep: function(ms) {
             return new Promise(resolve => setTimeout(resolve, ms));
         },
-        
+
         /**
-         * Update send button state
+         * Update send button state and stop button visibility
          */
         updateSendButton: function(disabled) {
             const btn = document.getElementById('advisor-send-full');
+            const stopBtn = document.getElementById('advisorStopPolling');
             if (btn) {
                 btn.disabled = disabled;
             }
+            // Enable stop button when processing, disable when not
+            if (stopBtn) {
+                if (disabled) {
+                    stopBtn.classList.remove('disabled');
+                } else {
+                    stopBtn.classList.add('disabled');
+                }
+            }
         },
-        
+
         /**
          * Retry the last query or a specific query
          */
@@ -4710,16 +4948,25 @@
         
         /**
          * Save session to storage
+         * - Chat history goes to localStorage (persists across page reloads)
+         * - Active request goes to sessionStorage (only persists during navigation)
          */
         saveSession: function() {
             try {
-                const data = {
+                // Save chat history to localStorage (persists across reloads)
+                const historyData = {
                     messages: messages.slice(-MAX_HISTORY),
-                    sessionContext: sessionContext,  // Persist entity resolutions
-                    activeRequest: activeRequest,    // Persist in-flight request for resume
+                    sessionContext: sessionContext,
                     timestamp: Date.now()
                 };
-                sessionStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+                localStorage.setItem(STORAGE_KEY, JSON.stringify(historyData));
+
+                // Save active request to sessionStorage (cleared on page reload)
+                if (activeRequest) {
+                    sessionStorage.setItem(ACTIVE_REQUEST_KEY, JSON.stringify(activeRequest));
+                } else {
+                    sessionStorage.removeItem(ACTIVE_REQUEST_KEY);
+                }
             } catch (e) {
                 console.warn('[Advisor] Save failed:', e);
             }
@@ -4730,19 +4977,21 @@
          */
         loadSession: function() {
             try {
-                const data = sessionStorage.getItem(STORAGE_KEY);
-                if (data) {
-                    const parsed = JSON.parse(data);
+                // Load chat history from localStorage
+                const historyData = localStorage.getItem(STORAGE_KEY);
+                if (historyData) {
+                    const parsed = JSON.parse(historyData);
                     messages = parsed.messages || [];
-                    // Load full sessionContext with all fields, with defaults for missing
                     sessionContext = parsed.sessionContext || {};
                     sessionContext.resolvedEntities = sessionContext.resolvedEntities || {};
                     sessionContext.entityOrder = sessionContext.entityOrder || [];
                     sessionContext.topics = sessionContext.topics || [];
                     sessionContext.queryHistory = sessionContext.queryHistory || [];
-                    // Load active request if present
-                    activeRequest = parsed.activeRequest || null;
                 }
+
+                // Load active request from sessionStorage (only present during same-page navigation)
+                const activeData = sessionStorage.getItem(ACTIVE_REQUEST_KEY);
+                activeRequest = activeData ? JSON.parse(activeData) : null;
             } catch (e) {
                 messages = [];
                 sessionContext = {
