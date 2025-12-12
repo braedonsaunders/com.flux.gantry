@@ -8226,14 +8226,18 @@
                         var acctRate = acct.rate || 0;
                         var pctOfCat = expense > 0 ? (amt / expense * 100) : 0;
                         var barWidth = maxAmount > 0 ? (Math.abs(amt) / maxAmount * 100) : 0;
-                        
+
                         // For timebill, show hours alongside amount
                         var extraInfo = isTimeType && acct.hours ? ' (' + self.fmtNum(acct.hours, 1) + ' hrs)' : '';
-                        
+
                         html += '<div class="cf-acct-row">' +
                             '<div class="cf-acct-info">' +
                                 '<div class="cf-acct-num">' + escapeHtml(acct.number || '') + '</div>' +
                                 '<div class="cf-acct-name">' + escapeHtml(acct.name || '') + extraInfo + '</div>' +
+                            '</div>' +
+                            '<div class="cf-acct-rate">' +
+                                '<span class="cf-rate-value">$' + self.fmtNum(acctRate, 2) + '</span>' +
+                                '<span class="cf-rate-label">/hr</span>' +
                             '</div>' +
                             '<div class="cf-acct-data">' +
                                 '<div class="cf-acct-bar-wrap">' +
