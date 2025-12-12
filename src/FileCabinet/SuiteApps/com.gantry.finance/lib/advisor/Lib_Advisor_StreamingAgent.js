@@ -27,8 +27,9 @@ define([
     './Lib_Advisor_Tools',
     './Lib_Advisor_DataStore',
     './Lib_Advisor_ProgressStore',
-    './Lib_Advisor_Utils'
-], function(log, AIProviders, Tools, DataStore, ProgressStore, Utils) {
+    './Lib_Advisor_Utils',
+    '../Lib_Dashboard_Registry'
+], function(log, AIProviders, Tools, DataStore, ProgressStore, Utils, DashboardRegistry) {
     'use strict';
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -633,6 +634,191 @@ Response format (JSON only):
         };
 
         return suggestions[toolName] || 'Try rephrasing your question or asking for different data.';
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // DASHBOARD INTELLIGENCE BRIDGE
+    // Converts dashboard intelligence objects to LLM-consumable data references
+    // Works dynamically with any dashboard registered in Dashboard Registry
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Check if a tool result is a dashboard intelligence object
+     * @param {Object} result - Tool execution result
+     * @returns {boolean} True if result contains dashboard intelligence
+     */
+    function isDashboardResult(result) {
+        return result && result.success && result.intelligence && result.dashboard;
+    }
+
+    /**
+     * Build a comprehensive LLM-consumable summary from dashboard intelligence
+     * Dynamically reads schema from Dashboard Registry - works for any dashboard
+     *
+     * @param {Object} result - Dashboard tool result with intelligence object
+     * @returns {Object} Data structure formatted for RESPOND phase consumption
+     */
+    function buildDashboardIntelligenceData(result) {
+        const dashboardId = result.dashboard;
+        const intelligence = result.intelligence;
+
+        // Get schema from Dashboard Registry
+        const dashboard = DashboardRegistry.getDashboard(dashboardId);
+        const schema = dashboard?.dataSchema;
+
+        if (!schema) {
+            log.debug('Dashboard Intelligence Bridge', 'No schema for: ' + dashboardId);
+            return null;
+        }
+
+        // Build summary rows - one row per metric for LLM consumption
+        const rows = [];
+        const metrics = intelligence.metrics || {};
+
+        // Process all metrics dynamically from the intelligence object
+        for (const [metricName, metricData] of Object.entries(metrics)) {
+            const fieldDef = schema.fields?.[metricName];
+            rows.push({
+                metric_name: metricName,
+                value: metricData.value,
+                formatted_value: metricData.formatted || String(metricData.value),
+                description: metricData.desc || fieldDef?.desc || metricName,
+                type: metricData.type || fieldDef?.type || 'unknown',
+                status: metricData.status || null,
+                trend: metricData.trend || null,
+                change: metricData.change || null
+            });
+        }
+
+        // Add collection summaries as additional rows
+        const collections = intelligence.collections || {};
+        for (const [collectionName, collectionInfo] of Object.entries(collections)) {
+            const fieldDef = schema.fields?.[collectionName];
+            rows.push({
+                metric_name: collectionName + '_collection',
+                value: collectionInfo.count,
+                formatted_value: `${collectionInfo.count} items`,
+                description: collectionInfo.desc || fieldDef?.desc || `${collectionName} data`,
+                type: 'collection',
+                status: null,
+                trend: null,
+                change: null,
+                preview: (collectionInfo.preview || []).join(', '),
+                columns: (collectionInfo.columns || []).join(', '),
+                refId: collectionInfo.refId
+            });
+        }
+
+        // Build column definitions
+        const columns = [
+            'metric_name', 'value', 'formatted_value', 'description',
+            'type', 'status', 'trend', 'change', 'preview', 'columns', 'refId'
+        ];
+
+        // Build comprehensive text summary for the LLM
+        let textSummary = `DASHBOARD: ${dashboard.name} (${dashboardId})\n`;
+        textSummary += `${schema.summary}\n\n`;
+
+        // Add insights if available
+        if (intelligence.insights && intelligence.insights.length > 0) {
+            textSummary += `KEY INSIGHTS:\n`;
+            intelligence.insights.forEach(insight => {
+                textSummary += `• ${insight}\n`;
+            });
+            textSummary += '\n';
+        }
+
+        // Add alerts if available
+        if (intelligence.alerts && intelligence.alerts.length > 0) {
+            textSummary += `ALERTS:\n`;
+            intelligence.alerts.forEach(alert => {
+                const icon = alert.type === 'danger' ? '🔴' : alert.type === 'warning' ? '🟡' : '🟢';
+                textSummary += `${icon} ${alert.message}\n`;
+            });
+            textSummary += '\n';
+        }
+
+        // Add metrics section
+        textSummary += `METRICS:\n`;
+        for (const [metricName, metricData] of Object.entries(metrics)) {
+            const statusIcon = metricData.status === 'danger' ? '⚠️ ' :
+                              metricData.status === 'warning' ? '⚡ ' : '';
+            const trendIcon = metricData.trend === 'up' ? '↑' :
+                             metricData.trend === 'down' ? '↓' : '';
+            textSummary += `• ${metricName}: ${metricData.formatted}`;
+            if (trendIcon) textSummary += ` ${trendIcon}`;
+            if (metricData.change) textSummary += ` (${metricData.change})`;
+            if (statusIcon) textSummary += ` ${statusIcon}`;
+            textSummary += `\n  └─ ${metricData.desc || ''}\n`;
+        }
+
+        // Add collections summary
+        if (Object.keys(collections).length > 0) {
+            textSummary += `\nAVAILABLE COLLECTIONS (for drill-down):\n`;
+            for (const [collectionName, collectionInfo] of Object.entries(collections)) {
+                textSummary += `• ${collectionName}: ${collectionInfo.count} items\n`;
+                if (collectionInfo.preview && collectionInfo.preview.length > 0) {
+                    textSummary += `  Preview: ${collectionInfo.preview.slice(0, 3).join(', ')}${collectionInfo.count > 3 ? '...' : ''}\n`;
+                }
+            }
+        }
+
+        return {
+            rows: rows,
+            columns: columns,
+            rowCount: rows.length,
+            textSummary: textSummary,
+            dashboardId: dashboardId,
+            dashboardName: dashboard.name,
+            intelligence: intelligence,
+            // Store refId for collection access
+            refId: intelligence.refId
+        };
+    }
+
+    /**
+     * Store dashboard intelligence as a data reference for RESPOND phase
+     *
+     * @param {string} requestId - Current request ID
+     * @param {string} toolName - Dashboard tool name (e.g., 'dashboard_cashflow')
+     * @param {Object} result - Dashboard tool result
+     * @returns {Object|null} Data reference object or null if failed
+     */
+    function storeDashboardDataReference(requestId, toolName, result) {
+        const dashboardData = buildDashboardIntelligenceData(result);
+
+        if (!dashboardData) {
+            log.debug('Dashboard Intelligence Bridge', 'Failed to build data for: ' + toolName);
+            return null;
+        }
+
+        // Create a data reference that looks like standard tool output
+        // This allows RESPOND phase to consume it without special handling
+        const dataRef = DataStore.storeData(requestId, toolName, {
+            success: true,
+            rows: dashboardData.rows,
+            columns: dashboardData.columns,
+            rowCount: dashboardData.rowCount,
+            // Store text summary for enhanced prompts
+            textSummary: dashboardData.textSummary,
+            // Mark as dashboard data for special handling in buildDataSectionsForPrompt
+            isDashboard: true,
+            dashboardId: dashboardData.dashboardId,
+            dashboardName: dashboardData.dashboardName,
+            // Preserve original intelligence for deep access
+            intelligence: dashboardData.intelligence
+        });
+
+        log.debug('Dashboard Intelligence Bridge', {
+            action: 'stored_data_reference',
+            toolName: toolName,
+            dashboardId: dashboardData.dashboardId,
+            metricsCount: Object.keys(dashboardData.intelligence?.metrics || {}).length,
+            collectionsCount: Object.keys(dashboardData.intelligence?.collections || {}).length,
+            refId: dataRef?.refId
+        });
+
+        return dataRef;
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -1266,13 +1452,28 @@ Response format (JSON only):
             const toolDuration = Date.now() - toolStart;
             const totalDuration = Date.now() - invokeStart;
 
-            // Store data reference if tool returned rows
+            // Store data reference if tool returned rows OR dashboard intelligence
             let dataRef = null;
             if (result.success && result.rows && result.rows.length > 0) {
+                // Standard tool with rows
                 dataRef = DataStore.storeData(state.requestId, toolName, result);
                 state.dataReferences.push(dataRef);
                 // Track that we found data (for reflection)
                 state.reflection.dataFound = true;
+            } else if (isDashboardResult(result)) {
+                // Dashboard Intelligence Bridge: Convert intelligence to data reference
+                // This enables RESPOND phase to consume dashboard data seamlessly
+                dataRef = storeDashboardDataReference(state.requestId, toolName, result);
+                if (dataRef) {
+                    state.dataReferences.push(dataRef);
+                    state.reflection.dataFound = true;
+                    log.debug('INVOKE phase - dashboard intelligence stored', {
+                        tool: toolName,
+                        dashboard: result.dashboard,
+                        metricsCount: Object.keys(result.intelligence?.metrics || {}).length,
+                        dataRefId: dataRef?.refId
+                    });
+                }
             }
 
             // ═══════════════════════════════════════════════════════════════════════
@@ -2400,6 +2601,7 @@ Response format (JSON only):
     /**
      * Build data sections with ACTUAL ROWS for the RESPOND prompt
      * This gives LLM full visibility into the data
+     * Enhanced with Dashboard Intelligence Bridge support
      */
     function buildDataSectionsForPrompt(state) {
         const sections = [];
@@ -2412,6 +2614,44 @@ Response format (JSON only):
             const data = DataStore.loadRows(state.requestId, ref.refId, 0, 49); // Up to 50 rows
             if (!data || !data.rows) return;
 
+            // ═══════════════════════════════════════════════════════════════════════
+            // DASHBOARD INTELLIGENCE BRIDGE: Use rich text summary for dashboards
+            // This provides LLM with formatted metrics, insights, and collection info
+            // ═══════════════════════════════════════════════════════════════════════
+            if (data.isDashboard && data.textSummary) {
+                let section = `═══ DASHBOARD INTELLIGENCE: ${data.dashboardName || toolName} ═══\n\n`;
+                section += data.textSummary;
+
+                // Add token reference guide for dashboard metrics
+                section += `\n\nTOKEN REFERENCE GUIDE FOR DASHBOARD DATA:\n`;
+                section += `  Metrics: {{data.rows[N].formatted_value}} (use the formatted_value column)\n`;
+                section += `  Row structure: metric_name, value, formatted_value, description, type, status, trend, change\n`;
+
+                // List available metrics for easy reference
+                const metricRows = data.rows.filter(r => r.type !== 'collection');
+                if (metricRows.length > 0) {
+                    section += `\n  AVAILABLE METRICS:\n`;
+                    metricRows.forEach((row, i) => {
+                        section += `    Row ${i}: ${row.metric_name} = ${row.formatted_value}\n`;
+                    });
+                }
+
+                // List collections for drill-down reference
+                const collectionRows = data.rows.filter(r => r.type === 'collection');
+                if (collectionRows.length > 0) {
+                    section += `\n  AVAILABLE COLLECTIONS (for drill-down queries):\n`;
+                    collectionRows.forEach(row => {
+                        section += `    ${row.metric_name}: ${row.value} items\n`;
+                    });
+                }
+
+                sections.push(section);
+                return; // Skip standard row processing for dashboards
+            }
+
+            // ═══════════════════════════════════════════════════════════════════════
+            // STANDARD DATA PROCESSING (non-dashboard tools)
+            // ═══════════════════════════════════════════════════════════════════════
             const totalRows = data.range?.total || data.rows.length;
             let section = `═══ DATA: ${toolName} (${totalRows} total rows) ═══\n`;
             section += `Columns: ${data.columns.join(', ')}\n\n`;
