@@ -153,7 +153,7 @@
                         '<ul class="nav nav-tabs cf-tabs" id="burdenTabs">' +
                             '<li class="nav-item"><a class="nav-link active" id="dash-tab" data-toggle="tab" href="#burden-dashboard"><i class="fas fa-home mr-2"></i>Overview</a></li>' +
                             '<li class="nav-item"><a class="nav-link" id="cat-tab" data-toggle="tab" href="#burden-categories"><i class="fas fa-layer-group mr-2"></i>Categories</a></li>' +
-                            '<li class="nav-item"><a class="nav-link" id="rates-tab" data-toggle="tab" href="#burden-rates"><i class="fas fa-table mr-2"></i>Burden</a></li>' +
+                            '<li class="nav-item"><a class="nav-link" id="rates-tab" data-toggle="tab" href="#burden-rates"><i class="fas fa-table mr-2"></i>Matrix</a></li>' +
                             '<li class="nav-item"><a class="nav-link" id="mod-tab" data-toggle="tab" href="#burden-modeler"><i class="fas fa-balance-scale mr-2"></i>Absorption</a></li>' +
                             '<li class="nav-item"><a class="nav-link" id="sell-tab" data-toggle="tab" href="#burden-selling"><i class="fas fa-calculator mr-2"></i>Selling Rate</a></li>' +
                             '<li class="nav-item"><a class="nav-link" id="hist-tab" data-toggle="tab" href="#burden-history"><i class="fas fa-chart-line mr-2"></i>Trends</a></li>' +
