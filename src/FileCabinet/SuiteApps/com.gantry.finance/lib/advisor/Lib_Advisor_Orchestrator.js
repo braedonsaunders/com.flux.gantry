@@ -188,7 +188,7 @@ define([
                 // NEW: Use Streaming Agent with multi-phase lightweight calls
                 log.debug('Using Streaming Context Architecture (SCA)', { requestId: requestId });
 
-                agentState = StreamingAgent.initState(message, sessionContext, requestId);
+                agentState = StreamingAgent.initState(message, sessionContext, requestId, history);
                 agentState.useStreamingAgent = true; // Flag for getStatus to know which agent to use
 
                 // Create progress entry
