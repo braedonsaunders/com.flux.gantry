@@ -225,17 +225,12 @@ define([
             if (action === 'customer_value_config') {
                 return ConfigLib.save(data, 'customer_value');
             }
-            
-            // Advisor AI Chat (synchronous - waits for completion)
-            if (action === 'advisor_chat') {
-                return handleAdvisorChat(data);
-            }
 
             // Advisor AI Chat Async (returns request_id immediately, poll for updates)
             if (action === 'advisor_chat_async') {
                 return handleAdvisorChatAsync(data);
             }
-            
+
             // AI Summary for dashboard
             if (action === 'ai_summary') {
                 return getAISummary(context.dashboard, data);
@@ -320,64 +315,7 @@ define([
             return { status: 'error', message: e.message };
         }
     }
-    
-    /**
-     * Handle Advisor AI chat request
-     * @param {Object} data - Request data with message, history, context, sessionContext
-     */
-    function handleAdvisorChat(data) {
-        const startTime = Date.now();
-        
-        try {
-            auditLog('Advisor Chat Request', {
-                messageLength: data.message?.length || 0,
-                historyLength: data.history?.length || 0,
-                dashboardContext: data.context?.dashboard,
-                hasSessionContext: !!(data.sessionContext && Object.keys(data.sessionContext).length > 0),
-                resolvedEntityCount: data.sessionContext?.resolvedEntities ? Object.keys(data.sessionContext.resolvedEntities).length : 0
-            });
-            
-            // Validate message
-            if (!data.message || typeof data.message !== 'string') {
-                return { 
-                    error: 'Message is required',
-                    duration: Date.now() - startTime
-                };
-            }
-            
-            // Process through Advisor orchestrator
-            const result = AdvisorOrchestrator.processChat({
-                message: data.message.trim(),
-                history: data.history || [],
-                context: data.context || {},
-                sessionContext: data.sessionContext || {},
-                aiSettings: data.aiSettings || {}
-            });
-            
-            result.duration = Date.now() - startTime;
-            
-            debugLog('Advisor Chat Response', {
-                success: !result.error,
-                hasRichContent: !!(result.richContent && result.richContent.length),
-                duration: result.duration
-            });
-            
-            return result;
-            
-        } catch (e) {
-            log.error('Advisor Chat Error', {
-                message: e.message,
-                stack: e.stack
-            });
-            
-            return {
-                text: 'I encountered an error processing your request. Please try again.',
-                error: e.message,
-                duration: Date.now() - startTime
-            };
-        }
-    }
-    
+
     /**
      * Handle Advisor AI chat request (async mode)
      * Returns request_id immediately, frontend polls for updates
