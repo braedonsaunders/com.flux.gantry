@@ -1877,7 +1877,59 @@ format_response({
             return lines.join('\n');
         }
 
-        // Dashboard data - include full data
+        // Dashboard intelligence - optimized format for AI consumption
+        if (result.intelligence) {
+            const intel = result.intelligence;
+            lines.push(`Dashboard: ${result.dashboard || toolName}`);
+            lines.push(`Cache Ref: ${intel.refId} (use with load_collection for drill-down)`);
+            lines.push(`Timestamp: ${intel.timestamp}`);
+
+            // Key metrics - most important data
+            if (intel.metrics && Object.keys(intel.metrics).length > 0) {
+                lines.push(`\n=== KEY METRICS ===`);
+                for (const [key, metric] of Object.entries(intel.metrics)) {
+                    let line = `${key}: ${metric.value}`;
+                    if (metric.formatted) line = `${key}: ${metric.formatted}`;
+                    if (metric.status && metric.status !== 'healthy') {
+                        line += ` [${metric.status.toUpperCase()}]`;
+                    }
+                    if (metric.trend) line += ` (trend: ${metric.trend})`;
+                    lines.push(line);
+                }
+            }
+
+            // Alerts - critical issues requiring attention
+            if (intel.alerts && intel.alerts.length > 0) {
+                lines.push(`\n=== ALERTS (${intel.alerts.length}) ===`);
+                intel.alerts.forEach(alert => {
+                    lines.push(`[${alert.severity.toUpperCase()}] ${alert.field}: ${alert.message}`);
+                });
+            }
+
+            // Insights - auto-generated observations
+            if (intel.insights && intel.insights.length > 0) {
+                lines.push(`\n=== INSIGHTS ===`);
+                intel.insights.forEach(insight => lines.push(`- ${insight}`));
+            }
+
+            // Collections - available for drill-down
+            if (intel.collections && Object.keys(intel.collections).length > 0) {
+                lines.push(`\n=== AVAILABLE COLLECTIONS ===`);
+                lines.push(`Use load_collection(refId="${intel.refId}", collection="<name>") for details:`);
+                for (const [name, coll] of Object.entries(intel.collections)) {
+                    lines.push(`- ${name}: ${coll.count} items`);
+                }
+            }
+
+            // Schema hint for context
+            if (intel.schemaHint) {
+                lines.push(`\nContext: ${intel.schemaHint}`);
+            }
+
+            return lines.join('\n');
+        }
+
+        // Legacy dashboard data - full JSON (for backwards compatibility)
         if (result.data) {
             lines.push(`Dashboard: ${result.dashboard || toolName}`);
             lines.push(`\nDashboard Data:`);
@@ -1952,7 +2004,19 @@ format_response({
             return stepData;
         }
 
-        // Dashboard data - include key metrics
+        // Dashboard intelligence - include key metrics for frontend
+        if (result.intelligence) {
+            const intel = result.intelligence;
+            stepData.dashboard = result.dashboard || toolName;
+            stepData.refId = intel.refId;
+            stepData.metrics = intel.metrics;
+            stepData.alerts = intel.alerts;
+            stepData.insights = intel.insights;
+            stepData.collections = intel.collections;
+            return stepData;
+        }
+
+        // Legacy dashboard data - include key metrics
         if (result.data) {
             stepData.dashboard = result.dashboard || toolName;
             stepData.dashboardData = result.data;

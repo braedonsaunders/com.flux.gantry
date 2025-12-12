@@ -25,6 +25,7 @@ define([
     './Lib_Advisor_EntityResolver',
     './Lib_Advisor_QueryExecutor',
     './Lib_Advisor_Utils',
+    './Lib_Advisor_DashboardCache',
     '../Lib_Dashboard_Registry',
     '../Lib_Config',
     // Dashboard data modules - loaded as dependencies to avoid dynamic require() errors
@@ -42,6 +43,7 @@ define([
     EntityResolver,
     QueryExecutor,
     Utils,
+    DashboardCache,
     DashboardRegistry,
     ConfigLib,
     // Dashboard data modules
@@ -3389,14 +3391,16 @@ Use for: "cash flow", "runway", "cash projection", "liquidity", "treasury", "wor
             },
             execute: function(args) {
                 try {
-                    // Use pre-loaded module (no dynamic require)
-                    const data = CashflowData.getData(args);
+                    // Get raw data from dashboard module
+                    const rawData = CashflowData.getData(args);
+
+                    // Process through intelligence layer - extracts key metrics, generates insights
+                    const intelligence = DashboardCache.process('cashflow', rawData, args.requestId);
 
                     return {
                         success: true,
                         dashboard: 'cashflow',
-                        data: data,
-                        schema: DashboardRegistry.getDashboard('cashflow').dataSchema,
+                        intelligence: intelligence,
                         tool: 'dashboard_cashflow'
                     };
                 } catch (e) {
@@ -3442,14 +3446,16 @@ PREFERRED for: "income statement", "P&L", "profit and loss", "financial health",
             },
             execute: function(args) {
                 try {
-                    // Use pre-loaded module (no dynamic require)
-                    const data = HealthData.getData(args);
+                    // Get raw data from dashboard module
+                    const rawData = HealthData.getData(args);
+
+                    // Process through intelligence layer - extracts key metrics, generates insights
+                    const intelligence = DashboardCache.process('health', rawData, args.requestId);
 
                     return {
                         success: true,
                         dashboard: 'health',
-                        data: data,
-                        schema: DashboardRegistry.getDashboard('health').dataSchema,
+                        intelligence: intelligence,
                         tool: 'dashboard_health'
                     };
                 } catch (e) {
@@ -3494,14 +3500,16 @@ Use for: "burden rate", "overhead", "labor burden", "cost recovery", "fringe rat
             },
             execute: function(args) {
                 try {
-                    // Use pre-loaded module (no dynamic require)
-                    const data = BurdenData.getData(args);
+                    // Get raw data from dashboard module
+                    const rawData = BurdenData.getData(args);
+
+                    // Process through intelligence layer - extracts key metrics, generates insights
+                    const intelligence = DashboardCache.process('burden', rawData, args.requestId);
 
                     return {
                         success: true,
                         dashboard: 'burden',
-                        data: data,
-                        schema: DashboardRegistry.getDashboard('burden').dataSchema,
+                        intelligence: intelligence,
                         tool: 'dashboard_burden'
                     };
                 } catch (e) {
@@ -3551,14 +3559,16 @@ Use for: "utilization", "billable hours", "time tracking", "unbilled time", "emp
             },
             execute: function(args) {
                 try {
-                    // Use pre-loaded module (no dynamic require)
-                    const data = TimeData.getData(args);
+                    // Get raw data from dashboard module
+                    const rawData = TimeData.getData(args);
+
+                    // Process through intelligence layer - extracts key metrics, generates insights
+                    const intelligence = DashboardCache.process('time', rawData, args.requestId);
 
                     return {
                         success: true,
                         dashboard: 'time',
-                        data: data,
-                        schema: DashboardRegistry.getDashboard('time').dataSchema,
+                        intelligence: intelligence,
                         tool: 'dashboard_time'
                     };
                 } catch (e) {
@@ -3599,14 +3609,16 @@ Use for: "fraud detection", "anomalies", "duplicates", "Benford's law", "suspici
             },
             execute: function(args) {
                 try {
-                    // Use pre-loaded module (no dynamic require)
-                    const data = IntegrityData.getData(args);
+                    // Get raw data from dashboard module
+                    const rawData = IntegrityData.getData(args);
+
+                    // Process through intelligence layer - extracts key metrics, generates insights
+                    const intelligence = DashboardCache.process('integrity', rawData, args.requestId);
 
                     return {
                         success: true,
                         dashboard: 'integrity',
-                        data: data,
-                        schema: DashboardRegistry.getDashboard('integrity').dataSchema,
+                        intelligence: intelligence,
                         tool: 'dashboard_integrity'
                     };
                 } catch (e) {
@@ -3652,14 +3664,16 @@ Use for: "vendor performance", "procurement", "vendor leverage", "payment terms"
             },
             execute: function(args) {
                 try {
-                    // Use pre-loaded module (no dynamic require)
-                    const data = VendorPerformanceData.getData(args);
+                    // Get raw data from dashboard module
+                    const rawData = VendorPerformanceData.getData(args);
+
+                    // Process through intelligence layer - extracts key metrics, generates insights
+                    const intelligence = DashboardCache.process('vendorperformance', rawData, args.requestId);
 
                     return {
                         success: true,
                         dashboard: 'vendorperformance',
-                        data: data,
-                        schema: DashboardRegistry.getDashboard('vendorperformance').dataSchema,
+                        intelligence: intelligence,
                         tool: 'dashboard_vendorperformance'
                     };
                 } catch (e) {
@@ -3705,14 +3719,16 @@ Use for: "customer value", "CLV", "lifetime value", "RFM", "churn risk", "custom
             },
             execute: function(args) {
                 try {
-                    // Use pre-loaded module (no dynamic require)
-                    const data = CustomerValueData.getData(args);
+                    // Get raw data from dashboard module
+                    const rawData = CustomerValueData.getData(args);
+
+                    // Process through intelligence layer - extracts key metrics, generates insights
+                    const intelligence = DashboardCache.process('customervalue', rawData, args.requestId);
 
                     return {
                         success: true,
                         dashboard: 'customervalue',
-                        data: data,
-                        schema: DashboardRegistry.getDashboard('customervalue').dataSchema,
+                        intelligence: intelligence,
                         tool: 'dashboard_customervalue'
                     };
                 } catch (e) {
@@ -3758,14 +3774,16 @@ Use for: "spend velocity", "subscription creep", "shadow IT", "commitment cliff"
             },
             execute: function(args) {
                 try {
-                    // Use pre-loaded module (no dynamic require)
-                    const data = SpendVelocityData.getData(args);
+                    // Get raw data from dashboard module
+                    const rawData = SpendVelocityData.getData(args);
+
+                    // Process through intelligence layer - extracts key metrics, generates insights
+                    const intelligence = DashboardCache.process('spendvelocity', rawData, args.requestId);
 
                     return {
                         success: true,
                         dashboard: 'spendvelocity',
-                        data: data,
-                        schema: DashboardRegistry.getDashboard('spendvelocity').dataSchema,
+                        intelligence: intelligence,
                         tool: 'dashboard_spendvelocity'
                     };
                 } catch (e) {
@@ -3779,6 +3797,95 @@ Use for: "spend velocity", "subscription creep", "shadow IT", "commitment cliff"
             },
             displayName: function(args) {
                 return 'Analyzing spend velocity...';
+            }
+        },
+
+        load_collection: {
+            name: 'load_collection',
+            description: `Load detailed collection data from a cached dashboard for deep-dive analysis.
+After calling a dashboard tool, you receive a summary with key metrics and collection references.
+Use this tool to drill down into specific collections when the user asks for details.
+
+Example flow:
+1. User asks "what's our cash position?" → call dashboard_cashflow
+2. Response includes: collections: { arAgingItems: { count: 47, refId: 'cash_abc123' } }
+3. User asks "show me the overdue invoices" → call load_collection(refId='cash_abc123', collection='arAgingItems', filter='overdue')
+
+Parameters:
+- refId: The cache reference ID from the dashboard response
+- collection: Name of the collection to load (e.g., 'arAgingItems', 'topVendors', 'departments')
+- limit: Max items to return (default 20)
+- filter: Optional filter (varies by collection - 'overdue', 'top5', 'critical', etc.)
+- sort: Optional sort override (asc/desc)
+
+Use this for: "show me details", "list the vendors", "which customers", "break it down", "drill into"`,
+            parameters: {
+                type: 'object',
+                properties: {
+                    refId: {
+                        type: 'string',
+                        description: 'Cache reference ID from dashboard response (e.g., "cashflow_abc123")'
+                    },
+                    collection: {
+                        type: 'string',
+                        description: 'Name of collection to load (e.g., "arAgingItems", "topVendors", "departments")'
+                    },
+                    limit: {
+                        type: 'number',
+                        description: 'Maximum items to return (default: 20)'
+                    },
+                    filter: {
+                        type: 'string',
+                        description: 'Filter criteria (e.g., "overdue", "top5", "critical", "warning")'
+                    },
+                    sort: {
+                        type: 'string',
+                        enum: ['asc', 'desc'],
+                        description: 'Sort direction override'
+                    }
+                },
+                required: ['refId', 'collection']
+            },
+            execute: function(args) {
+                try {
+                    const result = DashboardCache.loadCollection(
+                        args.refId,
+                        args.collection,
+                        {
+                            limit: args.limit || 20,
+                            filter: args.filter,
+                            sort: args.sort
+                        }
+                    );
+
+                    if (!result) {
+                        return {
+                            success: false,
+                            error: 'Collection not found or cache expired. Call the dashboard tool again to refresh data.',
+                            tool: 'load_collection'
+                        };
+                    }
+
+                    return {
+                        success: true,
+                        collection: args.collection,
+                        data: result.items,
+                        count: result.count,
+                        totalAvailable: result.totalAvailable,
+                        appliedFilter: result.appliedFilter,
+                        tool: 'load_collection'
+                    };
+                } catch (e) {
+                    log.error('load_collection failed', { error: e.message, args: args });
+                    return {
+                        success: false,
+                        error: e.message,
+                        tool: 'load_collection'
+                    };
+                }
+            },
+            displayName: function(args) {
+                return 'Loading ' + (args.collection || 'collection') + ' details...';
             }
         }
     };
