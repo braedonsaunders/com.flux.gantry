@@ -448,6 +448,7 @@
                 p.y = 50 + Math.random() * (this.canvas.height - 100);
                 p.vx = (Math.random() - 0.5) * 0.12;
                 p.vy = (Math.random() - 0.5) * 0.12;
+                p.opacity = 0; // Start invisible
                 p.targetOpacity = 0.1 + Math.random() * 0.08;
                 p.size = this.config.particleSize.min + Math.random() * (this.config.particleSize.max - this.config.particleSize.min);
             });
@@ -459,7 +460,8 @@
                 this.particles.forEach(p => {
                     p.x += p.vx;
                     p.y += p.vy;
-                    p.opacity += (p.targetOpacity - p.opacity) * 0.02;
+                    // Much slower fade in (0.004 instead of 0.02)
+                    p.opacity += (p.targetOpacity - p.opacity) * 0.004;
 
                     if (p.x < 20 || p.x > this.canvas.width - 20) p.vx *= -1;
                     if (p.y < 20 || p.y > this.canvas.height - 20) p.vy *= -1;
@@ -1933,9 +1935,13 @@
                 });
             });
             
-            // Show panel, hide score-categories
+            // Show panel, hide score-categories with animation
             if (scoreCategoriesEl) scoreCategoriesEl.style.display = 'none';
             panelEl.style.display = 'block';
+            // Trigger animation after display change
+            requestAnimationFrame(() => {
+                panelEl.classList.add('visible');
+            });
         },
 
         /**
@@ -1945,10 +1951,18 @@
             const scoreCategoriesEl = document.getElementById('score-categories');
             const panelEl = document.getElementById('query-panel');
 
-            if (scoreCategoriesEl) {
+            if (panelEl) {
+                panelEl.classList.remove('visible');
+                // Wait for animation to complete before hiding
+                setTimeout(() => {
+                    panelEl.style.display = 'none';
+                    if (scoreCategoriesEl) {
+                        scoreCategoriesEl.style.display = 'flex';
+                    }
+                }, 300);
+            } else if (scoreCategoriesEl) {
                 scoreCategoriesEl.style.display = 'flex';
             }
-            if (panelEl) panelEl.style.display = 'none';
         },
         
         /**
