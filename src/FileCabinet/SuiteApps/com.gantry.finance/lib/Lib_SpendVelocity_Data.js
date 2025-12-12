@@ -2781,9 +2781,62 @@ define(['N/query', 'N/log', './Lib_Core'], function(query, log, Core) {
     }
 
     // ==========================================
+    // ADVISOR API - getData wrapper
+    // ==========================================
+    /**
+     * getData - Adapter for Advisor tools
+     * Converts advisor-style args (period string) to analyze-style params (startDate/endDate)
+     *
+     * @param {Object} args - Advisor tool arguments
+     * @param {string} [args.period] - 'last_6_months', 'last_12_months', 'ytd'
+     * @param {number} [args.vendor_id] - Optional filter to specific vendor
+     * @param {number} [args.subsidiary] - Optional subsidiary filter
+     * @returns {Object} Analysis results from analyzeSpendVelocity
+     */
+    function getData(args) {
+        var params = {};
+        var today = new Date();
+
+        // Convert period string to startDate/endDate
+        switch (args.period) {
+            case 'last_6_months':
+                var sixMonthsAgo = new Date(today.getFullYear(), today.getMonth() - 6, today.getDate());
+                params.startDate = sixMonthsAgo.toISOString().split('T')[0];
+                params.endDate = today.toISOString().split('T')[0];
+                break;
+            case 'last_12_months':
+                params.startDate = new Date(today.getFullYear() - 1, today.getMonth(), today.getDate()).toISOString().split('T')[0];
+                params.endDate = today.toISOString().split('T')[0];
+                break;
+            case 'ytd':
+            default:
+                // YTD: January 1 of current year to today
+                params.startDate = new Date(today.getFullYear(), 0, 1).toISOString().split('T')[0];
+                params.endDate = today.toISOString().split('T')[0];
+                break;
+        }
+
+        // Pass through optional filters
+        if (args.subsidiary) {
+            params.subsidiaryId = args.subsidiary;
+        }
+        if (args.vendor_id) {
+            params.vendorId = args.vendor_id;
+        }
+        if (args.config) {
+            params.config = args.config;
+        }
+
+        // Call the existing analyze function
+        var result = analyzeSpendVelocity(params);
+        return result.results;
+    }
+
+    // ==========================================
     // PUBLIC API
     // ==========================================
     return {
+        getData: getData,
         analyze: analyzeSpendVelocity,
         analyzeSpendVelocity: analyzeSpendVelocity,
         getConfig: getConfig,
