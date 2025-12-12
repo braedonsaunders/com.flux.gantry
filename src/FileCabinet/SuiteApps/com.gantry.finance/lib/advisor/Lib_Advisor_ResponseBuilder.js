@@ -554,14 +554,22 @@ define(['N/log', './Lib_Advisor_Utils', './Lib_Advisor_AIProviders', '../Lib_Das
             return null;
         };
         
-        // Helper to find non-zero numeric value
+        // Helper to find non-zero numeric value (handles string-to-number coercion)
         const findNonZeroAmount = (...patterns) => {
             for (const pattern of patterns) {
                 const colIndex = colsLower.findIndex(c => c.includes(pattern));
                 if (colIndex >= 0) {
                     const colName = columns[colIndex];
-                    const val = row[colName] !== undefined ? row[colName] : row[colName.toLowerCase()];
-                    if (val !== null && val !== undefined && val !== 0) return val;
+                    let val = row[colName] !== undefined ? row[colName] : row[colName.toLowerCase()];
+
+                    // Coerce string numbers to actual numbers (database may return strings)
+                    if (typeof val === 'string' && /^-?\d+\.?\d*$/.test(val.trim())) {
+                        val = parseFloat(val);
+                    }
+
+                    if (typeof val === 'number' && !isNaN(val) && val !== 0) {
+                        return val;
+                    }
                 }
             }
             return null;
@@ -578,8 +586,13 @@ define(['N/log', './Lib_Advisor_Utils', './Lib_Advisor_AIProviders', '../Lib_Das
         const isVendorTransaction = tranType && typeof tranType === 'string' && 
             (tranType.toLowerCase().includes('vend') || tranType.toLowerCase().includes('bill'));
         
+        // Coerce displayAmount to number if it's a numeric string (database may return strings)
+        if (displayAmount !== null && typeof displayAmount === 'string' && /^-?\d+\.?\d*$/.test(displayAmount.trim())) {
+            displayAmount = parseFloat(displayAmount);
+        }
+
         // Fix negative amounts for vendor bills (NetSuite stores them as negative)
-        if (displayAmount !== null && typeof displayAmount === 'number' && displayAmount < 0 && isVendorTransaction) {
+        if (displayAmount !== null && typeof displayAmount === 'number' && !isNaN(displayAmount) && displayAmount < 0 && isVendorTransaction) {
             displayAmount = Math.abs(displayAmount);
         }
         
