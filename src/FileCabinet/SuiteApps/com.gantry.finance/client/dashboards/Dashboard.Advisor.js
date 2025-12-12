@@ -53,7 +53,7 @@
             glowDuration: 400,            // was 500
             explodeDuration: 1050,        // was 1200, +10% slower then 20% faster
             orbitDuration: 1000,          // was 1500
-            convergeDuration: 880,        // 20% faster converge to input
+            convergeDuration: 700,        // Fast suction into input
             shineDuration: 480,           // was 600
             colors: [
                 { r: 99, g: 102, b: 241 },   // Indigo
@@ -229,7 +229,7 @@
         },
 
         /**
-         * Orbit: smooth 3D orbital motion - no jolting, seamless from explode
+         * Orbit: organic floating motion - particles drift naturally
          */
         startOrbit: function() {
             this.phase = 'orbit';
@@ -237,16 +237,18 @@
             const center = this.getBrainCenter();
             const chatInput = document.getElementById('advisor-input-full');
 
-            // Store starting positions and calculate orbital parameters
+            // Store starting positions and set up organic drift parameters
             this.particles.forEach((p, i) => {
                 p.orbitStartX = p.x;
                 p.orbitStartY = p.y;
-                const dx = p.x - center.x;
-                const dy = p.y - center.y;
-                p.orbitRadius = Math.sqrt(dx * dx + dy * dy);
-                p.orbitAngle = Math.atan2(dy, dx);
-                p.orbitSpeed = 0.4 + Math.random() * 0.3; // Slower, smoother
-                p.orbitTilt = 0.15 + Math.random() * 0.2; // Subtler 3D
+                // Multiple frequencies for organic movement
+                p.driftFreqX = 0.3 + Math.random() * 0.4;
+                p.driftFreqY = 0.25 + Math.random() * 0.35;
+                p.driftFreqZ = 0.2 + Math.random() * 0.3;
+                p.driftPhaseX = Math.random() * Math.PI * 2;
+                p.driftPhaseY = Math.random() * Math.PI * 2;
+                p.driftPhaseZ = Math.random() * Math.PI * 2;
+                p.driftAmplitude = 15 + Math.random() * 25; // How far they drift
             });
 
             const animateOrbit = () => {
@@ -255,26 +257,25 @@
                 const elapsed = Date.now() - startTime;
                 const progress = Math.min(elapsed / this.config.orbitDuration, 1);
                 this.globalTime += 16;
+                const time = elapsed * 0.001;
 
-                // Blend factor - smoothly ramp into orbital motion
-                const blendIn = Math.min(1, progress * 4); // First 25% is blending in
+                // Gentle blend in
+                const blendIn = Math.min(1, progress * 3);
 
                 this.particles.forEach((p, i) => {
-                    const time = elapsed * 0.001;
-                    const angle = p.orbitAngle + time * p.orbitSpeed;
-                    const zAngle = time * p.orbitSpeed * 0.5;
-                    const zFactor = Math.sin(zAngle) * p.orbitTilt;
+                    // Organic floating motion using multiple sine waves
+                    const driftX = Math.sin(time * p.driftFreqX + p.driftPhaseX) * p.driftAmplitude * 0.7
+                                 + Math.sin(time * p.driftFreqX * 1.7 + p.driftPhaseY) * p.driftAmplitude * 0.3;
+                    const driftY = Math.sin(time * p.driftFreqY + p.driftPhaseY) * p.driftAmplitude * 0.5
+                                 + Math.cos(time * p.driftFreqY * 1.3 + p.driftPhaseX) * p.driftAmplitude * 0.3;
+                    const driftZ = Math.sin(time * p.driftFreqZ + p.driftPhaseZ);
 
-                    // Target orbital position
-                    const orbX = center.x + Math.cos(angle) * p.orbitRadius;
-                    const orbY = center.y + Math.sin(angle) * p.orbitRadius * (0.85 + zFactor * 0.15);
+                    // Apply organic drift from start position
+                    p.x = p.orbitStartX + driftX * blendIn;
+                    p.y = p.orbitStartY + driftY * blendIn;
 
-                    // Smooth blend from start position to orbital position
-                    p.x = p.orbitStartX + (orbX - p.orbitStartX) * blendIn;
-                    p.y = p.orbitStartY + (orbY - p.orbitStartY) * blendIn;
-
-                    // Subtle size variation
-                    p.size = p.baseSize * (0.9 + zFactor * 0.2);
+                    // Subtle size "breathing"
+                    p.size = p.baseSize * (0.9 + driftZ * 0.15);
                 });
 
                 this.draw();
@@ -1405,12 +1406,12 @@
          */
         fetchDashboardScores: function() {
             const self = this;
-            const grid = document.getElementById('scores-grid');
+            const container = document.getElementById('score-categories');
             const timestamp = document.getElementById('scores-timestamp');
 
-            if (!grid) return;
+            if (!container) return;
 
-            // Show loading skeleton (already in HTML)
+            // Fetch and render health scores
             API.get('dashboard_scores')
                 .then(function(response) {
                     if (response && response.scores) {
@@ -1424,7 +1425,7 @@
                 .catch(function(error) {
                     console.error('[Advisor] Failed to fetch dashboard scores:', error);
                     // Show error state
-                    grid.innerHTML = '<div class="scores-error">Unable to load health scores</div>';
+                    container.innerHTML = '<div class="scores-error">Unable to load health scores</div>';
                 });
         },
 
