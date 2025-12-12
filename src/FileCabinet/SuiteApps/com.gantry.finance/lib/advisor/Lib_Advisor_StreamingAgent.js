@@ -130,7 +130,8 @@ Response format: {"tools": ["tool1", "tool2"], "reasoning": "brief explanation"}
 TOOL: {tool_name}
 {tool_schema}
 
-Question context: "{question}"
+{history_context}
+Current question: "{question}"
 {resolved_entities}
 
 CRITICAL SEMANTIC GUIDANCE:
@@ -200,7 +201,8 @@ Response format:
 
     const REFLECT_PROMPT = `You are evaluating tool execution results. Analyze what happened and decide the next action.
 
-ORIGINAL QUESTION: "{question}"
+{history_context}
+CURRENT QUESTION: "{question}"
 
 TOOL EXECUTION SUMMARY:
 {tool_summary}
@@ -290,7 +292,8 @@ Response format (JSON only):
 
     const RESPOND_PROMPT = `You are a financial data analyst. Analyze this data and create a response.
 
-QUESTION: "{question}"
+{history_context}
+CURRENT QUESTION: "{question}"
 
 {data_sections}
 
@@ -1019,6 +1022,7 @@ Response format (JSON only):
         const prompt = INVOKE_PROMPT
             .replace('{tool_name}', toolName)
             .replace('{tool_schema}', schemaLines.join('\n') || 'No parameters required')
+            .replace('{history_context}', buildHistoryContext(state))
             .replace('{question}', state.message)
             .replace('{resolved_entities}', resolvedContext ? `Resolved entities:\n${resolvedContext}` : '')
             .replace('{date_context}', getDateContext())
@@ -1364,24 +1368,42 @@ Response format (JSON only):
         }
 
         // ═══════════════════════════════════════════════════════════════════════
-        // QUICK CHECK: If we have data, just proceed (no LLM call needed)
+        // QUICK CHECK: Only skip LLM reflection if ALL tools succeeded with data
+        // If ANY tool returned 0 rows, we need to evaluate whether to retry
         // ═══════════════════════════════════════════════════════════════════════
         const hasUsefulData = state.dataReferences.length > 0;
         const totalRows = state.toolInvocations.reduce((sum, inv) =>
             sum + (inv.rowCount || 0), 0);
 
-        if (hasUsefulData && totalRows > 0) {
-            // We have data - proceed to RESPOND
+        // Check if any tool returned 0 rows (partial failure)
+        const toolsWithNoData = state.toolInvocations.filter(inv =>
+            inv.success && (inv.rowCount === 0 || inv.rowCount === undefined)
+        );
+        const hasPartialFailure = toolsWithNoData.length > 0 && hasUsefulData;
+
+        // Only fast-path to RESPOND if ALL tools returned data
+        // If there's a partial failure, let LLM evaluate if we should retry
+        if (hasUsefulData && totalRows > 0 && !hasPartialFailure) {
+            // All tools returned data - proceed to RESPOND
             state.reflection.hasReflected = true;
             state.reflection.failureMode = FAILURE_MODES.SUCCESS;
             state.phase = PHASES.RESPOND;
 
-            log.debug('SCA REFLECT phase - data found, proceeding to RESPOND', {
+            log.debug('SCA REFLECT phase - all tools returned data, proceeding to RESPOND', {
                 dataRefs: state.dataReferences.length,
                 totalRows: totalRows
             });
 
             return { success: true, nextPhase: PHASES.RESPOND };
+        }
+
+        // Log partial failure for debugging
+        if (hasPartialFailure) {
+            log.debug('SCA REFLECT phase - partial failure detected, evaluating with LLM', {
+                toolsWithData: state.toolInvocations.filter(t => t.rowCount > 0).map(t => t.tool),
+                toolsWithNoData: toolsWithNoData.map(t => t.tool),
+                totalRows: totalRows
+            });
         }
 
         // ═══════════════════════════════════════════════════════════════════════
@@ -1394,6 +1416,7 @@ Response format (JSON only):
         const dataSummary = buildDataSummaryForReflection(state);
 
         const prompt = REFLECT_PROMPT
+            .replace('{history_context}', buildHistoryContext(state))
             .replace('{question}', state.message)
             .replace('{tool_summary}', toolSummary)
             .replace('{resolved_entities}', resolvedEntitiesStr)
@@ -1774,6 +1797,7 @@ Response format (JSON only):
         const dataSections = buildDataSectionsForPrompt(state);
 
         const prompt = RESPOND_PROMPT
+            .replace('{history_context}', buildHistoryContext(state))
             .replace('{question}', state.message)
             .replace('{data_sections}', dataSections);
 
