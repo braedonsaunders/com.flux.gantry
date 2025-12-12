@@ -480,7 +480,27 @@ IMPORTANT: Use transaction_context to help determine entity type:
                 }
 
                 try {
-                    const result = EntityResolver.resolveEntityWithFallback(term, typeHint);
+                    let result = EntityResolver.resolveEntityWithFallback(term, typeHint);
+
+                    // ═══════════════════════════════════════════════════════════════════════
+                    // FALLBACK: If specific type_hint search fails, try searching all types
+                    // This prevents misclassification issues (e.g., "birla" as vendor when
+                    // it's actually a customer) from causing complete entity resolution failure
+                    // ═══════════════════════════════════════════════════════════════════════
+                    if ((!result.resolved || !result.entity) && typeHint && typeHint !== 'auto') {
+                        log.debug('resolve_entity fallback: specific type not found, trying auto', {
+                            term: term,
+                            failedTypeHint: typeHint
+                        });
+                        result = EntityResolver.resolveEntityWithFallback(term, 'auto');
+                        if (result.resolved && result.entity) {
+                            log.debug('resolve_entity fallback succeeded', {
+                                term: term,
+                                originalTypeHint: typeHint,
+                                foundType: result.actualType
+                            });
+                        }
+                    }
 
                     if (result.resolved && result.entity) {
                         // ═══════════════════════════════════════════════════════════════════════
@@ -639,6 +659,7 @@ Examples: "Hotels", "West Coast", "Engineering", "US subsidiary"`,
                 const term = escapeSql(args.term);
                 // FIXED: Use escapeSqlLike for LIKE clauses to prevent SQL injection via wildcards
                 const termLike = escapeSqlLike(args.term).toLowerCase();
+                const termLower = term.toLowerCase();
                 const dimension = args.dimension || 'auto';
 
                 // Build queries for each dimension
