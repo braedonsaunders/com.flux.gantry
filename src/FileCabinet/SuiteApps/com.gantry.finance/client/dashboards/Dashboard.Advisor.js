@@ -149,99 +149,31 @@
         },
 
         /**
-         * Birth: particles emerge INSIDE the orb background (small radius)
+         * Birth: INVISIBLE - just wait, orb glows
+         * Particles don't show until explode
          */
         startBirth: function() {
             this.phase = 'birth';
-            const startTime = Date.now();
-            const center = this.getBrainCenter();
-
-            const animateBirth = () => {
-                if (!this.isActive || this.phase !== 'birth') return;
-
-                const elapsed = Date.now() - startTime;
-                const progress = Math.min(elapsed / this.config.birthDuration, 1);
-                this.globalTime = elapsed;
-
-                this.particles.forEach((p, i) => {
-                    const stagger = (i / this.particles.length) * 0.5;
-                    const particleProgress = Math.max(0, (progress - stagger) / (1 - stagger));
-
-                    if (particleProgress > 0) {
-                        const eased = this.easeOutSine(particleProgress);
-                        p.opacity = p.targetOpacity * eased * 0.6;
-                        // Stay INSIDE the orb background (max 25px radius)
-                        const burstRadius = 25 * this.easeOutQuart(particleProgress);
-                        p.x = center.x + Math.cos(p.angle) * burstRadius;
-                        p.y = center.y + Math.sin(p.angle) * burstRadius;
-                        p.baseSize = p.size;
-                    }
-                });
-
-                this.draw();
-
-                if (progress < 1) {
-                    this.animationId = requestAnimationFrame(animateBirth);
-                } else {
-                    // Brief pause, then glow
-                    setTimeout(() => {
-                        if (this.isActive) this.startOrbGlow();
-                    }, this.config.pauseDuration);
-                }
-            };
-
-            this.animationId = requestAnimationFrame(animateBirth);
-        },
-
-        /**
-         * Orb Glow: orb glows and pulls particles back to center before explosion
-         */
-        startOrbGlow: function() {
-            this.phase = 'orbGlow';
             const center = this.getBrainCenter();
             const heroOrb = center.element;
 
+            // All particles start invisible at center
+            this.particles.forEach(p => {
+                p.x = center.x;
+                p.y = center.y;
+                p.opacity = 0; // INVISIBLE
+            });
+
+            // Start orb glow immediately
             if (heroOrb) {
                 heroOrb.classList.add('orb-charging');
             }
 
-            // Store starting positions for pull-back
-            this.particles.forEach(p => {
-                p.glowStartX = p.x;
-                p.glowStartY = p.y;
-            });
-
-            const startTime = Date.now();
-
-            const animateGlow = () => {
-                if (!this.isActive || this.phase !== 'orbGlow') return;
-
-                const elapsed = Date.now() - startTime;
-                const progress = Math.min(elapsed / this.config.glowDuration, 1);
-                this.globalTime += 16;
-
-                // Pull particles back to center during glow
-                const pullProgress = this.easeInQuad(progress);
-                const pulse = Math.sin(progress * Math.PI * 2) * 0.3;
-
-                this.particles.forEach(p => {
-                    // Pull back to center
-                    p.x = p.glowStartX + (center.x - p.glowStartX) * pullProgress;
-                    p.y = p.glowStartY + (center.y - p.glowStartY) * pullProgress;
-                    p.opacity = p.targetOpacity * (0.6 + pulse * 0.4);
-                });
-
-                this.draw();
-
-                if (progress < 1) {
-                    this.animationId = requestAnimationFrame(animateGlow);
-                } else {
-                    if (heroOrb) heroOrb.classList.remove('orb-charging');
-                    this.startExplode();
-                }
-            };
-
-            this.animationId = requestAnimationFrame(animateGlow);
+            // Just wait for glow duration, then explode
+            setTimeout(() => {
+                if (heroOrb) heroOrb.classList.remove('orb-charging');
+                if (this.isActive) this.startExplode();
+            }, this.config.glowDuration);
         },
 
         /**
@@ -261,6 +193,7 @@
                 p.y = center.y;
                 p.expandX = padding + Math.random() * (this.canvas.width - padding * 2);
                 p.expandY = padding + Math.random() * (this.canvas.height - padding * 2);
+                p.baseSize = p.size; // Store for orbit 3D effect
             });
 
             const animateExplode = () => {
@@ -296,18 +229,26 @@
         },
 
         /**
-         * Orbit: individual rotation + camera sway left/right
+         * Orbit: 3D orbital motion around brain center + input glow starts
          */
         startOrbit: function() {
             this.phase = 'orbit';
             const startTime = Date.now();
+            const center = this.getBrainCenter();
 
-            // Store exact positions from end of explode
-            this.particles.forEach(p => {
-                p.orbitBaseX = p.x;
-                p.orbitBaseY = p.y;
+            // Get input for early glow
+            const chatInput = document.getElementById('advisor-input-full');
+
+            // Calculate orbital parameters for each particle
+            this.particles.forEach((p, i) => {
+                // Distance from center determines orbit radius
+                const dx = p.x - center.x;
+                const dy = p.y - center.y;
+                p.orbitRadius = Math.sqrt(dx * dx + dy * dy);
+                p.orbitAngle = Math.atan2(dy, dx);
+                p.orbitSpeed = 0.8 + Math.random() * 0.6; // Varying speeds
+                p.orbitTilt = 0.3 + Math.random() * 0.4; // 3D tilt factor
                 p.orbitPhase = Math.random() * Math.PI * 2;
-                p.rotationSpeed = 0.5 + Math.random() * 0.5;
             });
 
             const animateOrbit = () => {
@@ -317,30 +258,34 @@
                 const progress = Math.min(elapsed / this.config.orbitDuration, 1);
                 this.globalTime += 16;
 
-                // Camera sway - all particles shift left then right
-                const cameraSwayAmount = 40; // pixels
-                this.cameraOffsetX = Math.sin(progress * Math.PI * 2) * cameraSwayAmount;
-
-                // Individual particle rotation + camera offset
+                // 3D orbital motion around brain center
                 this.particles.forEach((p, i) => {
                     const time = elapsed * 0.001;
-                    const drift = 10 + (i % 4) * 4;
+                    const angle = p.orbitAngle + time * p.orbitSpeed;
 
-                    // Individual rotation
-                    const individualX = Math.sin(time * p.rotationSpeed + p.orbitPhase) * drift;
-                    const individualY = Math.cos(time * p.rotationSpeed * 0.8 + p.orbitPhase) * drift * 0.7;
+                    // 3D orbit - x/y with z-depth affecting y position (perspective)
+                    const zAngle = time * p.orbitSpeed * 0.7 + p.orbitPhase;
+                    const zFactor = Math.sin(zAngle) * p.orbitTilt;
 
-                    // Apply camera offset to all particles
-                    p.x = p.orbitBaseX + individualX + this.cameraOffsetX;
-                    p.y = p.orbitBaseY + individualY;
+                    p.x = center.x + Math.cos(angle) * p.orbitRadius;
+                    p.y = center.y + Math.sin(angle) * p.orbitRadius * (0.6 + zFactor * 0.4);
+
+                    // Size varies with "depth" for 3D effect
+                    p.size = p.baseSize * (0.8 + zFactor * 0.4);
                 });
 
                 this.draw();
 
+                // Start input glow early (at 50% through orbit)
+                if (chatInput && progress > 0.5) {
+                    const glowProgress = (progress - 0.5) * 2;
+                    const glowSize = 10 + 15 * glowProgress;
+                    chatInput.style.boxShadow = `0 0 ${glowSize}px rgba(99, 102, 241, ${0.2 * glowProgress})`;
+                }
+
                 if (progress < 1) {
                     this.animationId = requestAnimationFrame(animateOrbit);
                 } else {
-                    this.cameraOffsetX = 0; // Reset camera
                     this.startConverge();
                 }
             };
@@ -482,6 +427,12 @@
 
         startAmbient: function() {
             this.phase = 'ambient';
+
+            // Show the score-category cards now that animation is complete
+            var scoreCategories = document.getElementById('score-categories');
+            if (scoreCategories) {
+                scoreCategories.classList.add('cards-visible');
+            }
 
             this.particles.forEach(p => {
                 p.x = 50 + Math.random() * (this.canvas.width - 100);
@@ -5597,18 +5548,10 @@
                 GeometricAnimation.init();
             }, 100);
 
-            // Reset score-category cards animation by re-triggering it
+            // Reset score-category cards visibility for animation replay
             const scoreCategories = document.getElementById('score-categories');
             if (scoreCategories) {
-                scoreCategories.style.animation = 'none';
-                scoreCategories.offsetHeight; // Force reflow
-                scoreCategories.style.animation = '';
-                // Also reset individual card animations
-                scoreCategories.querySelectorAll('.score-category-card').forEach(card => {
-                    card.style.animation = 'none';
-                    card.offsetHeight;
-                    card.style.animation = '';
-                });
+                scoreCategories.classList.remove('cards-visible');
             }
 
             // Re-bind suggestion chip events
