@@ -44,7 +44,7 @@
         orbitAngle: 0,
 
         config: {
-            particleCount: 55,
+            particleCount: 70,
             connectionDistance: 90,
             particleSize: { min: 1.5, max: 2.5 },
             // All timings sped up 20% (multiplied by 0.8)
