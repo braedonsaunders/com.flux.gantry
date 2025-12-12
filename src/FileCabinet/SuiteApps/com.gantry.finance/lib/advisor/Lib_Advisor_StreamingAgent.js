@@ -1525,11 +1525,12 @@ Response format (JSON only):
         const totalRows = state.toolInvocations.reduce((sum, inv) =>
             sum + (inv.rowCount || 0), 0);
 
-        // Check if any tool returned 0 rows (partial failure)
+        // Check if any tool returned 0 rows OR failed entirely (partial failure)
         const toolsWithNoData = state.toolInvocations.filter(inv =>
             inv.success && (inv.rowCount === 0 || inv.rowCount === undefined)
         );
-        const hasPartialFailure = toolsWithNoData.length > 0 && hasUsefulData;
+        const toolsWithErrors = state.toolInvocations.filter(inv => !inv.success);
+        const hasPartialFailure = (toolsWithNoData.length > 0 || toolsWithErrors.length > 0) && hasUsefulData;
 
         // Only fast-path to RESPOND if ALL tools returned data
         // If there's a partial failure, let LLM evaluate if we should retry
@@ -1552,6 +1553,7 @@ Response format (JSON only):
             log.debug('SCA REFLECT phase - partial failure detected, evaluating with LLM', {
                 toolsWithData: state.toolInvocations.filter(t => t.rowCount > 0).map(t => t.tool),
                 toolsWithNoData: toolsWithNoData.map(t => t.tool),
+                toolsWithErrors: toolsWithErrors.map(t => ({ tool: t.tool, error: t.error })),
                 totalRows: totalRows
             });
         }
