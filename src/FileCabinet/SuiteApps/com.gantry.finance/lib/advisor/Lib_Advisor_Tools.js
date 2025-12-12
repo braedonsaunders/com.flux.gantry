@@ -432,6 +432,8 @@ define([
     const DISCOVERY_TOOLS = {
         resolve_entity: {
             name: 'resolve_entity',
+            shortDescription: 'Find customer/vendor/employee by name → returns ID',
+            category: 'discovery',
             description: `Find a business entity (customer, vendor, employee, item, project) by name.
 Returns the entity's ID, full name, and type.
 Use this when the user mentions a company name, person name, product, or project.
@@ -560,6 +562,8 @@ IMPORTANT: Use transaction_context to help determine entity type:
 
         resolve_gl_account: {
             name: 'resolve_gl_account',
+            shortDescription: 'Find GL account by name/number → returns ID',
+            category: 'discovery',
             description: `Find a GL (General Ledger) account by name, number, or type.
 Use for questions about specific accounts, expense categories, revenue accounts.
 Returns account ID, name, number, and type (Bank, Income, Expense, COGS, etc.)
@@ -639,6 +643,8 @@ Examples: "Travel expenses", "4000", "Bank accounts", "COGS"`,
 
         resolve_classification: {
             name: 'resolve_classification',
+            shortDescription: 'Find class/department/location/subsidiary → returns ID',
+            category: 'discovery',
             description: `Find a NetSuite classification dimension: class, location, department, or subsidiary.
 Use when user mentions business segments, categories, regions, divisions, or departments.
 Examples: "Hotels", "West Coast", "Engineering", "US subsidiary"`,
@@ -731,6 +737,8 @@ Examples: "Hotels", "West Coast", "Engineering", "US subsidiary"`,
 
         explore_schema: {
             name: 'explore_schema',
+            shortDescription: 'Explore NetSuite record schema and fields',
+            category: 'discovery',
             description: `Get available fields and relationships for a NetSuite SuiteQL table.
 Use this to understand what data is available before writing custom queries.
 
@@ -890,6 +898,8 @@ inventorybalance (stock levels), budget (budget data), ProjectFinancials (projec
     const DATA_TOOLS = {
         get_ap_aging: {
             name: 'get_ap_aging',
+            shortDescription: 'AP aging buckets by vendor (current, 1-30, 31-60, etc.)',
+            category: 'data',
             description: `Get accounts payable aging summary by bucket (Current, 1-30, 31-60, 61-90, 90+).
 Shows what we owe to vendors, broken down by how overdue.
 Use for: "AP aging", "what do we owe", "overdue bills", "vendor balances"
@@ -1051,6 +1061,8 @@ Can filter by minimum outstanding amount, specific aging buckets, and subsidiary
 
         get_ar_aging: {
             name: 'get_ar_aging',
+            shortDescription: 'AR aging buckets by customer (current, 1-30, 31-60, etc.)',
+            category: 'data',
             description: `Get accounts receivable aging summary by bucket (Current, 1-30, 31-60, 61-90, 90+).
 Shows what customers owe us, broken down by how overdue.
 Use for: "AR aging", "what are we owed", "overdue invoices", "customer balances"
@@ -1219,6 +1231,8 @@ Can filter by minimum outstanding amount, specific aging buckets, subsidiary, an
 
         get_vendor_spend: {
             name: 'get_vendor_spend',
+            shortDescription: 'Spend by vendor for a period',
+            category: 'data',
             description: `Get vendor spending analysis.
 Shows total spend by vendor for a given period.
 Use for: "vendor spend", "who do we pay most", "top vendors", "AP by vendor"
@@ -1385,6 +1399,8 @@ Can filter by minimum/maximum spend, class, department, and subsidiary.`,
 
         get_customer_revenue: {
             name: 'get_customer_revenue',
+            shortDescription: 'Revenue by customer for a period',
+            category: 'data',
             description: `Get customer revenue analysis.
 Shows total revenue by customer for a given period.
 Use for: "customer revenue", "top customers", "sales by customer"
@@ -1554,6 +1570,8 @@ Can filter by minimum/maximum revenue, class, department, subsidiary, and sales 
 
         get_gl_activity: {
             name: 'get_gl_activity',
+            shortDescription: 'GL account activity and transaction details',
+            category: 'data',
             description: `Get GL (General Ledger) transaction activity.
 Shows transactions and their GL impact filtered by account, class, location, and/or period.
 Use for: "GL activity", "account activity", "what hit this account", "GL variance", "class expenses"
@@ -1800,6 +1818,8 @@ NOTE: Class/department/location filters use the segment values from the GL accou
 
         get_trial_balance: {
             name: 'get_trial_balance',
+            shortDescription: 'Trial balance for a period',
+            category: 'data',
             description: `Get trial balance - account balances as of now.
 Shows all accounts with their debit/credit totals.
 
@@ -1866,6 +1886,8 @@ Use for: "trial balance", "account balances", "GL balances", "income statement",
 
         get_income_statement: {
             name: 'get_income_statement',
+            shortDescription: 'Income statement / P&L report',
+            category: 'data',
             description: `Get a complete Income Statement / P&L (Profit and Loss) for a period.
 Returns Revenue, COGS, Gross Profit, Operating Expenses, and Net Income with proper calculations.
 ALWAYS use this for: "income statement", "P&L", "profit and loss", "show me P&L", "how much profit", "net income"`,
@@ -1993,6 +2015,8 @@ ALWAYS use this for: "income statement", "P&L", "profit and loss", "show me P&L"
 
         get_balance_sheet: {
             name: 'get_balance_sheet',
+            shortDescription: 'Balance sheet at a point in time',
+            category: 'data',
             description: `Get a complete Balance Sheet showing Assets, Liabilities, and Equity.
 Returns all balance sheet accounts organized by category.
 ALWAYS use this for: "balance sheet", "assets and liabilities", "financial position", "what do we own", "net worth"`,
@@ -2099,6 +2123,8 @@ ALWAYS use this for: "balance sheet", "assets and liabilities", "financial posit
 
         get_top_customers: {
             name: 'get_top_customers',
+            shortDescription: 'Top N customers by revenue or transaction volume',
+            category: 'data',
             description: `Get top customers by revenue for current fiscal year.
 ALWAYS use this for: "top customers", "best customers", "biggest customers", "customer revenue", "who are our best customers"
 
@@ -2275,6 +2301,8 @@ Supports filtering by minimum revenue, subsidiary, class, and can include AR agi
 
         get_top_vendors: {
             name: 'get_top_vendors',
+            shortDescription: 'Top N vendors by spend amount',
+            category: 'data',
             description: `Get top vendors by spend for current fiscal year.
 ALWAYS use this for: "top vendors", "biggest vendors", "vendor spend", "who do we pay most", "where do we spend"
 
@@ -2411,6 +2439,8 @@ Supports filtering by minimum spend, subsidiary, class, department, and can incl
 
         get_recent_transactions: {
             name: 'get_recent_transactions',
+            shortDescription: 'Recent transactions with optional filters',
+            category: 'data',
             description: `Get recent transactions, optionally filtered by type or entity.
 Use for: "recent transactions", "latest invoices", "recent bills", "show transactions"
 
@@ -2609,6 +2639,8 @@ IMPORTANT: You MUST use exact NetSuite type codes from the enum:
 
         get_transaction_detail: {
             name: 'get_transaction_detail',
+            shortDescription: 'Details of a specific transaction by ID',
+            category: 'data',
             description: `Get full details of a specific transaction including line items and GL impact.
 Use when you need to drill into a specific transaction.`,
             parameters: {
@@ -2669,6 +2701,8 @@ Use when you need to drill into a specific transaction.`,
 
         compare_periods: {
             name: 'compare_periods',
+            shortDescription: 'Compare two time periods (YoY, MoM, etc.)',
+            category: 'data',
             description: `Compare a metric between two periods to find variance.
 Use for: "variance analysis", "compare to last month", "YoY change", "period comparison"
 
@@ -2791,6 +2825,8 @@ Example period formats (assuming current date is Dec 2025):
 
         get_revenue_by_month: {
             name: 'get_revenue_by_month',
+            shortDescription: 'Monthly revenue trend with optional YoY comparison',
+            category: 'data',
             description: `Get monthly revenue breakdown showing trend over time.
 ALWAYS use this for: "revenue trend", "monthly revenue", "revenue by month", "revenue over time", "sales trend"
 
@@ -2882,6 +2918,8 @@ Returns revenue for each month with optional year-over-year comparison.`,
 
         find_anomalies: {
             name: 'find_anomalies',
+            shortDescription: 'Find unusual transactions or patterns',
+            category: 'data',
             description: `Find unusual transactions or outliers in the data.
 Identifies transactions that are significantly different from average.
 Use for: "anomalies", "unusual transactions", "what caused the spike", "outliers"`,
@@ -3065,6 +3103,8 @@ Use for: "anomalies", "unusual transactions", "what caused the spike", "outliers
 
         get_cash_position: {
             name: 'get_cash_position',
+            shortDescription: 'Current cash and bank account balances',
+            category: 'data',
             description: `Get current cash position across all bank accounts.
 Use for: "cash balance", "how much cash", "bank balances", "cash on hand"
 
@@ -3166,6 +3206,8 @@ Supports filtering by subsidiary and including credit card balances.`,
 
         get_expense_breakdown: {
             name: 'get_expense_breakdown',
+            shortDescription: 'Expenses by category or account',
+            category: 'data',
             description: `Get expense breakdown by category/account.
 Use for: "expense breakdown", "where is money going", "expenses by category"`,
             parameters: {
@@ -3243,6 +3285,8 @@ Use for: "expense breakdown", "where is money going", "expenses by category"`,
 
         get_budget_variance: {
             name: 'get_budget_variance',
+            shortDescription: 'Actual vs budget comparison',
+            category: 'data',
             description: `Compare actual financial results vs budget by account and period.
 Use for: "budget variance", "actual vs budget", "budget comparison", "are we over budget", "budget performance"
 
@@ -3397,6 +3441,8 @@ Can filter by account type, department, class, and specific accounts.`,
 
         get_project_profitability: {
             name: 'get_project_profitability',
+            shortDescription: 'Project P&L and margin analysis',
+            category: 'profitability',
             description: `Get project profitability analysis showing revenue, costs, and margin by project.
 Use for: "project profitability", "project P&L", "project margin", "project performance", "which projects are profitable"
 
@@ -3519,8 +3565,10 @@ Can filter by subsidiary, specific project, or transaction type.`,
 
         get_department_profitability: {
             name: 'get_department_profitability',
+            shortDescription: 'Department-level P&L breakdown',
+            category: 'profitability',
             description: `Get P&L breakdown by department showing revenue, expenses, and margin.
-Use for: "department profitability", "department P&L", "segment analysis", "departmental performance"
+Use for: "department profitability", "department P&L", "segment analysis", "departmental performance", "revenue by department"
 
 Shows income, expenses, and net margin for each department.
 Can filter by subsidiary and time period.`,
@@ -3621,6 +3669,8 @@ Can filter by subsidiary and time period.`,
 
         get_employee_expenses: {
             name: 'get_employee_expenses',
+            shortDescription: 'Expense report analysis by employee',
+            category: 'data',
             description: `Get expense report analysis by employee.
 Use for: "employee expenses", "expense reports", "who is spending", "T&E analysis", "travel expenses"
 
@@ -3771,6 +3821,8 @@ Can filter by period, expense category, and approval status.`,
 
         get_purchase_orders: {
             name: 'get_purchase_orders',
+            shortDescription: 'PO status and procurement pipeline',
+            category: 'data',
             description: `Get purchase order status and analysis.
 Use for: "purchase orders", "PO status", "outstanding orders", "pending deliveries", "procurement pipeline"
 
@@ -3908,6 +3960,8 @@ Can filter by vendor, status, department, and date.`,
 
         get_sales_orders: {
             name: 'get_sales_orders',
+            shortDescription: 'SO backlog and fulfillment status',
+            category: 'data',
             description: `Get sales order pipeline and backlog analysis.
 Use for: "sales orders", "order backlog", "pending fulfillment", "sales pipeline", "order status"
 
@@ -4051,6 +4105,8 @@ Can filter by customer, status, and date.`,
 
         get_inventory_status: {
             name: 'get_inventory_status',
+            shortDescription: 'Stock levels and reorder alerts',
+            category: 'data',
             description: `Get inventory status including stock levels and reorder alerts.
 Use for: "inventory status", "stock levels", "low stock", "reorder items", "inventory value"
 
@@ -4169,6 +4225,8 @@ Can filter by location, item type, and low stock alerts.`,
 
         get_journal_entries: {
             name: 'get_journal_entries',
+            shortDescription: 'Journal entry analysis',
+            category: 'data',
             description: `Get journal entry analysis for adjustments, accruals, and manual entries.
 Use for: "journal entries", "adjusting entries", "accruals", "manual entries", "JE analysis"
 
@@ -4327,6 +4385,8 @@ Can filter by period, memo text, account, and amount.`,
 
         get_period_close_status: {
             name: 'get_period_close_status',
+            shortDescription: 'Accounting period open/closed status',
+            category: 'data',
             description: `Get accounting period status showing which periods are open, closed, or locked.
 Use for: "period status", "which periods are open", "period close status", "can I post to", "locked periods"
 
@@ -4429,6 +4489,8 @@ Shows all accounting periods with their current status for AR, AP, Payroll, and 
 
         get_intercompany_balances: {
             name: 'get_intercompany_balances',
+            shortDescription: 'IC receivables/payables between subsidiaries',
+            category: 'data',
             description: `Get intercompany receivable/payable balances between subsidiaries.
 Use for: "intercompany balances", "IC balances", "intercompany receivables", "intercompany payables", "eliminate intercompany"
 
@@ -4536,6 +4598,8 @@ Shows balances owed between subsidiaries for elimination and reconciliation.`,
     const DASHBOARD_TOOLS = {
         list_dashboards: {
             name: 'list_dashboards',
+            shortDescription: 'List all available dashboards',
+            category: 'dashboard',
             description: `List all available financial dashboards and their purposes.
 Use this when:
 - User asks "what dashboards are available?"
@@ -4621,6 +4685,8 @@ Use this when:
 
         dashboard_cashflow: {
             name: 'dashboard_cashflow',
+            shortDescription: 'Cash projections, runway, burn rate, forecasts',
+            category: 'dashboard',
             description: `Get comprehensive TREASURY/CASHFLOW dashboard data including:
 - Current cash position across all bank accounts
 - Cash projections for 30/60/90 days
@@ -4687,6 +4753,8 @@ Use for: "cash flow", "runway", "cash projection", "liquidity", "treasury", "wor
 
         dashboard_health: {
             name: 'dashboard_health',
+            shortDescription: 'Financial health score, margins, ratios',
+            category: 'dashboard',
             description: `Get comprehensive PROFITABILITY PULSE dashboard data including:
 - Overall health score (0-100)
 - Gross margin, net margin, operating margin
@@ -4745,6 +4813,8 @@ PREFERRED for: "income statement", "P&L", "profit and loss", "financial health",
 
         dashboard_burden: {
             name: 'dashboard_burden',
+            shortDescription: 'Rate Engine: overhead, burden rates',
+            category: 'dashboard',
             description: `Get comprehensive RATE ENGINE/BURDEN RATE dashboard data including:
 - Current burden rate (overhead / direct labor)
 - Target burden rate
@@ -4802,6 +4872,8 @@ Use for: "burden rate", "overhead", "labor burden", "cost recovery", "fringe rat
 
         dashboard_time: {
             name: 'dashboard_time',
+            shortDescription: 'Utilization: billable hours, productivity',
+            category: 'dashboard',
             description: `Get comprehensive UTILIZATION dashboard data including:
 - Total billable vs non-billable hours
 - Utilization rate
@@ -4864,6 +4936,8 @@ Use for: "utilization", "billable hours", "time tracking", "unbilled time", "emp
 
         dashboard_integrity: {
             name: 'dashboard_integrity',
+            shortDescription: 'Sentinel: fraud detection, anomalies',
+            category: 'dashboard',
             description: `Get comprehensive SENTINEL/INTEGRITY dashboard data including:
 - Overall risk score
 - Flagged transaction count
@@ -4917,6 +4991,8 @@ Use for: "fraud detection", "anomalies", "duplicates", "Benford's law", "suspici
 
         dashboard_vendorperformance: {
             name: 'dashboard_vendorperformance',
+            shortDescription: 'Procurement: vendor analysis, payment trends',
+            category: 'dashboard',
             description: `Get comprehensive PROCUREMENT/VENDOR PERFORMANCE dashboard data including:
 - Vendor leverage matrix (strategic/commodity/niche/transactional)
 - Payment term compliance (early/on-time/late rates)
@@ -4975,6 +5051,8 @@ Use for: "vendor performance", "procurement", "vendor leverage", "payment terms"
 
         dashboard_customervalue: {
             name: 'dashboard_customervalue',
+            shortDescription: 'Revenue Intelligence: customer CLV, RFM',
+            category: 'dashboard',
             description: `Get comprehensive REVENUE INTELLIGENCE/CUSTOMER VALUE dashboard data including:
 - Customer lifetime value (CLV) projections
 - RFM segmentation (Recency, Frequency, Monetary)
@@ -5033,6 +5111,8 @@ Use for: "customer value", "CLV", "lifetime value", "RFM", "churn risk", "custom
 
         dashboard_spendvelocity: {
             name: 'dashboard_spendvelocity',
+            shortDescription: 'Cost Dynamics: expense trends, velocity',
+            category: 'dashboard',
             description: `Get comprehensive COST DYNAMICS/SPEND VELOCITY dashboard data including:
 - Spend velocity by vendor (growth speed)
 - Spend acceleration (is growth speeding up)
@@ -5091,6 +5171,8 @@ Use for: "spend velocity", "subscription creep", "shadow IT", "commitment cliff"
 
         load_collection: {
             name: 'load_collection',
+            shortDescription: 'Load dashboard collection for deep-dive',
+            category: 'dashboard',
             description: `Load detailed collection data from a cached dashboard for deep-dive analysis.
 After calling a dashboard tool, you receive a summary with key metrics and collection references.
 Use this tool to drill down into specific collections when the user asks for details.
@@ -5187,6 +5269,8 @@ Use this for: "show me details", "list the vendors", "which customers", "break i
     const UTILITY_TOOLS = {
         get_fiscal_context: {
             name: 'get_fiscal_context',
+            shortDescription: 'Current fiscal period and date info',
+            category: 'utility',
             description: `Get current fiscal calendar context including:
 - Current date
 - Fiscal year start/end dates
@@ -5248,6 +5332,8 @@ Use to understand what "YTD", "this quarter", etc. mean for this organization.`,
 
         load_cached_data: {
             name: 'load_cached_data',
+            shortDescription: 'Load/drill-down into previously fetched data',
+            category: 'utility',
             description: `Load data from cache - use this to access previously fetched data or drill into dashboard collections.
 
 USE THIS TOOL WHEN:
@@ -5439,6 +5525,8 @@ EXAMPLES:
 
         run_custom_query: {
             name: 'run_custom_query',
+            shortDescription: 'Execute custom SuiteQL query',
+            category: 'utility',
             description: `Execute a custom SuiteQL query when no other tool provides the needed data.
 USE SPARINGLY - prefer specific data tools when available.
 Only use for complex queries that combine multiple data sources.
@@ -5489,6 +5577,8 @@ Query vendor bills: SELECT * FROM transaction WHERE type = 'VendBill'`,
 
         run_saved_search: {
             name: 'run_saved_search',
+            shortDescription: 'Run a NetSuite saved search by ID',
+            category: 'reports',
             description: `Execute a NetSuite saved search by its internal ID or script ID.
 Use this when:
 - User mentions a specific saved search name or ID
@@ -5618,6 +5708,8 @@ Examples:
 
         list_saved_searches: {
             name: 'list_saved_searches',
+            shortDescription: 'List available saved searches',
+            category: 'reports',
             description: `List available saved searches in the system, optionally filtered by record type or title.
 Use this to:
 - Find available searches before running them
@@ -5724,6 +5816,8 @@ Returns search ID, title, record type, and description.`,
 
         list_capabilities: {
             name: 'list_capabilities',
+            shortDescription: 'List all advisor capabilities',
+            category: 'utility',
             description: `Get a summary of all available tools and capabilities.
 Use this when user asks:
 - "What can you do?"
@@ -5734,86 +5828,70 @@ Use this when user asks:
                 properties: {
                     category: {
                         type: 'string',
-                        enum: ['all', 'discovery', 'data', 'dashboards', 'reports', 'queries'],
-                        description: 'Filter by tool category (default: all)'
+                        enum: ['all', 'discovery', 'data', 'profitability', 'dashboards', 'reports', 'utility', 'queries'],
+                        description: 'Filter by tool category (default: all). Note: "queries" is an alias for "utility"'
                     }
                 },
                 required: []
             },
             execute: function(args) {
-                const category = args.category || 'all';
+                const requestedCategory = args.category || 'all';
 
-                const capabilities = {
-                    discovery: {
-                        description: 'Find entities and resolve IDs',
-                        tools: [
-                            { name: 'resolve_entity', purpose: 'Find customer, vendor, employee, item, project by name' },
-                            { name: 'resolve_gl_account', purpose: 'Find GL account by name, number, or type' },
-                            { name: 'resolve_classification', purpose: 'Find class, department, location, or subsidiary' }
-                        ]
-                    },
-                    data: {
-                        description: 'Get financial data and metrics',
-                        tools: [
-                            { name: 'get_cash_position', purpose: 'Current bank balances and cash position' },
-                            { name: 'get_ap_aging', purpose: 'Accounts payable aging by vendor' },
-                            { name: 'get_ar_aging', purpose: 'Accounts receivable aging by customer' },
-                            { name: 'get_vendor_spend', purpose: 'Spending analysis by vendor' },
-                            { name: 'get_customer_revenue', purpose: 'Revenue analysis by customer' },
-                            { name: 'get_gl_activity', purpose: 'GL transactions by account/class/dept' },
-                            { name: 'get_trial_balance', purpose: 'Account balances with debits/credits' },
-                            { name: 'get_recent_transactions', purpose: 'Recent transactions filtered by type/entity' },
-                            { name: 'get_expense_breakdown', purpose: 'Expenses by category' },
-                            { name: 'compare_periods', purpose: 'Period over period comparison' },
-                            { name: 'get_budget_variance', purpose: 'Actual vs budget comparison' },
-                            { name: 'get_project_profitability', purpose: 'Project P&L and margin analysis' },
-                            { name: 'get_department_profitability', purpose: 'Department-level P&L breakdown' },
-                            { name: 'get_employee_expenses', purpose: 'Expense report analysis by employee' },
-                            { name: 'get_purchase_orders', purpose: 'PO status and procurement pipeline' },
-                            { name: 'get_sales_orders', purpose: 'SO backlog and fulfillment status' },
-                            { name: 'get_inventory_status', purpose: 'Stock levels and reorder alerts' },
-                            { name: 'get_journal_entries', purpose: 'Journal entry analysis' },
-                            { name: 'get_period_close_status', purpose: 'Accounting period open/closed status' },
-                            { name: 'get_intercompany_balances', purpose: 'IC receivables/payables between subs' },
-                            { name: 'find_anomalies', purpose: 'Detect outliers and unusual patterns' }
-                        ]
-                    },
-                    dashboards: {
-                        description: 'Comprehensive pre-computed analysis',
-                        tools: [
-                            { name: 'dashboard_cashflow', purpose: 'Treasury: cash, runway, projections' },
-                            { name: 'dashboard_health', purpose: 'Profitability: margins, ratios, health score' },
-                            { name: 'dashboard_burden', purpose: 'Rate Engine: overhead, burden rates' },
-                            { name: 'dashboard_time', purpose: 'Utilization: billable hours, productivity' },
-                            { name: 'dashboard_integrity', purpose: 'Sentinel: fraud detection, anomalies' },
-                            { name: 'dashboard_vendorperformance', purpose: 'Procurement: vendor analysis' },
-                            { name: 'dashboard_customervalue', purpose: 'Revenue Intelligence: customer CLV, RFM' },
-                            { name: 'dashboard_spendvelocity', purpose: 'Cost Dynamics: expense trends' },
-                            { name: 'list_dashboards', purpose: 'List all available dashboards' }
-                        ]
-                    },
-                    reports: {
-                        description: 'Standard and custom reports',
-                        tools: [
-                            { name: 'run_report', purpose: 'Execute standard financial reports (P&L, Balance Sheet, etc.)' },
-                            { name: 'list_reports', purpose: 'List available reports' },
-                            { name: 'run_saved_search', purpose: 'Execute a saved search by ID' },
-                            { name: 'list_saved_searches', purpose: 'Find available saved searches' }
-                        ]
-                    },
-                    queries: {
-                        description: 'Custom data queries',
-                        tools: [
-                            { name: 'run_custom_query', purpose: 'Execute custom SuiteQL query for specific data needs' }
-                        ]
-                    }
+                // Category metadata for display
+                const categoryDescriptions = {
+                    discovery: 'Find entities and resolve IDs',
+                    data: 'Get financial data and metrics',
+                    profitability: 'Segment-level P&L analysis',
+                    dashboard: 'Comprehensive pre-computed analysis',
+                    reports: 'Standard and custom reports',
+                    utility: 'Helper tools and custom queries'
                 };
 
+                // Map category names for backwards compatibility
+                const categoryAliases = {
+                    dashboards: 'dashboard',
+                    queries: 'utility'
+                };
+
+                // DYNAMICALLY build capabilities from ALL_TOOLS
+                const capabilities = {};
+
+                for (const toolName in ALL_TOOLS) {
+                    const tool = ALL_TOOLS[toolName];
+
+                    // Skip internal/unexposed tools
+                    if (tool.exposed === false || tool.category === 'internal') {
+                        continue;
+                    }
+
+                    const category = tool.category || 'utility';
+                    const displayCategory = category === 'dashboard' ? 'dashboards' : category;
+
+                    // Initialize category if needed
+                    if (!capabilities[displayCategory]) {
+                        capabilities[displayCategory] = {
+                            description: categoryDescriptions[category] || category,
+                            tools: []
+                        };
+                    }
+
+                    // Add tool to category
+                    capabilities[displayCategory].tools.push({
+                        name: toolName,
+                        purpose: tool.shortDescription || tool.description.split('\n')[0].trim()
+                    });
+                }
+
+                // Resolve category alias (e.g., 'queries' -> 'utility')
+                const normalizedCategory = categoryAliases[requestedCategory] || requestedCategory;
+
                 let result = {};
-                if (category === 'all') {
+                if (requestedCategory === 'all') {
                     result = capabilities;
-                } else if (capabilities[category]) {
-                    result[category] = capabilities[category];
+                } else if (capabilities[requestedCategory]) {
+                    result[requestedCategory] = capabilities[requestedCategory];
+                } else if (capabilities[normalizedCategory]) {
+                    result[normalizedCategory] = capabilities[normalizedCategory];
                 }
 
                 const totalTools = Object.values(capabilities).reduce((sum, cat) => sum + cat.tools.length, 0);
@@ -5834,6 +5912,8 @@ Use this when user asks:
 
         list_reports: {
             name: 'list_reports',
+            shortDescription: 'List available report types',
+            category: 'reports',
             description: `List available reports that can be run with run_report.
 Returns both standard financial reports and discovered custom reports.
 
@@ -6009,6 +6089,8 @@ Use this when:
 
         run_report: {
             name: 'run_report',
+            shortDescription: 'Run a standard financial report',
+            category: 'reports',
             description: `Execute a financial report from NetSuite's standard reports or custom reports.
 This executes the report and returns the data in a structured format.
 
@@ -6219,6 +6301,9 @@ Use parameters to filter by date range, subsidiary, class, department, etc.`,
 
         format_response: {
             name: 'format_response',
+            shortDescription: 'Format final response with rich blocks',
+            category: 'internal',
+            exposed: false,  // Internal tool - not shown in LLM tool selection
             description: `REQUIRED: Format your final response with rich structured content.
 Use this tool when you are ready to provide your final answer to the user.
 This creates professional, visually appealing responses with multiple content types.
@@ -6547,71 +6632,34 @@ ALWAYS use this tool for your final response instead of plain text.
     // LIGHTWEIGHT TOOL MANIFEST (for Streaming Context Architecture)
     // Tool names + one-line descriptions only - no schemas, no parameters
     // This reduces token usage from ~15,000 to ~300 for tool selection
+    // DYNAMIC: Generated from tool definitions (single source of truth)
     // ═══════════════════════════════════════════════════════════════════════════
 
     /**
      * Get lightweight tool manifest (names + one-liners only)
      * Used by Streaming Agent for tool selection phase
+     * DYNAMICALLY generated from ALL_TOOLS - no more manual maintenance!
      * @returns {object} Map of tool names to one-line descriptions
      */
     function getToolManifest() {
-        return {
-            // Discovery
-            resolve_entity: "Find customer/vendor/employee by name → returns ID",
-            resolve_gl_account: "Find GL account by name/number → returns ID",
-            resolve_classification: "Find class/department/location/subsidiary → returns ID",
+        const manifest = {};
 
-            // Customer/Revenue
-            get_customer_revenue: "Revenue by customer for a period",
-            get_top_customers: "Top N customers by revenue or transaction volume",
+        for (const toolName in ALL_TOOLS) {
+            const tool = ALL_TOOLS[toolName];
 
-            // Vendor/Spend
-            get_vendor_spend: "Spend by vendor for a period",
-            get_top_vendors: "Top N vendors by spend amount",
+            // Skip internal/unexposed tools (e.g., format_response)
+            if (tool.exposed === false) {
+                continue;
+            }
 
-            // Aging
-            get_ar_aging: "AR aging buckets by customer (current, 1-30, 31-60, etc.)",
-            get_ap_aging: "AP aging buckets by vendor",
+            // Use shortDescription if available, otherwise extract first line of description
+            const description = tool.shortDescription ||
+                (tool.description ? tool.description.split('\n')[0].trim() : toolName);
 
-            // GL & Financial Statements
-            get_gl_activity: "GL account activity and transaction details",
-            get_trial_balance: "Trial balance for a period",
-            get_income_statement: "Income statement / P&L report",
-            get_balance_sheet: "Balance sheet at a point in time",
+            manifest[toolName] = description;
+        }
 
-            // Transactions
-            get_recent_transactions: "Recent transactions with optional filters",
-            get_transaction_detail: "Details of a specific transaction by ID",
-
-            // Analysis
-            compare_periods: "Compare two time periods (YoY, MoM, etc.)",
-            get_revenue_by_month: "Monthly revenue trend with optional YoY comparison",
-            find_anomalies: "Find unusual transactions or patterns",
-            get_cash_position: "Current cash and bank account balances",
-            get_expense_breakdown: "Expenses by category or account",
-
-            // Dashboards
-            dashboard_cashflow: "Cash flow metrics and projections",
-            dashboard_health: "Financial health indicators",
-            dashboard_burden: "Administrative burden metrics",
-            dashboard_time: "Time-based financial trends",
-            dashboard_integrity: "Data integrity checks",
-            dashboard_vendorperformance: "Vendor performance analytics",
-            dashboard_customervalue: "Customer value and lifetime metrics",
-            dashboard_spendvelocity: "Spending velocity and trends",
-            list_dashboards: "List all available dashboards",
-
-            // Utility
-            get_fiscal_context: "Current fiscal period and date info",
-            run_custom_query: "Execute custom SuiteQL query",
-            run_saved_search: "Run a NetSuite saved search by ID",
-            list_saved_searches: "List available saved searches",
-            run_report: "Run a standard financial report",
-            list_reports: "List available report types",
-            list_capabilities: "List all advisor capabilities",
-            explore_schema: "Explore NetSuite record schema",
-            format_response: "Format final response with rich blocks"
-        };
+        return manifest;
     }
 
     /**
