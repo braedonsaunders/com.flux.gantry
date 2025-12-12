@@ -474,10 +474,139 @@ define(['N/cache', 'N/log'], function(cache, log) {
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
+    // TOOL RESULT CACHING WITH TTL
+    // Caches tool execution results to avoid redundant queries within a session.
+    // Different TTLs for different tool types:
+    // - Entity resolution: 5 minutes (entities rarely change mid-session)
+    // - Data queries: 30 seconds (data should be relatively fresh)
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    const TOOL_CACHE_NAME = 'ADVISOR_TOOL_CACHE';
+    const ENTITY_RESOLUTION_TTL = 300;  // 5 minutes for entity resolution
+    const DATA_QUERY_TTL = 30;          // 30 seconds for data queries
+
+    function getToolCache() {
+        return cache.getCache({
+            name: TOOL_CACHE_NAME,
+            scope: cache.Scope.PUBLIC
+        });
+    }
+
+    /**
+     * Generate a cache key for a tool call
+     * Key is based on tool name and serialized args
+     *
+     * @param {string} toolName - Name of the tool
+     * @param {object} args - Tool arguments
+     * @returns {string} Cache key
+     */
+    function buildToolCacheKey(toolName, args) {
+        // Normalize args to ensure consistent keys
+        const normalizedArgs = args ? JSON.stringify(args, Object.keys(args).sort()) : '';
+        // Create a short hash-like key
+        const argsHash = normalizedArgs.split('').reduce((a, b) => {
+            a = ((a << 5) - a) + b.charCodeAt(0);
+            return a & a;
+        }, 0).toString(36);
+        return `tool_${toolName}_${argsHash}`;
+    }
+
+    /**
+     * Determine TTL based on tool type
+     *
+     * @param {string} toolName - Name of the tool
+     * @returns {number} TTL in seconds
+     */
+    function getToolCacheTTL(toolName) {
+        // Entity resolution tools get longer TTL
+        if (toolName.startsWith('resolve_')) {
+            return ENTITY_RESOLUTION_TTL;
+        }
+        // Data query tools get shorter TTL
+        return DATA_QUERY_TTL;
+    }
+
+    /**
+     * Check if a cached tool result exists
+     *
+     * @param {string} toolName - Name of the tool
+     * @param {object} args - Tool arguments
+     * @returns {object|null} Cached result or null
+     */
+    function getCachedToolResult(toolName, args) {
+        const cacheKey = buildToolCacheKey(toolName, args);
+
+        try {
+            const cached = getToolCache().get({ key: cacheKey });
+            if (cached) {
+                const result = JSON.parse(cached);
+                log.debug('Tool cache HIT', { tool: toolName, key: cacheKey });
+                result._cached = true;
+                result._cacheKey = cacheKey;
+                return result;
+            }
+        } catch (e) {
+            log.debug('Tool cache miss or error', { tool: toolName, error: e.message });
+        }
+
+        return null;
+    }
+
+    /**
+     * Store a tool result in cache
+     *
+     * @param {string} toolName - Name of the tool
+     * @param {object} args - Tool arguments
+     * @param {object} result - Tool execution result
+     */
+    function cacheToolResult(toolName, args, result) {
+        // Don't cache failures or empty results
+        if (!result || !result.success) {
+            return;
+        }
+
+        const cacheKey = buildToolCacheKey(toolName, args);
+        const ttl = getToolCacheTTL(toolName);
+
+        try {
+            const payload = JSON.stringify(result);
+            // Only cache if under reasonable size (50KB)
+            if (payload.length < 50 * 1024) {
+                getToolCache().put({
+                    key: cacheKey,
+                    value: payload,
+                    ttl: ttl
+                });
+                log.debug('Tool result cached', {
+                    tool: toolName,
+                    key: cacheKey,
+                    ttl: ttl,
+                    sizeKB: Math.round(payload.length / 1024)
+                });
+            }
+        } catch (e) {
+            log.debug('Failed to cache tool result', { tool: toolName, error: e.message });
+        }
+    }
+
+    /**
+     * Clear all cached tool results (useful for testing or forced refresh)
+     */
+    function clearToolCache() {
+        try {
+            // Note: N/cache doesn't have a clearAll method, so we rely on TTL expiration
+            log.debug('Tool cache clear requested - results will expire per TTL');
+        } catch (e) {
+            log.debug('Tool cache clear error', { error: e.message });
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
     // EXPORTS
     // ═══════════════════════════════════════════════════════════════════════════
 
     return {
+        // Data storage
         storeData: storeData,
         loadData: loadData,
         loadRows: loadRows,
@@ -485,6 +614,12 @@ define(['N/cache', 'N/log'], function(cache, log) {
         aggregate: aggregate,
         executeCommand: executeCommand,
         formatReferenceForPrompt: formatReferenceForPrompt,
-        generateSummary: generateSummary
+        generateSummary: generateSummary,
+
+        // Tool result caching
+        getCachedToolResult: getCachedToolResult,
+        cacheToolResult: cacheToolResult,
+        clearToolCache: clearToolCache,
+        buildToolCacheKey: buildToolCacheKey
     };
 });

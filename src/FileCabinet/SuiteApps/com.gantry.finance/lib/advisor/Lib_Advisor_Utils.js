@@ -417,79 +417,25 @@ define(['N/log', 'N/runtime', 'N/record', '../Lib_Config'], function(log, runtim
         return statusMap[statusCode] || statusCode;
     }
 
+    // ═══════════════════════════════════════════════════════════════
+    // TOPIC EXTRACTION - DEPRECATED
+    // Topic extraction is now handled by the LLM in the INTENT phase
+    // using semantic understanding rather than keyword matching.
+    // The LLM returns topics in the 'semantic_topics' field of the intent response.
+    // This stub is kept for backward compatibility only.
+    // ═══════════════════════════════════════════════════════════════
+
     /**
-     * Extract topics from query for session tracking
-     * FIXED: Replaced brittle word-boundary regex with contextual phrase matching
-     * to avoid false positives like "Arkansas" matching AR or "app" matching AP
+     * @deprecated Use LLM-based semantic topic extraction instead.
+     * Topics are now determined by the INTENT phase LLM call which returns
+     * 'semantic_topics' based on meaning rather than keyword matching.
+     * This function returns an empty array - callers should use intent.semantic_topics instead.
      */
     function extractTopicsFromQuery(message, description) {
-        const topics = [];
-        const text = (message + ' ' + (description || '')).toLowerCase();
-
-        // Revenue/Sales - look for financial context
-        if (text.includes('revenue') || text.includes('sales') ||
-            text.includes('income') || text.includes('earnings')) {
-            topics.push('revenue');
-        }
-
-        // Expenses - look for financial context
-        if (text.includes('expense') || text.includes('cost') ||
-            text.includes('spending') || text.includes('expenditure')) {
-            topics.push('expenses');
-        }
-
-        // Customers
-        if (text.includes('customer')) topics.push('customers');
-
-        // Vendors
-        if (text.includes('vendor') || text.includes('supplier')) topics.push('vendors');
-
-        // Invoices
-        if (text.includes('invoice') || text.includes('bill')) topics.push('invoices');
-
-        // Payments
-        if (text.includes('payment') || text.includes('paid') || text.includes('remittance')) {
-            topics.push('payments');
-        }
-
-        // Departments
-        if (text.includes('department') || text.includes('dept')) topics.push('departments');
-
-        // AR - use contextual phrases instead of brittle regex
-        // FIXED: \bar\b could match "Arkansas", "bar", etc.
-        if (text.includes('receivable') || text.includes('a/r') || text.includes('accounts receivable') ||
-            text.includes('ar aging') || text.includes('ar balance') || text.includes('outstanding ar') ||
-            text.includes('receivables') || /\bar\s+(aging|balance|report|summary|detail)/i.test(text)) {
-            topics.push('AR');
-        }
-
-        // AP - use contextual phrases instead of brittle regex
-        // FIXED: \bap\b could match "app", "apt", etc.
-        if (text.includes('payable') || text.includes('a/p') || text.includes('accounts payable') ||
-            text.includes('ap aging') || text.includes('ap balance') || text.includes('outstanding ap') ||
-            text.includes('payables') || /\bap\s+(aging|balance|report|summary|detail)/i.test(text)) {
-            topics.push('AP');
-        }
-
-        // Cash flow
-        if (text.includes('cash flow') || text.includes('cashflow') ||
-            (text.includes('cash') && text.includes('flow'))) {
-            topics.push('cash flow');
-        }
-
-        // Profitability
-        if (text.includes('profit') || text.includes('margin') ||
-            text.includes('p&l') || text.includes('profitability')) {
-            topics.push('profitability');
-        }
-
-        // Balances
-        if (text.includes('balance sheet') || text.includes('trial balance') ||
-            text.includes('account balance')) {
-            topics.push('balances');
-        }
-
-        return topics;
+        // REMOVED: Keyword-based topic extraction has been eliminated.
+        // The LLM in the INTENT phase now classifies topics semantically.
+        // See INTENT_PROMPT in Lib_Advisor_StreamingAgent.js
+        return [];
     }
 
     /**
@@ -975,8 +921,103 @@ define(['N/log', 'N/runtime', 'N/record', '../Lib_Config'], function(log, runtim
         if (Object.keys(details).length === 0) {
             details.message = String(e);
         }
-        
+
         return details;
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // CONSOLIDATED ERROR HANDLING
+    // Standard error handler for SCA phases - ensures consistent
+    // error logging, state tracking, and error propagation.
+    // ═══════════════════════════════════════════════════════════════
+
+    /**
+     * Handle errors that occur during SCA phase execution
+     * Provides consistent:
+     * - Error logging with full context
+     * - State tracking (adds to state.errors array)
+     * - User-friendly error message generation
+     * - Error propagation for retry/recovery logic
+     *
+     * @param {string} phase - The SCA phase where error occurred (intent, select, invoke, respond)
+     * @param {Error|Object} error - The error object
+     * @param {Object} state - The current streaming state
+     * @param {Object} [context] - Additional context (tool name, args, etc.)
+     * @returns {Object} Standardized error result
+     */
+    function handlePhaseError(phase, error, state, context) {
+        context = context || {};
+
+        // Extract comprehensive error details
+        const errorDetails = extractErrorDetails(error);
+
+        // Build standardized error record
+        const errorRecord = {
+            phase: phase,
+            message: errorDetails.message || 'Unknown error',
+            code: errorDetails.code,
+            timestamp: Date.now(),
+            duration: context.startTime ? (Date.now() - context.startTime) : undefined,
+            tool: context.tool,
+            args: context.args
+        };
+
+        // Add to state.errors if state is provided
+        if (state && state.errors) {
+            state.errors.push(errorRecord);
+        }
+
+        // Log with appropriate severity based on phase
+        const logContext = {
+            phase: phase,
+            error: errorDetails.message,
+            requestId: state?.requestId,
+            ...context
+        };
+
+        // Use audit for phase failures (these are significant)
+        log.error(`SCA ${phase.toUpperCase()} phase error`, logContext);
+
+        // Build user-friendly message
+        let userMessage = 'An error occurred while processing your request.';
+        switch (phase) {
+            case 'intent':
+                userMessage = 'I had trouble understanding your question. Please try rephrasing.';
+                break;
+            case 'select':
+                userMessage = 'I had trouble selecting the right analysis tools. Please try again.';
+                break;
+            case 'invoke':
+                userMessage = context.tool
+                    ? `I encountered an issue while running ${context.tool}. ${errorRecord.message}`
+                    : 'I encountered an issue while fetching data. Please try again.';
+                break;
+            case 'respond':
+            case 'analyze':
+            case 'format':
+                userMessage = 'I had trouble generating the response. Please try again.';
+                break;
+        }
+
+        return {
+            success: false,
+            phase: phase,
+            error: errorRecord,
+            userMessage: userMessage,
+            recoverable: phase !== 'intent' && phase !== 'respond',  // Most errors are recoverable
+            retryable: true
+        };
+    }
+
+    /**
+     * Check if an error result indicates a recoverable failure
+     *
+     * @param {Object} errorResult - Result from handlePhaseError
+     * @returns {boolean} True if the error might be recoverable
+     */
+    function isRecoverableError(errorResult) {
+        if (!errorResult || errorResult.success !== false) return false;
+        return errorResult.recoverable === true || errorResult.retryable === true;
     }
 
     /**
@@ -1134,8 +1175,10 @@ define(['N/log', 'N/runtime', 'N/record', '../Lib_Config'], function(log, runtim
         // Data Transformation
         applyPivotTransformation: applyPivotTransformation,
 
-        // Error handling
+        // Error handling (consolidated)
         extractErrorDetails: extractErrorDetails,
+        handlePhaseError: handlePhaseError,
+        isRecoverableError: isRecoverableError,
 
         // Debug mode (centralized control for all advisor modules)
         isDebugMode: isDebugMode,

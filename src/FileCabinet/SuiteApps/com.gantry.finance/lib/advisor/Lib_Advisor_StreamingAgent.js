@@ -215,6 +215,11 @@ CRITICAL INSTRUCTIONS - READ CAREFULLY:
 5. In narrative, cite specific data points using tokens:
    "{{{{data.rows[0].customer_name}}}} leads with {{{{data.rows[0].total_revenue:currency}}}}."
 
+6. TRUNCATION AWARENESS: If a data section shows "truncated: true", inform the user:
+   - Mention that more data may be available
+   - Suggest they can ask for more results or use more specific filters
+   - Example: "Showing the top 500 results. Ask if you'd like to see more or apply filters."
+
 ═══════════════════════════════════════════════════════════════════════════════
 
 Response format (JSON only):
@@ -893,9 +898,24 @@ Response format (JSON only):
             // ═══════════════════════════════════════════════════════════════════════
             args = autoInjectResolvedEntities(args, state, toolName);
 
-            // Execute the tool
+            // ═══════════════════════════════════════════════════════════════════════
+            // TOOL RESULT CACHING: Check cache before executing
+            // Entity resolution tools cached for 5 minutes, data queries for 30 seconds
+            // ═══════════════════════════════════════════════════════════════════════
             const toolStart = Date.now();
-            const result = Tools.executeTool(toolName, args);
+            let result = DataStore.getCachedToolResult(toolName, args);
+            let fromCache = false;
+
+            if (result) {
+                // Cache hit - use cached result
+                fromCache = true;
+                log.debug('Tool result from cache', { tool: toolName, args: args });
+            } else {
+                // Cache miss - execute the tool
+                result = Tools.executeTool(toolName, args);
+                // Cache successful results
+                DataStore.cacheToolResult(toolName, args, result);
+            }
             const toolDuration = Date.now() - toolStart;
             const totalDuration = Date.now() - invokeStart;
 
@@ -920,6 +940,7 @@ Response format (JSON only):
                 columns: result.columns || (result.rows && result.rows[0] ? Object.keys(result.rows[0]) : []),
                 dataRef: dataRef?.refId,
                 duration: toolDuration,
+                fromCache: fromCache,  // Track cache usage
                 timestamp: Date.now()
             };
             state.toolInvocations.push(invocation);
@@ -958,6 +979,7 @@ Response format (JSON only):
                 success: result.success,
                 rowCount: invocation.rowCount,
                 hasDataRef: !!dataRef,
+                fromCache: fromCache,
                 duration: totalDuration
             });
 
