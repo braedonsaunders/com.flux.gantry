@@ -706,6 +706,86 @@ Response format (JSON only):
     }
 
     /**
+     * INTELLIGENCE FIX: Auto-inject resolved entity IDs into tool arguments
+     * When we have previously resolved an entity, ensure the tool gets the correct ID
+     * even if the LLM forgot to include it or used the wrong value.
+     *
+     * @param {Object} args - Tool arguments from LLM
+     * @param {Object} state - Current streaming state
+     * @param {string} toolName - Name of the tool being invoked
+     * @returns {Object} Enhanced arguments with entity IDs injected
+     */
+    function autoInjectResolvedEntities(args, state, toolName) {
+        if (!state.resolvedEntities || Object.keys(state.resolvedEntities).length === 0) {
+            return args;
+        }
+
+        const enhanced = { ...args };
+        const resolvedEntries = Object.entries(state.resolvedEntities);
+
+        // Tools that use customer_id parameter
+        const customerIdTools = ['get_customer_revenue', 'get_recent_transactions', 'get_transaction_detail'];
+        // Tools that use vendor_id parameter
+        const vendorIdTools = ['get_vendor_spend', 'get_recent_transactions', 'get_transaction_detail'];
+        // Tools that use entity_id parameter (generic)
+        const entityIdTools = ['get_recent_transactions', 'get_transaction_detail', 'get_ar_detail', 'get_ap_detail'];
+
+        for (const [searchTerm, entity] of resolvedEntries) {
+            if (!entity || !entity.id) continue;
+
+            const entityType = (entity.type || '').toLowerCase();
+
+            // Auto-inject customer_id
+            if (customerIdTools.includes(toolName) && entityType === 'customer') {
+                if (!enhanced.customer_id) {
+                    enhanced.customer_id = entity.id;
+                    log.debug('Auto-injected customer_id', { toolName, entityName: entity.name, entityId: entity.id });
+                }
+            }
+
+            // Auto-inject vendor_id
+            if (vendorIdTools.includes(toolName) && entityType === 'vendor') {
+                if (!enhanced.vendor_id) {
+                    enhanced.vendor_id = entity.id;
+                    log.debug('Auto-injected vendor_id', { toolName, entityName: entity.name, entityId: entity.id });
+                }
+            }
+
+            // Auto-inject entity_id (for generic entity tools)
+            if (entityIdTools.includes(toolName)) {
+                if (!enhanced.entity_id && (entityType === 'customer' || entityType === 'vendor')) {
+                    enhanced.entity_id = entity.id;
+                    log.debug('Auto-injected entity_id', { toolName, entityName: entity.name, entityId: entity.id, type: entityType });
+                }
+            }
+
+            // Auto-inject account_id for GL tools
+            if ((toolName === 'get_gl_activity' || toolName === 'get_trial_balance') && entityType === 'account') {
+                if (!enhanced.account_id) {
+                    enhanced.account_id = entity.id;
+                    log.debug('Auto-injected account_id', { toolName, entityName: entity.name, entityId: entity.id });
+                }
+            }
+
+            // Auto-inject class_id, department_id, location_id for classification dimensions
+            if (entityType === 'class' && !enhanced.class_id) {
+                enhanced.class_id = entity.id;
+                log.debug('Auto-injected class_id', { toolName, entityName: entity.name, entityId: entity.id });
+            }
+            if (entityType === 'department' && !enhanced.department_id) {
+                enhanced.department_id = entity.id;
+                log.debug('Auto-injected department_id', { toolName, entityName: entity.name, entityId: entity.id });
+            }
+            if (entityType === 'location' && !enhanced.location_id) {
+                enhanced.location_id = entity.id;
+                log.debug('Auto-injected location_id', { toolName, entityName: entity.name, entityId: entity.id });
+            }
+        }
+
+        return enhanced;
+    }
+
+    /**
      * Phase 3: INVOKE - Call tools one at a time
      */
     function executeInvokePhase(state) {
@@ -789,7 +869,13 @@ Response format (JSON only):
             });
 
             const parsed = parseJsonResponse(response?.text);
-            const args = parsed?.args || {};
+            let args = parsed?.args || {};
+
+            // ═══════════════════════════════════════════════════════════════════════
+            // INTELLIGENCE FIX: Auto-inject resolved entity IDs into tool arguments
+            // This prevents the LLM from forgetting to use the correct entity ID
+            // ═══════════════════════════════════════════════════════════════════════
+            args = autoInjectResolvedEntities(args, state, toolName);
 
             // Execute the tool
             const toolStart = Date.now();
@@ -1872,6 +1958,10 @@ Response format (JSON only):
         return null;
     }
 
+    /**
+     * Get default tools for a given intent when LLM selection fails
+     * FIXED: Added 'follow_up' intent to use cached data instead of refetching
+     */
     function getDefaultToolsForIntent(intent) {
         const defaults = {
             'entity_lookup': ['resolve_entity'],
@@ -1881,7 +1971,10 @@ Response format (JSON only):
             'dashboard': ['dashboard_health'],
             'comparison': ['compare_periods'],
             'transaction': ['get_transaction_detail'],
-            'general': ['get_fiscal_context']
+            'general': ['get_fiscal_context'],
+            // FIXED: follow_up intent should NOT invoke new tools - it should use cached data
+            // Empty array signals to skip INVOKE phase and go directly to RESPOND with existing data
+            'follow_up': []
         };
         return defaults[intent] || ['get_recent_transactions'];
     }
@@ -1906,6 +1999,10 @@ Response format (JSON only):
         };
     }
 
+    /**
+     * Enrich table blocks with actual data from data references
+     * FIXED: Optimized to load all needed rows in one batch instead of N calls
+     */
     function enrichTableBlocks(state) {
         if (!state.formattedResponse || !state.formattedResponse.blocks) return;
 
@@ -1918,11 +2015,20 @@ Response format (JSON only):
                     const cols = dataRef.summary.columns?.slice(0, 5) || [];
 
                     block.headers = block.headers || cols;
+
+                    // OPTIMIZATION: Load all rows in one batch instead of N separate calls
+                    const maxRank = Math.max(...preview.map(p => p.rank || 0));
+                    const allData = DataStore.loadRows(state.requestId, dataRef.refId, 0, maxRank);
+                    const rowsMap = {};
+                    if (allData && allData.rows) {
+                        allData.rows.forEach((row, idx) => { rowsMap[idx] = row; });
+                    }
+
                     block.rows = preview.map(p => {
-                        // Load actual row data if available
-                        const data = DataStore.loadRows(state.requestId, dataRef.refId, p.rank - 1, p.rank - 1);
-                        if (data && data.rows && data.rows[0]) {
-                            return block.headers.map(h => formatCellValue(data.rows[0][h], h));
+                        const rowIndex = (p.rank || 1) - 1;
+                        const rowData = rowsMap[rowIndex];
+                        if (rowData) {
+                            return block.headers.map(h => formatCellValue(rowData[h], h));
                         }
                         // Fallback to preview data
                         return [p.rank, p.name || '', p.value ? formatCellValue(p.value, 'amount') : ''];
@@ -1973,7 +2079,9 @@ Response format (JSON only):
     }
 
     /**
-     * Get a user-friendly display name for a tool
+     * Get a user-friendly display name for a tool (internal/simple version)
+     * Note: This is intentionally different from Tools.getToolDisplayName() which takes args
+     * This version is for static display names without argument context
      */
     function getToolDisplayName(toolName) {
         if (!toolName) return null;

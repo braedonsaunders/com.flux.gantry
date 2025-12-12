@@ -360,7 +360,9 @@ Examples: "Travel expenses", "4000", "Bank accounts", "COGS"`,
                 required: ['term']
             },
             execute: function(args) {
+                // FIXED: Use escapeSqlLike for LIKE clauses to prevent SQL injection via wildcards
                 const term = escapeSql(args.term);
+                const termLike = escapeSqlLike(args.term).toLowerCase();
                 const termLower = term.toLowerCase();
 
                 let typeFilter = '';
@@ -379,14 +381,14 @@ Examples: "Travel expenses", "4000", "Bank accounts", "COGS"`,
                     WHERE account.isinactive = 'F'
                         ${typeFilter}
                         AND (
-                            LOWER(account.accountsearchdisplayname) LIKE '%${termLower}%'
-                            OR account.acctnumber LIKE '%${term}%'
+                            LOWER(account.accountsearchdisplayname) LIKE '%${termLike}%' ESCAPE '\\'
+                            OR account.acctnumber LIKE '%${escapeSqlLike(args.term)}%' ESCAPE '\\'
                             OR LOWER(account.accttype) = '${termLower}'
                         )
                     ORDER BY
                         CASE
                             WHEN LOWER(account.accountsearchdisplayname) = '${termLower}' THEN 0
-                            WHEN LOWER(account.accountsearchdisplayname) LIKE '${termLower}%' THEN 1
+                            WHEN LOWER(account.accountsearchdisplayname) LIKE '${termLike}%' ESCAPE '\\' THEN 1
                             WHEN account.acctnumber = '${term}' THEN 2
                             ELSE 3
                         END,
@@ -435,7 +437,8 @@ Examples: "Hotels", "West Coast", "Engineering", "US subsidiary"`,
             },
             execute: function(args) {
                 const term = escapeSql(args.term);
-                const termLower = term.toLowerCase();
+                // FIXED: Use escapeSqlLike for LIKE clauses to prevent SQL injection via wildcards
+                const termLike = escapeSqlLike(args.term).toLowerCase();
                 const dimension = args.dimension || 'auto';
 
                 // Build queries for each dimension
@@ -446,7 +449,7 @@ Examples: "Hotels", "West Coast", "Engineering", "US subsidiary"`,
                         SELECT id, name, 'class' AS dimension_type
                         FROM classification
                         WHERE isinactive = 'F'
-                            AND LOWER(name) LIKE '%${termLower}%'
+                            AND LOWER(name) LIKE '%${termLike}%' ESCAPE '\\'
                     `);
                 }
 
@@ -455,7 +458,7 @@ Examples: "Hotels", "West Coast", "Engineering", "US subsidiary"`,
                         SELECT id, name, 'location' AS dimension_type
                         FROM location
                         WHERE isinactive = 'F'
-                            AND LOWER(name) LIKE '%${termLower}%'
+                            AND LOWER(name) LIKE '%${termLike}%' ESCAPE '\\'
                     `);
                 }
 
@@ -464,7 +467,7 @@ Examples: "Hotels", "West Coast", "Engineering", "US subsidiary"`,
                         SELECT id, name, 'department' AS dimension_type
                         FROM department
                         WHERE isinactive = 'F'
-                            AND LOWER(name) LIKE '%${termLower}%'
+                            AND LOWER(name) LIKE '%${termLike}%' ESCAPE '\\'
                     `);
                 }
 
@@ -473,7 +476,7 @@ Examples: "Hotels", "West Coast", "Engineering", "US subsidiary"`,
                         SELECT id, name, 'subsidiary' AS dimension_type
                         FROM subsidiary
                         WHERE isinactive = 'F'
-                            AND LOWER(name) LIKE '%${termLower}%'
+                            AND LOWER(name) LIKE '%${termLike}%' ESCAPE '\\'
                     `);
                 }
 
@@ -1408,7 +1411,8 @@ NOTE: Class/department/location filters use the segment values from the GL accou
                 if (args.subsidiary_id) filters.push(`transaction.subsidiary = ${args.subsidiary_id}`);
                 if (args.entity_id) filters.push(`transaction.entity = ${args.entity_id}`);
                 if (args.transaction_type) filters.push(`transaction.type = '${escapeSql(args.transaction_type)}'`);
-                if (args.memo_contains) filters.push(`LOWER(transaction.memo) LIKE '%${escapeSql(args.memo_contains.toLowerCase())}%'`);
+                // FIXED: Use escapeSqlLike for LIKE clause to prevent SQL injection via wildcards
+                if (args.memo_contains) filters.push(`LOWER(transaction.memo) LIKE '%${escapeSqlLike(args.memo_contains.toLowerCase())}%' ESCAPE '\\'`);
 
                 // Amount filters
                 if (args.min_amount) filters.push(`ABS(COALESCE(tal.debit, 0) - COALESCE(tal.credit, 0)) >= ${args.min_amount}`);
@@ -2544,7 +2548,8 @@ IMPORTANT: You MUST use exact NetSuite type codes from the enum:
 
                 // Additional filters
                 const subsidiaryFilter = args.subsidiary_id ? `AND transaction.subsidiary = ${args.subsidiary_id}` : '';
-                const memoFilter = args.memo_contains ? `AND LOWER(transaction.memo) LIKE '%${escapeSql(args.memo_contains.toLowerCase())}%'` : '';
+                // FIXED: Use escapeSqlLike for LIKE clause to prevent SQL injection via wildcards
+                const memoFilter = args.memo_contains ? `AND LOWER(transaction.memo) LIKE '%${escapeSqlLike(args.memo_contains.toLowerCase())}%' ESCAPE '\\'` : '';
                 const createdByFilter = args.created_by ? `AND transaction.createdby = ${args.created_by}` : '';
 
                 // Amount filters
