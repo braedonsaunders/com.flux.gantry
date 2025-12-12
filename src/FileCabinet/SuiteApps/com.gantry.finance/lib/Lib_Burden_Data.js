@@ -4872,7 +4872,7 @@ define(["N/query", "N/search", "N/log", "N/runtime", "./Lib_Core", "./Lib_Config
             ${empTypeJoin}
             ${whereClause}
             GROUP BY t.employee, e.entityid, BUILTIN.DF(t.employee)
-            ORDER BY SUM(t.hours) DESC
+            ORDER BY SUM(${costExpr}) DESC
         `;
 
         let items = [];
