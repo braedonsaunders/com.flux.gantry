@@ -1445,9 +1445,61 @@ function(query, record, search, runtime, format, log, Core, Utils) {
     }
 
     // ==========================================
+    // ADVISOR API - getData wrapper
+    // ==========================================
+    /**
+     * getData - Adapter for Advisor tools
+     * Converts advisor-style args (period string) to analyze-style params (startDate/endDate)
+     *
+     * @param {Object} args - Advisor tool arguments
+     * @param {string} [args.period] - 'last_90_days', 'ytd', 'last_365_days'
+     * @param {number} [args.vendor_id] - Optional filter to specific vendor
+     * @param {number} [args.subsidiary] - Optional subsidiary filter
+     * @returns {Object} Analysis results from analyzeVendorPerformance
+     */
+    function getData(args) {
+        const params = {};
+        const today = new Date();
+
+        // Convert period string to startDate/endDate
+        switch (args.period) {
+            case 'last_90_days':
+                params.startDate = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 90).toISOString().split('T')[0];
+                params.endDate = today.toISOString().split('T')[0];
+                break;
+            case 'last_365_days':
+                params.startDate = new Date(today.getFullYear() - 1, today.getMonth(), today.getDate()).toISOString().split('T')[0];
+                params.endDate = today.toISOString().split('T')[0];
+                break;
+            case 'ytd':
+            default:
+                // YTD: January 1 of current year to today
+                params.startDate = new Date(today.getFullYear(), 0, 1).toISOString().split('T')[0];
+                params.endDate = today.toISOString().split('T')[0];
+                break;
+        }
+
+        // Pass through optional filters
+        if (args.subsidiary) {
+            params.subsidiary = args.subsidiary;
+        }
+        if (args.vendor_id) {
+            params.vendorId = args.vendor_id;
+        }
+        if (args.config) {
+            params.config = args.config;
+        }
+
+        // Call the existing analyze function
+        const { results } = analyzeVendorPerformance(params);
+        return results;
+    }
+
+    // ==========================================
     // PUBLIC API
     // ==========================================
     return {
+        getData: getData,
         analyze: analyzeVendorPerformance,
         getConfig: getConfigForApi,
         getDefaultConfig: getDefaultConfig,

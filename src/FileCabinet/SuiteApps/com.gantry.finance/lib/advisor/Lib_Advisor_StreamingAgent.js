@@ -982,16 +982,48 @@ Response format (JSON only):
 
     /**
      * Build context string from recent history for prompts
+     * Includes both conversation history AND previous tool invocation results
+     * This allows the LLM to use data from earlier tools when invoking subsequent tools
      */
     function buildHistoryContext(state) {
-        if (!state.history || state.history.length === 0) return '';
+        const sections = [];
 
-        const lines = state.history.map(h => {
-            const role = h.role === 'user' ? 'User' : 'Assistant';
-            return `${role}: ${h.content}`;
-        });
+        // 1. Conversation history
+        if (state.history && state.history.length > 0) {
+            const lines = state.history.map(h => {
+                const role = h.role === 'user' ? 'User' : 'Assistant';
+                return `${role}: ${h.content}`;
+            });
+            sections.push(`RECENT CONVERSATION:\n${lines.join('\n')}`);
+        }
 
-        return `\nRECENT CONVERSATION:\n${lines.join('\n')}\n`;
+        // 2. Previous tool invocations in this request (critical for multi-tool queries)
+        // This gives the LLM access to data from earlier tools (e.g., vendor IDs from get_top_vendors)
+        if (state.toolInvocations && state.toolInvocations.length > 0) {
+            const toolResults = state.toolInvocations
+                .filter(inv => inv.success && !inv.skipped)
+                .map(inv => {
+                    let resultSummary = `Tool: ${inv.tool}`;
+                    if (inv.args) {
+                        resultSummary += `\nArgs: ${JSON.stringify(inv.args)}`;
+                    }
+                    resultSummary += `\nStatus: ${inv.rowCount > 0 ? 'SUCCESS' : 'NO DATA'} (${inv.rowCount || 0} rows)`;
+
+                    // Include actual data preview if available (critical for using IDs from previous tools)
+                    if (inv.result && inv.result.rows && inv.result.rows.length > 0) {
+                        const preview = inv.result.rows.slice(0, 10); // Show up to 10 rows
+                        resultSummary += `\nData preview:\n${JSON.stringify(preview, null, 2)}`;
+                    }
+
+                    return resultSummary;
+                });
+
+            if (toolResults.length > 0) {
+                sections.push(`PREVIOUS TOOL RESULTS (use these values when relevant):\n${toolResults.join('\n\n')}`);
+            }
+        }
+
+        return sections.length > 0 ? `\n${sections.join('\n\n')}\n` : '';
     }
 
     /**
@@ -1744,7 +1776,10 @@ Response format (JSON only):
                 timestamp: Date.now(),
                 // NEW: Classification for reflection
                 resultClass: invocationResult.classification,
-                resultDetails: invocationResult.details
+                resultDetails: invocationResult.details,
+                // Store result data for subsequent tool invocations to reference
+                // This enables LLM to use IDs/values from previous tools (e.g., vendor IDs from get_top_vendors)
+                result: result.rows ? { rows: result.rows.slice(0, 20) } : null // Limit to 20 rows to manage memory
             };
             state.toolInvocations.push(invocation);
 
