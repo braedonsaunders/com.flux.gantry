@@ -107,10 +107,10 @@ define(["N/search", "N/query", "N/log", "./Lib_Core", "./Lib_Config"], function 
             priorYearEnd.setFullYear(priorYearEnd.getFullYear() - 1);
 
             const periods = {
-                range: { start: Core.formatDateYMD(rangeStart), end: Core.formatDateYMD(rangeEnd) },
-                currentMonth: { start: Core.formatDateYMD(currentMonthStart), end: Core.formatDateYMD(currentMonthEnd) },
-                previousMonth: { start: Core.formatDateYMD(prevMonthStart), end: Core.formatDateYMD(prevMonthEnd) },
-                priorYearRange: { start: Core.formatDateYMD(priorYearStart), end: Core.formatDateYMD(priorYearEnd) }
+                range: { start: Core.formatDateForQuery(rangeStart), end: Core.formatDateForQuery(rangeEnd) },
+                currentMonth: { start: Core.formatDateForQuery(currentMonthStart), end: Core.formatDateForQuery(currentMonthEnd) },
+                previousMonth: { start: Core.formatDateForQuery(prevMonthStart), end: Core.formatDateForQuery(prevMonthEnd) },
+                priorYearRange: { start: Core.formatDateForQuery(priorYearStart), end: Core.formatDateForQuery(priorYearEnd) }
             };
 
             // 2. Fetch Data
@@ -217,13 +217,13 @@ define(["N/search", "N/query", "N/log", "./Lib_Core", "./Lib_Config"], function 
             return {
                 meta: {
                     fiscal: { 
-                        start: Core.formatDateYMD(fyStart), 
-                        end: Core.formatDateYMD(fyEnd), 
+                        start: Core.formatDateForQuery(fyStart), 
+                        end: Core.formatDateForQuery(fyEnd), 
                         percentComplete: percentFY,
                         startMonth: fiscalYearStartMonth,
                         detectedFrom: fiscalCalendar.detectedFrom
                     },
-                    range: { start: Core.formatDateYMD(rangeStart), end: Core.formatDateYMD(rangeEnd), monthsInRange: monthsInRange, daysInRange: daysInRange },
+                    range: { start: Core.formatDateForQuery(rangeStart), end: Core.formatDateForQuery(rangeEnd), monthsInRange: monthsInRange, daysInRange: daysInRange },
                     config: {
                         gmWarningThresholds: config.gmWarningThresholds,
                         opexToRevenueWarningThreshold: config.opexToRevenueWarningThreshold,
@@ -535,7 +535,7 @@ define(["N/search", "N/query", "N/log", "./Lib_Core", "./Lib_Config"], function 
             FETCH FIRST 2000 ROWS ONLY
         `;
         
-        const results = Core.runSuiteQL(sql);
+        const results = Core.runQuery(sql);
         
         return results.map(r => ({
             transactionId: r.transaction_id,
@@ -593,7 +593,7 @@ define(["N/search", "N/query", "N/log", "./Lib_Core", "./Lib_Config"], function 
                 ${segmentField}, BUILTIN.DF(${segmentField}), a.accttype
         `;
         
-        const results = Core.runSuiteQL(sql);
+        const results = Core.runQuery(sql);
         
         // Aggregate by segment
         const segments = {};
@@ -948,7 +948,7 @@ define(["N/search", "N/query", "N/log", "./Lib_Core", "./Lib_Config"], function 
                 ${subsidiaryId ? `AND e.subsidiary = ${subsidiaryId}` : ''}
                 ${excludeClause}
             `;
-            const results = Core.runSuiteQL(sql);
+            const results = Core.runQuery(sql);
             return results.length > 0 ? parseInt(results[0].headcount) || 0 : 0;
         } catch (e) {
             return 0;
@@ -1041,7 +1041,7 @@ define(["N/search", "N/query", "N/log", "./Lib_Core", "./Lib_Config"], function 
             FETCH FIRST 50 ROWS ONLY
         `;
         
-        const results = Core.runSuiteQL(sql);
+        const results = Core.runQuery(sql);
         const totalRevenue = results.reduce((sum, r) => sum + (parseFloat(r.revenue) || 0), 0);
         
         return results.map(r => ({
@@ -1101,7 +1101,7 @@ define(["N/search", "N/query", "N/log", "./Lib_Core", "./Lib_Config"], function 
                     GROUP BY 
                         b.account, BUILTIN.DF(b.account), a.accttype
                 `;
-                budgetData = Core.runSuiteQL(budgetSql);
+                budgetData = Core.runQuery(budgetSql);
             } catch (e) {
                 // Budget records may not exist
                 log.debug('Budget query failed', e.message);
@@ -1313,7 +1313,7 @@ define(["N/search", "N/query", "N/log", "./Lib_Core", "./Lib_Config"], function 
             FETCH FIRST 20 ROWS ONLY
         `;
         
-        const results = Core.runSuiteQL(sql);
+        const results = Core.runQuery(sql);
         const total = results.reduce((sum, r) => sum + Math.abs(parseFloat(r.amount) || 0), 0);
         
         return results.map(r => ({
@@ -1355,7 +1355,7 @@ define(["N/search", "N/query", "N/log", "./Lib_Core", "./Lib_Config"], function 
             FETCH FIRST 20 ROWS ONLY
         `;
         
-        const results = Core.runSuiteQL(sql);
+        const results = Core.runQuery(sql);
         const total = results.reduce((sum, r) => sum + Math.abs(parseFloat(r.amount) || 0), 0);
         
         return results.map(r => ({
@@ -1390,12 +1390,12 @@ define(["N/search", "N/query", "N/log", "./Lib_Core", "./Lib_Config"], function 
                     t.posting = 'T'
                     AND tal.posting = 'T'
                     AND tal.account = ${accountId}
-                    AND t.trandate >= TO_DATE('${Core.formatDateYMD(monthStart)}', 'YYYY-MM-DD')
-                    AND t.trandate <= TO_DATE('${Core.formatDateYMD(monthEnd)}', 'YYYY-MM-DD')
+                    AND t.trandate >= TO_DATE('${Core.formatDateForQuery(monthStart)}', 'YYYY-MM-DD')
+                    AND t.trandate <= TO_DATE('${Core.formatDateForQuery(monthEnd)}', 'YYYY-MM-DD')
                     ${subsidiaryId ? `AND t.subsidiary = ${subsidiaryId}` : ''}
             `;
             
-            const rows = Core.runSuiteQL(sql);
+            const rows = Core.runQuery(sql);
             const amt = rows.length > 0 ? parseFloat(rows[0].amount) || 0 : 0;
             
             results.push({
@@ -1528,7 +1528,7 @@ define(["N/search", "N/query", "N/log", "./Lib_Core", "./Lib_Config"], function 
             ${subsidiaryId ? `AND t.subsidiary = ${subsidiaryId}` : ''}
         `;
         
-        const accounts = Core.runSuiteQL(accountSql);
+        const accounts = Core.runQuery(accountSql);
         
         accounts.forEach(acc => {
             // Get monthly totals for this account
@@ -1544,12 +1544,12 @@ define(["N/search", "N/query", "N/log", "./Lib_Core", "./Lib_Config"], function 
                     JOIN TransactionAccountingLine tal ON t.id = tal.transaction
                     WHERE t.posting = 'T' AND tal.posting = 'T'
                     AND tal.account = ${acc.account}
-                    AND t.trandate >= TO_DATE('${Core.formatDateYMD(monthStart)}', 'YYYY-MM-DD')
-                    AND t.trandate <= TO_DATE('${Core.formatDateYMD(monthEnd)}', 'YYYY-MM-DD')
+                    AND t.trandate >= TO_DATE('${Core.formatDateForQuery(monthStart)}', 'YYYY-MM-DD')
+                    AND t.trandate <= TO_DATE('${Core.formatDateForQuery(monthEnd)}', 'YYYY-MM-DD')
                     ${subsidiaryId ? `AND t.subsidiary = ${subsidiaryId}` : ''}
                 `;
                 
-                const rows = Core.runSuiteQL(sql);
+                const rows = Core.runQuery(sql);
                 const amt = rows.length > 0 ? parseFloat(rows[0].amount) || 0 : 0;
                 monthlyData.push(amt);
             }
@@ -1685,7 +1685,7 @@ define(["N/search", "N/query", "N/log", "./Lib_Core", "./Lib_Config"], function 
                 BUILTIN.DF(${segmentField}), a.accttype
         `;
         
-        const results = Core.runSuiteQL(sql);
+        const results = Core.runQuery(sql);
         
         if (results.length === 0) return null;
         
@@ -1889,7 +1889,7 @@ define(["N/search", "N/query", "N/log", "./Lib_Core", "./Lib_Config"], function 
         `;
         
         try {
-            const results = Core.runSuiteQL(sql);
+            const results = Core.runQuery(sql);
             return results.map(r => ({
                 itemId: r.item_id,
                 itemName: r.item_name || 'Unknown',
@@ -1932,7 +1932,7 @@ define(["N/search", "N/query", "N/log", "./Lib_Core", "./Lib_Config"], function 
             GROUP BY 
                 tal.account, tl.department, a.accttype
         `;
-        return Core.runSuiteQL(sql);
+        return Core.runQuery(sql);
     }
 
     function getAccountMetadata(ids) {
@@ -2174,8 +2174,8 @@ define(["N/search", "N/query", "N/log", "./Lib_Core", "./Lib_Config"], function 
             const monthEnd = new Date(end.getFullYear(), end.getMonth() - i + 1, 0);
             const monthStart = new Date(monthEnd.getFullYear(), monthEnd.getMonth(), 1);
             
-            const startStr = Core.formatDateYMD(monthStart);
-            const endStr = Core.formatDateYMD(monthEnd);
+            const startStr = Core.formatDateForQuery(monthStart);
+            const endStr = Core.formatDateForQuery(monthEnd);
             
             const rows = fetchPLRange(startStr, endStr, subsidiaryId);
             const accountMap = {};
