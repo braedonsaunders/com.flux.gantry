@@ -3165,17 +3165,13 @@ Use for: "anomalies", "unusual transactions", "what caused the spike", "outliers
             description: `Get current cash position across all bank accounts.
 Use for: "cash balance", "how much cash", "bank balances", "cash on hand"
 
-Supports filtering by subsidiary, currency, and including credit card balances.`,
+Supports filtering by subsidiary and including credit card balances.`,
             parameters: {
                 type: 'object',
                 properties: {
                     subsidiary_id: {
                         type: 'number',
                         description: 'Filter by subsidiary ID'
-                    },
-                    currency: {
-                        type: 'string',
-                        description: 'Filter by currency code (e.g., USD, CAD, EUR)'
                     },
                     include_credit_cards: {
                         type: 'boolean',
@@ -3204,9 +3200,8 @@ Supports filtering by subsidiary, currency, and including credit card balances.`
                     acctTypeFilter = `account.accttype IN ('Bank', 'CredCard')`;
                 }
 
-                // Build filters
+                // Build filters (NOTE: currency field removed from NetSuite - do not filter by currency)
                 const subsidiaryFilter = args.subsidiary_id ? `AND account.subsidiary = ${args.subsidiary_id}` : '';
-                const currencyFilter = args.currency ? `AND account.currency = (SELECT id FROM currency WHERE symbol = '${escapeSql(args.currency)}')` : '';
                 const minBalanceFilter = args.min_balance ? `AND account.balance >= ${args.min_balance}` : '';
                 const inactiveFilter = args.include_inactive ? '' : `AND account.isinactive = 'F'`;
 
@@ -3221,13 +3216,11 @@ Supports filtering by subsidiary, currency, and including credit card balances.`
                         account.accountsearchdisplayname AS account_name,
                         account.accttype AS account_type,
                         BUILTIN.DF(account.subsidiary) AS subsidiary,
-                        BUILTIN.DF(account.currency) AS currency,
                         account.balance AS balance
                     FROM account
                     WHERE ${acctTypeFilter}
                         ${inactiveFilter}
                         ${subsidiaryFilter}
-                        ${currencyFilter}
                         ${minBalanceFilter}
                     ORDER BY ${orderBy}
                 `;

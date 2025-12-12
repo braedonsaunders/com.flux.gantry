@@ -349,16 +349,19 @@ accountingperiod
 
 **SUITEQL SYNTAX RULES (CRITICAL!):**
 
-1. ROW LIMITS: Use "FETCH FIRST N ROWS ONLY" (NOT "LIMIT N"!)
+1. ROW LIMITS: Use "FETCH FIRST N ROWS ONLY" at the END of the query (NOT "LIMIT N"!)
    ✓ SELECT * FROM customer FETCH FIRST 100 ROWS ONLY
    ✗ SELECT * FROM customer LIMIT 100
+   NOTE: For CTEs, put FETCH FIRST at the very end, after the final SELECT
 
 2. DISPLAY NAMES: Use BUILTIN.DF() for foreign key display values
    ✓ BUILTIN.DF(transaction.entity) AS entity_name
    ✓ BUILTIN.DF(tal.account) AS account_name
 
-3. DATE FUNCTIONS:
+3. DATE ARITHMETIC:
    - CURRENT_DATE (today)
+   - CURRENT_DATE + 30 (add 30 days - just use + operator!)
+   - CURRENT_DATE - 30 (subtract 30 days)
    - TO_DATE('2024-01-01', 'YYYY-MM-DD')
    - ADD_MONTHS(CURRENT_DATE, -12)
    - TRUNC(date, 'MM') for month start, 'Q' for quarter, 'IW' for week
@@ -371,6 +374,12 @@ accountingperiod
 
 6. CASE STATEMENTS for conditional aggregation:
    SUM(CASE WHEN condition THEN value ELSE 0 END)
+
+7. CTEs (WITH clause): Supported! Rules for CTEs:
+   - The main SELECT must reference a real table (not just CTEs)
+   - Use CROSS JOIN to bring in CTE values
+   - Always include ORDER BY before FETCH FIRST
+   - For scalar aggregates, prefer subqueries from DUAL instead of CTEs
 
 **COMMON PATTERNS:**
 
@@ -392,9 +401,23 @@ prior_year AS (
     AND t.posting = 'T' AND t.voided = 'F'
   GROUP BY account
 )
-SELECT c.*, p.amount as prior,
-  CASE WHEN p.amount > 0 THEN (c.amount - p.amount) / p.amount * 100 END as yoy_pct
-FROM current_year c LEFT JOIN prior_year p ON c.account = p.account
+SELECT c.account, BUILTIN.DF(c.account) AS account_name,
+  c.amount AS current_amount, p.amount AS prior_amount,
+  CASE WHEN p.amount > 0 THEN (c.amount - p.amount) / p.amount * 100 END AS yoy_pct
+FROM current_year c
+LEFT JOIN prior_year p ON c.account = p.account
+FETCH FIRST 100 ROWS ONLY
+
+Cash Flow Projection (AR/AP due in next N days):
+SELECT
+  (SELECT COALESCE(SUM(balance), 0) FROM account WHERE accttype = 'Bank' AND isinactive = 'F') AS current_cash,
+  (SELECT COALESCE(SUM(foreignamountunpaid), 0) FROM transaction
+   WHERE type = 'CustInvc' AND posting = 'T' AND voided = 'F'
+   AND duedate BETWEEN CURRENT_DATE AND CURRENT_DATE + 30) AS ar_due_30_days,
+  (SELECT COALESCE(SUM(foreignamountunpaid), 0) FROM transaction
+   WHERE type = 'VendBill' AND posting = 'T' AND voided = 'F'
+   AND duedate BETWEEN CURRENT_DATE AND CURRENT_DATE + 30) AS ap_due_30_days
+FROM DUAL
 
 Expense by Category:
 SELECT a.acctnumber, a.accountsearchdisplayname,
@@ -405,6 +428,7 @@ JOIN account a ON tal.account = a.id
 WHERE a.accttype = 'Expense' AND t.posting = 'T' AND t.voided = 'F'
 GROUP BY a.acctnumber, a.accountsearchdisplayname
 ORDER BY amount DESC
+FETCH FIRST 50 ROWS ONLY
 
 ═══════════════════════════════════════════════════════════════════════════════
 {error_context}
@@ -520,14 +544,14 @@ Response format (JSON only):
             // Analysis
             compare_periods: "Compare two time periods",
             find_anomalies: "Find unusual transactions or patterns",
-            get_cash_position: "Current cash and bank balances",
+            get_cash_position: "Current bank balances (snapshot only - use dashboard_cashflow for projections)",
             get_expense_breakdown: "Expenses by category",
 
-            // Dashboards
-            dashboard_cashflow: "Cash flow dashboard metrics",
-            dashboard_health: "Financial health indicators",
-            dashboard_customervalue: "Customer value analysis",
-            dashboard_vendorperformance: "Vendor performance metrics",
+            // Dashboards - PREFERRED for complex/forward-looking questions
+            dashboard_cashflow: "Cash projections, runway, burn rate, 30/60/90 day forecasts - USE FOR FUTURE CASH QUESTIONS",
+            dashboard_health: "Financial health score, margins, ratios, profitability analysis",
+            dashboard_customervalue: "Customer CLV, payment behavior, revenue concentration",
+            dashboard_vendorperformance: "Vendor spend analysis, payment trends, concentration risk",
 
             // Utility
             get_fiscal_context: "Current fiscal period info",
