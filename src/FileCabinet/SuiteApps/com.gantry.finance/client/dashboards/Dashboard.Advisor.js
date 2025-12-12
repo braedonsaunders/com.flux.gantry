@@ -47,10 +47,10 @@
             particleCount: 55,
             connectionDistance: 90,
             particleSize: { min: 1.5, max: 2.5 },
-            birthDuration: 1200,
-            explodeDuration: 1400,
-            orbitDuration: 3000,
-            convergeDuration: 1800,
+            birthDuration: 1000,
+            explodeDuration: 1200,
+            orbitDuration: 1500,      // Reduced from 3000
+            convergeDuration: 1700,   // 5% faster than 1800
             colors: [
                 { r: 99, g: 102, b: 241 },   // Indigo
                 { r: 139, g: 92, b: 246 },   // Purple
@@ -135,7 +135,7 @@
         },
 
         /**
-         * Birth: particles emerge from behind orb, expand slightly past it
+         * Birth: particles emerge INSIDE the orb background (small radius)
          */
         startBirth: function() {
             this.phase = 'birth';
@@ -155,9 +155,9 @@
 
                     if (particleProgress > 0) {
                         const eased = this.easeOutSine(particleProgress);
-                        p.opacity = p.targetOpacity * eased * 0.7;
-                        // Emerge just past the orb (70px radius)
-                        const burstRadius = 70 * this.easeOutQuart(particleProgress);
+                        p.opacity = p.targetOpacity * eased * 0.6;
+                        // Stay INSIDE the orb background (max 25px radius)
+                        const burstRadius = 25 * this.easeOutQuart(particleProgress);
                         p.x = center.x + Math.cos(p.angle) * burstRadius;
                         p.y = center.y + Math.sin(p.angle) * burstRadius;
                         p.baseSize = p.size;
@@ -169,10 +169,10 @@
                 if (progress < 1) {
                     this.animationId = requestAnimationFrame(animateBirth);
                 } else {
-                    // Pause briefly, then glow the orb
+                    // Brief pause, then glow
                     setTimeout(() => {
                         if (this.isActive) this.startOrbGlow();
-                    }, 400);
+                    }, 300);
                 }
             };
 
@@ -180,7 +180,7 @@
         },
 
         /**
-         * Orb Glow: orb glows momentarily before explosion
+         * Orb Glow: orb glows and pulls particles back to center before explosion
          */
         startOrbGlow: function() {
             this.phase = 'orbGlow';
@@ -191,8 +191,13 @@
                 heroOrb.classList.add('orb-charging');
             }
 
-            // Hold particles in place while orb glows
-            const glowDuration = 600;
+            // Store starting positions for pull-back
+            this.particles.forEach(p => {
+                p.glowStartX = p.x;
+                p.glowStartY = p.y;
+            });
+
+            const glowDuration = 500;
             const startTime = Date.now();
 
             const animateGlow = () => {
@@ -202,10 +207,15 @@
                 const progress = Math.min(elapsed / glowDuration, 1);
                 this.globalTime += 16;
 
-                // Particles pulse slightly during charge
-                const pulse = Math.sin(progress * Math.PI * 3) * 0.2;
+                // Pull particles back to center during glow
+                const pullProgress = this.easeInQuad(progress);
+                const pulse = Math.sin(progress * Math.PI * 2) * 0.3;
+
                 this.particles.forEach(p => {
-                    p.opacity = p.targetOpacity * (0.7 + pulse * 0.3);
+                    // Pull back to center
+                    p.x = p.glowStartX + (center.x - p.glowStartX) * pullProgress;
+                    p.y = p.glowStartY + (center.y - p.glowStartY) * pullProgress;
+                    p.opacity = p.targetOpacity * (0.6 + pulse * 0.4);
                 });
 
                 this.draw();
@@ -273,17 +283,17 @@
         },
 
         /**
-         * Orbit: particles rotate orbitally for a few seconds
+         * Orbit: gentle rotation without jumping - particles stay where explode left them
          */
         startOrbit: function() {
             this.phase = 'orbit';
             const startTime = Date.now();
-            const center = this.getBrainCenter();
 
-            // Store current positions as orbit centers
+            // Store exact positions from end of explode (no jumping)
             this.particles.forEach(p => {
-                p.orbitCenterX = p.x;
-                p.orbitCenterY = p.y;
+                p.orbitBaseX = p.x;
+                p.orbitBaseY = p.y;
+                p.orbitPhase = Math.random() * Math.PI * 2;
             });
 
             const animateOrbit = () => {
@@ -292,19 +302,15 @@
                 const elapsed = Date.now() - startTime;
                 const progress = Math.min(elapsed / this.config.orbitDuration, 1);
                 this.globalTime += 16;
-                this.orbitAngle += 0.015;
 
+                // Gentle figure-8 / elliptical drift (no sudden jumps)
                 this.particles.forEach((p, i) => {
-                    // Orbital rotation around their position
-                    const orbitScale = 20 + (i % 3) * 10;
-                    const individualAngle = this.orbitAngle * p.orbitSpeed + p.orbitOffset;
+                    const time = elapsed * 0.001;
+                    const drift = 8 + (i % 4) * 3; // Small drift radius
 
-                    p.x = p.orbitCenterX + Math.cos(individualAngle) * orbitScale;
-                    p.y = p.orbitCenterY + Math.sin(individualAngle) * orbitScale * 0.6;
-
-                    // Slowly drift orbit centers toward screen center for visual flow
-                    p.orbitCenterX += (center.x - p.orbitCenterX) * 0.0005;
-                    p.orbitCenterY += (center.y - p.orbitCenterY) * 0.0005;
+                    // Smooth sinusoidal movement
+                    p.x = p.orbitBaseX + Math.sin(time * p.orbitSpeed + p.orbitPhase) * drift;
+                    p.y = p.orbitBaseY + Math.cos(time * p.orbitSpeed * 0.7 + p.orbitPhase) * drift * 0.6;
                 });
 
                 this.draw();
@@ -5539,11 +5545,11 @@
             }
 
             this.saveSession();
-            
+
             const container = document.getElementById('advisor-messages-full');
             if (container) {
-                // Keep only the welcome hero
-                const welcome = container.querySelector('.advisor-hero');
+                // Keep only the welcome/command center
+                const welcome = container.querySelector('.command-center') || container.querySelector('.advisor-hero');
                 container.innerHTML = '';
                 if (welcome) {
                     container.appendChild(welcome);
@@ -5551,9 +5557,37 @@
                 }
             }
 
-            // Show health scores again with animation
+            // Show health scores again
             const healthScores = document.getElementById('health-scores-overview');
             if (healthScores) healthScores.classList.remove('hidden');
+
+            // Show command center / welcome
+            const commandCenter = document.getElementById('advisor-welcome-full');
+            if (commandCenter) commandCenter.style.display = '';
+
+            // Reset and restart the geometric animation
+            GeometricAnimation.cleanup();
+            // Reset canvas opacity
+            const canvas = document.getElementById('geometric-canvas');
+            if (canvas) canvas.style.opacity = '1';
+            // Small delay then restart animation
+            setTimeout(() => {
+                GeometricAnimation.init();
+            }, 100);
+
+            // Reset score-category cards animation by re-triggering it
+            const scoreCategories = document.getElementById('score-categories');
+            if (scoreCategories) {
+                scoreCategories.style.animation = 'none';
+                scoreCategories.offsetHeight; // Force reflow
+                scoreCategories.style.animation = '';
+                // Also reset individual card animations
+                scoreCategories.querySelectorAll('.score-category-card').forEach(card => {
+                    card.style.animation = 'none';
+                    card.offsetHeight;
+                    card.style.animation = '';
+                });
+            }
 
             // Re-bind suggestion chip events
             this.bindEvents();
