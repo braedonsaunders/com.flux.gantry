@@ -3455,10 +3455,26 @@ Use for: "cash flow", "runway", "cash projection", "liquidity", "treasury", "wor
                     // Process through intelligence layer - extracts key metrics, generates insights
                     const intelligence = DashboardCache.process('cashflow', rawData, args.requestId);
 
+                    // Calculate rowCount from metrics for proper data detection
+                    const metricsCount = Object.keys(intelligence?.metrics || {}).length;
+
+                    // Debug: Log if metrics extraction seems to have failed
+                    if (metricsCount === 0 && rawData?.company?.cash) {
+                        log.debug('dashboard_cashflow: metrics empty but rawData exists', {
+                            hasRawData: !!rawData,
+                            hasCash: !!rawData?.company?.cash,
+                            startingCash: rawData?.company?.cash?.startingCash,
+                            intelligenceKeys: Object.keys(intelligence || {})
+                        });
+                    }
+
                     return {
                         success: true,
                         dashboard: 'cashflow',
                         intelligence: intelligence,
+                        // CRITICAL: Include rowCount so system knows we have data
+                        // Use at least 1 if we have ANY data to prevent false "no data" detection
+                        rowCount: metricsCount > 0 ? metricsCount : (rawData ? 1 : 0),
                         tool: 'dashboard_cashflow'
                     };
                 } catch (e) {
@@ -3466,6 +3482,7 @@ Use for: "cash flow", "runway", "cash projection", "liquidity", "treasury", "wor
                     return {
                         success: false,
                         error: e.message,
+                        rowCount: 0,
                         tool: 'dashboard_cashflow'
                     };
                 }
@@ -3509,11 +3526,13 @@ PREFERRED for: "income statement", "P&L", "profit and loss", "financial health",
 
                     // Process through intelligence layer - extracts key metrics, generates insights
                     const intelligence = DashboardCache.process('health', rawData, args.requestId);
+                    const metricsCount = Object.keys(intelligence.metrics || {}).length;
 
                     return {
                         success: true,
                         dashboard: 'health',
                         intelligence: intelligence,
+                        rowCount: metricsCount > 0 ? metricsCount : 1,
                         tool: 'dashboard_health'
                     };
                 } catch (e) {
@@ -3521,6 +3540,7 @@ PREFERRED for: "income statement", "P&L", "profit and loss", "financial health",
                     return {
                         success: false,
                         error: e.message,
+                        rowCount: 0,
                         tool: 'dashboard_health'
                     };
                 }
@@ -3563,11 +3583,13 @@ Use for: "burden rate", "overhead", "labor burden", "cost recovery", "fringe rat
 
                     // Process through intelligence layer - extracts key metrics, generates insights
                     const intelligence = DashboardCache.process('burden', rawData, args.requestId);
+                    const metricsCount = Object.keys(intelligence.metrics || {}).length;
 
                     return {
                         success: true,
                         dashboard: 'burden',
                         intelligence: intelligence,
+                        rowCount: metricsCount > 0 ? metricsCount : 1,
                         tool: 'dashboard_burden'
                     };
                 } catch (e) {
@@ -3575,6 +3597,7 @@ Use for: "burden rate", "overhead", "labor burden", "cost recovery", "fringe rat
                     return {
                         success: false,
                         error: e.message,
+                        rowCount: 0,
                         tool: 'dashboard_burden'
                     };
                 }
@@ -3622,11 +3645,13 @@ Use for: "utilization", "billable hours", "time tracking", "unbilled time", "emp
 
                     // Process through intelligence layer - extracts key metrics, generates insights
                     const intelligence = DashboardCache.process('time', rawData, args.requestId);
+                    const metricsCount = Object.keys(intelligence.metrics || {}).length;
 
                     return {
                         success: true,
                         dashboard: 'time',
                         intelligence: intelligence,
+                        rowCount: metricsCount > 0 ? metricsCount : 1,
                         tool: 'dashboard_time'
                     };
                 } catch (e) {
@@ -3634,6 +3659,7 @@ Use for: "utilization", "billable hours", "time tracking", "unbilled time", "emp
                     return {
                         success: false,
                         error: e.message,
+                        rowCount: 0,
                         tool: 'dashboard_time'
                     };
                 }
@@ -3672,11 +3698,13 @@ Use for: "fraud detection", "anomalies", "duplicates", "Benford's law", "suspici
 
                     // Process through intelligence layer - extracts key metrics, generates insights
                     const intelligence = DashboardCache.process('integrity', rawData, args.requestId);
+                    const metricsCount = Object.keys(intelligence.metrics || {}).length;
 
                     return {
                         success: true,
                         dashboard: 'integrity',
                         intelligence: intelligence,
+                        rowCount: metricsCount > 0 ? metricsCount : 1,
                         tool: 'dashboard_integrity'
                     };
                 } catch (e) {
@@ -3684,6 +3712,7 @@ Use for: "fraud detection", "anomalies", "duplicates", "Benford's law", "suspici
                     return {
                         success: false,
                         error: e.message,
+                        rowCount: 0,
                         tool: 'dashboard_integrity'
                     };
                 }
@@ -3727,11 +3756,13 @@ Use for: "vendor performance", "procurement", "vendor leverage", "payment terms"
 
                     // Process through intelligence layer - extracts key metrics, generates insights
                     const intelligence = DashboardCache.process('vendorperformance', rawData, args.requestId);
+                    const metricsCount = Object.keys(intelligence.metrics || {}).length;
 
                     return {
                         success: true,
                         dashboard: 'vendorperformance',
                         intelligence: intelligence,
+                        rowCount: metricsCount > 0 ? metricsCount : 1,
                         tool: 'dashboard_vendorperformance'
                     };
                 } catch (e) {
@@ -3739,6 +3770,7 @@ Use for: "vendor performance", "procurement", "vendor leverage", "payment terms"
                     return {
                         success: false,
                         error: e.message,
+                        rowCount: 0,
                         tool: 'dashboard_vendorperformance'
                     };
                 }
@@ -3782,11 +3814,13 @@ Use for: "customer value", "CLV", "lifetime value", "RFM", "churn risk", "custom
 
                     // Process through intelligence layer - extracts key metrics, generates insights
                     const intelligence = DashboardCache.process('customervalue', rawData, args.requestId);
+                    const metricsCount = Object.keys(intelligence.metrics || {}).length;
 
                     return {
                         success: true,
                         dashboard: 'customervalue',
                         intelligence: intelligence,
+                        rowCount: metricsCount > 0 ? metricsCount : 1,
                         tool: 'dashboard_customervalue'
                     };
                 } catch (e) {
@@ -3794,6 +3828,7 @@ Use for: "customer value", "CLV", "lifetime value", "RFM", "churn risk", "custom
                     return {
                         success: false,
                         error: e.message,
+                        rowCount: 0,
                         tool: 'dashboard_customervalue'
                     };
                 }
@@ -3837,11 +3872,13 @@ Use for: "spend velocity", "subscription creep", "shadow IT", "commitment cliff"
 
                     // Process through intelligence layer - extracts key metrics, generates insights
                     const intelligence = DashboardCache.process('spendvelocity', rawData, args.requestId);
+                    const metricsCount = Object.keys(intelligence.metrics || {}).length;
 
                     return {
                         success: true,
                         dashboard: 'spendvelocity',
                         intelligence: intelligence,
+                        rowCount: metricsCount > 0 ? metricsCount : 1,
                         tool: 'dashboard_spendvelocity'
                     };
                 } catch (e) {
@@ -3849,6 +3886,7 @@ Use for: "spend velocity", "subscription creep", "shadow IT", "commitment cliff"
                     return {
                         success: false,
                         error: e.message,
+                        rowCount: 0,
                         tool: 'dashboard_spendvelocity'
                     };
                 }
