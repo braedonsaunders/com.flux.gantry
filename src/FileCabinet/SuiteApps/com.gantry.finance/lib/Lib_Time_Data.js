@@ -563,46 +563,87 @@ define(["N/query", "N/log", "./Lib_Core", "./Lib_Config"], function (query, log,
      */
     function getScoreOnly() {
         try {
-            // Get last month's time data (single query)
+            // Get last month's time data matching getData() logic
             var today = new Date();
             var endDate = new Date(today.getFullYear(), today.getMonth(), 0);
             var startDate = new Date(endDate.getFullYear(), endDate.getMonth(), 1);
             var start = Core.formatDateForQuery(startDate);
             var end = Core.formatDateForQuery(endDate);
 
-            var totalHours = 0, billableHours = 0;
+            // Load config for filters (matching getData flow)
+            var config = ConfigLib.getStoredConfiguration('time');
+            var targetPct = config.targetBillablePercent || 70;
 
+            // Build filter sets matching getData() (lines 45-47)
+            var hiddenDepts = (config.hiddenDepartments || []).map(String);
+            var hiddenEmps = (config.hiddenEmployees || []).map(String);
+            var noBillDepts = (config.noBillableDepartments || []).map(String);
+
+            // Get laborCostField from config (matching fetchTimeStats)
+            var rawLaborCostField = config.laborCostField || 'laborcost';
+            var laborCostField = rawLaborCostField.replace(/[^a-zA-Z0-9_]/g, '') || 'laborcost';
+
+            // Build employee type exclusion filter (matching fetchTimeStats)
+            var excludeEmpTypes = (config.excludeEmployeeTypes || []).map(function(t) { return String(t).replace(/[^0-9]/g, ''); }).filter(function(t) { return t; });
+            var empTypeFilter = excludeEmpTypes.length > 0
+                ? " AND (e.employeetype IS NULL OR e.employeetype NOT IN (" + excludeEmpTypes.join(',') + "))"
+                : '';
+
+            // Fetch per-employee stats (matching fetchTimeStats structure)
+            var rows = [];
             try {
                 var sql = "SELECT " +
+                    "t.employee, t.department, " +
                     "SUM(t.hours) as total_hours, " +
-                    "SUM(CASE WHEN t.customer IS NOT NULL THEN t.hours ELSE 0 END) as billable_hours " +
+                    "SUM(CASE WHEN t.customer IS NOT NULL THEN t.hours ELSE 0 END) as billable_hours, " +
+                    "SUM(CASE WHEN t.customer IS NULL THEN t.hours * NVL(e." + laborCostField + ", 0) ELSE 0 END) as non_billable_cost " +
                     "FROM timebill t " +
-                    "WHERE t.trandate BETWEEN TO_DATE('" + start + "', 'YYYY-MM-DD') AND TO_DATE('" + end + "', 'YYYY-MM-DD')";
-                var result = Core.runQuery(sql);
-                if (result && result.length > 0) {
-                    totalHours = parseFloat(result[0].total_hours) || 0;
-                    billableHours = parseFloat(result[0].billable_hours) || 0;
-                }
+                    "LEFT JOIN employee e ON t.employee = e.id " +
+                    "WHERE t.trandate >= TO_DATE('" + start + "', 'YYYY-MM-DD') " +
+                    "AND t.trandate <= TO_DATE('" + end + "', 'YYYY-MM-DD')" +
+                    empTypeFilter +
+                    " GROUP BY t.employee, t.department";
+                rows = Core.runQuery(sql) || [];
             } catch (e) {
                 log.debug('Time Query Error', e.message);
             }
 
-            // Calculate billable percentage
-            var billablePct = totalHours > 0 ? (billableHours / totalHours) * 100 : 0;
+            // Filter out hidden departments and employees (matching getData lines 49-51)
+            var filtered = rows.filter(function(r) {
+                return hiddenDepts.indexOf(String(r.department)) === -1 &&
+                       hiddenEmps.indexOf(String(r.employee)) === -1;
+            });
 
-            // Get target from config (default 70%)
-            var targetPct = 70;
-            try {
-                var config = ConfigLib.getStoredConfiguration('time');
-                if (config && config.targetBillablePercent) {
-                    targetPct = config.targetBillablePercent;
-                }
-            } catch (e) {}
+            // For efficiency score: aggregate from filtered employee data (matching Dashboard.Time.js lines 1322-1328)
+            // Track unique employees
+            var employeeSet = {};
+            var totalHours = 0, totalBillableHours = 0, totalNonBillCost = 0;
 
-            // Score is how well we're meeting the target (scaled 0-100)
-            // If billable% >= target, score approaches 100
-            // Score = min(100, (billable% / target%) * 100)
-            var score = Math.min(100, (billablePct / targetPct) * 100);
+            filtered.forEach(function(r) {
+                var empId = String(r.employee);
+                employeeSet[empId] = true;
+                totalHours += parseFloat(r.total_hours) || 0;
+                totalBillableHours += parseFloat(r.billable_hours) || 0;
+                totalNonBillCost += parseFloat(r.non_billable_cost) || 0;
+            });
+
+            var employeeCount = Object.keys(employeeSet).length || 1;
+            var avgBillable = totalHours > 0 ? (totalBillableHours / totalHours) * 100 : 0;
+            var costPerEmployee = totalNonBillCost / employeeCount;
+
+            // Efficiency score formula matching Dashboard.Time.js buildInsights() exactly (lines 1351-1360)
+            // 50 points from billable %, 50 points from cost efficiency
+            var COST_EFFICIENCY_THRESHOLD = 5000;
+            var COST_PENALTY_DIVISOR = 200;
+
+            var billableScore = (avgBillable / targetPct) * 50;
+            var costScore = employeeCount > 0
+                ? (costPerEmployee < COST_EFFICIENCY_THRESHOLD
+                    ? 50
+                    : Math.min(50, Math.max(0, 50 - (costPerEmployee - COST_EFFICIENCY_THRESHOLD) / COST_PENALTY_DIVISOR)))
+                : 25;
+
+            var score = Math.min(100, Math.round(billableScore + costScore));
 
             var grade = 'A';
             var label = 'Excellent';
@@ -614,19 +655,21 @@ define(["N/query", "N/log", "./Lib_Core", "./Lib_Config"], function (query, log,
             else { grade = 'A+'; label = 'Excellent'; }
 
             var trend = 'stable';
-            if (billablePct < targetPct * 0.8) trend = 'down';
-            else if (billablePct > targetPct * 1.1) trend = 'up';
+            if (avgBillable < targetPct * 0.8) trend = 'down';
+            else if (avgBillable > targetPct * 1.1) trend = 'up';
 
             return {
-                score: Math.round(score),
+                score: score,
                 grade: grade,
                 label: label,
                 trend: trend,
                 details: {
                     totalHours: Core.round2(totalHours),
-                    billableHours: Core.round2(billableHours),
-                    billablePct: Core.round2(billablePct),
-                    targetPct: targetPct
+                    billableHours: Core.round2(totalBillableHours),
+                    billablePct: Core.round2(avgBillable),
+                    targetPct: targetPct,
+                    employeeCount: employeeCount,
+                    costPerEmployee: Core.round2(costPerEmployee)
                 }
             };
         } catch (e) {

@@ -2222,17 +2222,41 @@ define(["N/search", "N/query", "N/log", "./Lib_Core", "./Lib_Config"], function 
      */
     function getScoreOnly() {
         try {
-            // Get last 3 months of P&L data (minimal query)
             var today = new Date();
-            var endDate = new Date(today.getFullYear(), today.getMonth(), 0);
-            var startDate = new Date(endDate.getFullYear(), endDate.getMonth() - 2, 1);
-            var start = Core.formatDateForQuery(startDate);
-            var end = Core.formatDateForQuery(endDate);
-            var months = 3;
+            var config = ConfigLib.getStoredConfiguration('health');
+            var fiscalCalendar = ConfigLib.getFiscalCalendar();
+            var fiscalYearStartMonth = fiscalCalendar.fiscalYearStartMonth;
 
+            // Match getData() date logic exactly: go back 6 weeks, then get last day of previous month
+            var sixWeeksAgo = new Date(today);
+            sixWeeksAgo.setDate(sixWeeksAgo.getDate() - 42);
+            var rangeEnd = new Date(sixWeeksAgo.getFullYear(), sixWeeksAgo.getMonth(), 0); // Last day of month before sixWeeksAgo
+
+            // Fiscal year start date
+            var fyYear = rangeEnd.getMonth() < fiscalYearStartMonth ? rangeEnd.getFullYear() - 1 : rangeEnd.getFullYear();
+            var rangeStart = new Date(fyYear, fiscalYearStartMonth, 1);
+
+            var start = Core.formatDateForQuery(rangeStart);
+            var end = Core.formatDateForQuery(rangeEnd);
+
+            // Calculate months dynamically
+            var rawMonthsInRange = (rangeEnd.getFullYear() - rangeStart.getFullYear()) * 12 + (rangeEnd.getMonth() - rangeStart.getMonth()) + 1;
+            var months = Math.max(1, rawMonthsInRange);
+
+            // Period definitions matching getData() exactly
+            var currentMonthStart = new Date(rangeEnd.getFullYear(), rangeEnd.getMonth(), 1);
+            var currentMonthEnd = new Date(rangeEnd);
+
+            var prevMonthEnd = new Date(currentMonthStart);
+            prevMonthEnd.setDate(prevMonthEnd.getDate() - 1);
+            var prevMonthStart = new Date(prevMonthEnd.getFullYear(), prevMonthEnd.getMonth(), 1);
+
+            // Fetch P&L data for range, previous month, and current month (for chooseTargetGMPct)
             var revenue = 0, cogs = 0, opex = 0;
+            var prevMonthGmPct = 0, currMonthGmPct = 0;
 
             try {
+                // Main range query
                 var sql = "SELECT " +
                     "SUM(CASE WHEN a.accttype IN ('Income', 'OthIncome') THEN -tl.amount ELSE 0 END) as revenue, " +
                     "SUM(CASE WHEN a.accttype = 'COGS' THEN tl.amount ELSE 0 END) as cogs, " +
@@ -2248,6 +2272,38 @@ define(["N/search", "N/query", "N/log", "./Lib_Core", "./Lib_Config"], function 
                     cogs = parseFloat(result[0].cogs) || 0;
                     opex = parseFloat(result[0].opex) || 0;
                 }
+
+                // Previous month GM% (for chooseTargetGMPct)
+                var prevSql = "SELECT " +
+                    "SUM(CASE WHEN a.accttype IN ('Income', 'OthIncome') THEN -tl.amount ELSE 0 END) as revenue, " +
+                    "SUM(CASE WHEN a.accttype = 'COGS' THEN tl.amount ELSE 0 END) as cogs " +
+                    "FROM transactionline tl " +
+                    "JOIN transaction t ON t.id = tl.transaction " +
+                    "JOIN account a ON a.id = tl.account " +
+                    "WHERE t.trandate BETWEEN TO_DATE('" + Core.formatDateForQuery(prevMonthStart) + "', 'YYYY-MM-DD') AND TO_DATE('" + Core.formatDateForQuery(prevMonthEnd) + "', 'YYYY-MM-DD') " +
+                    "AND t.posting = 'T' AND tl.mainline = 'F'";
+                var prevResult = Core.runQuery(prevSql);
+                if (prevResult && prevResult.length > 0) {
+                    var prevRev = parseFloat(prevResult[0].revenue) || 0;
+                    var prevCogs = parseFloat(prevResult[0].cogs) || 0;
+                    prevMonthGmPct = prevRev > 0 ? (prevRev - prevCogs) / prevRev : 0;
+                }
+
+                // Current month GM% (rangeEnd month)
+                var currSql = "SELECT " +
+                    "SUM(CASE WHEN a.accttype IN ('Income', 'OthIncome') THEN -tl.amount ELSE 0 END) as revenue, " +
+                    "SUM(CASE WHEN a.accttype = 'COGS' THEN tl.amount ELSE 0 END) as cogs " +
+                    "FROM transactionline tl " +
+                    "JOIN transaction t ON t.id = tl.transaction " +
+                    "JOIN account a ON a.id = tl.account " +
+                    "WHERE t.trandate BETWEEN TO_DATE('" + Core.formatDateForQuery(currentMonthStart) + "', 'YYYY-MM-DD') AND TO_DATE('" + Core.formatDateForQuery(currentMonthEnd) + "', 'YYYY-MM-DD') " +
+                    "AND t.posting = 'T' AND tl.mainline = 'F'";
+                var currResult = Core.runQuery(currSql);
+                if (currResult && currResult.length > 0) {
+                    var currRev = parseFloat(currResult[0].revenue) || 0;
+                    var currCogs = parseFloat(currResult[0].cogs) || 0;
+                    currMonthGmPct = currRev > 0 ? (currRev - currCogs) / currRev : 0;
+                }
             } catch (e) {
                 log.debug('Health P&L Query Error', e.message);
             }
@@ -2257,13 +2313,8 @@ define(["N/search", "N/query", "N/log", "./Lib_Core", "./Lib_Config"], function 
             var avgMonthlyRevenue = revenue / months;
             var avgMonthlyOpex = opex / months;
 
-            var targetGM = 0.35;
-            try {
-                var config = ConfigLib.getStoredConfiguration('health');
-                if (config && config.targetGrossMargin) {
-                    targetGM = config.targetGrossMargin;
-                }
-            } catch (e) {}
+            // Use chooseTargetGMPct to match getData() logic
+            var targetGM = chooseTargetGMPct(prevMonthGmPct, currMonthGmPct, gmPct, config);
 
             var breakeven = targetGM > 0 ? avgMonthlyOpex / targetGM : 0;
             var score = computeHealthScore(avgMonthlyRevenue, breakeven, gmPct, targetGM);
