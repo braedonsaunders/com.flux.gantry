@@ -47,10 +47,14 @@
             particleCount: 55,
             connectionDistance: 90,
             particleSize: { min: 1.5, max: 2.5 },
-            birthDuration: 1000,
-            explodeDuration: 1200,
-            orbitDuration: 1500,      // Reduced from 3000
-            convergeDuration: 1700,   // 5% faster than 1800
+            // All timings sped up 20% (multiplied by 0.8)
+            birthDuration: 800,           // was 1000
+            pauseDuration: 200,           // was 300
+            glowDuration: 400,            // was 500
+            explodeDuration: 1050,        // was 1200, +10% slower then 20% faster
+            orbitDuration: 1000,          // was 1500
+            convergeDuration: 1100,       // was 1700
+            shineDuration: 480,           // was 600
             colors: [
                 { r: 99, g: 102, b: 241 },   // Indigo
                 { r: 139, g: 92, b: 246 },   // Purple
@@ -70,7 +74,7 @@
 
             this.isActive = true;
             this.globalTime = 0;
-            this.orbitAngle = 0;
+            this.cameraOffsetX = 0; // For camera rotation effect
             this.createParticles();
             this.startBirth();
         },
@@ -85,6 +89,16 @@
             const heroOrb = document.querySelector('.hero-orb');
             if (heroOrb) {
                 const rect = heroOrb.getBoundingClientRect();
+                // Use exact center of the orb-core (the brain icon background)
+                const orbCore = heroOrb.querySelector('.orb-core');
+                if (orbCore) {
+                    const coreRect = orbCore.getBoundingClientRect();
+                    return {
+                        x: coreRect.left + coreRect.width / 2,
+                        y: coreRect.top + coreRect.height / 2,
+                        element: heroOrb
+                    };
+                }
                 return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2, element: heroOrb };
             }
             return { x: this.canvas.width / 2, y: this.canvas.height * 0.25, element: null };
@@ -172,7 +186,7 @@
                     // Brief pause, then glow
                     setTimeout(() => {
                         if (this.isActive) this.startOrbGlow();
-                    }, 300);
+                    }, this.config.pauseDuration);
                 }
             };
 
@@ -197,14 +211,13 @@
                 p.glowStartY = p.y;
             });
 
-            const glowDuration = 500;
             const startTime = Date.now();
 
             const animateGlow = () => {
                 if (!this.isActive || this.phase !== 'orbGlow') return;
 
                 const elapsed = Date.now() - startTime;
-                const progress = Math.min(elapsed / glowDuration, 1);
+                const progress = Math.min(elapsed / this.config.glowDuration, 1);
                 this.globalTime += 16;
 
                 // Pull particles back to center during glow
@@ -283,17 +296,18 @@
         },
 
         /**
-         * Orbit: gentle rotation without jumping - particles stay where explode left them
+         * Orbit: individual rotation + camera sway left/right
          */
         startOrbit: function() {
             this.phase = 'orbit';
             const startTime = Date.now();
 
-            // Store exact positions from end of explode (no jumping)
+            // Store exact positions from end of explode
             this.particles.forEach(p => {
                 p.orbitBaseX = p.x;
                 p.orbitBaseY = p.y;
                 p.orbitPhase = Math.random() * Math.PI * 2;
+                p.rotationSpeed = 0.5 + Math.random() * 0.5;
             });
 
             const animateOrbit = () => {
@@ -303,14 +317,22 @@
                 const progress = Math.min(elapsed / this.config.orbitDuration, 1);
                 this.globalTime += 16;
 
-                // Gentle figure-8 / elliptical drift (no sudden jumps)
+                // Camera sway - all particles shift left then right
+                const cameraSwayAmount = 40; // pixels
+                this.cameraOffsetX = Math.sin(progress * Math.PI * 2) * cameraSwayAmount;
+
+                // Individual particle rotation + camera offset
                 this.particles.forEach((p, i) => {
                     const time = elapsed * 0.001;
-                    const drift = 8 + (i % 4) * 3; // Small drift radius
+                    const drift = 10 + (i % 4) * 4;
 
-                    // Smooth sinusoidal movement
-                    p.x = p.orbitBaseX + Math.sin(time * p.orbitSpeed + p.orbitPhase) * drift;
-                    p.y = p.orbitBaseY + Math.cos(time * p.orbitSpeed * 0.7 + p.orbitPhase) * drift * 0.6;
+                    // Individual rotation
+                    const individualX = Math.sin(time * p.rotationSpeed + p.orbitPhase) * drift;
+                    const individualY = Math.cos(time * p.rotationSpeed * 0.8 + p.orbitPhase) * drift * 0.7;
+
+                    // Apply camera offset to all particles
+                    p.x = p.orbitBaseX + individualX + this.cameraOffsetX;
+                    p.y = p.orbitBaseY + individualY;
                 });
 
                 this.draw();
@@ -318,6 +340,7 @@
                 if (progress < 1) {
                     this.animationId = requestAnimationFrame(animateOrbit);
                 } else {
+                    this.cameraOffsetX = 0; // Reset camera
                     this.startConverge();
                 }
             };
@@ -413,11 +436,10 @@
             }
 
             const shineStart = Date.now();
-            const shineDuration = 600;
 
             const animateShine = () => {
                 const elapsed = Date.now() - shineStart;
-                const progress = Math.min(elapsed / shineDuration, 1);
+                const progress = Math.min(elapsed / this.config.shineDuration, 1);
 
                 const pulse = Math.sin(progress * Math.PI);
                 const glowSize = 25 + 40 * pulse;
