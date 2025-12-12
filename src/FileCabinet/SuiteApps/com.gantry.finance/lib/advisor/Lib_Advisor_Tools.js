@@ -26,6 +26,7 @@ define([
     './Lib_Advisor_QueryExecutor',
     './Lib_Advisor_Utils',
     './Lib_Advisor_DashboardCache',
+    './Lib_Advisor_DataStore',
     '../Lib_Dashboard_Registry',
     '../Lib_Config',
     // Dashboard data modules - loaded as dependencies to avoid dynamic require() errors
@@ -44,6 +45,7 @@ define([
     QueryExecutor,
     Utils,
     DashboardCache,
+    DataStore,
     DashboardRegistry,
     ConfigLib,
     // Dashboard data modules
@@ -4045,6 +4047,191 @@ Use to understand what "YTD", "this quarter", etc. mean for this organization.`,
             },
             displayName: function(args) {
                 return 'Getting fiscal context...';
+            }
+        },
+
+        // ═══════════════════════════════════════════════════════════════════════════
+        // CACHED DATA ACCESS TOOL
+        // Allows LLM to query any data stored in cache from previous tool calls
+        // ═══════════════════════════════════════════════════════════════════════════
+
+        load_cached_data: {
+            name: 'load_cached_data',
+            description: `Load data from cache - use this to access previously fetched data or drill into dashboard collections.
+
+USE THIS TOOL WHEN:
+1. User asks for more details about data you already have (drill-down)
+2. User wants to see a specific collection from a dashboard (e.g., "show me the weekly projection")
+3. User asks to filter or sort previously loaded data
+4. You need to access data stored with a refId from a previous response
+
+TYPES OF DATA YOU CAN ACCESS:
+1. Dashboard Collections: Use refId from dashboard + collection_name (e.g., "weeklyProjection", "arBuckets")
+2. Query Results: Use refId from previous query to load more rows or filter
+3. Any cached data: Use the refId shown in previous responses
+
+EXAMPLES:
+- Load weekly projection: { "ref_id": "dash_cash_abc123", "collection_name": "weeklyProjection" }
+- Load with filter: { "ref_id": "dash_cash_abc123", "collection_name": "arBuckets", "filter": { "amount": { "min": 10000 } } }
+- Load query rows: { "ref_id": "ref_geta_xyz789", "start_row": 0, "end_row": 49 }`,
+            parameters: {
+                type: 'object',
+                properties: {
+                    ref_id: {
+                        type: 'string',
+                        description: 'The refId from a previous tool result (e.g., "dash_cash_abc123" or "ref_geta_xyz789")'
+                    },
+                    request_id: {
+                        type: 'string',
+                        description: 'Optional: The requestId if loading from a different request (usually not needed)'
+                    },
+                    collection_name: {
+                        type: 'string',
+                        description: 'For dashboards: name of the collection to load (e.g., "weeklyProjection", "arBuckets", "topCustomers")'
+                    },
+                    start_row: {
+                        type: 'number',
+                        description: 'For query results: starting row index (0-based). Default: 0'
+                    },
+                    end_row: {
+                        type: 'number',
+                        description: 'For query results: ending row index (inclusive). Default: 49'
+                    },
+                    filter: {
+                        type: 'object',
+                        description: 'Optional filter for collections. Format: { "fieldName": value } or { "fieldName": { "min": N, "max": N, "contains": "text" } }'
+                    },
+                    sort: {
+                        type: 'object',
+                        description: 'Optional sort for collections. Format: { "field": "fieldName", "direction": "asc" or "desc" }'
+                    },
+                    limit: {
+                        type: 'number',
+                        description: 'Maximum number of items to return. Default: 50'
+                    }
+                },
+                required: ['ref_id']
+            },
+            execute: function(args) {
+                const refId = args.ref_id;
+                const requestId = args.request_id;
+
+                log.debug('load_cached_data', {
+                    refId: refId,
+                    collectionName: args.collection_name,
+                    hasFilter: !!args.filter
+                });
+
+                try {
+                    // Determine data source based on refId pattern
+                    const isDashboardRef = refId.startsWith('dash_');
+
+                    if (isDashboardRef && args.collection_name) {
+                        // Load dashboard collection from DashboardCache
+                        const collectionResult = DashboardCache.loadCollection(
+                            refId,
+                            args.collection_name,
+                            {
+                                filter: args.filter,
+                                sort: args.sort,
+                                limit: args.limit || 50
+                            }
+                        );
+
+                        if (!collectionResult.success) {
+                            return {
+                                success: false,
+                                error: collectionResult.error || 'Failed to load collection',
+                                hint: collectionResult.hint || 'The data may have expired. Try calling the dashboard tool again.',
+                                available: collectionResult.available,
+                                tool: 'load_cached_data'
+                            };
+                        }
+
+                        // Convert items to rows format for consistency
+                        const items = collectionResult.items || [];
+                        const columns = items.length > 0 ? Object.keys(items[0]) : collectionResult.columns || [];
+
+                        return {
+                            success: true,
+                            source: 'dashboard_collection',
+                            collection: args.collection_name,
+                            refId: refId,
+                            rows: items,
+                            columns: columns,
+                            rowCount: items.length,
+                            totalCount: collectionResult.totalCount,
+                            aggregates: collectionResult.aggregates,
+                            tool: 'load_cached_data'
+                        };
+
+                    } else if (isDashboardRef && !args.collection_name) {
+                        // Load dashboard metric
+                        if (args.metric_name) {
+                            const metricResult = DashboardCache.getMetric(refId, args.metric_name);
+                            return {
+                                success: metricResult.success,
+                                source: 'dashboard_metric',
+                                ...metricResult,
+                                tool: 'load_cached_data'
+                            };
+                        }
+
+                        // No collection specified - return available collections
+                        return {
+                            success: false,
+                            error: 'Please specify collection_name to load dashboard data',
+                            hint: 'Available collections can be found in the dashboard response (e.g., weeklyProjection, arBuckets)',
+                            tool: 'load_cached_data'
+                        };
+
+                    } else {
+                        // Load from DataStore (query results)
+                        const startRow = args.start_row || 0;
+                        const endRow = args.end_row || 49;
+
+                        // Try to load with provided requestId, then fall back to refId-only lookup
+                        let data = null;
+                        if (requestId) {
+                            data = DataStore.loadRows(requestId, refId, startRow, endRow);
+                        }
+
+                        if (!data) {
+                            return {
+                                success: false,
+                                error: 'Data not found or expired',
+                                hint: 'The cached data may have expired. Try re-running the original query.',
+                                refId: refId,
+                                tool: 'load_cached_data'
+                            };
+                        }
+
+                        return {
+                            success: true,
+                            source: 'query_cache',
+                            refId: refId,
+                            rows: data.rows,
+                            columns: data.columns,
+                            rowCount: data.rows.length,
+                            range: data.range,
+                            tool: 'load_cached_data'
+                        };
+                    }
+
+                } catch (e) {
+                    log.error('load_cached_data error', { refId: refId, error: e.message });
+                    return {
+                        success: false,
+                        error: e.message,
+                        tool: 'load_cached_data'
+                    };
+                }
+            },
+            displayName: function(args) {
+                if (args.collection_name) {
+                    return `Loading ${args.collection_name} collection...`;
+                }
+                return 'Loading cached data...';
             }
         },
 
