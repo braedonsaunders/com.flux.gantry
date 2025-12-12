@@ -166,7 +166,23 @@ define(['N/cache', 'N/log', '../Lib_Dashboard_Registry'], function(cache, log, D
                 log.debug('DashboardCache', 'Invalid formula characters: ' + result);
                 return null;
             }
-            return Function('"use strict"; return (' + result + ')')();
+
+            // Guard against deeply nested expressions that could cause stack overflow
+            const parenDepth = (result.match(/\(/g) || []).length;
+            if (parenDepth > 20) {
+                log.debug('DashboardCache', 'Formula too deeply nested: ' + parenDepth + ' levels');
+                return null;
+            }
+
+            const evaluated = Function('"use strict"; return (' + result + ')')();
+
+            // Validate result is a finite number (catches Infinity, -Infinity, NaN)
+            if (typeof evaluated !== 'number' || !isFinite(evaluated)) {
+                log.debug('DashboardCache', 'Formula produced non-finite result: ' + evaluated);
+                return null;
+            }
+
+            return evaluated;
         } catch (e) {
             log.debug('DashboardCache', 'Formula eval failed: ' + e.message);
             return null;
