@@ -2368,8 +2368,14 @@
                     return;
                 }
 
-                // Re-render the chain with pending indicator if still loading
-                const chainHtml = this.renderSteps(allSteps, isStillLoading);
+                // Capture existing expansion state before re-render
+                const existingChainId = existingChain.getAttribute('data-chain-id');
+                const expansionPanel = document.getElementById(existingChainId + '-expansion');
+                const expandedIdx = expansionPanel ? expansionPanel.getAttribute('data-expanded-idx') : null;
+                const wasExpanded = expansionPanel && expansionPanel.classList.contains('visible') && expandedIdx !== null && expandedIdx !== '';
+
+                // Re-render the chain with pending indicator if still loading, preserving chainId
+                const chainHtml = this.renderSteps(allSteps, isStillLoading, existingChainId);
                 const tempDiv = document.createElement('div');
                 tempDiv.innerHTML = chainHtml;
                 const newChain = tempDiv.firstElementChild;
@@ -2378,6 +2384,15 @@
                     // Store step data on the chain element for expansion
                     newChain._stepsData = allSteps.map((s, i) => ({...s, _chainId: newChain.getAttribute('data-chain-id')}));
                     existingChain.replaceWith(newChain);
+
+                    // Restore expansion state if a step was expanded
+                    if (wasExpanded) {
+                        const self = this;
+                        // Use requestAnimationFrame to ensure DOM is updated before restoring expansion
+                        requestAnimationFrame(function() {
+                            self.toggleExpansion(existingChainId, parseInt(expandedIdx, 10));
+                        });
+                    }
                 }
             } else {
                 // Create new thought-chain with pending indicator if still loading
@@ -2432,13 +2447,28 @@
                 // Re-render the thought chain without pending indicator
                 const existingChain = stepsContainer.querySelector('.thought-chain');
                 if (existingChain && existingChain._stepsData) {
-                    const chainHtml = this.renderSteps(existingChain._stepsData, false);
+                    // Capture existing expansion state before re-render
+                    const existingChainId = existingChain.getAttribute('data-chain-id');
+                    const expansionPanel = document.getElementById(existingChainId + '-expansion');
+                    const expandedIdx = expansionPanel ? expansionPanel.getAttribute('data-expanded-idx') : null;
+                    const wasExpanded = expansionPanel && expansionPanel.classList.contains('visible') && expandedIdx !== null && expandedIdx !== '';
+
+                    // Re-render preserving chainId
+                    const chainHtml = this.renderSteps(existingChain._stepsData, false, existingChainId);
                     const tempDiv = document.createElement('div');
                     tempDiv.innerHTML = chainHtml;
                     const newChain = tempDiv.firstElementChild;
                     if (newChain) {
                         newChain._stepsData = existingChain._stepsData.map((s, i) => ({...s, _chainId: newChain.getAttribute('data-chain-id')}));
                         existingChain.replaceWith(newChain);
+
+                        // Restore expansion state if a step was expanded
+                        if (wasExpanded) {
+                            const self = this;
+                            requestAnimationFrame(function() {
+                                self.toggleExpansion(existingChainId, parseInt(expandedIdx, 10));
+                            });
+                        }
                     }
                 }
             }
@@ -3145,15 +3175,17 @@
          * Render steps as Neural Flow thought-chain
          * @param {Array} steps - Array of step objects
          * @param {boolean} showPending - Show pending indicator at end (while still loading)
+         * @param {string} existingChainId - Optional existing chain ID to preserve (for re-renders)
          */
-        renderSteps: function(steps, showPending) {
+        renderSteps: function(steps, showPending, existingChainId) {
             if (!steps || steps.length === 0) return '';
 
             // Filter out retry steps - they're intermediate and shouldn't be displayed
             const filteredSteps = steps.filter(s => s.type !== 'retry');
             if (filteredSteps.length === 0) return '';
 
-            const chainId = 'chain-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
+            // Reuse existing chainId if provided (preserves expansion panel ID across re-renders)
+            const chainId = existingChainId || ('chain-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9));
             const self = this;
             const allComplete = filteredSteps.every(s => self.normalizeStepStatus(s.status) === 'complete') && !showPending;
             const hasRunning = filteredSteps.some(s => self.normalizeStepStatus(s.status) === 'running');
