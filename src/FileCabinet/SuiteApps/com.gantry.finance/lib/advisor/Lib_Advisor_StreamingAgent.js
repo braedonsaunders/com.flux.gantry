@@ -518,66 +518,24 @@ Response format (JSON only):
 }}`;
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // TOOL MANIFEST (Names + One-liners only)
-    // NOTE: format_response is NOT included - it's internal only
+    // TOOL MANIFEST - Now delegated to Tools.js (single source of truth)
+    // The manifest is dynamically generated from tool definitions.
+    // Internal tools (exposed: false) are automatically excluded.
     // ═══════════════════════════════════════════════════════════════════════════
 
+    /**
+     * Get tool manifest - delegates to Tools.getToolManifest()
+     * Dynamically generated from ALL_TOOLS with shortDescription metadata
+     */
     function getToolManifest() {
-        return {
-            // Discovery
-            resolve_entity: "Find customer/vendor/employee by name → returns ID",
-            resolve_gl_account: "Find GL account by name/number → returns ID",
-            resolve_classification: "Find class/department/location → returns ID",
-
-            // Customer/Revenue
-            get_customer_revenue: "Revenue by customer for a period",
-            get_top_customers: "Top N customers by revenue or volume",
-
-            // Vendor/Spend
-            get_vendor_spend: "Spend by vendor for a period",
-            get_top_vendors: "Top N vendors by spend",
-
-            // Aging
-            get_ar_aging: "AR aging buckets by customer",
-            get_ap_aging: "AP aging buckets by vendor",
-
-            // GL & Reporting
-            get_gl_activity: "GL account activity and balances",
-            get_trial_balance: "Trial balance for a period",
-            get_income_statement: "Income statement / P&L",
-            get_balance_sheet: "Balance sheet",
-            get_recent_transactions: "Recent transactions with filters",
-            get_transaction_detail: "Details of a specific transaction",
-
-            // Analysis
-            compare_periods: "Compare two time periods",
-            find_anomalies: "Find unusual transactions or patterns",
-            get_cash_position: "Current bank balances (snapshot only - use dashboard_cashflow for projections)",
-            get_expense_breakdown: "Expenses by category",
-
-            // Dashboards - PREFERRED for complex/forward-looking questions
-            dashboard_cashflow: "Cash projections, runway, burn rate, 30/60/90 day forecasts - USE FOR FUTURE CASH QUESTIONS",
-            dashboard_health: "Financial health score, margins, ratios, profitability analysis",
-            dashboard_customervalue: "Customer CLV, payment behavior, revenue concentration",
-            dashboard_vendorperformance: "Vendor spend analysis, payment trends, concentration risk",
-
-            // Utility
-            get_fiscal_context: "Current fiscal period info",
-            run_custom_query: "Execute custom SuiteQL query",
-            run_saved_search: "Run a NetSuite saved search",
-            list_saved_searches: "List available saved searches",
-
-            // Cached Data Access - USE FOR DRILL-DOWN QUERIES
-            load_cached_data: "Load/drill-down into previously fetched data - USE WHEN USER ASKS FOR MORE DETAILS about collections (e.g., 'show me weekly projection details', 'list the AR buckets')"
-            // NOTE: format_response intentionally excluded - internal use only
-        };
+        return Tools.getToolManifest();
     }
 
+    /**
+     * Get formatted tool list for LLM prompts - delegates to Tools.getToolListForPrompt()
+     */
     function getToolListForPrompt() {
-        const manifest = getToolManifest();
-        return Object.entries(manifest)
-            .map(([name, desc]) => `• ${name}: ${desc}`)
-            .join('\n');
+        return Tools.getToolListForPrompt();
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
