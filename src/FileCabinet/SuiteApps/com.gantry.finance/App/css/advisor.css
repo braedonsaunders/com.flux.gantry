@@ -5111,7 +5111,7 @@ body.dark-mode .thought-node.expanded::before {
 .health-scores-overview {
     width: 100%;
     max-width: 900px;
-    margin: 0 auto 32px;
+    margin: 0 auto 20px;
     padding: 0 16px;
 }
 
@@ -5119,25 +5119,25 @@ body.dark-mode .thought-node.expanded::before {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 16px;
+    margin-bottom: 10px;
 }
 
 .scores-title {
     display: flex;
     align-items: center;
-    gap: 10px;
-    font-size: 14px;
+    gap: 8px;
+    font-size: 12px;
     font-weight: 600;
     color: var(--text-dark);
 }
 
 .scores-title i {
     color: var(--primary);
-    font-size: 16px;
+    font-size: 14px;
 }
 
 .scores-timestamp {
-    font-size: 11px;
+    font-size: 10px;
     color: var(--text-muted);
     font-weight: 500;
 }
@@ -5145,7 +5145,7 @@ body.dark-mode .thought-node.expanded::before {
 .scores-grid {
     display: grid;
     grid-template-columns: repeat(4, 1fr);
-    gap: 12px;
+    gap: 8px;
 }
 
 @media (max-width: 800px) {
@@ -5160,21 +5160,20 @@ body.dark-mode .thought-node.expanded::before {
     }
 }
 
-/* Score Card */
+/* Score Card - Ultra Compact */
 .score-card {
     position: relative;
-    border-radius: 16px;
+    border-radius: 10px;
     background: var(--bg-card);
     border: 1px solid var(--border-light);
     overflow: hidden;
     cursor: pointer;
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    transition: all 0.2s ease;
 }
 
 .score-card:hover {
-    transform: translateY(-4px);
-    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.12);
-    border-color: transparent;
+    border-color: var(--score-color, var(--primary));
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
 }
 
 .score-card::before {
@@ -5182,11 +5181,10 @@ body.dark-mode .thought-node.expanded::before {
     position: absolute;
     top: 0;
     left: 0;
-    right: 0;
-    height: 4px;
+    width: 3px;
+    height: 100%;
     background: var(--score-color, var(--primary));
-    opacity: 0;
-    transition: opacity 0.3s ease;
+    opacity: 0.7;
 }
 
 .score-card:hover::before {
@@ -5194,49 +5192,55 @@ body.dark-mode .thought-node.expanded::before {
 }
 
 .score-card-inner {
-    padding: 16px;
+    padding: 8px 10px;
     display: flex;
-    flex-direction: column;
-    gap: 8px;
+    flex-direction: row;
+    align-items: center;
+    gap: 10px;
 }
 
 /* Score Icon */
 .score-card .score-icon {
-    width: 36px;
-    height: 36px;
-    border-radius: 10px;
+    width: 28px;
+    height: 28px;
+    min-width: 28px;
+    border-radius: 6px;
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 16px;
+    font-size: 12px;
     color: white;
     background: var(--score-color, var(--primary));
-    box-shadow: 0 4px 12px var(--score-shadow, rgba(59, 130, 246, 0.25));
-    transition: transform 0.3s ease;
+    box-shadow: none;
+    transition: none;
 }
 
 .score-card:hover .score-icon {
-    transform: scale(1.1);
+    transform: none;
 }
 
 /* Score Name */
 .score-card .score-name {
-    font-size: 12px;
+    font-size: 10px;
     font-weight: 600;
     color: var(--text-muted);
     text-transform: uppercase;
-    letter-spacing: 0.5px;
+    letter-spacing: 0.3px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 /* Score Value Container */
 .score-value-container {
     display: flex;
-    align-items: baseline;
-    gap: 8px;
+    align-items: center;
+    gap: 6px;
+    margin-left: auto;
 }
 
 .score-card .score-number {
-    font-size: 32px;
+    font-size: 18px;
     font-weight: 700;
     color: var(--text-dark);
     line-height: 1;
@@ -5244,10 +5248,10 @@ body.dark-mode .thought-node.expanded::before {
 }
 
 .score-card .score-grade {
-    font-size: 14px;
+    font-size: 10px;
     font-weight: 700;
-    padding: 3px 8px;
-    border-radius: 6px;
+    padding: 2px 5px;
+    border-radius: 4px;
     background: var(--grade-bg, rgba(76, 175, 80, 0.12));
     color: var(--grade-color, #4CAF50);
 }
@@ -5275,70 +5279,47 @@ body.dark-mode .thought-node.expanded::before {
     --grade-color: #F44336;
 }
 
-/* Score Label & Trend */
+/* Score Label & Trend - Hidden in compact mode */
 .score-meta {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-top: 4px;
+    display: none;
 }
 
 .score-card .score-label {
-    font-size: 11px;
-    font-weight: 500;
-    color: var(--text-muted);
+    display: none;
 }
 
 .score-card .score-trend {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    font-size: 11px;
-    font-weight: 600;
+    display: none;
 }
 
-.score-trend.up {
-    color: #4CAF50;
-}
-
-.score-trend.down {
-    color: #F44336;
-}
-
-.score-trend.stable {
-    color: var(--text-muted);
-}
-
-.score-trend i {
-    font-size: 10px;
-}
-
-/* Skeleton Loading */
+/* Skeleton Loading - Compact */
 .score-card.skeleton .score-card-inner {
-    gap: 12px;
+    gap: 10px;
 }
 
 .skeleton-pulse {
     background: linear-gradient(90deg, var(--bg-muted) 25%, var(--bg-card) 50%, var(--bg-muted) 75%);
     background-size: 200% 100%;
     animation: skeleton-shimmer 1.5s infinite;
-    border-radius: 6px;
+    border-radius: 4px;
 }
 
 .score-card.skeleton .score-icon {
-    width: 36px;
-    height: 36px;
+    width: 28px;
+    height: 28px;
+    min-width: 28px;
     background: var(--bg-muted);
 }
 
 .score-card.skeleton .score-name {
-    height: 12px;
-    width: 80%;
+    height: 10px;
+    width: 60px;
+    flex: 1;
 }
 
 .score-card.skeleton .score-value {
-    height: 32px;
-    width: 60%;
+    height: 18px;
+    width: 40px;
 }
 
 @keyframes skeleton-shimmer {
@@ -5368,12 +5349,9 @@ body.dark-mode .thought-node.expanded::before {
     font-size: 16px;
 }
 
-/* Enhanced Score Card Hover Glow */
+/* Enhanced Score Card Hover - Subtle */
 .score-card:hover {
-    --score-glow: var(--score-color, var(--primary));
-    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.1),
-                0 0 0 1px var(--score-glow),
-                0 0 30px -5px var(--score-glow);
+    background: var(--bg-hover, #fafafa);
 }
 
 /* Score Card Color Themes */
@@ -5417,85 +5395,54 @@ body.dark-mode .thought-node.expanded::before {
     --score-shadow: rgba(121, 85, 72, 0.3);
 }
 
-/* Animate score cards on load */
+/* Subtle fade in for score cards */
 .score-card {
     opacity: 0;
-    transform: translateY(20px);
-    animation: score-card-enter 0.5s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+    animation: score-card-fade 0.3s ease forwards;
 }
 
-.score-card:nth-child(1) { animation-delay: 0.1s; }
-.score-card:nth-child(2) { animation-delay: 0.15s; }
-.score-card:nth-child(3) { animation-delay: 0.2s; }
-.score-card:nth-child(4) { animation-delay: 0.25s; }
-.score-card:nth-child(5) { animation-delay: 0.3s; }
-.score-card:nth-child(6) { animation-delay: 0.35s; }
-.score-card:nth-child(7) { animation-delay: 0.4s; }
-.score-card:nth-child(8) { animation-delay: 0.45s; }
+.score-card:nth-child(1) { animation-delay: 0.05s; }
+.score-card:nth-child(2) { animation-delay: 0.1s; }
+.score-card:nth-child(3) { animation-delay: 0.15s; }
+.score-card:nth-child(4) { animation-delay: 0.2s; }
+.score-card:nth-child(5) { animation-delay: 0.25s; }
+.score-card:nth-child(6) { animation-delay: 0.3s; }
+.score-card:nth-child(7) { animation-delay: 0.35s; }
+.score-card:nth-child(8) { animation-delay: 0.4s; }
 
-@keyframes score-card-enter {
+@keyframes score-card-fade {
     to {
         opacity: 1;
-        transform: translateY(0);
     }
 }
 
-/* Score Number Animation */
+/* No animation on hover */
 .score-card .score-number {
-    transition: transform 0.3s ease;
+    transition: none;
 }
 
 .score-card:hover .score-number {
-    transform: scale(1.05);
+    transform: none;
 }
 
-/* Tooltip on hover */
+/* Tooltip hidden - compact design */
 .score-card .score-tooltip {
-    position: absolute;
-    bottom: calc(100% + 8px);
-    left: 50%;
-    transform: translateX(-50%);
-    background: var(--bg-dark);
-    color: white;
-    padding: 8px 12px;
-    border-radius: 8px;
-    font-size: 11px;
-    white-space: nowrap;
-    opacity: 0;
-    visibility: hidden;
-    transition: all 0.2s ease;
-    z-index: 100;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.2);
-}
-
-.score-card .score-tooltip::after {
-    content: '';
-    position: absolute;
-    top: 100%;
-    left: 50%;
-    transform: translateX(-50%);
-    border: 6px solid transparent;
-    border-top-color: var(--bg-dark);
-}
-
-.score-card:hover .score-tooltip {
-    opacity: 1;
-    visibility: visible;
+    display: none;
 }
 
 /* Responsive adjustments */
 @media (max-width: 600px) {
     .health-scores-overview {
-        margin-bottom: 24px;
+        margin-bottom: 16px;
     }
 
     .scores-header {
         flex-direction: column;
         align-items: flex-start;
-        gap: 8px;
+        gap: 6px;
     }
 
     .score-card .score-number {
-        font-size: 28px;
+        font-size: 16px;
     }
 }
