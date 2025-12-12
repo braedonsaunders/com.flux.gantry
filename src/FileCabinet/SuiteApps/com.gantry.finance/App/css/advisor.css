@@ -155,40 +155,13 @@
 .advisor-hero {
     max-width: 680px;
     margin: auto;
-    padding: 60px 24px;
+    padding: 40px 24px;
     text-align: center;
-    animation: fadeInUp 0.5s ease-out;
 }
 
-@keyframes fadeInUp {
-    from {
-        opacity: 0;
-        transform: translateY(20px);
-    }
-    to {
-        opacity: 1;
-        transform: translateY(0);
-    }
-}
-
+/* Legacy hero-avatar hidden - using new hero-orb */
 .hero-avatar {
-    width: 56px;
-    height: 56px;
-    background: linear-gradient(135deg, var(--primary-soft), #dbeafe);
-    border: none;
-    border-radius: 16px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 24px;
-    color: var(--primary);
-    margin: 0 auto 20px;
-    box-shadow: 0 4px 20px rgba(37, 99, 235, 0.15);
-    transition: transform 0.3s ease;
-}
-
-.hero-avatar:hover {
-    transform: scale(1.05) rotate(-3deg);
+    display: none;
 }
 
 .advisor-hero h2 {
@@ -5105,41 +5078,75 @@ body.dark-mode .thought-node.expanded::before {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   HEALTH SCORES OVERVIEW - World Class Dashboard Display
+   COMMAND CENTER - Premium Financial Dashboard Landing
    ═══════════════════════════════════════════════════════════════════════════ */
 
-.health-scores-overview {
+.command-center {
     width: 100%;
-    max-width: 900px;
+    max-width: 920px;
     margin: 0 auto;
-    padding: 16px 20px;
+    padding: 24px 20px 16px;
+    opacity: 1;
+    transform: translateY(0);
+    transition: opacity 0.4s ease, transform 0.4s ease, max-height 0.4s ease;
+    max-height: 300px;
+    overflow: hidden;
 }
 
+.command-center.hidden {
+    opacity: 0;
+    transform: translateY(-20px);
+    max-height: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+    pointer-events: none;
+}
+
+/* Scores Grid - 4x2 */
 .scores-grid {
     display: grid;
     grid-template-columns: repeat(4, 1fr);
-    gap: 10px;
+    gap: 12px;
 }
 
 @media (max-width: 800px) {
     .scores-grid {
         grid-template-columns: repeat(2, 1fr);
+        gap: 10px;
     }
 }
 
-/* Score Card */
+/* ═══════════════════════════════════════════════════════════════════════════
+   SCORE CARDS - Elegant Glass Morphism
+   ═══════════════════════════════════════════════════════════════════════════ */
+
 .score-card {
     position: relative;
-    border-radius: 8px;
-    background: var(--bg-card, #fff);
-    border: 1px solid var(--border-light, #e2e8f0);
+    border-radius: 12px;
+    background: linear-gradient(135deg, rgba(255,255,255,0.95) 0%, rgba(248,250,252,0.9) 100%);
+    border: 1px solid rgba(226, 232, 240, 0.8);
     cursor: pointer;
-    transition: all 0.15s ease;
+    overflow: hidden;
+    opacity: 0;
+    transform: translateY(15px);
+    animation: scoreCardReveal 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.04);
 }
 
-.score-card:hover {
-    border-color: var(--score-color, var(--primary));
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+.score-card:nth-child(1) { animation-delay: 0.05s; }
+.score-card:nth-child(2) { animation-delay: 0.1s; }
+.score-card:nth-child(3) { animation-delay: 0.15s; }
+.score-card:nth-child(4) { animation-delay: 0.2s; }
+.score-card:nth-child(5) { animation-delay: 0.25s; }
+.score-card:nth-child(6) { animation-delay: 0.3s; }
+.score-card:nth-child(7) { animation-delay: 0.35s; }
+.score-card:nth-child(8) { animation-delay: 0.4s; }
+
+@keyframes scoreCardReveal {
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
 }
 
 .score-card::before {
@@ -5147,14 +5154,25 @@ body.dark-mode .thought-node.expanded::before {
     position: absolute;
     top: 0;
     left: 0;
-    width: 3px;
+    width: 4px;
     height: 100%;
     background: var(--score-color, var(--primary));
-    border-radius: 8px 0 0 8px;
+    opacity: 0.8;
+    transition: opacity 0.2s ease;
+}
+
+.score-card:hover {
+    border-color: var(--score-color, var(--primary));
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+    transform: translateY(-2px);
+}
+
+.score-card:hover::before {
+    opacity: 1;
 }
 
 .score-card-inner {
-    padding: 10px 12px;
+    padding: 14px 16px;
     display: flex;
     align-items: center;
     gap: 10px;
@@ -5162,26 +5180,26 @@ body.dark-mode .thought-node.expanded::before {
 
 /* Score Icon */
 .score-card .score-icon {
-    width: 32px;
-    height: 32px;
-    min-width: 32px;
-    border-radius: 6px;
+    width: 36px;
+    height: 36px;
+    min-width: 36px;
+    border-radius: 8px;
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 14px;
+    font-size: 15px;
     color: white;
     background: var(--score-color, var(--primary));
-    transition: none;
+    transition: transform 0.2s ease;
 }
 
 .score-card:hover .score-icon {
-    transform: none;
+    transform: scale(1.05);
 }
 
 /* Score Name */
 .score-card .score-name {
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 600;
     color: var(--text-dark, #1e293b);
     line-height: 1.3;
@@ -5193,12 +5211,12 @@ body.dark-mode .thought-node.expanded::before {
 .score-value-container {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 8px;
     flex-shrink: 0;
 }
 
 .score-card .score-number {
-    font-size: 20px;
+    font-size: 22px;
     font-weight: 700;
     color: var(--text-dark, #1e293b);
     line-height: 1;
@@ -5206,106 +5224,262 @@ body.dark-mode .thought-node.expanded::before {
 }
 
 .score-card .score-grade {
-    font-size: 10px;
+    font-size: 11px;
     font-weight: 700;
-    padding: 2px 6px;
-    border-radius: 4px;
+    padding: 3px 8px;
+    border-radius: 6px;
     background: var(--grade-bg, rgba(76, 175, 80, 0.12));
     color: var(--grade-color, #4CAF50);
-}
-
-/* Animate health scores out when chat is active */
-.health-scores-overview {
-    transition: opacity 0.3s ease, transform 0.3s ease, max-height 0.3s ease;
-    max-height: 200px;
-    overflow: hidden;
-}
-
-.health-scores-overview.hidden {
-    opacity: 0;
-    transform: translateY(-10px);
-    max-height: 0;
-    padding: 0 20px;
-    pointer-events: none;
 }
 
 /* Grade Colors */
 .score-card[data-grade="A+"] .score-grade,
 .score-card[data-grade="A"] .score-grade {
-    --grade-bg: rgba(76, 175, 80, 0.12);
-    --grade-color: #4CAF50;
+    --grade-bg: rgba(76, 175, 80, 0.15);
+    --grade-color: #22c55e;
 }
 
 .score-card[data-grade="B"] .score-grade {
-    --grade-bg: rgba(33, 150, 243, 0.12);
-    --grade-color: #2196F3;
+    --grade-bg: rgba(59, 130, 246, 0.15);
+    --grade-color: #3b82f6;
 }
 
 .score-card[data-grade="C"] .score-grade {
-    --grade-bg: rgba(255, 152, 0, 0.12);
-    --grade-color: #FF9800;
+    --grade-bg: rgba(245, 158, 11, 0.15);
+    --grade-color: #f59e0b;
 }
 
 .score-card[data-grade="D"] .score-grade,
 .score-card[data-grade="F"] .score-grade {
-    --grade-bg: rgba(244, 67, 54, 0.12);
-    --grade-color: #F44336;
+    --grade-bg: rgba(239, 68, 68, 0.15);
+    --grade-color: #ef4444;
 }
 
-/* Score Label & Trend - Hidden in compact mode */
-.score-meta {
-    display: none;
+/* ═══════════════════════════════════════════════════════════════════════════
+   HERO ORB - Animated AI Avatar
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.hero-orb {
+    position: relative;
+    width: 80px;
+    height: 80px;
+    margin: 0 auto 20px;
 }
 
-.score-card .score-label {
-    display: none;
+.orb-core {
+    position: absolute;
+    inset: 15px;
+    background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    font-size: 24px;
+    box-shadow: 0 0 30px rgba(245, 158, 11, 0.4);
+    animation: orbPulse 3s ease-in-out infinite;
+    z-index: 2;
 }
 
-.score-card .score-trend {
-    display: none;
+@keyframes orbPulse {
+    0%, 100% { transform: scale(1); box-shadow: 0 0 30px rgba(245, 158, 11, 0.4); }
+    50% { transform: scale(1.05); box-shadow: 0 0 40px rgba(245, 158, 11, 0.6); }
 }
 
-/* Skeleton Loading - Compact */
-.score-card.skeleton .score-card-inner {
+.orb-ring {
+    position: absolute;
+    inset: 0;
+    border: 2px solid rgba(245, 158, 11, 0.3);
+    border-radius: 50%;
+    animation: orbRingSpin 8s linear infinite;
+}
+
+.orb-ring-1 {
+    border-color: rgba(245, 158, 11, 0.4);
+    animation-duration: 6s;
+}
+
+.orb-ring-2 {
+    inset: -8px;
+    border-color: rgba(245, 158, 11, 0.2);
+    animation-duration: 10s;
+    animation-direction: reverse;
+}
+
+.orb-ring-3 {
+    inset: -16px;
+    border-color: rgba(245, 158, 11, 0.1);
+    animation-duration: 14s;
+}
+
+@keyframes orbRingSpin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+
+/* Hero Title */
+.hero-title {
+    font-size: 28px;
+    font-weight: 700;
+    color: var(--text-dark, #1e293b);
+    margin: 0 0 8px;
+    opacity: 0;
+    animation: heroFadeUp 0.6s ease forwards 0.3s;
+}
+
+.hero-subtitle {
+    font-size: 15px;
+    color: var(--text-muted, #64748b);
+    margin: 0 0 28px;
+    opacity: 0;
+    animation: heroFadeUp 0.6s ease forwards 0.4s;
+}
+
+@keyframes heroFadeUp {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   CATEGORY PILLS - Sleek Horizontal Layout
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.query-categories {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
     gap: 10px;
+    max-width: 600px;
+    margin: 0 auto;
+    opacity: 0;
+    animation: heroFadeUp 0.6s ease forwards 0.5s;
 }
 
-.skeleton-pulse {
-    background: linear-gradient(90deg, var(--bg-muted) 25%, var(--bg-card) 50%, var(--bg-muted) 75%);
-    background-size: 200% 100%;
-    animation: skeleton-shimmer 1.5s infinite;
-    border-radius: 4px;
+.category-pill {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 18px;
+    border-radius: 100px;
+    border: 1px solid var(--border-light, #e2e8f0);
+    background: var(--bg-card, #fff);
+    color: var(--text-dark, #1e293b);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.04);
 }
 
-.score-card.skeleton .score-icon {
-    width: 28px;
-    height: 28px;
-    min-width: 28px;
-    background: var(--bg-muted);
+.category-pill i {
+    font-size: 14px;
+    color: var(--text-muted, #64748b);
+    transition: color 0.2s ease;
 }
 
-.score-card.skeleton .score-name {
-    height: 10px;
-    width: 60px;
-    flex: 1;
+.category-pill:hover {
+    border-color: var(--primary, #f59e0b);
+    background: linear-gradient(135deg, rgba(245, 158, 11, 0.05) 0%, rgba(217, 119, 6, 0.05) 100%);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.08);
 }
 
-.score-card.skeleton .score-value {
-    height: 18px;
+.category-pill:hover i {
+    color: var(--primary, #f59e0b);
+}
+
+.category-pill[data-category="cash"] i { color: #10b981; }
+.category-pill[data-category="revenue"] i { color: #3b82f6; }
+.category-pill[data-category="expenses"] i { color: #ef4444; }
+.category-pill[data-category="profitability"] i { color: #8b5cf6; }
+.category-pill[data-category="labor"] i { color: #f59e0b; }
+.category-pill[data-category="customers"] i { color: #06b6d4; }
+
+.category-pill[data-category="cash"]:hover { border-color: #10b981; background: rgba(16, 185, 129, 0.08); }
+.category-pill[data-category="revenue"]:hover { border-color: #3b82f6; background: rgba(59, 130, 246, 0.08); }
+.category-pill[data-category="expenses"]:hover { border-color: #ef4444; background: rgba(239, 68, 68, 0.08); }
+.category-pill[data-category="profitability"]:hover { border-color: #8b5cf6; background: rgba(139, 92, 246, 0.08); }
+.category-pill[data-category="labor"]:hover { border-color: #f59e0b; background: rgba(245, 158, 11, 0.08); }
+.category-pill[data-category="customers"]:hover { border-color: #06b6d4; background: rgba(6, 182, 212, 0.08); }
+
+/* Query Panel */
+.query-panel {
+    max-width: 600px;
+    margin: 0 auto;
+    animation: heroFadeUp 0.3s ease forwards;
+}
+
+.query-panel-back {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 0;
+    background: none;
+    border: none;
+    color: var(--text-muted, #64748b);
+    font-size: 13px;
+    cursor: pointer;
+    transition: color 0.2s;
+}
+
+.query-panel-back:hover {
+    color: var(--primary, #f59e0b);
+}
+
+.query-panel-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 16px;
+}
+
+.query-panel-icon {
     width: 40px;
+    height: 40px;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    color: white;
 }
 
-@keyframes skeleton-shimmer {
-    0% { background-position: 200% 0; }
-    100% { background-position: -200% 0; }
+.query-panel-header h3 {
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--text-dark, #1e293b);
+    margin: 0;
 }
 
-/* Categories Header */
-.categories-header {
-    width: 100%;
-    max-width: 900px;
-    margin: 0 auto 16px;
-    padding: 0 16px;
+.query-panel-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.query-panel-grid button {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 16px;
+    border-radius: 10px;
+    border: 1px solid var(--border-light, #e2e8f0);
+    background: var(--bg-card, #fff);
+    color: var(--text-dark, #1e293b);
+    font-size: 13px;
+    text-align: left;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.query-panel-grid button:hover {
+    border-color: var(--primary, #f59e0b);
+    background: rgba(245, 158, 11, 0.05);
+}
+
+.query-panel-grid button i {
+    color: var(--text-muted, #64748b);
+    font-size: 14px;
 }
 
 .categories-title {
@@ -5403,30 +5577,62 @@ body.dark-mode .thought-node.expanded::before {
     display: none;
 }
 
-/* Additional responsive adjustments for small screens */
-@media (max-width: 500px) {
+/* Responsive adjustments for small screens */
+@media (max-width: 600px) {
+    .command-center {
+        padding: 16px 12px 12px;
+    }
+
     .score-card .score-number {
-        font-size: 14px;
+        font-size: 18px;
     }
 
     .score-card .score-grade {
-        font-size: 8px;
-        padding: 1px 3px;
+        font-size: 9px;
+        padding: 2px 5px;
     }
 
     .score-card .score-name {
-        font-size: 8px;
-    }
-
-    .score-card .score-icon {
-        width: 24px;
-        height: 24px;
-        min-width: 24px;
         font-size: 10px;
     }
 
+    .score-card .score-icon {
+        width: 30px;
+        height: 30px;
+        min-width: 30px;
+        font-size: 13px;
+    }
+
     .score-card-inner {
-        padding: 6px 8px;
-        gap: 6px;
+        padding: 10px 12px;
+        gap: 8px;
+    }
+
+    .hero-orb {
+        width: 70px;
+        height: 70px;
+        margin-bottom: 16px;
+    }
+
+    .orb-core {
+        font-size: 20px;
+    }
+
+    .hero-title {
+        font-size: 24px;
+    }
+
+    .hero-subtitle {
+        font-size: 14px;
+        margin-bottom: 20px;
+    }
+
+    .category-pill {
+        padding: 8px 14px;
+        font-size: 12px;
+    }
+
+    .category-pill i {
+        font-size: 13px;
     }
 }
