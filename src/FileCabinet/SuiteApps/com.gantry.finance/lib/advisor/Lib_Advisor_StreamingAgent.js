@@ -1444,6 +1444,93 @@ Response format (JSON only):
         return enhanced;
     }
 
+    // ═══════════════════════════════════════════════════════════════════════════
+    // AUTO-INJECT CACHE REF_ID
+    // When load_cached_data is called without ref_id, auto-detect from available refs
+    // ═══════════════════════════════════════════════════════════════════════════
+    function autoInjectCacheRefId(args, state, toolName) {
+        // Only applies to load_cached_data tool
+        if (toolName !== 'load_cached_data') {
+            return args;
+        }
+
+        // If ref_id is already provided, nothing to do
+        if (args.ref_id) {
+            return args;
+        }
+
+        const enhanced = { ...args };
+
+        // Gather all available data refs (current request + previous request)
+        const allRefs = [
+            ...(state.dataReferences || []),
+            ...(state.previousDataRefs || [])
+        ];
+
+        if (allRefs.length === 0) {
+            log.debug('autoInjectCacheRefId - no refs available');
+            return args;
+        }
+
+        // If collection_name is provided, find a dashboard ref that has this collection
+        if (args.collection_name) {
+            const collectionNameLower = args.collection_name.toLowerCase();
+
+            for (const ref of allRefs) {
+                // Only check dashboard refs
+                if (!ref.refId || !ref.refId.startsWith('dash_')) {
+                    continue;
+                }
+
+                // Load the stored data to check its collections
+                const storedData = DataStore.loadRows(ref.requestId || state.requestId, ref.refId, 0, 1);
+                const intelligence = storedData.intelligence;
+
+                if (intelligence && intelligence.collections) {
+                    // Check if this dashboard has the requested collection
+                    const collectionNames = Object.keys(intelligence.collections).map(c => c.toLowerCase());
+                    if (collectionNames.includes(collectionNameLower)) {
+                        enhanced.ref_id = ref.refId;
+                        log.debug('autoInjectCacheRefId - auto-injected ref_id from collection match', {
+                            collection_name: args.collection_name,
+                            ref_id: ref.refId,
+                            dashboard: ref.summary?.dashboardName || 'unknown'
+                        });
+                        return enhanced;
+                    }
+                }
+            }
+        }
+
+        // If no collection_name specified but only one dashboard ref exists, use it
+        const dashboardRefs = allRefs.filter(r => r.refId && r.refId.startsWith('dash_'));
+        if (dashboardRefs.length === 1 && !args.collection_name) {
+            enhanced.ref_id = dashboardRefs[0].refId;
+            log.debug('autoInjectCacheRefId - auto-injected single dashboard ref_id', {
+                ref_id: dashboardRefs[0].refId
+            });
+            return enhanced;
+        }
+
+        // If there's only one ref total, use it
+        if (allRefs.length === 1 && !args.collection_name) {
+            enhanced.ref_id = allRefs[0].refId;
+            log.debug('autoInjectCacheRefId - auto-injected single ref_id', {
+                ref_id: allRefs[0].refId
+            });
+            return enhanced;
+        }
+
+        // Log warning if we couldn't auto-inject
+        log.debug('autoInjectCacheRefId - could not auto-inject ref_id', {
+            collection_name: args.collection_name || 'not specified',
+            availableRefIds: allRefs.map(r => r.refId),
+            dashboardCount: dashboardRefs.length
+        });
+
+        return enhanced;
+    }
+
     /**
      * Phase 3: INVOKE - Call tools one at a time
      * After all tools complete, transitions to REFLECT phase for ReAct pattern evaluation
@@ -1543,6 +1630,12 @@ Response format (JSON only):
             // This prevents the LLM from forgetting to use the correct entity ID
             // ═══════════════════════════════════════════════════════════════════════
             args = autoInjectResolvedEntities(args, state, toolName);
+
+            // ═══════════════════════════════════════════════════════════════════════
+            // CACHE REF_ID FIX: Auto-inject ref_id for load_cached_data tool
+            // When LLM omits ref_id, detect from available refs based on collection_name
+            // ═══════════════════════════════════════════════════════════════════════
+            args = autoInjectCacheRefId(args, state, toolName);
 
             // ═══════════════════════════════════════════════════════════════════════
             // BROADEN FIX: Apply broadened parameters from REFLECT phase
