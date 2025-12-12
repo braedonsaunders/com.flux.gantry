@@ -570,18 +570,24 @@ define(["N/query", "N/log", "./Lib_Core", "./Lib_Config"], function (query, log,
             var start = Core.formatDateForQuery(startDate);
             var end = Core.formatDateForQuery(endDate);
 
-            var totalHours = 0, billableHours = 0;
+            var totalHours = 0, billableHours = 0, nonBillableCost = 0, employeeCount = 0;
 
             try {
+                // Query includes employee count and non-billable cost for efficiency score
                 var sql = "SELECT " +
                     "SUM(t.hours) as total_hours, " +
-                    "SUM(CASE WHEN t.customer IS NOT NULL THEN t.hours ELSE 0 END) as billable_hours " +
+                    "SUM(CASE WHEN t.customer IS NOT NULL THEN t.hours ELSE 0 END) as billable_hours, " +
+                    "COUNT(DISTINCT t.employee) as employee_count, " +
+                    "SUM(CASE WHEN t.customer IS NULL THEN COALESCE(t.hours * e.laborcost, 0) ELSE 0 END) as non_billable_cost " +
                     "FROM timebill t " +
+                    "LEFT JOIN employee e ON e.id = t.employee " +
                     "WHERE t.trandate BETWEEN TO_DATE('" + start + "', 'YYYY-MM-DD') AND TO_DATE('" + end + "', 'YYYY-MM-DD')";
                 var result = Core.runQuery(sql);
                 if (result && result.length > 0) {
                     totalHours = parseFloat(result[0].total_hours) || 0;
                     billableHours = parseFloat(result[0].billable_hours) || 0;
+                    employeeCount = parseInt(result[0].employee_count) || 0;
+                    nonBillableCost = parseFloat(result[0].non_billable_cost) || 0;
                 }
             } catch (e) {
                 log.debug('Time Query Error', e.message);
@@ -599,10 +605,22 @@ define(["N/query", "N/log", "./Lib_Core", "./Lib_Config"], function (query, log,
                 }
             } catch (e) {}
 
-            // Score is how well we're meeting the target (scaled 0-100)
-            // If billable% >= target, score approaches 100
-            // Score = min(100, (billable% / target%) * 100)
-            var score = Math.min(100, (billablePct / targetPct) * 100);
+            // Efficiency score formula matching Dashboard.Time.js buildInsights()
+            // 50 points from billable %, 50 points from cost efficiency
+            // Cost efficiency: Full 50 points if cost per employee < $5000/period
+            // Deduct 1 point per $200 above $5000 threshold
+            var COST_EFFICIENCY_THRESHOLD = 5000;
+            var COST_PENALTY_DIVISOR = 200;
+            var costPerEmployee = employeeCount > 0 ? nonBillableCost / employeeCount : 0;
+
+            var billableScore = (billablePct / targetPct) * 50;
+            var costScore = employeeCount > 0
+                ? (costPerEmployee < COST_EFFICIENCY_THRESHOLD
+                    ? 50
+                    : Math.max(0, 50 - (costPerEmployee - COST_EFFICIENCY_THRESHOLD) / COST_PENALTY_DIVISOR))
+                : 25; // Default 25 if no employees (matches dashboard logic)
+
+            var score = Math.min(100, Math.round(billableScore + costScore));
 
             var grade = 'A';
             var label = 'Excellent';
@@ -618,7 +636,7 @@ define(["N/query", "N/log", "./Lib_Core", "./Lib_Config"], function (query, log,
             else if (billablePct > targetPct * 1.1) trend = 'up';
 
             return {
-                score: Math.round(score),
+                score: score,
                 grade: grade,
                 label: label,
                 trend: trend,
@@ -626,7 +644,9 @@ define(["N/query", "N/log", "./Lib_Core", "./Lib_Config"], function (query, log,
                     totalHours: Core.round2(totalHours),
                     billableHours: Core.round2(billableHours),
                     billablePct: Core.round2(billablePct),
-                    targetPct: targetPct
+                    targetPct: targetPct,
+                    employeeCount: employeeCount,
+                    costPerEmployee: Core.round2(costPerEmployee)
                 }
             };
         } catch (e) {
