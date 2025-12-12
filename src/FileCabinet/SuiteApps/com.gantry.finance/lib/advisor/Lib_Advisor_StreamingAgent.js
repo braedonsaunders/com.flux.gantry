@@ -116,9 +116,25 @@ TOOL: {tool_name}
 Question context: "{question}"
 {resolved_entities}
 
-IMPORTANT: When specifying periods, use current year ({current_year}). Valid formats:
-- For period params: "ytd", "this_month", "this_quarter", "last_12_months"
-- For date ranges: "{current_year}-01" to "{current_year}-12" (YYYY-MM format)
+CRITICAL SEMANTIC GUIDANCE:
+
+1. TIME PERIODS: Use current year ({current_year}). Valid formats:
+   - Period params: "ytd", "this_month", "this_quarter", "last_12_months"
+   - Date ranges: "{current_year}-01" to "{current_year}-12" (YYYY-MM format)
+
+2. TRANSACTION TYPES - Infer from context (who is paying whom):
+   - "Invoice FROM vendor" / "bill FROM vendor" / "we owe" → transaction_type: "VendBill"
+   - "Invoice TO customer" / "customer owes us" / "receivable" → transaction_type: "CustInvc"
+   - "Payment TO vendor" / "we paid" → transaction_type: "VendPmt"
+   - "Payment FROM customer" / "customer paid" → transaction_type: "CustPmt"
+   - "Credit memo TO customer" → transaction_type: "CustCred"
+   - "Credit FROM vendor" → transaction_type: "VendCred"
+
+   Determine direction by semantic meaning: who is the payer and who is the payee?
+
+3. ENTITY CONTEXT:
+   - If a vendor was resolved, transaction likely involves payables (VendBill, VendPmt)
+   - If a customer was resolved, transaction likely involves receivables (CustInvc, CustPmt)
 
 Response format: {"tool": "{tool_name}", "args": {...}}`;
 
@@ -916,7 +932,7 @@ Response format (JSON only):
                 return previewRow;
             });
 
-            // Update step with results
+            // Update step with results - use smart summary builder
             addToolCallStep(state, {
                 title: Tools.getToolDisplayName(toolName, args),
                 tool: toolName,
@@ -929,9 +945,7 @@ Response format (JSON only):
                 preview: preview,
                 dataRef: dataRef?.refId,
                 duration: totalDuration,
-                summary: result.success
-                    ? `Found ${invocation.rowCount} results`
-                    : (result.error || 'Failed'),
+                summary: buildToolResultSummary(toolName, result, invocation.rowCount),
                 debug: buildDebugInfo(prompt, response, state, {
                     toolDuration: toolDuration,
                     totalDuration: totalDuration,
@@ -1214,7 +1228,14 @@ Response format (JSON only):
                     const val = row[col];
                     if (val === null || val === undefined) return 'null';
                     if (typeof val === 'number') {
-                        return isMonetaryColumn(col) ? '$' + val.toLocaleString('en-US', {minimumFractionDigits: 2}) : val.toLocaleString();
+                        if (isMonetaryColumn(col)) {
+                            // FIXED: Format negative currency correctly as -$X not $-X
+                            const isNegative = val < 0;
+                            const absVal = Math.abs(val);
+                            const formatted = '$' + absVal.toLocaleString('en-US', {minimumFractionDigits: 2});
+                            return isNegative ? '-' + formatted : formatted;
+                        }
+                        return val.toLocaleString();
                     }
                     return String(val);
                 });
@@ -1443,13 +1464,18 @@ Response format (JSON only):
 
     /**
      * Format a resolved value based on format hint and column name
+     * AGENTIC FIX: Properly formats negative currency as -$X instead of $-X
      */
     function formatResolvedValue(value, format, columnName) {
         if (value === null || value === undefined) return '';
 
         if (typeof value === 'number') {
             if (format === 'currency' || (!format && isMonetaryColumn(columnName))) {
-                return '$' + value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                // FIXED: Format negative currency correctly as -$X not $-X
+                const isNegative = value < 0;
+                const absVal = Math.abs(value);
+                const formatted = '$' + absVal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                return isNegative ? '-' + formatted : formatted;
             }
             if (format === 'percent') {
                 return value.toFixed(1) + '%';
@@ -1462,13 +1488,18 @@ Response format (JSON only):
 
     /**
      * Format stat value for display in prompt
+     * AGENTIC FIX: Properly formats negative currency as -$X instead of $-X
      */
     function formatStatValue(value, key) {
         if (typeof value === 'number') {
             const keyLower = key.toLowerCase();
             if (keyLower.includes('total') || keyLower.includes('sum') || keyLower.includes('amount') ||
                 keyLower.includes('revenue') || keyLower.includes('spend')) {
-                return '$' + value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                // FIXED: Format negative currency correctly as -$X not $-X
+                const isNegative = value < 0;
+                const absVal = Math.abs(value);
+                const formatted = '$' + absVal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                return isNegative ? '-' + formatted : formatted;
             }
             if (keyLower.includes('percent') || keyLower.includes('rate')) {
                 return value.toFixed(1) + '%';
@@ -1480,6 +1511,7 @@ Response format (JSON only):
 
     /**
      * Build fallback narrative from data summaries when LLM fails
+     * AGENTIC FIX: Uses formatStatValue for consistent currency formatting
      */
     function buildFallbackNarrative(state) {
         const parts = [];
@@ -1490,8 +1522,9 @@ Response format (JSON only):
             parts.push(`${toolName}: ${summary.rowCount || 0} results found.`);
 
             if (summary.stats) {
-                if (summary.stats.total) {
-                    parts.push(`Total: $${summary.stats.total.toLocaleString('en-US', {minimumFractionDigits: 2})}`);
+                if (summary.stats.total !== undefined) {
+                    // Use formatStatValue for consistent negative currency formatting
+                    parts.push(`Total: ${formatStatValue(summary.stats.total, 'total')}`);
                 }
             }
         });
@@ -1856,6 +1889,65 @@ Response format (JSON only):
     // ═══════════════════════════════════════════════════════════════════════════
 
     /**
+     * Build an appropriate summary for tool results
+     * AGENTIC FIX: Handles entity resolution tools specially - they report 'found' status
+     * not row counts. Also handles dashboard tools that return metric objects.
+     *
+     * @param {string} toolName - Name of the tool
+     * @param {object} result - Tool execution result
+     * @param {number} rowCount - Number of rows returned
+     * @returns {string} Human-readable summary
+     */
+    function buildToolResultSummary(toolName, result, rowCount) {
+        if (!result.success) {
+            return result.error || 'Failed';
+        }
+
+        // Entity resolution tools have special result structure
+        if (toolName.startsWith('resolve_')) {
+            if (result.found && result.entity) {
+                const entityName = result.entity.name || result.entity.entityid || 'entity';
+                const entityType = result.entityType || result.entity.type || '';
+                return `Found: ${entityName}${entityType ? ` (${entityType})` : ''}`;
+            }
+            if (result.notFound) {
+                return result.message || 'No match found';
+            }
+            if (result.ambiguous && result.matches) {
+                return `Ambiguous: ${result.matches.length} possible matches`;
+            }
+            // Fallback for resolve tools
+            return result.message || 'Resolution complete';
+        }
+
+        // Dashboard tools return metrics, not rows
+        if (toolName.startsWith('dashboard_')) {
+            if (result.metrics) {
+                const metricCount = Object.keys(result.metrics).length;
+                return `${metricCount} metrics calculated`;
+            }
+            return 'Dashboard loaded';
+        }
+
+        // Fiscal context tool
+        if (toolName === 'get_fiscal_context') {
+            return result.context?.currentPeriod || 'Fiscal context loaded';
+        }
+
+        // Standard data tools - report row count
+        if (rowCount > 0) {
+            return `Found ${rowCount} results`;
+        }
+
+        // Zero rows but success - context-aware message
+        if (result.message) {
+            return result.message;
+        }
+
+        return 'No data found';
+    }
+
+    /**
      * Add progressive table blocks immediately after INVOKE phase
      * Uses REAL data from DataStore - NO hallucination possible
      * Tables render in frontend BEFORE LLM generates narrative text
@@ -2041,14 +2133,27 @@ Response format (JSON only):
     /**
      * Format cell value based on column type
      * Only formats monetary columns as currency, leaves IDs and counts as plain numbers
+     * AGENTIC FIX: Properly formats negative currency as -$X instead of $-X
+     * Also translates status codes to human-readable labels
      */
     function formatCellValue(val, columnName) {
         if (val === null || val === undefined) return '';
+
+        // Translate status codes to human-readable labels
+        const statusColumns = ['status', 'statusref', 'approvalstatus', 'orderstatus'];
+        if (columnName && statusColumns.includes(columnName.toLowerCase())) {
+            return Utils.mapStatus(val) || val;
+        }
+
         if (typeof val === 'number') {
             // Check if this is a monetary column
             const isMonetary = columnName ? isMonetaryColumn(columnName) : false;
             if (isMonetary) {
-                return '$' + val.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                // FIXED: Format negative currency correctly as -$X not $-X
+                const isNegative = val < 0;
+                const absVal = Math.abs(val);
+                const formatted = '$' + absVal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                return isNegative ? '-' + formatted : formatted;
             }
             // For non-monetary numbers, just format with commas if large
             return val.toLocaleString('en-US');
