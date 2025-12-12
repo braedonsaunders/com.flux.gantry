@@ -28,8 +28,9 @@ define([
     './Lib_Advisor_DataStore',
     './Lib_Advisor_ProgressStore',
     './Lib_Advisor_Utils',
+    './Lib_Advisor_DashboardCache',
     '../Lib_Dashboard_Registry'
-], function(log, AIProviders, Tools, DataStore, ProgressStore, Utils, DashboardRegistry) {
+], function(log, AIProviders, Tools, DataStore, ProgressStore, Utils, DashboardCache, DashboardRegistry) {
     'use strict';
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -118,6 +119,7 @@ Question: "{question}"
 Intent: {intent}
 {entity_context}
 {history_context}
+{available_data_context}
 
 Rules:
 - Pick 1-3 most relevant tools
@@ -125,6 +127,11 @@ Rules:
 - Prefer specific tools over run_custom_query
 - For follow_up questions referencing previous data, you may select no tools if data is available
 - DO NOT select format_response - that's handled automatically
+
+DRILL-DOWN QUERIES:
+- If user asks for MORE DETAILS about a collection shown in previous response (e.g., "show weekly projection", "list AR buckets", "what are the critical weeks"), use load_cached_data tool
+- Use load_cached_data with the ref_id from the previous dashboard response and the collection_name
+- Collection names are listed in previous responses (e.g., weeklyProjection, arBuckets, apBuckets, criticalWeeks, topCustomers)
 
 Response format: {"tools": ["tool1", "tool2"], "reasoning": "brief explanation"}`;
 
@@ -558,7 +565,10 @@ Response format (JSON only):
             get_fiscal_context: "Current fiscal period info",
             run_custom_query: "Execute custom SuiteQL query",
             run_saved_search: "Run a NetSuite saved search",
-            list_saved_searches: "List available saved searches"
+            list_saved_searches: "List available saved searches",
+
+            // Cached Data Access - USE FOR DRILL-DOWN QUERIES
+            load_cached_data: "Load/drill-down into previously fetched data - USE WHEN USER ASKS FOR MORE DETAILS about collections (e.g., 'show me weekly projection details', 'list the AR buckets')"
             // NOTE: format_response intentionally excluded - internal use only
         };
     }
@@ -658,6 +668,12 @@ Response format (JSON only):
      * @param {Object} result - Dashboard tool result with intelligence object
      * @returns {Object} Data structure formatted for RESPOND phase consumption
      */
+    /**
+     * Threshold for inlining collections - collections with fewer items
+     * than this will be fully expanded in the LLM prompt
+     */
+    const COLLECTION_INLINE_THRESHOLD = 15;
+
     function buildDashboardIntelligenceData(result) {
         const dashboardId = result.dashboard;
         const intelligence = result.intelligence;
@@ -690,10 +706,36 @@ Response format (JSON only):
             });
         }
 
-        // Add collection summaries as additional rows
+        // ═══════════════════════════════════════════════════════════════════════
+        // INLINE SMALL COLLECTIONS
+        // Collections with <= COLLECTION_INLINE_THRESHOLD items are fully expanded
+        // This allows LLM to see all data without needing drill-down queries
+        // ═══════════════════════════════════════════════════════════════════════
         const collections = intelligence.collections || {};
+        const inlinedCollections = {}; // Store full collection data for text summary
+
         for (const [collectionName, collectionInfo] of Object.entries(collections)) {
             const fieldDef = schema.fields?.[collectionName];
+            const shouldInline = collectionInfo.count <= COLLECTION_INLINE_THRESHOLD;
+
+            // Try to load full collection data for inlining
+            let fullCollectionData = null;
+            if (shouldInline && intelligence.refId) {
+                try {
+                    const collectionResult = DashboardCache.loadCollection(
+                        intelligence.refId,
+                        collectionName,
+                        { limit: COLLECTION_INLINE_THRESHOLD }
+                    );
+                    if (collectionResult.success && collectionResult.items) {
+                        fullCollectionData = collectionResult;
+                        inlinedCollections[collectionName] = collectionResult;
+                    }
+                } catch (e) {
+                    log.debug('Dashboard Intelligence Bridge', 'Failed to load collection for inline: ' + e.message);
+                }
+            }
+
             rows.push({
                 metric_name: collectionName + '_collection',
                 value: collectionInfo.count,
@@ -705,7 +747,8 @@ Response format (JSON only):
                 change: null,
                 preview: (collectionInfo.preview || []).join(', '),
                 columns: (collectionInfo.columns || []).join(', '),
-                refId: collectionInfo.refId
+                refId: collectionInfo.refId,
+                inlined: shouldInline && fullCollectionData !== null
             });
         }
 
@@ -752,13 +795,55 @@ Response format (JSON only):
             textSummary += `\n  └─ ${metricData.desc || ''}\n`;
         }
 
-        // Add collections summary
+        // ═══════════════════════════════════════════════════════════════════════
+        // ADD COLLECTION DATA - INLINE SMALL, SUMMARIZE LARGE
+        // ═══════════════════════════════════════════════════════════════════════
         if (Object.keys(collections).length > 0) {
-            textSummary += `\nAVAILABLE COLLECTIONS (for drill-down):\n`;
+            textSummary += `\n`;
+
             for (const [collectionName, collectionInfo] of Object.entries(collections)) {
-                textSummary += `• ${collectionName}: ${collectionInfo.count} items\n`;
-                if (collectionInfo.preview && collectionInfo.preview.length > 0) {
-                    textSummary += `  Preview: ${collectionInfo.preview.slice(0, 3).join(', ')}${collectionInfo.count > 3 ? '...' : ''}\n`;
+                const inlinedData = inlinedCollections[collectionName];
+
+                if (inlinedData && inlinedData.items && inlinedData.items.length > 0) {
+                    // INLINE: Show full collection data
+                    textSummary += `═══ ${collectionName.toUpperCase()} (${inlinedData.items.length} items - FULL DATA) ═══\n`;
+
+                    // Build table header from item keys
+                    const sampleItem = inlinedData.items[0];
+                    const itemKeys = Object.keys(sampleItem).slice(0, 6); // Max 6 columns
+                    textSummary += `| ${itemKeys.join(' | ')} |\n`;
+                    textSummary += `|${itemKeys.map(() => '---').join('|')}|\n`;
+
+                    // Add each row
+                    inlinedData.items.forEach(item => {
+                        const values = itemKeys.map(key => {
+                            const val = item[key];
+                            if (val === null || val === undefined) return '-';
+                            if (typeof val === 'number') {
+                                // Format currency-like values
+                                if (Math.abs(val) >= 1000) {
+                                    return val < 0 ? '-$' + Math.abs(val/1000).toFixed(0) + 'K' : '$' + (val/1000).toFixed(0) + 'K';
+                                }
+                                return typeof val === 'number' && !Number.isInteger(val) ? val.toFixed(2) : String(val);
+                            }
+                            return String(val).substring(0, 20);
+                        });
+                        textSummary += `| ${values.join(' | ')} |\n`;
+                    });
+
+                    // Add aggregates if available
+                    if (inlinedData.aggregates) {
+                        textSummary += `\nAggregates: Total=${inlinedData.aggregates.formatted?.sum || 'N/A'}, Avg=${inlinedData.aggregates.formatted?.avg || 'N/A'}\n`;
+                    }
+                    textSummary += `\n`;
+                } else {
+                    // SUMMARIZE: Show preview for large collections
+                    textSummary += `═══ ${collectionName.toUpperCase()} (${collectionInfo.count} items - use load_cached_data for full data) ═══\n`;
+                    if (collectionInfo.preview && collectionInfo.preview.length > 0) {
+                        textSummary += `Preview: ${collectionInfo.preview.join(', ')}${collectionInfo.count > 3 ? '...' : ''}\n`;
+                    }
+                    textSummary += `Columns: ${(collectionInfo.columns || []).join(', ')}\n`;
+                    textSummary += `RefId: ${collectionInfo.refId} (use with load_cached_data tool)\n\n`;
                 }
             }
         }
@@ -771,6 +856,7 @@ Response format (JSON only):
             dashboardId: dashboardId,
             dashboardName: dashboard.name,
             intelligence: intelligence,
+            inlinedCollections: inlinedCollections,
             // Store refId for collection access
             refId: intelligence.refId
         };
@@ -1127,37 +1213,79 @@ Response format (JSON only):
         const phaseStart = Date.now();
 
         // ═══════════════════════════════════════════════════════════════════════
-        // FOLLOW-UP DATA REUSE
-        // If this is a follow-up question and we have previous data, skip tool selection
-        // and go directly to RESPOND using the cached data
+        // FOLLOW-UP DATA REUSE vs DRILL-DOWN DETECTION
+        // Check if user is asking for DRILL-DOWN details (specific collection data)
+        // or just referencing previous data for context
         // ═══════════════════════════════════════════════════════════════════════
         if (state.intent.intent === 'follow_up' && state.previousDataRefs && state.previousDataRefs.length > 0) {
-            log.debug('SCA SELECT phase - follow-up with previous data, skipping tool selection');
+            // Check if this looks like a drill-down request for specific data
+            const drillDownKeywords = [
+                'detail', 'details', 'show me', 'list', 'table', 'all',
+                'weekly', 'projection', 'bucket', 'breakdown', 'items',
+                'collection', 'drill', 'expand', 'full data', 'complete'
+            ];
+            const messageLower = state.message.toLowerCase();
+            const isDrillDownRequest = drillDownKeywords.some(kw => messageLower.includes(kw));
 
-            // Reuse previous data references
-            state.dataReferences = state.previousDataRefs;
-            state.selectedTools = []; // No new tools needed
-
-            upsertThinkingStep(state, 'select', {
-                title: 'Using previous results',
-                phase: 'select',
-                status: 'complete',
-                duration: Date.now() - phaseStart,
-                context: {
-                    intent: state.intent.intent,
-                    reusingPreviousData: true,
-                    dataRefs: state.dataReferences.length
-                }
+            // Check if previous data was from a dashboard (has collections)
+            const hasDashboardData = state.previousDataRefs.some(ref => {
+                const cols = ref.summary?.columns || [];
+                return cols.includes('refId') || ref.refId?.startsWith('dash_');
             });
 
-            // Skip INVOKE and go straight to REFLECT (which will proceed to RESPOND)
-            state.phase = PHASES.REFLECT;
-            return { success: true, nextPhase: PHASES.REFLECT };
+            if (isDrillDownRequest && hasDashboardData) {
+                // This looks like a drill-down request - let LLM select load_cached_data
+                log.debug('SCA SELECT phase - detected drill-down request, allowing tool selection', {
+                    message: state.message.substring(0, 50),
+                    hasDashboardData: true
+                });
+                // Continue to normal tool selection (don't skip)
+            } else {
+                // Simple follow-up - reuse previous data
+                log.debug('SCA SELECT phase - simple follow-up, reusing previous data');
+
+                // Reuse previous data references
+                state.dataReferences = state.previousDataRefs;
+                state.selectedTools = []; // No new tools needed
+
+                upsertThinkingStep(state, 'select', {
+                    title: 'Using previous results',
+                    phase: 'select',
+                    status: 'complete',
+                    duration: Date.now() - phaseStart,
+                    context: {
+                        intent: state.intent.intent,
+                        reusingPreviousData: true,
+                        dataRefs: state.dataReferences.length
+                    }
+                });
+
+                // Skip INVOKE and go straight to REFLECT (which will proceed to RESPOND)
+                state.phase = PHASES.REFLECT;
+                return { success: true, nextPhase: PHASES.REFLECT };
+            }
         }
 
         const entityContext = state.intent.entities && state.intent.entities.length > 0
             ? `Mentioned entities: ${state.intent.entities.join(', ')}`
             : 'No specific entities mentioned';
+
+        // Build context about previously fetched data (for drill-down queries)
+        let availableDataContext = '';
+        if (state.previousDataRefs && state.previousDataRefs.length > 0) {
+            availableDataContext = '\nPREVIOUSLY FETCHED DATA (available for drill-down):';
+            state.previousDataRefs.forEach(ref => {
+                const summary = ref.summary || {};
+                availableDataContext += `\n- Tool: ${summary.tool || 'unknown'}, RefId: ${ref.refId}`;
+                if (summary.columns) {
+                    // Check for collection rows
+                    const collectionInfo = (summary.columns || []).includes('refId') ?
+                        ' (dashboard with collections - can drill into arBuckets, apBuckets, weeklyProjection, etc.)' : '';
+                    availableDataContext += collectionInfo;
+                }
+            });
+            availableDataContext += '\n\nIf user asks about details/drill-down, use load_cached_data with ref_id and collection_name.\n';
+        }
 
         const prompt = SELECT_PROMPT
             .replace('{intent}', state.intent.intent)
@@ -1165,7 +1293,8 @@ Response format (JSON only):
             .replace('{question}', state.message)
             .replace('{entity_context}', entityContext)
             .replace('{date_context}', getDateContext())
-            .replace('{history_context}', buildHistoryContext(state));
+            .replace('{history_context}', buildHistoryContext(state))
+            .replace('{available_data_context}', availableDataContext);
 
         upsertThinkingStep(state, 'select', {
             title: 'Selecting analysis tools',
