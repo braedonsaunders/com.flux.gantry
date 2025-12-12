@@ -267,21 +267,23 @@ define([
 
     /**
      * Legacy: Get entities of type (for direct queries)
+     * FIXED: Uses escapeSqlLike for LIKE clauses to prevent SQL injection via wildcards
      */
     function getEntitiesOfType(entityType, searchTerm) {
         const config = ENTITY_CONFIG[entityType];
         if (!config) return [];
-        
-        const termSafe = searchTerm ? escapeSql(searchTerm) : '';
-        
+
+        // FIXED: Use escapeSqlLike for LIKE clauses (escapes % and _ wildcards)
+        const termSafeLike = searchTerm ? escapeSqlLike(searchTerm) : '';
+
         let query;
-        if (termSafe) {
+        if (termSafeLike) {
             query = `
                 SELECT id, ${config.nameField} AS name, ${config.codeField} AS code
                 FROM ${config.table}
                 WHERE isinactive = 'F'
-                  AND (LOWER(${config.nameField}) LIKE '%' || LOWER('${termSafe}') || '%'
-                       OR LOWER(${config.codeField}) LIKE '%' || LOWER('${termSafe}') || '%')
+                  AND (LOWER(${config.nameField}) LIKE '%' || LOWER('${termSafeLike}') || '%' ESCAPE '\\'
+                       OR LOWER(${config.codeField}) LIKE '%' || LOWER('${termSafeLike}') || '%' ESCAPE '\\')
                 ORDER BY ${config.nameField}
                 FETCH FIRST 50 ROWS ONLY
             `;
@@ -294,7 +296,7 @@ define([
                 FETCH FIRST 1000 ROWS ONLY
             `;
         }
-        
+
         try {
             const result = QueryExecutor.executeQuery(query);
             if (result.success && result.rows) {
@@ -307,7 +309,7 @@ define([
         } catch (e) {
             log.debug('getEntitiesOfType failed', { type: entityType, error: e.message });
         }
-        
+
         return [];
     }
 
