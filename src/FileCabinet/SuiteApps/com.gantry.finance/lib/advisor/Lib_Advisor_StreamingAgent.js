@@ -152,36 +152,44 @@ QUESTION: "{question}"
 ═══════════════════════════════════════════════════════════════════════════════
 CRITICAL INSTRUCTIONS - READ CAREFULLY:
 
-1. NEVER INVENT DATA. Every number you mention must come from the data above.
+1. NEVER INVENT DATA. Every number must come from tokens or the data above.
 
-2. Use {{token}} syntax to reference specific values:
-   - {{data.rows[0].customer_name}} → references first row's customer_name
-   - {{data.rows[0].total_revenue:currency}} → formats as currency
-   - {{data.stats.total:currency}} → references computed stats
-   - {{data.stats.count}} → total row count
+2. AVAILABLE TOKEN SYNTAX:
+   Row values:
+   - {{{{data.rows[0].customer_name}}}} → first row's customer_name
+   - {{{{data.rows[0].total_revenue:currency}}}} → formats as currency
+   - {{{{data.rows[5].amount}}}} → 6th row's amount value
 
-3. DO NOT create table blocks - tables are rendered separately with real data.
+   Aggregate stats (from STATS section above):
+   - {{{{data.stats.total:currency}}}} → sum of primary monetary column
+   - {{{{data.stats.average:currency}}}} → average
+   - {{{{data.stats.count}}}} → total row count
+
+   Column-specific aggregates:
+   - {{{{data.stats.total_outstanding_ar:currency}}}} → sum of outstanding_ar column
+   - {{{{data.stats.total_revenue:currency}}}} → sum of total_revenue column
+
+3. DO NOT create table blocks - tables are rendered separately.
    Only create: text, metrics, list blocks.
 
-4. For metrics, use tokens for values:
-   {{"type": "metrics", "items": [
-     {{"label": "Total Revenue", "value": "{{{{data.stats.total:currency}}}}"}}
-   ]}}
+4. For metrics, ALWAYS use tokens for the value field:
+   {{"label": "Total Revenue", "value": "{{{{data.stats.total:currency}}}}"}}
 
-5. Be specific and cite actual data points. Good example:
-   "{{{{data.rows[0].customer_name}}}} leads with {{{{data.rows[0].total_revenue:currency}}}} in revenue."
+5. In narrative, cite specific data points using tokens:
+   "{{{{data.rows[0].customer_name}}}} leads with {{{{data.rows[0].total_revenue:currency}}}}."
 
 ═══════════════════════════════════════════════════════════════════════════════
 
 Response format (JSON only):
 {{
-  "narrative": "Your analysis text with {{{{tokens}}}} for specific values",
+  "narrative": "Analysis text referencing {{{{tokens}}}} for specific values",
   "metrics": [
-    {{"label": "Label", "value": "{{{{data.rows[0].column:currency}}}}", "trend": "up|down|neutral"}}
+    {{"label": "Total Revenue", "value": "{{{{data.stats.total:currency}}}}", "trend": "neutral"}},
+    {{"label": "Average", "value": "{{{{data.stats.average:currency}}}}", "trend": "neutral"}}
   ],
   "findings": [
-    "Finding with {{{{data.rows[N].column}}}} reference",
-    "Another finding"
+    "Insight about {{{{data.rows[0].customer_name}}}} with {{{{data.rows[0].total_revenue:currency}}}}",
+    "Another key finding with data reference"
   ]
 }}`;
 
@@ -916,21 +924,27 @@ Response format (JSON only):
             const data = DataStore.loadRows(state.requestId, ref.refId, 0, 49); // Up to 50 rows
             if (!data || !data.rows) return;
 
-            let section = `═══ DATA: ${toolName} (${data.totalRows} total rows) ═══\n`;
+            const totalRows = data.range?.total || data.rows.length;
+            let section = `═══ DATA: ${toolName} (${totalRows} total rows) ═══\n`;
             section += `Columns: ${data.columns.join(', ')}\n\n`;
 
-            // Add summary stats
-            if (summary.stats) {
+            // Compute aggregate stats from schema
+            const computedStats = computeAggregateStats(summary);
+            if (computedStats) {
                 section += `STATS:\n`;
-                Object.entries(summary.stats).forEach(([key, val]) => {
-                    section += `  ${key}: ${formatStatValue(val, key)}\n`;
-                });
+                if (computedStats.total !== undefined) {
+                    section += `  total: ${formatStatValue(computedStats.total, 'total')}\n`;
+                }
+                if (computedStats.average !== undefined) {
+                    section += `  average: ${formatStatValue(computedStats.average, 'average')}\n`;
+                }
+                section += `  count: ${totalRows}\n`;
                 section += '\n';
             }
 
             // Add actual rows (up to 20 for prompt size management)
             const rowsToShow = Math.min(data.rows.length, 20);
-            section += `ROWS (showing ${rowsToShow} of ${data.totalRows}):\n`;
+            section += `ROWS (showing ${rowsToShow} of ${totalRows}):\n`;
 
             for (let i = 0; i < rowsToShow; i++) {
                 const row = data.rows[i];
@@ -945,14 +959,77 @@ Response format (JSON only):
                 section += `  Row ${i}: {${data.columns.slice(0, 6).map((c, j) => `${c}: ${rowData[j]}`).join(', ')}}\n`;
             }
 
-            // Reference syntax guide
-            section += `\nTo reference this data use: {{data.rows[N].column_name}} or {{data.rows[N].column_name:currency}}\n`;
-            section += `Stats: {{data.stats.total}}, {{data.stats.count}}, {{data.stats.average}}\n`;
+            // Reference syntax guide with available column stats
+            section += `\nTOKEN REFERENCE GUIDE:\n`;
+            section += `  Rows: {{data.rows[N].column_name}} or {{data.rows[N].column_name:currency}}\n`;
+            section += `  Stats: {{data.stats.total}}, {{data.stats.count}}, {{data.stats.average}}\n`;
+
+            // List columns with numeric stats
+            if (summary.schema) {
+                const numericCols = Object.entries(summary.schema)
+                    .filter(([col, s]) => s.stats)
+                    .map(([col]) => col);
+                if (numericCols.length > 0) {
+                    section += `  Column totals: ${numericCols.map(c => '{{data.stats.total_' + c + ':currency}}').join(', ')}\n`;
+                }
+            }
 
             sections.push(section);
         });
 
         return sections.join('\n\n') || 'No data available';
+    }
+
+    /**
+     * Compute aggregate stats from the summary schema
+     * Finds the primary monetary column and extracts its stats
+     */
+    function computeAggregateStats(summary) {
+        if (!summary || !summary.schema) return null;
+
+        // Find the primary monetary column (total_revenue, amount, total, etc.)
+        const monetaryPriority = ['total_revenue', 'revenue', 'total', 'amount', 'balance', 'spend'];
+        let primaryCol = null;
+        let primaryStats = null;
+
+        // First try priority columns
+        for (const col of monetaryPriority) {
+            if (summary.schema[col] && summary.schema[col].stats) {
+                primaryCol = col;
+                primaryStats = summary.schema[col].stats;
+                break;
+            }
+        }
+
+        // If not found, look for any numeric column with stats
+        if (!primaryStats) {
+            for (const [col, schema] of Object.entries(summary.schema)) {
+                if (schema.stats && (schema.type === 'number' || schema.type === 'currency')) {
+                    // Prefer columns with monetary names
+                    if (isMonetaryColumn(col)) {
+                        primaryCol = col;
+                        primaryStats = schema.stats;
+                        break;
+                    }
+                    // Keep as fallback
+                    if (!primaryStats) {
+                        primaryCol = col;
+                        primaryStats = schema.stats;
+                    }
+                }
+            }
+        }
+
+        if (!primaryStats) return null;
+
+        return {
+            total: primaryStats.sum,
+            average: primaryStats.avg,
+            min: primaryStats.min,
+            max: primaryStats.max,
+            count: primaryStats.count,
+            column: primaryCol
+        };
     }
 
     /**
@@ -1007,6 +1084,8 @@ Response format (JSON only):
                 const data = DataStore.loadRows(state.requestId, dataRef.refId, 0, 49);
                 if (!data) return match;
 
+                const totalRows = data.range?.total || data.rows.length;
+
                 // Handle data.rows[N].column
                 const rowMatch = path.match(/data\.rows\[(\d+)\]\.(\w+)/);
                 if (rowMatch) {
@@ -1020,24 +1099,60 @@ Response format (JSON only):
                     return match; // Keep original if not found
                 }
 
-                // Handle data.stats.X
+                // Handle data.stats.X - compute from schema
                 const statsMatch = path.match(/data\.stats\.(\w+)/);
                 if (statsMatch) {
                     const statName = statsMatch[1];
                     const summary = dataRef.summary || {};
+                    const computedStats = computeAggregateStats(summary);
 
-                    // Common stat mappings
-                    if (statName === 'total' && summary.stats?.total !== undefined) {
-                        return formatResolvedValue(summary.stats.total, format || 'currency', 'total');
-                    }
+                    // Handle count/rowCount
                     if (statName === 'count' || statName === 'rowCount') {
-                        return data.totalRows?.toString() || '0';
+                        return totalRows.toString();
                     }
-                    if (statName === 'average' && summary.stats?.average !== undefined) {
-                        return formatResolvedValue(summary.stats.average, format || 'currency', 'average');
+
+                    // Handle computed stats from primary column
+                    if (computedStats) {
+                        if (statName === 'total' && computedStats.total !== undefined) {
+                            return formatResolvedValue(computedStats.total, format || 'currency', 'total');
+                        }
+                        if (statName === 'average' && computedStats.average !== undefined) {
+                            return formatResolvedValue(computedStats.average, format || 'currency', 'average');
+                        }
+                        if (statName === 'min' && computedStats.min !== undefined) {
+                            return formatResolvedValue(computedStats.min, format || 'currency', 'min');
+                        }
+                        if (statName === 'max' && computedStats.max !== undefined) {
+                            return formatResolvedValue(computedStats.max, format || 'currency', 'max');
+                        }
                     }
-                    if (summary.stats && summary.stats[statName] !== undefined) {
-                        return formatResolvedValue(summary.stats[statName], format, statName);
+
+                    // Handle column-specific stats (e.g., total_outstanding_ar -> sum of outstanding_ar column)
+                    if (summary.schema) {
+                        // Check for total_X or sum_X patterns
+                        const totalMatch = statName.match(/^(total|sum)_(.+)$/);
+                        if (totalMatch) {
+                            const colName = totalMatch[2];
+                            if (summary.schema[colName]?.stats?.sum !== undefined) {
+                                return formatResolvedValue(summary.schema[colName].stats.sum, format || 'currency', colName);
+                            }
+                        }
+
+                        // Check for avg_X or average_X patterns
+                        const avgMatch = statName.match(/^(avg|average)_(.+)$/);
+                        if (avgMatch) {
+                            const colName = avgMatch[2];
+                            if (summary.schema[colName]?.stats?.avg !== undefined) {
+                                return formatResolvedValue(summary.schema[colName].stats.avg, format || 'currency', colName);
+                            }
+                        }
+
+                        // Direct column stat lookup
+                        for (const [col, schema] of Object.entries(summary.schema)) {
+                            if (schema.stats && schema.stats[statName] !== undefined) {
+                                return formatResolvedValue(schema.stats[statName], format, statName);
+                            }
+                        }
                     }
                 }
 
