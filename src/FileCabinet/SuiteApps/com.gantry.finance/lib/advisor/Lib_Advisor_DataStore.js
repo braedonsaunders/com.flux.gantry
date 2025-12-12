@@ -286,6 +286,7 @@ define(['N/cache', 'N/log'], function(cache, log) {
 
         return {
             refId: refId,
+            requestId: requestId,  // Include requestId for follow-up query data access
             stored: true,
             summary: summary,
             commands: {
