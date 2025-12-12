@@ -872,7 +872,7 @@
         },
 
         /**
-         * Render dashboard health score cards
+         * Render dashboard health score cards - compact horizontal layout
          */
         renderDashboardScores: function(scores) {
             const grid = document.getElementById('scores-grid');
@@ -893,12 +893,10 @@
                 burden: 'fa-layer-group'
             };
 
-            // Trend icon mapping
-            const trendIcons = {
-                up: 'fa-arrow-up',
-                down: 'fa-arrow-down',
-                stable: 'fa-minus'
-            };
+            // Get configurable dashboard names from settings if available
+            const configuredNames = (window.SettingsController && SettingsController.data && SettingsController.data.dashboardNames)
+                ? SettingsController.data.dashboardNames
+                : {};
 
             let html = '';
 
@@ -907,8 +905,8 @@
                 if (!scoreData) return;
 
                 const icon = iconMap[dashboardId] || 'fa-chart-bar';
-                const trendIcon = trendIcons[scoreData.trend] || 'fa-minus';
-                const trendClass = scoreData.trend || 'stable';
+                // Use configured name first, then API name, then default
+                const displayName = configuredNames[dashboardId] || scoreData.name || dashboardId;
 
                 html += `
                     <div class="score-card" data-dashboard="${dashboardId}" data-grade="${scoreData.grade}" onclick="GantryApp.navigate('${dashboardId}')">
@@ -916,24 +914,60 @@
                             <div class="score-icon">
                                 <i class="fas ${icon}"></i>
                             </div>
-                            <div class="score-name">${scoreData.name || dashboardId}</div>
+                            <div class="score-name">${displayName}</div>
                             <div class="score-value-container">
                                 <span class="score-number">${scoreData.score}</span>
                                 <span class="score-grade">${scoreData.grade}</span>
                             </div>
-                            <div class="score-meta">
-                                <span class="score-label">${scoreData.label || ''}</span>
-                                <span class="score-trend ${trendClass}">
-                                    <i class="fas ${trendIcon}"></i>
-                                </span>
-                            </div>
                         </div>
-                        <div class="score-tooltip">Click to view ${scoreData.name || dashboardId} dashboard</div>
                     </div>
                 `;
             });
 
             grid.innerHTML = html;
+
+            // Also update sidebar scores if available
+            this.updateSidebarScores(scores);
+        },
+
+        /**
+         * Update sidebar with health scores beside each dashboard name
+         */
+        updateSidebarScores: function(scores) {
+            const nav = document.querySelector('.gantry-nav');
+            if (!nav) return;
+
+            // Route to dashboard ID mapping
+            const routeMap = {
+                'health': 'health',
+                'time': 'time',
+                'integrity': 'integrity',
+                'customervalue': 'customervalue',
+                'vendorperformance': 'vendorperformance',
+                'spendvelocity': 'spendvelocity',
+                'cashflow': 'cashflow',
+                'burden': 'burden'
+            };
+
+            Object.keys(routeMap).forEach(function(route) {
+                const dashboardId = routeMap[route];
+                const scoreData = scores[dashboardId];
+                if (!scoreData) return;
+
+                const navLink = nav.querySelector(`[data-route="${route}"]`);
+                if (!navLink) return;
+
+                // Remove existing score badge if present
+                const existingBadge = navLink.querySelector('.nav-score-badge');
+                if (existingBadge) existingBadge.remove();
+
+                // Add score badge
+                const badge = document.createElement('span');
+                badge.className = 'nav-score-badge';
+                badge.setAttribute('data-grade', scoreData.grade);
+                badge.textContent = scoreData.score;
+                navLink.appendChild(badge);
+            });
         },
 
         /**
