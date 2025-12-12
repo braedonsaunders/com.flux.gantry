@@ -5396,8 +5396,11 @@ body.dark-mode .progressive-text {
     background: rgba(255, 255, 255, 0.85);
     backdrop-filter: blur(6px);
     cursor: pointer;
-    transition: all 0.2s ease;
     min-width: 0;
+    /* Initially hidden - shown via .cards-visible on parent */
+    opacity: 0;
+    transform: translateY(8px) scale(0.95);
+    transition: opacity 0.4s ease, transform 0.4s ease, box-shadow 0.2s ease, border-color 0.2s ease, background 0.2s ease;
 }
 
 .score-category-card:hover {
@@ -5485,17 +5488,14 @@ body.dark-mode .progressive-text {
 .score-category-card[data-dashboard="vendorperformance"] { --score-color: #ec4899; }
 .score-category-card[data-dashboard="integrity"] { --score-color: #6366f1; }
 
-/* Cards initially hidden, JS will trigger animation via .cards-visible class */
-.score-category-card {
-    opacity: 0;
-    transform: translateY(8px) scale(0.95);
-    transition: opacity 0.4s ease, transform 0.4s ease;
-}
-
 /* When parent has .cards-visible, show cards with staggered delays */
 .score-categories.cards-visible .score-category-card {
     opacity: 1;
     transform: translateY(0) scale(1);
+}
+
+.score-categories.cards-visible .score-category-card:hover {
+    transform: translateY(-1px) scale(1);
 }
 
 .score-categories.cards-visible .score-category-card:nth-child(1) { transition-delay: 0s; }
