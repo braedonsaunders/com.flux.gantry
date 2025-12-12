@@ -1935,9 +1935,13 @@
                 });
             });
             
-            // Show panel, hide score-categories
+            // Show panel, hide score-categories with animation
             if (scoreCategoriesEl) scoreCategoriesEl.style.display = 'none';
             panelEl.style.display = 'block';
+            // Trigger animation after display change
+            requestAnimationFrame(() => {
+                panelEl.classList.add('visible');
+            });
         },
 
         /**
@@ -1947,10 +1951,18 @@
             const scoreCategoriesEl = document.getElementById('score-categories');
             const panelEl = document.getElementById('query-panel');
 
-            if (scoreCategoriesEl) {
+            if (panelEl) {
+                panelEl.classList.remove('visible');
+                // Wait for animation to complete before hiding
+                setTimeout(() => {
+                    panelEl.style.display = 'none';
+                    if (scoreCategoriesEl) {
+                        scoreCategoriesEl.style.display = 'flex';
+                    }
+                }, 300);
+            } else if (scoreCategoriesEl) {
                 scoreCategoriesEl.style.display = 'flex';
             }
-            if (panelEl) panelEl.style.display = 'none';
         },
         
         /**
