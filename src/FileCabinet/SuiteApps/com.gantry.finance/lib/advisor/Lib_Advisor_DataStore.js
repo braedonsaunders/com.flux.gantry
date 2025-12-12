@@ -515,12 +515,12 @@ define(['N/cache', 'N/log'], function(cache, log) {
     // Caches tool execution results to avoid redundant queries within a session.
     // Different TTLs for different tool types:
     // - Entity resolution: 5 minutes (entities rarely change mid-session)
-    // - Data queries: 30 seconds (data should be relatively fresh)
+    // - Data queries: 5 minutes (datasets/workbooks don't change frequently)
     // ═══════════════════════════════════════════════════════════════════════════
 
     const TOOL_CACHE_NAME = 'ADVISOR_TOOL_CACHE';
     const ENTITY_RESOLUTION_TTL = 300;  // 5 minutes for entity resolution
-    const DATA_QUERY_TTL = 30;          // 30 seconds for data queries
+    const DATA_QUERY_TTL = 300;         // 5 minutes for data queries
 
     function getToolCache() {
         return cache.getCache({
