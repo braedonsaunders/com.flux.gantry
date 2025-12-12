@@ -31,26 +31,33 @@
 
     /**
      * Geometric Animation Controller
-     * Creates stunning particle animation with lifecycle phases
+     * Lightweight particle animation with gradient colors and lifecycle phases
+     * Phases: birth (from brain) → expand (full viewport) → converge (to chat) → ambient
      */
     const GeometricAnimation = {
         canvas: null,
         ctx: null,
         particles: [],
-        connections: [],
         animationId: null,
-        phase: 'idle', // idle, birth, converge, ambient, departure
+        phase: 'idle', // idle, birth, expand, converge, ambient, departure
         isActive: false,
+        globalTime: 0, // For color animation
 
-        // Configuration
+        // Lightweight configuration
         config: {
-            particleCount: 60,
-            connectionDistance: 120,
-            particleSize: { min: 1, max: 3 },
-            baseSpeed: 0.3,
-            birthDuration: 1500,
-            convergeDuration: 1200,
-            departureOpacity: 0
+            particleCount: 35,           // Reduced for performance
+            connectionDistance: 100,      // Reduced connection checks
+            particleSize: { min: 1.5, max: 2.5 },
+            birthDuration: 800,          // Quick birth
+            expandDuration: 1200,        // Expand to full screen
+            convergeDuration: 1000,      // Converge to chat
+            // Gradient color palette (indigo → purple → cyan)
+            colors: [
+                { r: 99, g: 102, b: 241 },   // Indigo
+                { r: 139, g: 92, b: 246 },   // Purple
+                { r: 6, g: 182, b: 212 },    // Cyan
+                { r: 59, g: 130, b: 246 }    // Blue
+            ]
         },
 
         /**
@@ -62,9 +69,11 @@
 
             this.ctx = this.canvas.getContext('2d');
             this.resize();
-            window.addEventListener('resize', this.resize.bind(this));
+            this.boundResize = this.resize.bind(this);
+            window.addEventListener('resize', this.boundResize);
 
             this.isActive = true;
+            this.globalTime = 0;
             this.createParticles();
             this.startBirth();
         },
@@ -79,56 +88,97 @@
         },
 
         /**
-         * Create initial particles at center
+         * Get the brain icon center position
+         */
+        getBrainCenter: function() {
+            const heroOrb = document.querySelector('.hero-orb');
+            if (heroOrb) {
+                const rect = heroOrb.getBoundingClientRect();
+                return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+            }
+            // Fallback to upper center
+            return { x: this.canvas.width / 2, y: this.canvas.height * 0.25 };
+        },
+
+        /**
+         * Create particles starting behind the brain icon
          */
         createParticles: function() {
             this.particles = [];
-            const centerX = this.canvas.width / 2;
-            const centerY = this.canvas.height / 2;
+            const center = this.getBrainCenter();
 
             for (let i = 0; i < this.config.particleCount; i++) {
-                // All particles start at center
                 const angle = Math.random() * Math.PI * 2;
-                const speed = this.config.baseSpeed * (0.5 + Math.random());
+                const colorIndex = i % this.config.colors.length;
 
                 this.particles.push({
-                    x: centerX,
-                    y: centerY,
-                    targetX: Math.random() * this.canvas.width,
-                    targetY: Math.random() * this.canvas.height,
-                    vx: Math.cos(angle) * speed * 3, // Initial burst velocity
-                    vy: Math.sin(angle) * speed * 3,
+                    x: center.x,
+                    y: center.y,
+                    originX: center.x,
+                    originY: center.y,
+                    expandX: 0,  // Will be set during expand phase
+                    expandY: 0,
+                    angle: angle,
+                    speed: 0.2 + Math.random() * 0.3,
                     size: this.config.particleSize.min + Math.random() * (this.config.particleSize.max - this.config.particleSize.min),
                     opacity: 0,
-                    targetOpacity: 0.4 + Math.random() * 0.3
+                    targetOpacity: 0.5 + Math.random() * 0.2,
+                    colorIndex: colorIndex,
+                    colorOffset: Math.random() * Math.PI * 2, // For color animation
+                    vx: 0,
+                    vy: 0
                 });
             }
         },
 
         /**
-         * Birth phase - particles explode from center
+         * Get interpolated gradient color for a particle
+         */
+        getParticleColor: function(particle, opacity) {
+            const colors = this.config.colors;
+            // Animate color over time with particle offset
+            const t = (this.globalTime * 0.001 + particle.colorOffset) % (Math.PI * 2);
+            const colorT = (Math.sin(t) + 1) / 2; // 0 to 1
+
+            // Interpolate between two colors based on particle index
+            const c1 = colors[particle.colorIndex];
+            const c2 = colors[(particle.colorIndex + 1) % colors.length];
+
+            const r = Math.round(c1.r + (c2.r - c1.r) * colorT);
+            const g = Math.round(c1.g + (c2.g - c1.g) * colorT);
+            const b = Math.round(c1.b + (c2.b - c1.b) * colorT);
+
+            return `rgba(${r}, ${g}, ${b}, ${opacity})`;
+        },
+
+        /**
+         * Birth phase - particles emerge from behind brain icon
          */
         startBirth: function() {
             this.phase = 'birth';
             const startTime = Date.now();
+            const center = this.getBrainCenter();
 
             const animateBirth = () => {
                 if (!this.isActive || this.phase !== 'birth') return;
 
                 const elapsed = Date.now() - startTime;
                 const progress = Math.min(elapsed / this.config.birthDuration, 1);
-                const eased = this.easeOutExpo(progress);
+                const eased = this.easeOutCubic(progress);
+                this.globalTime = elapsed;
 
-                // Fade in particles and spread them out
-                this.particles.forEach(p => {
-                    p.opacity = p.targetOpacity * eased;
-                    // Move toward spread positions
-                    p.x += p.vx * (1 - progress * 0.7);
-                    p.y += p.vy * (1 - progress * 0.7);
+                // Particles emerge in a small radius around brain
+                this.particles.forEach((p, i) => {
+                    const stagger = (i / this.particles.length) * 0.4;
+                    const particleProgress = Math.max(0, (progress - stagger) / (1 - stagger));
 
-                    // Slow down velocities
-                    p.vx *= 0.98;
-                    p.vy *= 0.98;
+                    if (particleProgress > 0) {
+                        p.opacity = p.targetOpacity * this.easeOutCubic(particleProgress);
+                        // Small burst from center
+                        const burstRadius = 40 * particleProgress;
+                        p.x = center.x + Math.cos(p.angle) * burstRadius;
+                        p.y = center.y + Math.sin(p.angle) * burstRadius;
+                    }
                 });
 
                 this.draw();
@@ -136,12 +186,58 @@
                 if (progress < 1) {
                     this.animationId = requestAnimationFrame(animateBirth);
                 } else {
-                    // Transition to converge phase
-                    this.startConverge();
+                    this.startExpand();
                 }
             };
 
             this.animationId = requestAnimationFrame(animateBirth);
+        },
+
+        /**
+         * Expand phase - particles spread to fill the entire viewport
+         */
+        startExpand: function() {
+            this.phase = 'expand';
+            const startTime = Date.now();
+            const padding = 50;
+
+            // Assign each particle a target position across the full viewport
+            this.particles.forEach(p => {
+                p.originX = p.x;
+                p.originY = p.y;
+                p.expandX = padding + Math.random() * (this.canvas.width - padding * 2);
+                p.expandY = padding + Math.random() * (this.canvas.height - padding * 2);
+            });
+
+            const animateExpand = () => {
+                if (!this.isActive || this.phase !== 'expand') return;
+
+                const elapsed = Date.now() - startTime;
+                const progress = Math.min(elapsed / this.config.expandDuration, 1);
+                const eased = this.easeOutExpo(progress);
+                this.globalTime += 16;
+
+                this.particles.forEach(p => {
+                    // Smooth expansion to target positions
+                    p.x = p.originX + (p.expandX - p.originX) * eased;
+                    p.y = p.originY + (p.expandY - p.originY) * eased;
+                });
+
+                this.draw();
+
+                if (progress < 1) {
+                    this.animationId = requestAnimationFrame(animateExpand);
+                } else {
+                    // Brief pause at full expansion, then converge
+                    setTimeout(() => {
+                        if (this.isActive && this.phase === 'expand') {
+                            this.startConverge();
+                        }
+                    }, 300);
+                }
+            };
+
+            this.animationId = requestAnimationFrame(animateExpand);
         },
 
         /**
@@ -157,49 +253,54 @@
             const targetX = chatRect ? chatRect.left + chatRect.width / 2 : this.canvas.width / 2;
             const targetY = chatRect ? chatRect.top + chatRect.height / 2 : this.canvas.height * 0.9;
 
+            // Store starting positions
+            this.particles.forEach(p => {
+                p.originX = p.x;
+                p.originY = p.y;
+            });
+
             const animateConverge = () => {
                 if (!this.isActive || this.phase !== 'converge') return;
 
                 const elapsed = Date.now() - startTime;
                 const progress = Math.min(elapsed / this.config.convergeDuration, 1);
-                const eased = this.easeInOutQuad(progress);
+                this.globalTime += 16;
 
-                // Move particles toward chat input
                 this.particles.forEach((p, i) => {
-                    // Staggered convergence
+                    // Staggered convergence with curve
                     const stagger = (i / this.particles.length) * 0.3;
                     const particleProgress = Math.max(0, Math.min(1, (progress - stagger) / (1 - stagger)));
 
                     if (particleProgress > 0) {
-                        const startX = p.x;
-                        const startY = p.y;
+                        const t = this.easeInOutQuad(particleProgress);
+                        // Curve toward target
+                        const midY = Math.min(p.originY, targetY) - 50;
+                        const bez = this.quadraticBezier(
+                            p.originX, p.originY,
+                            (p.originX + targetX) / 2, midY,
+                            targetX, targetY,
+                            t
+                        );
+                        p.x = bez.x;
+                        p.y = bez.y;
 
-                        // Bezier-like curve toward target
-                        const controlX = startX + (targetX - startX) * 0.5 + (Math.random() - 0.5) * 50;
-                        const controlY = startY - 100;
-
-                        const t = this.easeInQuad(particleProgress);
-                        p.x = startX + (targetX - startX) * t * 0.3;
-                        p.y = startY + (targetY - startY) * t * 0.3;
+                        // Shrink as they converge
+                        p.size = p.size * (1 - particleProgress * 0.3);
                     }
                 });
 
                 this.draw();
 
-                // Add glow effect to chat input during convergence
+                // Glow effect on chat input
                 if (chatInput && progress > 0.5) {
                     const glowIntensity = (progress - 0.5) * 2;
-                    chatInput.style.boxShadow = `0 0 ${20 * glowIntensity}px rgba(79, 70, 229, ${0.3 * glowIntensity})`;
+                    chatInput.style.boxShadow = `0 0 ${25 * glowIntensity}px rgba(99, 102, 241, ${0.4 * glowIntensity})`;
                 }
 
                 if (progress < 1) {
                     this.animationId = requestAnimationFrame(animateConverge);
                 } else {
-                    // Reset chat input glow
-                    if (chatInput) {
-                        chatInput.style.boxShadow = '';
-                    }
-                    // Transition to ambient phase
+                    if (chatInput) chatInput.style.boxShadow = '';
                     this.startAmbient();
                 }
             };
@@ -208,44 +309,50 @@
         },
 
         /**
-         * Ambient phase - slow subtle movement
+         * Quadratic bezier helper
+         */
+        quadraticBezier: function(x0, y0, x1, y1, x2, y2, t) {
+            const mt = 1 - t;
+            return {
+                x: mt * mt * x0 + 2 * mt * t * x1 + t * t * x2,
+                y: mt * mt * y0 + 2 * mt * t * y1 + t * t * y2
+            };
+        },
+
+        /**
+         * Ambient phase - very slow subtle movement
          */
         startAmbient: function() {
             this.phase = 'ambient';
 
-            // Spread particles back out for ambient movement
+            // Spread particles back out gently
             this.particles.forEach(p => {
-                p.targetX = Math.random() * this.canvas.width;
-                p.targetY = Math.random() * this.canvas.height;
-                const angle = Math.random() * Math.PI * 2;
-                p.vx = Math.cos(angle) * this.config.baseSpeed * 0.3;
-                p.vy = Math.sin(angle) * this.config.baseSpeed * 0.3;
-                p.targetOpacity = 0.15 + Math.random() * 0.1; // Very subtle
+                p.x = 50 + Math.random() * (this.canvas.width - 100);
+                p.y = 50 + Math.random() * (this.canvas.height - 100);
+                p.vx = (Math.random() - 0.5) * 0.15;
+                p.vy = (Math.random() - 0.5) * 0.15;
+                p.targetOpacity = 0.12 + Math.random() * 0.08; // Very subtle
+                p.size = this.config.particleSize.min + Math.random() * (this.config.particleSize.max - this.config.particleSize.min);
             });
 
             const animateAmbient = () => {
                 if (!this.isActive || this.phase !== 'ambient') return;
+                this.globalTime += 16;
 
                 this.particles.forEach(p => {
-                    // Gentle floating movement
                     p.x += p.vx;
                     p.y += p.vy;
-
-                    // Fade to ambient opacity
                     p.opacity += (p.targetOpacity - p.opacity) * 0.02;
 
-                    // Bounce off edges gently
-                    if (p.x < 0 || p.x > this.canvas.width) p.vx *= -1;
-                    if (p.y < 0 || p.y > this.canvas.height) p.vy *= -1;
+                    // Soft bounce
+                    if (p.x < 20 || p.x > this.canvas.width - 20) p.vx *= -1;
+                    if (p.y < 20 || p.y > this.canvas.height - 20) p.vy *= -1;
 
-                    // Slight random drift
-                    p.vx += (Math.random() - 0.5) * 0.01;
-                    p.vy += (Math.random() - 0.5) * 0.01;
-
-                    // Clamp velocity
-                    const maxV = this.config.baseSpeed * 0.5;
-                    p.vx = Math.max(-maxV, Math.min(maxV, p.vx));
-                    p.vy = Math.max(-maxV, Math.min(maxV, p.vy));
+                    // Tiny drift
+                    p.vx += (Math.random() - 0.5) * 0.005;
+                    p.vy += (Math.random() - 0.5) * 0.005;
+                    p.vx = Math.max(-0.2, Math.min(0.2, p.vx));
+                    p.vy = Math.max(-0.2, Math.min(0.2, p.vy));
                 });
 
                 this.draw();
@@ -256,24 +363,24 @@
         },
 
         /**
-         * Departure phase - fade out and cleanup
+         * Departure phase - fade out
          */
         startDeparture: function() {
             if (this.phase === 'departure' || this.phase === 'idle') return;
 
             this.phase = 'departure';
             const startTime = Date.now();
-            const duration = 800;
+            const duration = 600;
 
             const animateDeparture = () => {
                 if (!this.isActive) return;
 
                 const elapsed = Date.now() - startTime;
                 const progress = Math.min(elapsed / duration, 1);
+                this.globalTime += 16;
 
-                // Fade out all particles
                 this.particles.forEach(p => {
-                    p.opacity = p.targetOpacity * (1 - progress);
+                    p.opacity = p.targetOpacity * (1 - this.easeInQuad(progress));
                 });
 
                 this.draw();
@@ -289,47 +396,49 @@
         },
 
         /**
-         * Draw particles and connections
+         * Draw particles and connections (optimized)
          */
         draw: function() {
             if (!this.ctx) return;
-
-            // Clear canvas
             this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
 
-            // Draw connections
-            this.ctx.strokeStyle = 'rgba(79, 70, 229, 0.1)';
-            this.ctx.lineWidth = 0.5;
+            const len = this.particles.length;
 
-            for (let i = 0; i < this.particles.length; i++) {
-                for (let j = i + 1; j < this.particles.length; j++) {
-                    const dx = this.particles[i].x - this.particles[j].x;
-                    const dy = this.particles[i].y - this.particles[j].y;
-                    const dist = Math.sqrt(dx * dx + dy * dy);
+            // Draw connections (optimized - skip if too many)
+            if (len <= 40) {
+                this.ctx.lineWidth = 0.5;
+                for (let i = 0; i < len; i++) {
+                    const p1 = this.particles[i];
+                    for (let j = i + 1; j < len; j++) {
+                        const p2 = this.particles[j];
+                        const dx = p1.x - p2.x;
+                        const dy = p1.y - p2.y;
+                        const distSq = dx * dx + dy * dy;
+                        const maxDistSq = this.config.connectionDistance * this.config.connectionDistance;
 
-                    if (dist < this.config.connectionDistance) {
-                        const opacity = (1 - dist / this.config.connectionDistance) *
-                            Math.min(this.particles[i].opacity, this.particles[j].opacity);
-                        this.ctx.strokeStyle = `rgba(79, 70, 229, ${opacity * 0.3})`;
-                        this.ctx.beginPath();
-                        this.ctx.moveTo(this.particles[i].x, this.particles[i].y);
-                        this.ctx.lineTo(this.particles[j].x, this.particles[j].y);
-                        this.ctx.stroke();
+                        if (distSq < maxDistSq) {
+                            const opacity = (1 - distSq / maxDistSq) * Math.min(p1.opacity, p2.opacity) * 0.4;
+                            this.ctx.strokeStyle = this.getParticleColor(p1, opacity);
+                            this.ctx.beginPath();
+                            this.ctx.moveTo(p1.x, p1.y);
+                            this.ctx.lineTo(p2.x, p2.y);
+                            this.ctx.stroke();
+                        }
                     }
                 }
             }
 
-            // Draw particles
+            // Draw particles with gradient colors
             this.particles.forEach(p => {
                 this.ctx.beginPath();
                 this.ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
-                this.ctx.fillStyle = `rgba(79, 70, 229, ${p.opacity})`;
+                this.ctx.fillStyle = this.getParticleColor(p, p.opacity);
                 this.ctx.fill();
             });
         },
 
         /**
-         * Cleanup animation
+         * Cleanup
          */
         cleanup: function() {
             this.isActive = false;
@@ -341,15 +450,20 @@
             if (this.ctx) {
                 this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
             }
-            // Hide canvas
             if (this.canvas) {
                 this.canvas.style.opacity = '0';
+            }
+            if (this.boundResize) {
+                window.removeEventListener('resize', this.boundResize);
             }
         },
 
         // Easing functions
         easeOutExpo: function(t) {
             return t === 1 ? 1 : 1 - Math.pow(2, -10 * t);
+        },
+        easeOutCubic: function(t) {
+            return 1 - Math.pow(1 - t, 3);
         },
         easeInOutQuad: function(t) {
             return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
