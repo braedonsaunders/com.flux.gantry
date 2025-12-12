@@ -4122,6 +4122,17 @@ EXAMPLES:
                     hasFilter: !!args.filter
                 });
 
+                // Validate ref_id is provided
+                if (!refId) {
+                    return {
+                        success: false,
+                        error: 'ref_id is required. Look for refId in the previous tool results (e.g., "dash_cash_abc123" or "ref_geta_xyz789") and provide it.',
+                        hint: args.collection_name
+                            ? `You requested collection "${args.collection_name}" but did not provide the ref_id. Check the previous response for dashboard refId.`
+                            : 'No ref_id provided. Check previous tool results for available refIds.'
+                    };
+                }
+
                 try {
                     // Determine data source based on refId pattern
                     const isDashboardRef = refId.startsWith('dash_');
