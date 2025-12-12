@@ -528,16 +528,16 @@
             
             // Summary cards using shared KPI card infrastructure
             html += '<div class="row mb-3 gutters-sm cf-kpi-row">';
-            html += '<div class="col-md-3"><div class="cf-kpi-card ' + (summary.complianceRate < 70 ? 'border-left-danger' : '') + '">' +
+            html += '<div class="col"><div class="cf-kpi-card ' + (summary.complianceRate < 70 ? 'border-left-danger' : '') + '">' +
                 '<div class="icon-wrapper ' + (summary.complianceRate >= 80 ? 'bg-green-soft' : summary.complianceRate >= 60 ? 'bg-yellow-soft' : 'bg-red-soft') + '"><i class="fas fa-check-circle ' + (summary.complianceRate >= 80 ? 'text-green' : summary.complianceRate >= 60 ? 'text-yellow' : 'text-red') + '"></i></div>' +
                 '<div class="kpi-content"><span class="kpi-label">PO Compliance</span><span class="kpi-value ' + (summary.complianceRate >= 80 ? 'text-success' : summary.complianceRate >= 60 ? 'text-warning' : 'text-danger') + '">' + (summary.complianceRate || 0) + '%</span></div></div></div>';
-            html += '<div class="col-md-3"><div class="cf-kpi-card">' +
+            html += '<div class="col"><div class="cf-kpi-card">' +
                 '<div class="icon-wrapper bg-red-soft"><i class="fas fa-ban text-red"></i></div>' +
                 '<div class="kpi-content"><span class="kpi-label">Maverick Spend</span><span class="kpi-value text-danger">' + this.formatCurrency(summary.maverickSpend || 0) + '</span></div></div></div>';
-            html += '<div class="col-md-3"><div class="cf-kpi-card">' +
+            html += '<div class="col"><div class="cf-kpi-card">' +
                 '<div class="icon-wrapper bg-blue-soft"><i class="fas fa-file-invoice text-blue"></i></div>' +
                 '<div class="kpi-content"><span class="kpi-label">Maverick / Total</span><span class="kpi-value">' + (summary.maverickBills || 0) + ' / ' + (summary.totalBills || 0) + '</span></div></div></div>';
-            html += '<div class="col-md-3"><div class="cf-kpi-card">' +
+            html += '<div class="col"><div class="cf-kpi-card">' +
                 '<div class="icon-wrapper bg-yellow-soft"><i class="fas fa-exclamation-triangle text-yellow"></i></div>' +
                 '<div class="kpi-content"><span class="kpi-label">Unmanaged Vendors</span><span class="kpi-value text-warning">' + (summary.criticalVendors || 0) + '</span></div></div></div>';
             html += '</div>';
@@ -631,16 +631,16 @@
             
             // Summary cards using shared KPI card infrastructure
             html += '<div class="row mb-3 gutters-sm cf-kpi-row">';
-            html += '<div class="col-md-3"><div class="cf-kpi-card ' + (summary.onTimeRate < 80 ? 'border-left-warning' : '') + '">' +
+            html += '<div class="col"><div class="cf-kpi-card ' + (summary.onTimeRate < 80 ? 'border-left-warning' : '') + '">' +
                 '<div class="icon-wrapper ' + (summary.onTimeRate >= 90 ? 'bg-green-soft' : summary.onTimeRate >= 70 ? 'bg-yellow-soft' : 'bg-red-soft') + '"><i class="fas fa-clock ' + (summary.onTimeRate >= 90 ? 'text-green' : summary.onTimeRate >= 70 ? 'text-yellow' : 'text-red') + '"></i></div>' +
                 '<div class="kpi-content"><span class="kpi-label">On-Time Rate</span><span class="kpi-value ' + (summary.onTimeRate >= 90 ? 'text-success' : summary.onTimeRate >= 70 ? 'text-warning' : 'text-danger') + '">' + (summary.onTimeRate || 0) + '%</span></div></div></div>';
-            html += '<div class="col-md-3"><div class="cf-kpi-card">' +
+            html += '<div class="col"><div class="cf-kpi-card">' +
                 '<div class="icon-wrapper bg-blue-soft"><i class="fas fa-boxes text-blue"></i></div>' +
                 '<div class="kpi-content"><span class="kpi-label">Total Receipts</span><span class="kpi-value">' + (summary.totalReceipts || 0) + '</span></div></div></div>';
-            html += '<div class="col-md-3"><div class="cf-kpi-card">' +
+            html += '<div class="col"><div class="cf-kpi-card">' +
                 '<div class="icon-wrapper bg-red-soft"><i class="fas fa-exclamation-circle text-red"></i></div>' +
                 '<div class="kpi-content"><span class="kpi-label">Late Deliveries</span><span class="kpi-value text-danger">' + (summary.lateCount || 0) + '</span></div></div></div>';
-            html += '<div class="col-md-3"><div class="cf-kpi-card">' +
+            html += '<div class="col"><div class="cf-kpi-card">' +
                 '<div class="icon-wrapper bg-yellow-soft"><i class="fas fa-hourglass-half text-yellow"></i></div>' +
                 '<div class="kpi-content"><span class="kpi-label">Avg Delay</span><span class="kpi-value">' + (avgDelayDays || 0) + ' days</span></div></div></div>';
             html += '</div>';
@@ -720,16 +720,16 @@
             
             // Summary cards using shared KPI card infrastructure
             html += '<div class="row mb-3 gutters-sm cf-kpi-row">';
-            html += '<div class="col-md-3"><div class="cf-kpi-card">' +
+            html += '<div class="col"><div class="cf-kpi-card">' +
                 '<div class="icon-wrapper bg-blue-soft"><i class="fas fa-users text-blue"></i></div>' +
                 '<div class="kpi-content"><span class="kpi-label">Vendors Analyzed</span><span class="kpi-value">' + (summary.vendorCount || 0) + '</span></div></div></div>';
-            html += '<div class="col-md-3"><div class="cf-kpi-card">' +
+            html += '<div class="col"><div class="cf-kpi-card">' +
                 '<div class="icon-wrapper bg-purple-soft"><i class="fas fa-chart-bar text-purple"></i></div>' +
                 '<div class="kpi-content"><span class="kpi-label">Avg CV</span><span class="kpi-value">' + (summary.avgCoeffOfVariation || 0) + '</span><span class="kpi-sub">lower is better</span></div></div></div>';
-            html += '<div class="col-md-3"><div class="cf-kpi-card border-left-success">' +
+            html += '<div class="col"><div class="cf-kpi-card border-left-success">' +
                 '<div class="icon-wrapper bg-green-soft"><i class="fas fa-check-circle text-green"></i></div>' +
                 '<div class="kpi-content"><span class="kpi-label">Consistent</span><span class="kpi-value text-success">' + (summary.consistentVendors || 0) + '</span></div></div></div>';
-            html += '<div class="col-md-3"><div class="cf-kpi-card border-left-danger">' +
+            html += '<div class="col"><div class="cf-kpi-card border-left-danger">' +
                 '<div class="icon-wrapper bg-red-soft"><i class="fas fa-exclamation-triangle text-red"></i></div>' +
                 '<div class="kpi-content"><span class="kpi-label">Volatile</span><span class="kpi-value text-danger">' + (summary.highVarianceVendors || 0) + '</span></div></div></div>';
             html += '</div>';
@@ -822,16 +822,16 @@
             
             // Summary cards using shared KPI card infrastructure
             html += '<div class="row mb-3 gutters-sm cf-kpi-row">';
-            html += '<div class="col-md-3"><div class="cf-kpi-card ' + (summary.totalVariance > 1000 ? 'border-left-danger' : '') + '">' +
+            html += '<div class="col"><div class="cf-kpi-card ' + (summary.totalVariance > 1000 ? 'border-left-danger' : '') + '">' +
                 '<div class="icon-wrapper bg-red-soft"><i class="fas fa-dollar-sign text-red"></i></div>' +
                 '<div class="kpi-content"><span class="kpi-label">Total Overcharge</span><span class="kpi-value text-danger">' + this.formatCurrency(summary.totalVariance || 0) + '</span></div></div></div>';
-            html += '<div class="col-md-3"><div class="cf-kpi-card">' +
+            html += '<div class="col"><div class="cf-kpi-card">' +
                 '<div class="icon-wrapper bg-blue-soft"><i class="fas fa-boxes text-blue"></i></div>' +
                 '<div class="kpi-content"><span class="kpi-label">Items Analyzed</span><span class="kpi-value">' + (summary.itemsAnalyzed || 0) + '</span></div></div></div>';
-            html += '<div class="col-md-3"><div class="cf-kpi-card">' +
+            html += '<div class="col"><div class="cf-kpi-card">' +
                 '<div class="icon-wrapper bg-yellow-soft"><i class="fas fa-exclamation-circle text-yellow"></i></div>' +
                 '<div class="kpi-content"><span class="kpi-label">Items Overcharged</span><span class="kpi-value text-warning">' + (summary.itemsWithOvercharge || 0) + '</span></div></div></div>';
-            html += '<div class="col-md-3"><div class="cf-kpi-card">' +
+            html += '<div class="col"><div class="cf-kpi-card">' +
                 '<div class="icon-wrapper bg-purple-soft"><i class="fas fa-percent text-purple"></i></div>' +
                 '<div class="kpi-content"><span class="kpi-label">Avg Variance</span><span class="kpi-value">' + (summary.avgVariancePct || 0) + '%</span></div></div></div>';
             html += '</div>';
