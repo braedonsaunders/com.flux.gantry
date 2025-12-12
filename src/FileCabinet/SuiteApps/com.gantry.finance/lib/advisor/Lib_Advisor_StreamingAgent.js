@@ -1052,6 +1052,22 @@ Response format (JSON only):
             args = autoInjectResolvedEntities(args, state, toolName);
 
             // ═══════════════════════════════════════════════════════════════════════
+            // BROADEN FIX: Apply broadened parameters from REFLECT phase
+            // When REFLECT decides to BROADEN, it stores modified_params in state.broadenedParams
+            // These MUST be merged into args to actually change the query behavior
+            // ═══════════════════════════════════════════════════════════════════════
+            if (state.broadenedParams && Object.keys(state.broadenedParams).length > 0) {
+                log.debug('Applying broadened parameters from REFLECT', {
+                    tool: toolName,
+                    originalArgs: args,
+                    broadenedParams: state.broadenedParams
+                });
+                args = { ...args, ...state.broadenedParams };
+                // Clear after applying so we don't apply stale params to subsequent tools
+                state.broadenedParams = null;
+            }
+
+            // ═══════════════════════════════════════════════════════════════════════
             // TOOL RESULT CACHING: Check cache before executing
             // Entity resolution tools cached for 5 minutes, data queries for 30 seconds
             // ═══════════════════════════════════════════════════════════════════════
@@ -3165,6 +3181,36 @@ Response format (JSON only):
         // Build base response
         let responseText = state.analysis?.analysis || formatted.summary || 'Analysis complete';
         let richContent = formatted.blocks || [];
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // FIX: Merge progressive table blocks from ProgressStore into richContent
+        // Tables are added during INVOKE phase via addProgressiveTableBlocks()
+        // but were never being included in the final response
+        // ═══════════════════════════════════════════════════════════════════════
+        const progressState = ProgressStore.get(state.requestId);
+        if (progressState && progressState.blocks && progressState.blocks.length > 0) {
+            // Get table blocks from progressive rendering
+            const tableBlocks = progressState.blocks.filter(b => b.type === 'table');
+            if (tableBlocks.length > 0) {
+                // Insert tables after text blocks but before metrics/findings
+                // Find the position after text blocks
+                const textBlockIndex = richContent.findIndex(b => b.type === 'text');
+                const insertPosition = textBlockIndex >= 0 ? textBlockIndex + 1 : 0;
+
+                // Insert table blocks at the appropriate position
+                richContent = [
+                    ...richContent.slice(0, insertPosition),
+                    ...tableBlocks,
+                    ...richContent.slice(insertPosition)
+                ];
+
+                log.debug('Merged progressive table blocks into richContent', {
+                    requestId: state.requestId,
+                    tableCount: tableBlocks.length,
+                    totalBlocks: richContent.length
+                });
+            }
+        }
 
         // FIXED: Surface errors visibly in the response
         if (hasCompleteFailure) {
