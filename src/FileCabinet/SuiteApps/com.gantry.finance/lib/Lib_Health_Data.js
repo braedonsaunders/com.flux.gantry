@@ -2222,17 +2222,29 @@ define(["N/search", "N/query", "N/log", "./Lib_Core", "./Lib_Config"], function 
      */
     function getScoreOnly() {
         try {
-            // Get last 3 months of P&L data (minimal query)
             var today = new Date();
-            var endDate = new Date(today.getFullYear(), today.getMonth(), 0);
-            var startDate = new Date(endDate.getFullYear(), endDate.getMonth() - 2, 1);
+            var config = ConfigLib.getStoredConfiguration('health');
+            var fiscalCalendar = ConfigLib.getFiscalCalendar();
+            var fiscalYearStartMonth = fiscalCalendar.fiscalYearStartMonth;
+
+            // Use fiscal YTD dates to match getData() logic
+            var endDate = new Date(today.getFullYear(), today.getMonth(), 0); // Last day of last month
+            var fyYear = endDate.getMonth() < fiscalYearStartMonth ? endDate.getFullYear() - 1 : endDate.getFullYear();
+            var startDate = new Date(fyYear, fiscalYearStartMonth, 1); // Fiscal year start
+
             var start = Core.formatDateForQuery(startDate);
             var end = Core.formatDateForQuery(endDate);
-            var months = 3;
 
+            // Calculate months dynamically
+            var rawMonthsInRange = (endDate.getFullYear() - startDate.getFullYear()) * 12 + (endDate.getMonth() - startDate.getMonth()) + 1;
+            var months = Math.max(1, rawMonthsInRange);
+
+            // Fetch P&L data for range, previous month, and current month (for chooseTargetGMPct)
             var revenue = 0, cogs = 0, opex = 0;
+            var prevMonthGmPct = 0, currMonthGmPct = 0;
 
             try {
+                // Main range query
                 var sql = "SELECT " +
                     "SUM(CASE WHEN a.accttype IN ('Income', 'OthIncome') THEN -tl.amount ELSE 0 END) as revenue, " +
                     "SUM(CASE WHEN a.accttype = 'COGS' THEN tl.amount ELSE 0 END) as cogs, " +
@@ -2248,6 +2260,41 @@ define(["N/search", "N/query", "N/log", "./Lib_Core", "./Lib_Config"], function 
                     cogs = parseFloat(result[0].cogs) || 0;
                     opex = parseFloat(result[0].opex) || 0;
                 }
+
+                // Previous month GM% (for chooseTargetGMPct)
+                var prevMonthEnd = new Date(endDate.getFullYear(), endDate.getMonth(), 0);
+                var prevMonthStart = new Date(prevMonthEnd.getFullYear(), prevMonthEnd.getMonth(), 1);
+                var prevSql = "SELECT " +
+                    "SUM(CASE WHEN a.accttype IN ('Income', 'OthIncome') THEN -tl.amount ELSE 0 END) as revenue, " +
+                    "SUM(CASE WHEN a.accttype = 'COGS' THEN tl.amount ELSE 0 END) as cogs " +
+                    "FROM transactionline tl " +
+                    "JOIN transaction t ON t.id = tl.transaction " +
+                    "JOIN account a ON a.id = tl.account " +
+                    "WHERE t.trandate BETWEEN TO_DATE('" + Core.formatDateForQuery(prevMonthStart) + "', 'YYYY-MM-DD') AND TO_DATE('" + Core.formatDateForQuery(prevMonthEnd) + "', 'YYYY-MM-DD') " +
+                    "AND t.posting = 'T' AND tl.mainline = 'F'";
+                var prevResult = Core.runQuery(prevSql);
+                if (prevResult && prevResult.length > 0) {
+                    var prevRev = parseFloat(prevResult[0].revenue) || 0;
+                    var prevCogs = parseFloat(prevResult[0].cogs) || 0;
+                    prevMonthGmPct = prevRev > 0 ? (prevRev - prevCogs) / prevRev : 0;
+                }
+
+                // Current month GM% (endDate month, which is last complete month)
+                var currMonthStart = new Date(endDate.getFullYear(), endDate.getMonth(), 1);
+                var currSql = "SELECT " +
+                    "SUM(CASE WHEN a.accttype IN ('Income', 'OthIncome') THEN -tl.amount ELSE 0 END) as revenue, " +
+                    "SUM(CASE WHEN a.accttype = 'COGS' THEN tl.amount ELSE 0 END) as cogs " +
+                    "FROM transactionline tl " +
+                    "JOIN transaction t ON t.id = tl.transaction " +
+                    "JOIN account a ON a.id = tl.account " +
+                    "WHERE t.trandate BETWEEN TO_DATE('" + Core.formatDateForQuery(currMonthStart) + "', 'YYYY-MM-DD') AND TO_DATE('" + end + "', 'YYYY-MM-DD') " +
+                    "AND t.posting = 'T' AND tl.mainline = 'F'";
+                var currResult = Core.runQuery(currSql);
+                if (currResult && currResult.length > 0) {
+                    var currRev = parseFloat(currResult[0].revenue) || 0;
+                    var currCogs = parseFloat(currResult[0].cogs) || 0;
+                    currMonthGmPct = currRev > 0 ? (currRev - currCogs) / currRev : 0;
+                }
             } catch (e) {
                 log.debug('Health P&L Query Error', e.message);
             }
@@ -2257,13 +2304,8 @@ define(["N/search", "N/query", "N/log", "./Lib_Core", "./Lib_Config"], function 
             var avgMonthlyRevenue = revenue / months;
             var avgMonthlyOpex = opex / months;
 
-            var targetGM = 0.35;
-            try {
-                var config = ConfigLib.getStoredConfiguration('health');
-                if (config && config.targetGrossMargin) {
-                    targetGM = config.targetGrossMargin;
-                }
-            } catch (e) {}
+            // Use chooseTargetGMPct to match getData() logic
+            var targetGM = chooseTargetGMPct(prevMonthGmPct, currMonthGmPct, gmPct, config);
 
             var breakeven = targetGM > 0 ? avgMonthlyOpex / targetGM : 0;
             var score = computeHealthScore(avgMonthlyRevenue, breakeven, gmPct, targetGM);
