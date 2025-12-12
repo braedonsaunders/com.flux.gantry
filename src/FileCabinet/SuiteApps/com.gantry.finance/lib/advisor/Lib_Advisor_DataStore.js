@@ -236,6 +236,18 @@ define(['N/cache', 'N/log'], function(cache, log) {
             }
         };
 
+        // ═══════════════════════════════════════════════════════════════════════
+        // DASHBOARD INTELLIGENCE BRIDGE: Preserve dashboard-specific properties
+        // These enable the RESPOND phase to use rich text summaries instead of raw rows
+        // ═══════════════════════════════════════════════════════════════════════
+        if (result.isDashboard) {
+            dataPayload.isDashboard = true;
+            dataPayload.dashboardId = result.dashboardId;
+            dataPayload.dashboardName = result.dashboardName;
+            dataPayload.textSummary = result.textSummary;
+            dataPayload.intelligence = result.intelligence;
+        }
+
         // Check size
         const json = JSON.stringify(dataPayload);
         const sizeKB = Math.round(json.length / 1024);
@@ -322,12 +334,26 @@ define(['N/cache', 'N/log'], function(cache, log) {
 
         const rows = data.rows.slice(start, end + 1);
 
-        return {
+        const result = {
             refId: refId,
             rows: rows,
             columns: data.columns,
             range: { start, end, total: data.rows.length }
         };
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // DASHBOARD INTELLIGENCE BRIDGE: Include dashboard properties if present
+        // This allows RESPOND phase to detect and use rich text summaries
+        // ═══════════════════════════════════════════════════════════════════════
+        if (data.isDashboard) {
+            result.isDashboard = true;
+            result.dashboardId = data.dashboardId;
+            result.dashboardName = data.dashboardName;
+            result.textSummary = data.textSummary;
+            result.intelligence = data.intelligence;
+        }
+
+        return result;
     }
 
     /**
