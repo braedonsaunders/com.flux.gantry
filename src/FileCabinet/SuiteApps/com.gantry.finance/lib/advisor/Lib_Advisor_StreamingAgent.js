@@ -9,11 +9,12 @@
  * LLM as Data Analyst - Full data access with zero hallucination
  *
  * PHASES:
- * 1. INTENT    - Classify the question type (~200 tokens, <1s)
- * 2. SELECT    - Pick relevant tools by name only (~300 tokens, <1s)
- * 3. INVOKE    - Execute tools, store data in N/cache (~200 tokens + tool time)
- * 4. RESPOND   - Single merged phase: LLM sees ACTUAL DATA ROWS,
- *                outputs narrative with {{token}} references (~8-10s)
+ * 1. INTENT     - Classify the question type (~200 tokens, <1s)
+ * 2. SELECT     - Pick relevant tools by name only (~300 tokens, <1s)
+ * 3. INVOKE     - Execute tools, store data in N/cache (~200 tokens + tool time)
+ * 4. REFLECT    - ReAct pattern: evaluate results, decide next action
+ * 5. SYNTHESIZE - NEW: LLM writes custom SuiteQL when tools fail (self-correcting)
+ * 6. RESPOND    - LLM sees ACTUAL DATA ROWS, outputs narrative with {{token}} refs
  *
  * KEY INNOVATION: Token Reference System
  * - LLM outputs: "Your top customer is {{data.rows[0].customer_name}} with {{data.rows[0].total_revenue:currency}}"
@@ -39,7 +40,8 @@ define([
         INTENT: 'intent',
         SELECT: 'select',
         INVOKE: 'invoke',
-        REFLECT: 'reflect',   // NEW: ReAct pattern - evaluate results and decide next action
+        REFLECT: 'reflect',   // ReAct pattern - evaluate results and decide next action
+        SYNTHESIZE: 'synthesize', // NEW: LLM writes custom SQL when tools fail
         RESPOND: 'respond',   // Merged analyze+format with data access
         COMPLETE: 'complete',
         // Legacy phases kept for backward compatibility
@@ -55,6 +57,7 @@ define([
     const MAX_ANALYZE_ITERATIONS = 3;  // Prevent analyze loops
     const MAX_FORMAT_ITERATIONS = 2;   // Prevent format loops
     const MAX_REFLECT_ITERATIONS = 3;  // Prevent infinite reflection loops
+    const MAX_SYNTHESIZE_ITERATIONS = 3; // Max SQL generation/correction attempts
 
     // ═══════════════════════════════════════════════════════════════════════════
     // FAILURE MODE CLASSIFICATION
@@ -287,6 +290,142 @@ Response format (JSON only):
 }}`;
 
     // ═══════════════════════════════════════════════════════════════════════════
+    // SYNTHESIZE PROMPT - LLM Writes Custom SuiteQL
+    // World-class SQL generation when pre-built tools fail
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    const SYNTHESIZE_PROMPT = `You are an expert NetSuite SuiteQL developer. Write a custom query to answer the user's question.
+
+{history_context}
+CURRENT QUESTION: "{question}"
+
+═══════════════════════════════════════════════════════════════════════════════
+CONTEXT FROM PREVIOUS ATTEMPTS:
+{previous_context}
+
+═══════════════════════════════════════════════════════════════════════════════
+NETSUITE SUITEQL SCHEMA:
+
+**CORE TABLES:**
+
+transaction (Header-level transactions)
+  - id, tranid, trandate, type, entity, subsidiary, status
+  - foreigntotal (USE THIS for amounts - 'amount' is NOT exposed!)
+  - foreignamountunpaid, amountremaining, duedate
+  - posting ('T'/'F'), voided ('T'/'F'), memo
+  - ALWAYS filter: posting = 'T' AND voided = 'F'
+  - Types: CustInvc, CustPymt, VendBill, VendPymt, CashSale, Check, Journal, ExpRept
+
+transactionline (Line-level detail)
+  - id, transaction, linesequencenumber, item
+  - netamount (USE THIS - 'amount' is NOT exposed!)
+  - quantity, rate, department, class, location, memo
+  - mainline ('T' for header, 'F' for lines)
+  - Filter mainline = 'F' for line items
+
+transactionaccountingline (GL entries - USE FOR EXPENSE/INCOME ANALYSIS)
+  - id, transaction, account
+  - amount, debit, credit (THESE ARE exposed here!)
+  - department, class, location, posting
+
+account (Chart of accounts)
+  - id, acctnumber, accountsearchdisplayname, accttype
+  - balance, parent, subsidiary, isinactive
+  - Types: Bank, AcctRec, AcctPay, Income, COGS, Expense, OthIncome, OthExpense, Equity, FixedAsset
+
+customer
+  - id, entityid, companyname, email, phone, subsidiary
+  - balance (outstanding AR), overduebalance, creditlimit, isinactive
+
+vendor
+  - id, entityid, companyname, email, phone, subsidiary
+  - balance (outstanding AP), isinactive
+
+employee
+  - id, entityid, firstname, lastname, email, department, subsidiary, isinactive
+
+accountingperiod
+  - id, periodname, startdate, enddate, isyear ('T'/'F'), isquarter ('T'/'F')
+
+**SUITEQL SYNTAX RULES (CRITICAL!):**
+
+1. ROW LIMITS: Use "FETCH FIRST N ROWS ONLY" (NOT "LIMIT N"!)
+   ✓ SELECT * FROM customer FETCH FIRST 100 ROWS ONLY
+   ✗ SELECT * FROM customer LIMIT 100
+
+2. DISPLAY NAMES: Use BUILTIN.DF() for foreign key display values
+   ✓ BUILTIN.DF(transaction.entity) AS entity_name
+   ✓ BUILTIN.DF(tal.account) AS account_name
+
+3. DATE FUNCTIONS:
+   - CURRENT_DATE (today)
+   - TO_DATE('2024-01-01', 'YYYY-MM-DD')
+   - ADD_MONTHS(CURRENT_DATE, -12)
+   - TRUNC(date, 'MM') for month start, 'Q' for quarter, 'IW' for week
+
+4. BOOLEANS: Use 'T' for true, 'F' for false
+   ✓ WHERE posting = 'T' AND voided = 'F'
+
+5. STRING COMPARISON: Use single quotes
+   ✓ WHERE type = 'VendBill'
+
+6. CASE STATEMENTS for conditional aggregation:
+   SUM(CASE WHEN condition THEN value ELSE 0 END)
+
+**COMMON PATTERNS:**
+
+YoY Comparison (using CTEs):
+WITH current_year AS (
+  SELECT account, SUM(amount) as amount
+  FROM transactionaccountingline tal
+  JOIN transaction t ON tal.transaction = t.id
+  WHERE t.trandate >= TO_DATE('2025-01-01', 'YYYY-MM-DD')
+    AND t.posting = 'T' AND t.voided = 'F'
+  GROUP BY account
+),
+prior_year AS (
+  SELECT account, SUM(amount) as amount
+  FROM transactionaccountingline tal
+  JOIN transaction t ON tal.transaction = t.id
+  WHERE t.trandate >= TO_DATE('2024-01-01', 'YYYY-MM-DD')
+    AND t.trandate < TO_DATE('2025-01-01', 'YYYY-MM-DD')
+    AND t.posting = 'T' AND t.voided = 'F'
+  GROUP BY account
+)
+SELECT c.*, p.amount as prior,
+  CASE WHEN p.amount > 0 THEN (c.amount - p.amount) / p.amount * 100 END as yoy_pct
+FROM current_year c LEFT JOIN prior_year p ON c.account = p.account
+
+Expense by Category:
+SELECT a.acctnumber, a.accountsearchdisplayname,
+  SUM(COALESCE(tal.debit,0) - COALESCE(tal.credit,0)) as amount
+FROM transactionaccountingline tal
+JOIN transaction t ON tal.transaction = t.id
+JOIN account a ON tal.account = a.id
+WHERE a.accttype = 'Expense' AND t.posting = 'T' AND t.voided = 'F'
+GROUP BY a.acctnumber, a.accountsearchdisplayname
+ORDER BY amount DESC
+
+═══════════════════════════════════════════════════════════════════════════════
+{error_context}
+═══════════════════════════════════════════════════════════════════════════════
+
+Write a SuiteQL query to answer the user's question. Think step by step:
+1. What data do I need?
+2. Which tables have that data?
+3. What joins are required?
+4. What filters apply?
+5. How should I aggregate/sort?
+
+Response format (JSON only):
+{{
+  "reasoning": "Step-by-step explanation of query design",
+  "query": "The complete SuiteQL query",
+  "purpose": "Brief description of what this query returns",
+  "expected_columns": ["col1", "col2", "..."]
+}}`;
+
+    // ═══════════════════════════════════════════════════════════════════════════
     // WORLD-CLASS RESPOND PROMPT - LLM as Data Analyst
     // ═══════════════════════════════════════════════════════════════════════════
 
@@ -507,7 +646,8 @@ Response format (JSON only):
             stepIds: {
                 intent: null,
                 select: null,
-                reflect: null,       // NEW: REFLECT phase step tracking
+                reflect: null,
+                synthesize: null,    // SYNTHESIZE phase step tracking
                 analyze: null,
                 format: null
             },
@@ -527,6 +667,16 @@ Response format (JSON only):
                 clarificationNeeded: false,    // Whether we need user input
                 gaveUp: false,                 // Whether we exhausted options
                 journey: []                    // Track what we tried for transparency
+            },
+
+            // ═══════════════════════════════════════════════════════════════════════
+            // SYNTHESIZE State - LLM SQL Generation
+            // ═══════════════════════════════════════════════════════════════════════
+            synthesize: {
+                iterations: 0,                 // Number of SQL generation attempts
+                queries: [],                   // History of queries tried [{sql, error, success}]
+                lastError: null,               // Last SQL error for correction
+                enabled: true                  // Whether to attempt synthesis before giving up
             },
 
             // Follow-up context - preserve data from previous exchanges
@@ -1583,7 +1733,27 @@ Response format (JSON only):
                 return PHASES.RESPOND;
 
             case 'GIVE_UP':
-                // We've exhausted options - proceed with explanation
+                // ═══════════════════════════════════════════════════════════════════════
+                // SYNTHESIZE FALLBACK: Before giving up, try LLM SQL generation
+                // This is the world-class innovation - let LLM write custom queries
+                // ═══════════════════════════════════════════════════════════════════════
+                if (state.synthesize.enabled && state.synthesize.iterations < MAX_SYNTHESIZE_ITERATIONS) {
+                    log.debug('SCA REFLECT - GIVE_UP redirected to SYNTHESIZE', {
+                        synthesizeIterations: state.synthesize.iterations,
+                        reason: details.explanation
+                    });
+
+                    state.reflection.journey.push({
+                        action: 'try_synthesize',
+                        reason: 'Pre-built tools insufficient, attempting custom SQL',
+                        previousExplanation: details.explanation
+                    });
+
+                    state.phase = PHASES.SYNTHESIZE;
+                    return PHASES.SYNTHESIZE;
+                }
+
+                // Synthesize exhausted or disabled - actually give up
                 state.reflection.gaveUp = true;
                 state.reflection.giveUpExplanation = details.explanation;
                 state.phase = PHASES.RESPOND;
@@ -1595,6 +1765,293 @@ Response format (JSON only):
                 state.phase = PHASES.RESPOND;
                 return PHASES.RESPOND;
         }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // SYNTHESIZE PHASE - LLM Writes Custom SQL
+    // World-class innovation: When pre-built tools fail, let LLM write raw SQL
+    // Self-correcting: If SQL errors, shows error to LLM and iterates
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Execute SYNTHESIZE phase - LLM generates custom SuiteQL
+     * Self-correcting loop: generates SQL, executes, if error shows error and retries
+     */
+    function executeSynthesizePhase(state) {
+        const phaseStart = Date.now();
+        state.synthesize.iterations++;
+
+        log.debug('SCA SYNTHESIZE phase starting', {
+            requestId: state.requestId,
+            iteration: state.synthesize.iterations,
+            hasLastError: !!state.synthesize.lastError
+        });
+
+        // Check iteration limit
+        if (state.synthesize.iterations > MAX_SYNTHESIZE_ITERATIONS) {
+            log.audit('SCA SYNTHESIZE - max iterations reached', {
+                iterations: state.synthesize.iterations
+            });
+            state.synthesize.enabled = false;
+            state.reflection.gaveUp = true;
+            state.reflection.giveUpExplanation = 'Unable to generate a working query after multiple attempts.';
+            state.phase = PHASES.RESPOND;
+            return { success: true, nextPhase: PHASES.RESPOND };
+        }
+
+        // Build context from previous tool attempts
+        const previousContext = buildSynthesizeContext(state);
+
+        // Build error context if this is a retry
+        const errorContext = state.synthesize.lastError ?
+            `PREVIOUS QUERY FAILED:\n\`\`\`sql\n${state.synthesize.queries[state.synthesize.queries.length - 1]?.sql || 'N/A'}\n\`\`\`\n\nERROR: ${state.synthesize.lastError}\n\nFix the error and try again. Common fixes:\n- Use FETCH FIRST N ROWS ONLY instead of LIMIT\n- Check column names against the schema\n- Use BUILTIN.DF() for display names\n- Verify table joins are correct` :
+            '';
+
+        const prompt = SYNTHESIZE_PROMPT
+            .replace('{history_context}', buildHistoryContext(state))
+            .replace('{question}', state.message)
+            .replace('{previous_context}', previousContext)
+            .replace('{error_context}', errorContext);
+
+        // Add thinking step
+        upsertThinkingStep(state, 'synthesize', {
+            title: state.synthesize.iterations === 1 ? 'Writing custom query' : 'Fixing query',
+            phase: 'synthesize',
+            status: 'active',
+            context: {
+                iteration: state.synthesize.iterations,
+                isRetry: state.synthesize.iterations > 1,
+                lastError: state.synthesize.lastError?.substring(0, 100)
+            }
+        });
+
+        try {
+            // Call LLM to generate SQL
+            const response = AIProviders.callAI(prompt, {
+                tier: FAST_TIER,
+                temperature: 0.2,
+                maxTokens: 1500,
+                jsonMode: true,
+                purpose: 'SCA:synthesize'
+            });
+
+            const parsed = parseJsonResponse(response?.text);
+
+            if (!parsed || !parsed.query) {
+                throw new Error('Invalid synthesize response - missing query');
+            }
+
+            const generatedSql = parsed.query;
+            const purpose = parsed.purpose || 'Custom query';
+
+            log.debug('SCA SYNTHESIZE - generated SQL', {
+                sqlPreview: generatedSql.substring(0, 300),
+                purpose: purpose,
+                reasoning: parsed.reasoning?.substring(0, 200)
+            });
+
+            // Record the query attempt
+            state.synthesize.queries.push({
+                sql: generatedSql,
+                purpose: purpose,
+                reasoning: parsed.reasoning,
+                timestamp: Date.now()
+            });
+
+            // Add tool call step for the custom query
+            addToolCallStep(state, {
+                title: `Running: ${purpose}`,
+                tool: 'synthesized_query',
+                status: 'active'
+            });
+
+            // Execute the SQL using QueryExecutor (imported via Tools)
+            const queryResult = Tools.executeTool('run_custom_query', {
+                sql: generatedSql,
+                purpose: purpose
+            });
+
+            const queryDuration = Date.now() - phaseStart;
+
+            if (!queryResult.success) {
+                // SQL execution failed - store error and retry
+                const errorMsg = queryResult.error || 'Query execution failed';
+                state.synthesize.lastError = errorMsg;
+                state.synthesize.queries[state.synthesize.queries.length - 1].error = errorMsg;
+
+                log.debug('SCA SYNTHESIZE - query failed, will retry', {
+                    error: errorMsg,
+                    iteration: state.synthesize.iterations
+                });
+
+                // Update tool call step with error
+                addToolCallStep(state, {
+                    title: `Query failed: ${purpose}`,
+                    tool: 'synthesized_query',
+                    status: 'complete',
+                    update: true,
+                    success: false,
+                    error: errorMsg,
+                    duration: queryDuration
+                });
+
+                // Loop back to synthesize (self-correction)
+                state.phase = PHASES.SYNTHESIZE;
+                return { success: true, nextPhase: PHASES.SYNTHESIZE };
+            }
+
+            // Success! Store the data
+            state.synthesize.lastError = null;
+            state.synthesize.queries[state.synthesize.queries.length - 1].success = true;
+            state.synthesize.queries[state.synthesize.queries.length - 1].rowCount = queryResult.rowCount;
+
+            // Store data reference if we got rows
+            if (queryResult.rows && queryResult.rows.length > 0) {
+                const dataRef = DataStore.storeData(state.requestId, 'synthesized_query', queryResult);
+                state.dataReferences.push(dataRef);
+                state.reflection.dataFound = true;
+
+                state.reflection.journey.push({
+                    action: 'synthesize_success',
+                    purpose: purpose,
+                    rowCount: queryResult.rowCount,
+                    iterations: state.synthesize.iterations
+                });
+            }
+
+            // Update tool call step with success
+            addToolCallStep(state, {
+                title: purpose,
+                tool: 'synthesized_query',
+                status: 'complete',
+                update: true,
+                success: true,
+                rowCount: queryResult.rowCount,
+                columns: queryResult.columns?.slice(0, 8),
+                duration: queryDuration,
+                summary: `Found ${queryResult.rowCount} results`
+            });
+
+            // Update thinking step
+            upsertThinkingStep(state, 'synthesize', {
+                title: 'Custom query succeeded',
+                phase: 'synthesize',
+                status: 'complete',
+                duration: queryDuration,
+                context: {
+                    iteration: state.synthesize.iterations,
+                    rowCount: queryResult.rowCount,
+                    purpose: purpose
+                },
+                debug: {
+                    sqlPreview: generatedSql.substring(0, 500),
+                    reasoning: parsed.reasoning,
+                    columns: queryResult.columns
+                }
+            });
+
+            log.debug('SCA SYNTHESIZE - success', {
+                rowCount: queryResult.rowCount,
+                iterations: state.synthesize.iterations,
+                duration: queryDuration
+            });
+
+            // Add progressive table block for immediate rendering
+            if (queryResult.rows && queryResult.rows.length > 0) {
+                addProgressiveTableBlocks(state);
+            }
+
+            // Proceed to RESPOND with the data
+            state.phase = PHASES.RESPOND;
+            return { success: true, nextPhase: PHASES.RESPOND };
+
+        } catch (e) {
+            const duration = Date.now() - phaseStart;
+            log.error('SCA SYNTHESIZE phase error', { error: e.message, duration: duration });
+            state.errors.push({ phase: 'synthesize', error: e.message, timestamp: Date.now() });
+
+            // If we haven't exhausted iterations, try again
+            if (state.synthesize.iterations < MAX_SYNTHESIZE_ITERATIONS) {
+                state.synthesize.lastError = e.message;
+                state.phase = PHASES.SYNTHESIZE;
+                return { success: true, nextPhase: PHASES.SYNTHESIZE };
+            }
+
+            // Exhausted - give up
+            state.synthesize.enabled = false;
+            state.reflection.gaveUp = true;
+            state.reflection.giveUpExplanation = `Unable to generate a working query: ${e.message}`;
+            state.phase = PHASES.RESPOND;
+
+            upsertThinkingStep(state, 'synthesize', {
+                title: 'Query generation failed',
+                phase: 'synthesize',
+                status: 'complete',
+                duration: duration,
+                context: {
+                    error: e.message.substring(0, 100),
+                    iterations: state.synthesize.iterations
+                }
+            });
+
+            return { success: true, nextPhase: PHASES.RESPOND };
+        }
+    }
+
+    /**
+     * Build context for SYNTHESIZE prompt from previous tool attempts
+     * Shows the LLM what SQL was tried (so it can build on it)
+     */
+    function buildSynthesizeContext(state) {
+        const lines = [];
+
+        // Show what tools were tried and their results
+        if (state.toolInvocations.length > 0) {
+            lines.push('TOOLS THAT WERE TRIED:');
+            state.toolInvocations.forEach((inv, idx) => {
+                const status = inv.success ? (inv.rowCount > 0 ? 'SUCCESS' : 'NO DATA') : 'FAILED';
+                lines.push(`${idx + 1}. ${inv.tool}: ${status} (${inv.rowCount || 0} rows)`);
+                if (inv.args) {
+                    lines.push(`   Args: ${JSON.stringify(inv.args)}`);
+                }
+            });
+            lines.push('');
+        }
+
+        // Show resolved entities
+        if (Object.keys(state.resolvedEntities).length > 0) {
+            lines.push('RESOLVED ENTITIES:');
+            Object.entries(state.resolvedEntities).forEach(([term, entity]) => {
+                lines.push(`- "${term}" = ${entity.name} (${entity.type}, ID: ${entity.id})`);
+            });
+            lines.push('');
+        }
+
+        // Show existing data summaries if any
+        if (state.dataReferences.length > 0) {
+            lines.push('DATA ALREADY COLLECTED:');
+            state.dataReferences.forEach(ref => {
+                const summary = ref.summary || {};
+                lines.push(`- ${summary.tool || 'Query'}: ${summary.rowCount || 0} rows`);
+                if (summary.columns) {
+                    lines.push(`  Columns: ${summary.columns.join(', ')}`);
+                }
+            });
+            lines.push('');
+        }
+
+        // Show previous synthesize attempts
+        if (state.synthesize.queries.length > 0) {
+            lines.push('PREVIOUS CUSTOM QUERY ATTEMPTS:');
+            state.synthesize.queries.forEach((q, idx) => {
+                const status = q.success ? `SUCCESS (${q.rowCount} rows)` : `FAILED: ${q.error}`;
+                lines.push(`Attempt ${idx + 1}: ${status}`);
+                lines.push(`SQL: ${q.sql.substring(0, 200)}...`);
+            });
+            lines.push('');
+        }
+
+        return lines.join('\n') || 'No previous attempts.';
     }
 
     /**
@@ -3139,9 +3596,27 @@ Response format (JSON only):
             // ═══════════════════════════════════════════════════════════════════════
             case PHASES.REFLECT:
                 result = executeReflectPhase(state);
-                // REFLECT can loop back to INVOKE for retry, or proceed to RESPOND
+                // REFLECT can loop back to INVOKE for retry, proceed to SYNTHESIZE, or RESPOND
                 if (result.nextPhase === PHASES.INVOKE) {
                     return { hasMore: true, phase: PHASES.INVOKE };
+                }
+                if (result.nextPhase === PHASES.SYNTHESIZE) {
+                    return { hasMore: true, phase: PHASES.SYNTHESIZE };
+                }
+                if (result.nextPhase === PHASES.RESPOND) {
+                    return { hasMore: true, phase: PHASES.RESPOND };
+                }
+                return { hasMore: true, phase: result.nextPhase };
+
+            // ═══════════════════════════════════════════════════════════════════════
+            // SYNTHESIZE: LLM writes custom SQL when pre-built tools fail
+            // Self-correcting loop that retries on SQL errors
+            // ═══════════════════════════════════════════════════════════════════════
+            case PHASES.SYNTHESIZE:
+                result = executeSynthesizePhase(state);
+                // SYNTHESIZE can loop back to itself (self-correction) or proceed to RESPOND
+                if (result.nextPhase === PHASES.SYNTHESIZE) {
+                    return { hasMore: true, phase: PHASES.SYNTHESIZE };
                 }
                 if (result.nextPhase === PHASES.RESPOND) {
                     return { hasMore: true, phase: PHASES.RESPOND };
