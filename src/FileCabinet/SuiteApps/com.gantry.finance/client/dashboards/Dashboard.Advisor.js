@@ -30,6 +30,336 @@
     let currentPollingId = null;  // Unique ID for current polling loop to detect stale loops
 
     /**
+     * Geometric Animation Controller
+     * Creates stunning particle animation with lifecycle phases
+     */
+    const GeometricAnimation = {
+        canvas: null,
+        ctx: null,
+        particles: [],
+        connections: [],
+        animationId: null,
+        phase: 'idle', // idle, birth, converge, ambient, departure
+        isActive: false,
+
+        // Configuration
+        config: {
+            particleCount: 60,
+            connectionDistance: 120,
+            particleSize: { min: 1, max: 3 },
+            baseSpeed: 0.3,
+            birthDuration: 1500,
+            convergeDuration: 1200,
+            departureOpacity: 0
+        },
+
+        /**
+         * Initialize the canvas and particles
+         */
+        init: function() {
+            this.canvas = document.getElementById('geometric-canvas');
+            if (!this.canvas) return;
+
+            this.ctx = this.canvas.getContext('2d');
+            this.resize();
+            window.addEventListener('resize', this.resize.bind(this));
+
+            this.isActive = true;
+            this.createParticles();
+            this.startBirth();
+        },
+
+        /**
+         * Resize canvas to match window
+         */
+        resize: function() {
+            if (!this.canvas) return;
+            this.canvas.width = window.innerWidth;
+            this.canvas.height = window.innerHeight;
+        },
+
+        /**
+         * Create initial particles at center
+         */
+        createParticles: function() {
+            this.particles = [];
+            const centerX = this.canvas.width / 2;
+            const centerY = this.canvas.height / 2;
+
+            for (let i = 0; i < this.config.particleCount; i++) {
+                // All particles start at center
+                const angle = Math.random() * Math.PI * 2;
+                const speed = this.config.baseSpeed * (0.5 + Math.random());
+
+                this.particles.push({
+                    x: centerX,
+                    y: centerY,
+                    targetX: Math.random() * this.canvas.width,
+                    targetY: Math.random() * this.canvas.height,
+                    vx: Math.cos(angle) * speed * 3, // Initial burst velocity
+                    vy: Math.sin(angle) * speed * 3,
+                    size: this.config.particleSize.min + Math.random() * (this.config.particleSize.max - this.config.particleSize.min),
+                    opacity: 0,
+                    targetOpacity: 0.4 + Math.random() * 0.3
+                });
+            }
+        },
+
+        /**
+         * Birth phase - particles explode from center
+         */
+        startBirth: function() {
+            this.phase = 'birth';
+            const startTime = Date.now();
+
+            const animateBirth = () => {
+                if (!this.isActive || this.phase !== 'birth') return;
+
+                const elapsed = Date.now() - startTime;
+                const progress = Math.min(elapsed / this.config.birthDuration, 1);
+                const eased = this.easeOutExpo(progress);
+
+                // Fade in particles and spread them out
+                this.particles.forEach(p => {
+                    p.opacity = p.targetOpacity * eased;
+                    // Move toward spread positions
+                    p.x += p.vx * (1 - progress * 0.7);
+                    p.y += p.vy * (1 - progress * 0.7);
+
+                    // Slow down velocities
+                    p.vx *= 0.98;
+                    p.vy *= 0.98;
+                });
+
+                this.draw();
+
+                if (progress < 1) {
+                    this.animationId = requestAnimationFrame(animateBirth);
+                } else {
+                    // Transition to converge phase
+                    this.startConverge();
+                }
+            };
+
+            this.animationId = requestAnimationFrame(animateBirth);
+        },
+
+        /**
+         * Converge phase - particles flow toward chat input
+         */
+        startConverge: function() {
+            this.phase = 'converge';
+            const startTime = Date.now();
+
+            // Get chat input position
+            const chatInput = document.getElementById('advisor-input-full');
+            const chatRect = chatInput ? chatInput.getBoundingClientRect() : null;
+            const targetX = chatRect ? chatRect.left + chatRect.width / 2 : this.canvas.width / 2;
+            const targetY = chatRect ? chatRect.top + chatRect.height / 2 : this.canvas.height * 0.9;
+
+            const animateConverge = () => {
+                if (!this.isActive || this.phase !== 'converge') return;
+
+                const elapsed = Date.now() - startTime;
+                const progress = Math.min(elapsed / this.config.convergeDuration, 1);
+                const eased = this.easeInOutQuad(progress);
+
+                // Move particles toward chat input
+                this.particles.forEach((p, i) => {
+                    // Staggered convergence
+                    const stagger = (i / this.particles.length) * 0.3;
+                    const particleProgress = Math.max(0, Math.min(1, (progress - stagger) / (1 - stagger)));
+
+                    if (particleProgress > 0) {
+                        const startX = p.x;
+                        const startY = p.y;
+
+                        // Bezier-like curve toward target
+                        const controlX = startX + (targetX - startX) * 0.5 + (Math.random() - 0.5) * 50;
+                        const controlY = startY - 100;
+
+                        const t = this.easeInQuad(particleProgress);
+                        p.x = startX + (targetX - startX) * t * 0.3;
+                        p.y = startY + (targetY - startY) * t * 0.3;
+                    }
+                });
+
+                this.draw();
+
+                // Add glow effect to chat input during convergence
+                if (chatInput && progress > 0.5) {
+                    const glowIntensity = (progress - 0.5) * 2;
+                    chatInput.style.boxShadow = `0 0 ${20 * glowIntensity}px rgba(79, 70, 229, ${0.3 * glowIntensity})`;
+                }
+
+                if (progress < 1) {
+                    this.animationId = requestAnimationFrame(animateConverge);
+                } else {
+                    // Reset chat input glow
+                    if (chatInput) {
+                        chatInput.style.boxShadow = '';
+                    }
+                    // Transition to ambient phase
+                    this.startAmbient();
+                }
+            };
+
+            this.animationId = requestAnimationFrame(animateConverge);
+        },
+
+        /**
+         * Ambient phase - slow subtle movement
+         */
+        startAmbient: function() {
+            this.phase = 'ambient';
+
+            // Spread particles back out for ambient movement
+            this.particles.forEach(p => {
+                p.targetX = Math.random() * this.canvas.width;
+                p.targetY = Math.random() * this.canvas.height;
+                const angle = Math.random() * Math.PI * 2;
+                p.vx = Math.cos(angle) * this.config.baseSpeed * 0.3;
+                p.vy = Math.sin(angle) * this.config.baseSpeed * 0.3;
+                p.targetOpacity = 0.15 + Math.random() * 0.1; // Very subtle
+            });
+
+            const animateAmbient = () => {
+                if (!this.isActive || this.phase !== 'ambient') return;
+
+                this.particles.forEach(p => {
+                    // Gentle floating movement
+                    p.x += p.vx;
+                    p.y += p.vy;
+
+                    // Fade to ambient opacity
+                    p.opacity += (p.targetOpacity - p.opacity) * 0.02;
+
+                    // Bounce off edges gently
+                    if (p.x < 0 || p.x > this.canvas.width) p.vx *= -1;
+                    if (p.y < 0 || p.y > this.canvas.height) p.vy *= -1;
+
+                    // Slight random drift
+                    p.vx += (Math.random() - 0.5) * 0.01;
+                    p.vy += (Math.random() - 0.5) * 0.01;
+
+                    // Clamp velocity
+                    const maxV = this.config.baseSpeed * 0.5;
+                    p.vx = Math.max(-maxV, Math.min(maxV, p.vx));
+                    p.vy = Math.max(-maxV, Math.min(maxV, p.vy));
+                });
+
+                this.draw();
+                this.animationId = requestAnimationFrame(animateAmbient);
+            };
+
+            this.animationId = requestAnimationFrame(animateAmbient);
+        },
+
+        /**
+         * Departure phase - fade out and cleanup
+         */
+        startDeparture: function() {
+            if (this.phase === 'departure' || this.phase === 'idle') return;
+
+            this.phase = 'departure';
+            const startTime = Date.now();
+            const duration = 800;
+
+            const animateDeparture = () => {
+                if (!this.isActive) return;
+
+                const elapsed = Date.now() - startTime;
+                const progress = Math.min(elapsed / duration, 1);
+
+                // Fade out all particles
+                this.particles.forEach(p => {
+                    p.opacity = p.targetOpacity * (1 - progress);
+                });
+
+                this.draw();
+
+                if (progress < 1) {
+                    this.animationId = requestAnimationFrame(animateDeparture);
+                } else {
+                    this.cleanup();
+                }
+            };
+
+            this.animationId = requestAnimationFrame(animateDeparture);
+        },
+
+        /**
+         * Draw particles and connections
+         */
+        draw: function() {
+            if (!this.ctx) return;
+
+            // Clear canvas
+            this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+
+            // Draw connections
+            this.ctx.strokeStyle = 'rgba(79, 70, 229, 0.1)';
+            this.ctx.lineWidth = 0.5;
+
+            for (let i = 0; i < this.particles.length; i++) {
+                for (let j = i + 1; j < this.particles.length; j++) {
+                    const dx = this.particles[i].x - this.particles[j].x;
+                    const dy = this.particles[i].y - this.particles[j].y;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+
+                    if (dist < this.config.connectionDistance) {
+                        const opacity = (1 - dist / this.config.connectionDistance) *
+                            Math.min(this.particles[i].opacity, this.particles[j].opacity);
+                        this.ctx.strokeStyle = `rgba(79, 70, 229, ${opacity * 0.3})`;
+                        this.ctx.beginPath();
+                        this.ctx.moveTo(this.particles[i].x, this.particles[i].y);
+                        this.ctx.lineTo(this.particles[j].x, this.particles[j].y);
+                        this.ctx.stroke();
+                    }
+                }
+            }
+
+            // Draw particles
+            this.particles.forEach(p => {
+                this.ctx.beginPath();
+                this.ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+                this.ctx.fillStyle = `rgba(79, 70, 229, ${p.opacity})`;
+                this.ctx.fill();
+            });
+        },
+
+        /**
+         * Cleanup animation
+         */
+        cleanup: function() {
+            this.isActive = false;
+            this.phase = 'idle';
+            if (this.animationId) {
+                cancelAnimationFrame(this.animationId);
+                this.animationId = null;
+            }
+            if (this.ctx) {
+                this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+            }
+            // Hide canvas
+            if (this.canvas) {
+                this.canvas.style.opacity = '0';
+            }
+        },
+
+        // Easing functions
+        easeOutExpo: function(t) {
+            return t === 1 ? 1 : 1 - Math.pow(2, -10 * t);
+        },
+        easeInOutQuad: function(t) {
+            return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+        },
+        easeInQuad: function(t) {
+            return t * t;
+        }
+    };
+
+    /**
      * Advisor Controller
      */
     const AdvisorController = {
@@ -64,6 +394,11 @@
             this.fetchDashboardScores(); // Fetch and render health scores
             this.bindEvents();
             this.renderAllMessages();
+
+            // Initialize geometric animation only if no messages (new session)
+            if (messages.length === 0) {
+                GeometricAnimation.init();
+            }
 
             // Check for and resume any active request from before navigation
             if (activeRequest && activeRequest.requestId) {
@@ -870,65 +1205,78 @@
         },
 
         /**
-         * Render dashboard health score cards - compact horizontal layout
+         * Render unified score-category cards
          */
         renderDashboardScores: function(scores) {
-            const grid = document.getElementById('scores-grid');
-            if (!grid) return;
+            const container = document.getElementById('score-categories');
+            if (!container) return;
+
+            const self = this;
 
             // Get settings data
             const settings = (window.SettingsController && SettingsController.data) ? SettingsController.data : {};
 
-            // Use configured order if available, otherwise default
-            const defaultOrder = ['health', 'time', 'integrity', 'customervalue', 'vendorperformance', 'spendvelocity', 'cashflow', 'burden'];
-            const displayOrder = settings.dashboardOrder || defaultOrder;
+            // Score-to-category mapping with display order
+            const scoreCategories = [
+                { dashboard: 'cashflow', category: 'cash', label: 'Cash Flow', icon: 'fa-money-bill-wave' },
+                { dashboard: 'health', category: 'revenue', label: 'Revenue', icon: 'fa-chart-line' },
+                { dashboard: 'spendvelocity', category: 'expenses', label: 'Expenses', icon: 'fa-receipt' },
+                { dashboard: 'burden', category: 'profitability', label: 'Margins', icon: 'fa-balance-scale' },
+                { dashboard: 'time', category: 'labor', label: 'Labor', icon: 'fa-user-clock' },
+                { dashboard: 'customervalue', category: 'customers', label: 'Customers', icon: 'fa-users' },
+                { dashboard: 'vendorperformance', category: null, label: 'Vendors', icon: 'fa-handshake' },
+                { dashboard: 'integrity', category: null, label: 'Data Quality', icon: 'fa-shield-alt' }
+            ];
 
             // Get configured names and visibility
             const configuredNames = settings.dashboardNames || {};
             const visibility = settings.dashboardVisibility || {};
 
-            // Icon mapping - must match sidebar icons exactly
-            const iconMap = {
-                health: 'fa-heartbeat',
-                time: 'fa-clock',
-                integrity: 'fa-shield-alt',
-                customervalue: 'fa-users',
-                vendorperformance: 'fa-handshake',
-                spendvelocity: 'fa-tachometer-alt',
-                cashflow: 'fa-money-bill-wave',
-                burden: 'fa-weight-hanging'
-            };
-
             let html = '';
 
-            displayOrder.forEach(function(dashboardId) {
+            scoreCategories.forEach(function(item) {
                 // Skip if not visible in settings
-                if (visibility[dashboardId] === false) return;
+                if (visibility[item.dashboard] === false) return;
 
-                const scoreData = scores[dashboardId];
-                if (!scoreData) return;
-
-                const icon = iconMap[dashboardId] || 'fa-chart-bar';
-                // Use configured name first, then API name, then default
-                const displayName = configuredNames[dashboardId] || scoreData.name || dashboardId;
+                const scoreData = scores[item.dashboard];
+                const score = scoreData ? scoreData.score : '--';
+                const grade = scoreData ? scoreData.grade : '';
+                const displayName = configuredNames[item.dashboard] || item.label;
 
                 html += `
-                    <div class="score-card" data-dashboard="${dashboardId}" data-grade="${scoreData.grade}" onclick="GantryApp.navigate('${dashboardId}')">
-                        <div class="score-card-inner">
-                            <div class="score-icon">
-                                <i class="fas ${icon}"></i>
-                            </div>
-                            <div class="score-name">${displayName}</div>
-                            <div class="score-value-container">
-                                <span class="score-number">${scoreData.score}</span>
-                                <span class="score-grade">${scoreData.grade}</span>
-                            </div>
+                    <div class="score-category-card"
+                         data-dashboard="${item.dashboard}"
+                         data-category="${item.category || ''}"
+                         data-grade="${grade}">
+                        <div class="card-icon">
+                            <i class="fas ${item.icon}"></i>
                         </div>
+                        <div class="card-content">
+                            <span class="card-score">${score}</span>
+                            <span class="card-label">${displayName}</span>
+                        </div>
+                        ${grade ? `<span class="card-grade">${grade}</span>` : ''}
                     </div>
                 `;
             });
 
-            grid.innerHTML = html;
+            container.innerHTML = html;
+
+            // Bind click events for score-category cards
+            container.querySelectorAll('.score-category-card').forEach(function(card) {
+                card.addEventListener('click', function() {
+                    const category = card.getAttribute('data-category');
+                    const dashboard = card.getAttribute('data-dashboard');
+
+                    if (category) {
+                        // Show category queries
+                        self.showCategoryQueries(category);
+                    } else {
+                        // Navigate to dashboard
+                        GantryApp.navigate(dashboard);
+                    }
+                });
+            });
 
             // Also update sidebar scores if available
             this.updateSidebarScores(scores);
@@ -996,6 +1344,9 @@
         cleanup: function() {
             // Save current state including any active request
             this.saveSession();
+
+            // Cleanup geometric animation
+            GeometricAnimation.cleanup();
 
             // Show floating panel if it exists
             const fab = document.getElementById('advisor-fab');
@@ -1357,6 +1708,9 @@
             // Hide health scores with animation
             const healthScores = document.getElementById('health-scores-overview');
             if (healthScores) healthScores.classList.add('hidden');
+
+            // Trigger geometric animation departure (fade out)
+            GeometricAnimation.startDeparture();
 
             // Hide welcome
             const welcome = document.getElementById('advisor-welcome-full');
