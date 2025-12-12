@@ -758,6 +758,7 @@
     padding: 16px 24px;
     border-bottom: 1px solid #e5e7eb;
     background: linear-gradient(to bottom, #f8fafc, #fff);
+    flex-shrink: 0;
 }
 
 /* Rest of content sections restore proper spacing */
@@ -774,6 +775,7 @@
 .cf-sparkline-section {
     padding: 12px 0;
     border-bottom: 1px solid #f3f4f6;
+    flex-shrink: 0;
 }
 
 .cf-sparkline-wrap {
@@ -794,6 +796,7 @@
 .cf-comparison {
     padding: 16px;
     border-bottom: 1px solid #f3f4f6;
+    flex-shrink: 0;
 }
 
 .cf-comp-header {
@@ -860,6 +863,10 @@
 
 .cf-accounts {
     padding: 16px;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
 }
 
 .cf-section-header {
@@ -868,6 +875,7 @@
     align-items: center;
     margin-bottom: 12px;
     font-size: 0.75rem;
+    flex-shrink: 0;
 }
 
 .cf-section-header span:first-child {
@@ -889,7 +897,8 @@
     display: flex;
     flex-direction: column;
     gap: 10px;
-    max-height: 280px;
+    flex: 1;
+    min-height: 0;
     overflow-y: auto;
 }
 
@@ -1003,6 +1012,7 @@
     background: #f9fafb;
     border-top: 1px solid #e5e7eb;
     font-size: 0.75rem;
+    flex-shrink: 0;
 }
 
 .cf-base-info {
@@ -1741,6 +1751,15 @@
     flex: 1;
     overflow-y: auto;
     padding: 20px 24px;
+    display: flex;
+    flex-direction: column;
+}
+
+.burden-flyout .flyout-body .cell-flyout-content {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
 }
 
 .burden-flyout .flyout-table {
