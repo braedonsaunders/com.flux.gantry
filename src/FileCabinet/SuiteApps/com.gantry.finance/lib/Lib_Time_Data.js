@@ -563,7 +563,7 @@ define(["N/query", "N/log", "./Lib_Core", "./Lib_Config"], function (query, log,
      */
     function getScoreOnly() {
         try {
-            // Get last month's time data (single query)
+            // Get last month's time data matching getData() logic
             var today = new Date();
             var endDate = new Date(today.getFullYear(), today.getMonth(), 0);
             var startDate = new Date(endDate.getFullYear(), endDate.getMonth(), 1);
@@ -572,9 +572,27 @@ define(["N/query", "N/log", "./Lib_Core", "./Lib_Config"], function (query, log,
 
             var totalHours = 0, billableHours = 0, nonBillableCost = 0, employeeCount = 0;
 
+            // Build filter sets matching getData() (lines 45-47)
+            var hiddenDepts = (config.hiddenDepartments || []).map(String);
+            var hiddenEmps = (config.hiddenEmployees || []).map(String);
+            var noBillDepts = (config.noBillableDepartments || []).map(String);
+
+            // Get laborCostField from config (matching fetchTimeStats)
+            var rawLaborCostField = config.laborCostField || 'laborcost';
+            var laborCostField = rawLaborCostField.replace(/[^a-zA-Z0-9_]/g, '') || 'laborcost';
+
+            // Build employee type exclusion filter (matching fetchTimeStats)
+            var excludeEmpTypes = (config.excludeEmployeeTypes || []).map(function(t) { return String(t).replace(/[^0-9]/g, ''); }).filter(function(t) { return t; });
+            var empTypeFilter = excludeEmpTypes.length > 0
+                ? " AND (e.employeetype IS NULL OR e.employeetype NOT IN (" + excludeEmpTypes.join(',') + "))"
+                : '';
+
+            // Fetch per-employee stats (matching fetchTimeStats structure)
+            var rows = [];
             try {
                 // Query includes employee count and non-billable cost for efficiency score
                 var sql = "SELECT " +
+                    "t.employee, t.department, " +
                     "SUM(t.hours) as total_hours, " +
                     "SUM(CASE WHEN t.customer IS NOT NULL THEN t.hours ELSE 0 END) as billable_hours, " +
                     "COUNT(DISTINCT t.employee) as employee_count, " +
@@ -593,17 +611,40 @@ define(["N/query", "N/log", "./Lib_Core", "./Lib_Config"], function (query, log,
                 log.debug('Time Query Error', e.message);
             }
 
-            // Calculate billable percentage
-            var billablePct = totalHours > 0 ? (billableHours / totalHours) * 100 : 0;
+            // Filter out hidden departments and employees (matching getData lines 49-51)
+            var filtered = rows.filter(function(r) {
+                return hiddenDepts.indexOf(String(r.department)) === -1 &&
+                       hiddenEmps.indexOf(String(r.employee)) === -1;
+            });
 
-            // Get target from config (default 70%)
-            var targetPct = 70;
-            try {
-                var config = ConfigLib.getStoredConfiguration('time');
-                if (config && config.targetBillablePercent) {
-                    targetPct = config.targetBillablePercent;
-                }
-            } catch (e) {}
+            // For efficiency score: aggregate from filtered employee data (matching Dashboard.Time.js lines 1322-1328)
+            // Track unique employees
+            var employeeSet = {};
+            var totalHours = 0, totalBillableHours = 0, totalNonBillCost = 0;
+
+            filtered.forEach(function(r) {
+                var empId = String(r.employee);
+                employeeSet[empId] = true;
+                totalHours += parseFloat(r.total_hours) || 0;
+                totalBillableHours += parseFloat(r.billable_hours) || 0;
+                totalNonBillCost += parseFloat(r.non_billable_cost) || 0;
+            });
+
+            var employeeCount = Object.keys(employeeSet).length || 1;
+            var avgBillable = totalHours > 0 ? (totalBillableHours / totalHours) * 100 : 0;
+            var costPerEmployee = totalNonBillCost / employeeCount;
+
+            // Efficiency score formula matching Dashboard.Time.js buildInsights() exactly (lines 1351-1360)
+            // 50 points from billable %, 50 points from cost efficiency
+            var COST_EFFICIENCY_THRESHOLD = 5000;
+            var COST_PENALTY_DIVISOR = 200;
+
+            var billableScore = (avgBillable / targetPct) * 50;
+            var costScore = employeeCount > 0
+                ? (costPerEmployee < COST_EFFICIENCY_THRESHOLD
+                    ? 50
+                    : Math.min(50, Math.max(0, 50 - (costPerEmployee - COST_EFFICIENCY_THRESHOLD) / COST_PENALTY_DIVISOR)))
+                : 25;
 
             // Efficiency score formula matching Dashboard.Time.js buildInsights()
             // 50 points from billable %, 50 points from cost efficiency
@@ -632,8 +673,8 @@ define(["N/query", "N/log", "./Lib_Core", "./Lib_Config"], function (query, log,
             else { grade = 'A+'; label = 'Excellent'; }
 
             var trend = 'stable';
-            if (billablePct < targetPct * 0.8) trend = 'down';
-            else if (billablePct > targetPct * 1.1) trend = 'up';
+            if (avgBillable < targetPct * 0.8) trend = 'down';
+            else if (avgBillable > targetPct * 1.1) trend = 'up';
 
             return {
                 score: score,
