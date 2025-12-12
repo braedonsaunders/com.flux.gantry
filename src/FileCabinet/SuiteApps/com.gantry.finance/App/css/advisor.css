@@ -5281,53 +5281,45 @@ body.dark-mode .progressive-text {
 
 .health-scores-overview {
     width: 100%;
-    max-width: 900px;
-    margin: 0 auto 20px;
-    padding: 0 16px;
-}
-
-.scores-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 10px;
-}
-
-.scores-title {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--text-dark);
-}
-
-.scores-title i {
-    color: var(--primary);
-    font-size: 14px;
-}
-
-.scores-timestamp {
-    font-size: 10px;
-    color: var(--text-muted);
-    font-weight: 500;
+    padding: 12px 16px;
+    background: var(--bg-muted, #f8fafc);
+    border-bottom: 1px solid var(--border-light, #e2e8f0);
 }
 
 .scores-grid {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    display: flex;
+    flex-wrap: wrap;
     gap: 8px;
+    justify-content: center;
 }
 
-@media (max-width: 800px) {
+/* Each score card takes equal space */
+.scores-grid .score-card {
+    flex: 1 1 130px;
+    max-width: 200px;
+    min-width: 110px;
+}
+
+@media (max-width: 700px) {
+    .health-scores-overview {
+        padding: 10px 12px;
+    }
+
     .scores-grid {
-        grid-template-columns: repeat(2, 1fr);
+        gap: 6px;
+    }
+
+    .scores-grid .score-card {
+        flex: 1 1 100px;
+        min-width: 85px;
+        max-width: 160px;
     }
 }
 
-@media (max-width: 500px) {
-    .scores-grid {
-        grid-template-columns: 1fr;
+@media (max-width: 400px) {
+    .scores-grid .score-card {
+        flex: 1 1 80px;
+        min-width: 70px;
     }
 }
 
@@ -5392,26 +5384,26 @@ body.dark-mode .progressive-text {
 
 /* Score Name */
 .score-card .score-name {
-    font-size: 10px;
+    font-size: 9px;
     font-weight: 600;
     color: var(--text-muted);
     text-transform: uppercase;
-    letter-spacing: 0.3px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    letter-spacing: 0.2px;
+    line-height: 1.2;
+    flex: 1;
+    min-width: 0;
 }
 
 /* Score Value Container */
 .score-value-container {
     display: flex;
     align-items: center;
-    gap: 6px;
-    margin-left: auto;
+    gap: 4px;
+    flex-shrink: 0;
 }
 
 .score-card .score-number {
-    font-size: 18px;
+    font-size: 16px;
     font-weight: 700;
     color: var(--text-dark);
     line-height: 1;
@@ -5419,10 +5411,10 @@ body.dark-mode .progressive-text {
 }
 
 .score-card .score-grade {
-    font-size: 10px;
+    font-size: 9px;
     font-weight: 700;
-    padding: 2px 5px;
-    border-radius: 4px;
+    padding: 2px 4px;
+    border-radius: 3px;
     background: var(--grade-bg, rgba(76, 175, 80, 0.12));
     color: var(--grade-color, #4CAF50);
 }
@@ -5601,19 +5593,30 @@ body.dark-mode .progressive-text {
     display: none;
 }
 
-/* Responsive adjustments */
-@media (max-width: 600px) {
-    .health-scores-overview {
-        margin-bottom: 16px;
-    }
-
-    .scores-header {
-        flex-direction: column;
-        align-items: flex-start;
-        gap: 6px;
-    }
-
+/* Additional responsive adjustments for small screens */
+@media (max-width: 500px) {
     .score-card .score-number {
-        font-size: 16px;
+        font-size: 14px;
+    }
+
+    .score-card .score-grade {
+        font-size: 8px;
+        padding: 1px 3px;
+    }
+
+    .score-card .score-name {
+        font-size: 8px;
+    }
+
+    .score-card .score-icon {
+        width: 24px;
+        height: 24px;
+        min-width: 24px;
+        font-size: 10px;
+    }
+
+    .score-card-inner {
+        padding: 6px 8px;
+        gap: 6px;
     }
 }

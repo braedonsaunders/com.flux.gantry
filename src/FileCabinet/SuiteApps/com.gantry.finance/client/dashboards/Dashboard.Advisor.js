@@ -878,8 +878,16 @@
             const grid = document.getElementById('scores-grid');
             if (!grid) return;
 
-            // Define display order for dashboards
-            const displayOrder = ['health', 'time', 'integrity', 'customervalue', 'vendorperformance', 'spendvelocity', 'cashflow', 'burden'];
+            // Get settings data
+            const settings = (window.SettingsController && SettingsController.data) ? SettingsController.data : {};
+
+            // Use configured order if available, otherwise default
+            const defaultOrder = ['health', 'time', 'integrity', 'customervalue', 'vendorperformance', 'spendvelocity', 'cashflow', 'burden'];
+            const displayOrder = settings.dashboardOrder || defaultOrder;
+
+            // Get configured names and visibility
+            const configuredNames = settings.dashboardNames || {};
+            const visibility = settings.dashboardVisibility || {};
 
             // Icon mapping for each dashboard
             const iconMap = {
@@ -893,14 +901,12 @@
                 burden: 'fa-layer-group'
             };
 
-            // Get configurable dashboard names from settings if available
-            const configuredNames = (window.SettingsController && SettingsController.data && SettingsController.data.dashboardNames)
-                ? SettingsController.data.dashboardNames
-                : {};
-
             let html = '';
 
             displayOrder.forEach(function(dashboardId) {
+                // Skip if not visible in settings
+                if (visibility[dashboardId] === false) return;
+
                 const scoreData = scores[dashboardId];
                 if (!scoreData) return;
 
