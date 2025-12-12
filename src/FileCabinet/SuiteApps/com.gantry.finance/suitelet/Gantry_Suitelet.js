@@ -15,8 +15,9 @@ define([
     'N/ui/serverWidget',
     'N/url',
     'N/runtime',
-    'N/log'
-], function(file, serverWidget, url, runtime, log) {
+    'N/log',
+    '../lib/Lib_Permissions'
+], function(file, serverWidget, url, runtime, log, Permissions) {
     'use strict';
 
     /**
@@ -136,13 +137,16 @@ define([
         // 5. Build configuration injection
         const currentUser = runtime.getCurrentUser();
         const accountId = runtime.accountId;
-        
+
+        // Get user permissions context
+        const userPermissions = Permissions.getCurrentUserContext();
+
         const configScript = `
     <script>
         // Gantry Configuration - Injected by Suitelet
         window.GANTRY_API_URL = "${routerUrl}";
         window.NS_ACCOUNT_ID = "${accountId}";
-        
+
         window.GANTRY_CONFIG = {
             apiUrl: "${routerUrl}",
             accountId: "${accountId}",
@@ -150,7 +154,14 @@ define([
                 id: "${currentUser.id}",
                 name: "${currentUser.name}",
                 role: ${currentUser.role},
-                subsidiary: ${currentUser.subsidiary || 'null'}
+                subsidiary: ${currentUser.subsidiary || 'null'},
+                isAdmin: ${userPermissions.isAdmin}
+            },
+            permissions: {
+                enabled: ${userPermissions.permissionsEnabled},
+                dashboards: ${JSON.stringify(userPermissions.permittedDashboards)},
+                subsidiaries: ${JSON.stringify(userPermissions.permittedSubsidiaries)},
+                isAdmin: ${userPermissions.isAdmin}
             },
             version: "2.1.0",
             buildDate: "${new Date().toISOString().split('T')[0]}",
@@ -160,7 +171,7 @@ define([
                 customerValue: true
             }
         };
-        
+
         // File URLs for dev mode
         window.GANTRY_FILE_URLS = ${JSON.stringify(fileUrls)};
     </script>`;

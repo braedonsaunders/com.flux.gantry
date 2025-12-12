@@ -10,8 +10,10 @@
  */
 define([
     'N/log',
+    'N/search',
     '../lib/Lib_Config',
     '../lib/Lib_Dashboard_Registry',
+    '../lib/Lib_Permissions',
     '../lib/Lib_Health_Data',
     '../lib/Lib_Cashflow_Data',
     '../lib/Lib_Time_Data',
@@ -25,8 +27,10 @@ define([
     '../lib/Lib_Model_Registry'
 ], function(
     log,
+    search,
     ConfigLib,
     DashboardRegistry,
+    Permissions,
     HealthData,
     CashflowData,
     TimeData,
@@ -88,18 +92,18 @@ define([
      */
     function doGet(context) {
         const action = context.action;
-        
+
         try {
-            // Dashboard list from registry
+            // Dashboard list from registry (filtered by permissions)
             if (action === 'dashboards') {
                 return getDashboardList();
             }
-            
+
             // Dashboard metadata from registry
             if (action === 'dashboard_meta') {
                 return getDashboardMetadata(context.dashboard);
             }
-            
+
             // AI usage stats
             if (action === 'ai_usage') {
                 return getAIUsage();
@@ -109,12 +113,12 @@ define([
             if (action === 'advisor_status') {
                 return getAdvisorStatus(context.id);
             }
-            
+
             // Models endpoint for Settings UI
             if (action === 'models') {
                 return ModelRegistry.getModelsForSettings();
             }
-            
+
             // OpenRouter models endpoint - fetches dynamic list from OpenRouter API
             if (action === 'openrouter_models') {
                 return getOpenRouterModels(context.apiKey);
@@ -125,8 +129,34 @@ define([
                 return getDashboardScores();
             }
 
+            // Roles list for permissions UI
+            if (action === 'roles') {
+                return getRolesList();
+            }
+
+            // User permissions context
+            if (action === 'user_permissions') {
+                return Permissions.getCurrentUserContext();
+            }
+
+            // Permissions config (admin only)
+            if (action === 'permissions_config') {
+                if (!Permissions.isAdmin()) {
+                    return { error: 'Access denied', message: 'Only administrators can view permissions configuration' };
+                }
+                return { config: Permissions.getPermissionsConfig() };
+            }
+
             // Check for dashboard data requests
             if (DATA_LIBS[action]) {
+                // Permission check for dashboard data
+                if (!Permissions.hasPermission(action)) {
+                    return {
+                        error: 'Access denied',
+                        message: 'You do not have permission to access this dashboard',
+                        dashboardId: action
+                    };
+                }
                 return getDashboardData(action, context);
             }
             
@@ -182,7 +212,15 @@ define([
             if (action === 'save_config') {
                 return ConfigLib.save(data, 'cashflow');
             }
-            
+
+            // Save permissions config (admin only)
+            if (action === 'save_permissions_config') {
+                if (!Permissions.isAdmin()) {
+                    return { status: 'error', message: 'Only administrators can modify permissions' };
+                }
+                return Permissions.savePermissions(data);
+            }
+
             // Customer Value config save
             if (action === 'customer_value_config') {
                 return ConfigLib.save(data, 'customer_value');
@@ -414,10 +452,10 @@ define([
     }
 
     /**
-     * Get list of all available dashboards from registry
+     * Get list of all available dashboards from registry (filtered by permissions)
      */
     function getDashboardList() {
-        const dashboards = DashboardRegistry.getDataDashboards().map(function(d) {
+        let dashboards = DashboardRegistry.getDataDashboards().map(function(d) {
             return {
                 id: d.id,
                 name: d.name,
@@ -427,8 +465,42 @@ define([
                 features: d.features || []
             };
         });
-        
+
+        // Filter by user permissions
+        dashboards = Permissions.filterDashboards(dashboards);
+
         return { dashboards: dashboards };
+    }
+
+    /**
+     * Get list of roles for permissions configuration UI
+     * Returns active roles that can be configured
+     */
+    function getRolesList() {
+        const roles = [];
+        try {
+            const roleSearch = search.create({
+                type: 'role',
+                filters: [
+                    ['isinactive', 'is', 'F']
+                ],
+                columns: [
+                    search.createColumn({ name: 'internalid' }),
+                    search.createColumn({ name: 'name', sort: search.Sort.ASC })
+                ]
+            });
+
+            roleSearch.run().each(function(result) {
+                roles.push({
+                    id: result.getValue('internalid'),
+                    name: result.getValue('name')
+                });
+                return true;
+            });
+        } catch (e) {
+            log.error('getRolesList', e.message);
+        }
+        return { roles: roles };
     }
     
     /**

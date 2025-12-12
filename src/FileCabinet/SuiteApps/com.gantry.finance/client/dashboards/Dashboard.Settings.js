@@ -190,6 +190,14 @@
                     { id: 'refreshInterval', type: 'select', label: 'Refresh Interval', description: 'How often to refresh when auto-refresh is enabled', default: '5',
                       options: [{ value: '1', label: 'Every 1 minute' }, { value: '5', label: 'Every 5 minutes' }, { value: '15', label: 'Every 15 minutes' }, { value: '30', label: 'Every 30 minutes' }] }
                 ]
+            },
+            {
+                id: 'rolePermissions',
+                title: 'Role Permissions',
+                icon: 'fa-user-shield',
+                description: 'Control which dashboards each role can access. Admin-only setting.',
+                type: 'permissions',
+                adminOnly: true
             }
         ]
     };
@@ -197,7 +205,13 @@
     const SettingsController = {
         data: null,
         draggedItem: null,
-        
+
+        // Permissions data
+        _permissionsData: null,
+        _rolesList: [],
+        _subsidiariesList: [],
+        _selectedRoleId: null,
+
         async init() {
             // Render template first
             el('#gantry-view-container').innerHTML = this.renderTemplate();
@@ -296,9 +310,18 @@
         },
 
         renderTemplate() {
+            const isAdmin = window.GANTRY_CONFIG?.user?.isAdmin || window.GANTRY_CONFIG?.permissions?.isAdmin;
+
             const sectionsHtml = SETTINGS_SCHEMA.sections.map(section => {
+                // Skip admin-only sections for non-admins
+                if (section.adminOnly && !isAdmin) {
+                    return '';
+                }
                 if (section.type === 'dashboards') {
                     return this.renderDashboardSection(section);
+                }
+                if (section.type === 'permissions') {
+                    return this.renderPermissionsSection(section);
                 }
                 return this.renderFieldSection(section);
             }).join('');
@@ -407,7 +430,7 @@
                 </div>
                 <div class="card-body">
                     <p class="text-muted small mb-3">${section.description}</p>
-                    
+
                     <div class="row">
                         <div class="col-lg-8">
                             <label class="cf-label mb-2">Dashboard Order & Visibility</label>
@@ -424,6 +447,143 @@
                     </div>
                 </div>
             </div>`;
+        },
+
+        renderPermissionsSection(section) {
+            return `
+            <div class="card shadow-sm mb-4" id="permissionsSection">
+                <div class="card-header bg-light py-2 d-flex align-items-center justify-content-between">
+                    <h6 class="mb-0 font-weight-bold"><i class="fas ${section.icon} mr-2"></i>${section.title}</h6>
+                    <span class="badge badge-warning"><i class="fas fa-crown mr-1"></i>Admin Only</span>
+                </div>
+                <div class="card-body">
+                    <p class="text-muted small mb-3">${section.description}</p>
+
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <div class="custom-control custom-switch">
+                                <input type="checkbox" class="custom-control-input" id="permissionsEnabled">
+                                <label class="custom-control-label" for="permissionsEnabled">
+                                    <strong>Enable Role-Based Access Control</strong>
+                                </label>
+                            </div>
+                            <small class="text-muted d-block mt-1">When disabled, all roles can access all dashboards.</small>
+                        </div>
+                    </div>
+
+                    <div id="permissionsConfigArea" style="display: none;">
+                        <hr class="my-3">
+
+                        <div class="row">
+                            <div class="col-md-4">
+                                <label class="cf-label mb-2">Select Role to Configure</label>
+                                <select class="form-control form-control-sm" id="roleSelector">
+                                    <option value="">Loading roles...</option>
+                                </select>
+                                <small class="text-muted">Administrator role always has full access.</small>
+                            </div>
+                            <div class="col-md-8">
+                                <label class="cf-label mb-2">Dashboard Access for Selected Role</label>
+                                <div id="roleDashboardPermissions" class="border rounded p-3" style="min-height: 150px;">
+                                    <p class="text-muted mb-0">Select a role to configure permissions</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="row mt-3">
+                            <div class="col-12">
+                                <label class="cf-label mb-2">Subsidiary Access for Selected Role</label>
+                                <div id="roleSubsidiaryPermissions" class="border rounded p-3">
+                                    <p class="text-muted mb-0">Select a role to configure subsidiary access</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="mt-3">
+                            <button class="btn btn-sm btn-outline-primary" id="btnSavePermissions">
+                                <i class="fas fa-save mr-1"></i>Save Permissions
+                            </button>
+                            <button class="btn btn-sm btn-outline-secondary ml-2" id="btnResetPermissions">
+                                <i class="fas fa-undo mr-1"></i>Reset to Defaults
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <style>
+                .perm-dash-item {
+                    display: flex;
+                    align-items: center;
+                    padding: 8px 12px;
+                    border-bottom: 1px solid #e2e8f0;
+                    transition: background 0.15s;
+                }
+                .perm-dash-item:last-child {
+                    border-bottom: none;
+                }
+                .perm-dash-item:hover {
+                    background: #f8fafc;
+                }
+                .dark-mode .perm-dash-item:hover {
+                    background: #374151;
+                }
+                .perm-dash-item .custom-switch {
+                    margin-right: 12px;
+                }
+                .perm-sub-item {
+                    display: inline-flex;
+                    align-items: center;
+                    padding: 4px 12px;
+                    margin: 4px;
+                    border: 1px solid #e2e8f0;
+                    border-radius: 20px;
+                    background: #fff;
+                    cursor: pointer;
+                    transition: all 0.15s;
+                }
+                .perm-sub-item.selected {
+                    background: #3b82f6;
+                    border-color: #3b82f6;
+                    color: #fff;
+                }
+                .perm-sub-item:hover:not(.selected) {
+                    border-color: #3b82f6;
+                    background: #eff6ff;
+                }
+                .dark-mode .perm-sub-item {
+                    background: #374151;
+                    border-color: #4b5563;
+                }
+                .dark-mode .perm-sub-item.selected {
+                    background: #3b82f6;
+                    border-color: #3b82f6;
+                }
+                .perm-all-access {
+                    display: inline-flex;
+                    align-items: center;
+                    padding: 4px 12px;
+                    margin: 4px;
+                    border: 2px dashed #10b981;
+                    border-radius: 20px;
+                    background: #ecfdf5;
+                    color: #059669;
+                    cursor: pointer;
+                    font-weight: 500;
+                }
+                .perm-all-access.selected {
+                    background: #10b981;
+                    border-style: solid;
+                    color: #fff;
+                }
+                .dark-mode .perm-all-access {
+                    background: #064e3b;
+                    color: #6ee7b7;
+                }
+                .dark-mode .perm-all-access.selected {
+                    background: #10b981;
+                    color: #fff;
+                }
+            </style>`;
         },
 
         renderFieldSection(section) {
@@ -838,6 +998,12 @@
             this.renderFieldValues();
             this.refreshAIUsage(); // Load AI usage on render
             this.loadModelOptions(); // Load model options for tier selects
+
+            // Load permissions if admin
+            const isAdmin = window.GANTRY_CONFIG?.user?.isAdmin || window.GANTRY_CONFIG?.permissions?.isAdmin;
+            if (isAdmin) {
+                this.loadPermissionsConfig();
+            }
         },
         
         /**
@@ -1608,6 +1774,325 @@
             } catch(e) {
                 console.error(e);
                 alert('Error saving settings');
+            }
+        },
+
+        // ==========================================
+        // PERMISSIONS MANAGEMENT
+        // ==========================================
+
+        /**
+         * Load permissions configuration and roles list
+         */
+        async loadPermissionsConfig() {
+            try {
+                // Load permissions config and roles in parallel
+                const [permRes, rolesRes, mainConfigRes] = await Promise.all([
+                    API.get('permissions_config'),
+                    API.get('roles'),
+                    API.get('main_config')
+                ]);
+
+                // Store permissions data
+                this._permissionsData = permRes?.config || this.getDefaultPermissions();
+                this._rolesList = rolesRes?.roles || [];
+                this._subsidiariesList = mainConfigRes?.subsidiaries || [];
+
+                // Render permissions UI
+                this.renderPermissionsUI();
+                this.setupPermissionsEventListeners();
+
+            } catch (e) {
+                console.error('Failed to load permissions config:', e);
+                // Show error state
+                const section = el('#permissionsSection');
+                if (section) {
+                    section.querySelector('.card-body').innerHTML = `
+                        <div class="alert alert-warning">
+                            <i class="fas fa-exclamation-triangle mr-2"></i>
+                            Failed to load permissions configuration.
+                            <button class="btn btn-sm btn-link" onclick="SettingsController.loadPermissionsConfig()">Retry</button>
+                        </div>
+                    `;
+                }
+            }
+        },
+
+        getDefaultPermissions() {
+            return {
+                enabled: false,
+                roles: {
+                    '3': { dashboards: ['*'], subsidiaries: ['*'] }
+                },
+                defaultPermissions: {
+                    dashboards: ['*'],
+                    subsidiaries: ['*']
+                },
+                auditEnabled: false
+            };
+        },
+
+        renderPermissionsUI() {
+            // Update enabled checkbox
+            const enabledCheckbox = el('#permissionsEnabled');
+            if (enabledCheckbox) {
+                enabledCheckbox.checked = this._permissionsData?.enabled === true;
+            }
+
+            // Show/hide config area based on enabled state
+            const configArea = el('#permissionsConfigArea');
+            if (configArea) {
+                configArea.style.display = this._permissionsData?.enabled ? 'block' : 'none';
+            }
+
+            // Populate roles dropdown
+            const roleSelector = el('#roleSelector');
+            if (roleSelector) {
+                let html = '<option value="">Select a role...</option>';
+
+                // Filter out Administrator (ID 3) as it always has full access
+                const configurableRoles = this._rolesList.filter(r => String(r.id) !== '3');
+
+                configurableRoles.forEach(role => {
+                    const hasCustomConfig = this._permissionsData?.roles?.[String(role.id)];
+                    const badge = hasCustomConfig ? ' (configured)' : '';
+                    html += `<option value="${role.id}">${role.name}${badge}</option>`;
+                });
+
+                roleSelector.innerHTML = html;
+            }
+
+            // If a role was previously selected, keep it selected and render its permissions
+            if (this._selectedRoleId) {
+                const roleSelector = el('#roleSelector');
+                if (roleSelector) {
+                    roleSelector.value = this._selectedRoleId;
+                }
+                this.renderRolePermissions(this._selectedRoleId);
+            }
+        },
+
+        renderRolePermissions(roleId) {
+            this._selectedRoleId = roleId;
+
+            const dashContainer = el('#roleDashboardPermissions');
+            const subContainer = el('#roleSubsidiaryPermissions');
+
+            if (!roleId) {
+                if (dashContainer) dashContainer.innerHTML = '<p class="text-muted mb-0">Select a role to configure permissions</p>';
+                if (subContainer) subContainer.innerHTML = '<p class="text-muted mb-0">Select a role to configure subsidiary access</p>';
+                return;
+            }
+
+            // Get role permissions (or defaults)
+            const rolePerms = this._permissionsData?.roles?.[String(roleId)] ||
+                              this._permissionsData?.defaultPermissions ||
+                              { dashboards: ['*'], subsidiaries: ['*'] };
+
+            // Render dashboard permissions
+            if (dashContainer) {
+                const allDashboards = rolePerms.dashboards?.includes('*');
+
+                let html = `
+                    <div class="mb-2">
+                        <span class="perm-all-access ${allDashboards ? 'selected' : ''}" data-value="*">
+                            <i class="fas fa-check-double mr-1"></i>All Dashboards
+                        </span>
+                    </div>
+                    <div class="perm-dash-list" style="${allDashboards ? 'opacity: 0.5; pointer-events: none;' : ''}">
+                `;
+
+                SETTINGS_SCHEMA.dashboards.forEach(dash => {
+                    const isAllowed = allDashboards || rolePerms.dashboards?.includes(dash.id);
+                    html += `
+                        <div class="perm-dash-item">
+                            <div class="custom-control custom-switch">
+                                <input type="checkbox" class="custom-control-input perm-dash-checkbox"
+                                    id="perm_dash_${dash.id}" data-dashboard="${dash.id}" ${isAllowed ? 'checked' : ''}>
+                                <label class="custom-control-label" for="perm_dash_${dash.id}"></label>
+                            </div>
+                            <i class="fas ${dash.icon} ${dash.color} mr-2"></i>
+                            <span>${dash.defaultName}</span>
+                        </div>
+                    `;
+                });
+
+                html += '</div>';
+                dashContainer.innerHTML = html;
+            }
+
+            // Render subsidiary permissions
+            if (subContainer) {
+                const allSubsidiaries = rolePerms.subsidiaries?.includes('*');
+
+                let html = `
+                    <div class="mb-2">
+                        <span class="perm-all-access ${allSubsidiaries ? 'selected' : ''}" data-sub-value="*">
+                            <i class="fas fa-check-double mr-1"></i>All Subsidiaries
+                        </span>
+                    </div>
+                    <div class="perm-sub-list" style="${allSubsidiaries ? 'opacity: 0.5; pointer-events: none;' : ''}">
+                `;
+
+                if (this._subsidiariesList.length === 0) {
+                    html += '<span class="text-muted">No subsidiaries found (single-company account)</span>';
+                } else {
+                    this._subsidiariesList.forEach(sub => {
+                        const isAllowed = allSubsidiaries || rolePerms.subsidiaries?.includes(String(sub.id)) || rolePerms.subsidiaries?.includes(parseInt(sub.id));
+                        html += `
+                            <span class="perm-sub-item ${isAllowed ? 'selected' : ''}" data-subsidiary="${sub.id}">
+                                ${sub.name}
+                            </span>
+                        `;
+                    });
+                }
+
+                html += '</div>';
+                subContainer.innerHTML = html;
+            }
+        },
+
+        setupPermissionsEventListeners() {
+            // Enable/disable toggle
+            el('#permissionsEnabled')?.addEventListener('change', (e) => {
+                this._permissionsData.enabled = e.target.checked;
+                const configArea = el('#permissionsConfigArea');
+                if (configArea) {
+                    configArea.style.display = e.target.checked ? 'block' : 'none';
+                }
+            });
+
+            // Role selector
+            el('#roleSelector')?.addEventListener('change', (e) => {
+                this.renderRolePermissions(e.target.value);
+            });
+
+            // Dashboard "All Dashboards" toggle
+            el('#roleDashboardPermissions')?.addEventListener('click', (e) => {
+                const allAccess = e.target.closest('.perm-all-access[data-value="*"]');
+                if (allAccess) {
+                    const isSelected = allAccess.classList.toggle('selected');
+                    this.updateRoleDashboardPermissions(isSelected ? ['*'] : []);
+
+                    // Update visual state
+                    const dashList = el('.perm-dash-list');
+                    if (dashList) {
+                        dashList.style.opacity = isSelected ? '0.5' : '1';
+                        dashList.style.pointerEvents = isSelected ? 'none' : 'auto';
+                    }
+                }
+            });
+
+            // Individual dashboard toggles
+            el('#roleDashboardPermissions')?.addEventListener('change', (e) => {
+                if (e.target.classList.contains('perm-dash-checkbox')) {
+                    this.collectAndUpdateDashboardPermissions();
+                }
+            });
+
+            // Subsidiary "All Subsidiaries" toggle
+            el('#roleSubsidiaryPermissions')?.addEventListener('click', (e) => {
+                const allAccess = e.target.closest('.perm-all-access[data-sub-value="*"]');
+                if (allAccess) {
+                    const isSelected = allAccess.classList.toggle('selected');
+                    this.updateRoleSubsidiaryPermissions(isSelected ? ['*'] : []);
+
+                    // Update visual state
+                    const subList = el('.perm-sub-list');
+                    if (subList) {
+                        subList.style.opacity = isSelected ? '0.5' : '1';
+                        subList.style.pointerEvents = isSelected ? 'none' : 'auto';
+                    }
+                }
+
+                // Individual subsidiary toggles
+                const subItem = e.target.closest('.perm-sub-item');
+                if (subItem && !subItem.classList.contains('perm-all-access')) {
+                    subItem.classList.toggle('selected');
+                    this.collectAndUpdateSubsidiaryPermissions();
+                }
+            });
+
+            // Save button
+            el('#btnSavePermissions')?.addEventListener('click', () => this.savePermissions());
+
+            // Reset button
+            el('#btnResetPermissions')?.addEventListener('click', () => {
+                if (confirm('Reset permissions to defaults? All roles will have access to all dashboards.')) {
+                    this._permissionsData = this.getDefaultPermissions();
+                    this.renderPermissionsUI();
+                    showToast('Permissions reset to defaults (not saved yet)');
+                }
+            });
+        },
+
+        updateRoleDashboardPermissions(dashboards) {
+            if (!this._selectedRoleId) return;
+
+            const roleKey = String(this._selectedRoleId);
+            if (!this._permissionsData.roles) {
+                this._permissionsData.roles = {};
+            }
+            if (!this._permissionsData.roles[roleKey]) {
+                this._permissionsData.roles[roleKey] = {
+                    dashboards: ['*'],
+                    subsidiaries: ['*']
+                };
+            }
+            this._permissionsData.roles[roleKey].dashboards = dashboards;
+        },
+
+        updateRoleSubsidiaryPermissions(subsidiaries) {
+            if (!this._selectedRoleId) return;
+
+            const roleKey = String(this._selectedRoleId);
+            if (!this._permissionsData.roles) {
+                this._permissionsData.roles = {};
+            }
+            if (!this._permissionsData.roles[roleKey]) {
+                this._permissionsData.roles[roleKey] = {
+                    dashboards: ['*'],
+                    subsidiaries: ['*']
+                };
+            }
+            this._permissionsData.roles[roleKey].subsidiaries = subsidiaries;
+        },
+
+        collectAndUpdateDashboardPermissions() {
+            const checkboxes = document.querySelectorAll('.perm-dash-checkbox:checked');
+            const dashboards = Array.from(checkboxes).map(cb => cb.dataset.dashboard);
+            this.updateRoleDashboardPermissions(dashboards.length > 0 ? dashboards : []);
+        },
+
+        collectAndUpdateSubsidiaryPermissions() {
+            const selected = document.querySelectorAll('.perm-sub-item.selected:not(.perm-all-access)');
+            const subsidiaries = Array.from(selected).map(el => el.dataset.subsidiary);
+            this.updateRoleSubsidiaryPermissions(subsidiaries.length > 0 ? subsidiaries : []);
+        },
+
+        async savePermissions() {
+            try {
+                // Ensure admin always has full access
+                if (!this._permissionsData.roles) {
+                    this._permissionsData.roles = {};
+                }
+                this._permissionsData.roles['3'] = {
+                    dashboards: ['*'],
+                    subsidiaries: ['*']
+                };
+
+                const res = await API.post('save_permissions_config', this._permissionsData);
+
+                if (res.status === 'success') {
+                    showToast('Permissions saved successfully!');
+                    // Update the role selector to show (configured) badges
+                    this.renderPermissionsUI();
+                } else {
+                    alert('Error saving permissions: ' + (res.message || 'Unknown error'));
+                }
+            } catch (e) {
+                console.error('Failed to save permissions:', e);
+                alert('Error saving permissions: ' + e.message);
             }
         },
 
