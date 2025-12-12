@@ -2611,7 +2611,8 @@ Response format (JSON only):
             const toolName = getToolDisplayName(summary.tool) || 'Data';
 
             // Load actual rows from DataStore
-            const data = DataStore.loadRows(state.requestId, ref.refId, 0, 49); // Up to 50 rows
+            // Use ref.requestId for follow-up queries (data stored under original request)
+            const data = DataStore.loadRows(ref.requestId || state.requestId, ref.refId, 0, 49); // Up to 50 rows
             if (!data || !data.rows) return;
 
             // ═══════════════════════════════════════════════════════════════════════
@@ -2817,7 +2818,8 @@ Response format (JSON only):
                 const dataRef = state.dataReferences[0];
                 if (!dataRef) return match;
 
-                const data = DataStore.loadRows(state.requestId, dataRef.refId, 0, 49);
+                // Use dataRef.requestId for follow-up queries
+                const data = DataStore.loadRows(dataRef.requestId || state.requestId, dataRef.refId, 0, 49);
                 if (!data) return match;
 
                 const totalRows = data.range?.total || data.rows.length;
@@ -3544,7 +3546,8 @@ Response format (JSON only):
         state.dataReferences.forEach((ref, index) => {
             try {
                 // Load actual data rows
-                const data = DataStore.loadRows(state.requestId, ref.refId, 0, 19);
+                // Use ref.requestId for follow-up queries
+                const data = DataStore.loadRows(ref.requestId || state.requestId, ref.refId, 0, 19);
                 if (!data || !data.rows || data.rows.length === 0) {
                     log.debug('SCA addProgressiveTableBlocks - no rows for ref', { refId: ref.refId });
                     return;
@@ -3692,8 +3695,9 @@ Response format (JSON only):
                     block.headers = block.headers || cols;
 
                     // OPTIMIZATION: Load all rows in one batch instead of N separate calls
+                    // Use dataRef.requestId for follow-up queries
                     const maxRank = Math.max(...preview.map(p => p.rank || 0));
-                    const allData = DataStore.loadRows(state.requestId, dataRef.refId, 0, maxRank);
+                    const allData = DataStore.loadRows(dataRef.requestId || state.requestId, dataRef.refId, 0, maxRank);
                     const rowsMap = {};
                     if (allData && allData.rows) {
                         allData.rows.forEach((row, idx) => { rowsMap[idx] = row; });
