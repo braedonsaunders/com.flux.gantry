@@ -934,6 +934,27 @@
     text-overflow: ellipsis;
 }
 
+.cf-acct-rate {
+    display: flex;
+    align-items: baseline;
+    gap: 2px;
+    min-width: 80px;
+    text-align: right;
+    justify-content: flex-end;
+}
+
+.cf-rate-value {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: #1f2937;
+    font-variant-numeric: tabular-nums;
+}
+
+.cf-rate-label {
+    font-size: 0.65rem;
+    color: #9ca3af;
+}
+
 .cf-acct-data {
     display: flex;
     flex-direction: column;
