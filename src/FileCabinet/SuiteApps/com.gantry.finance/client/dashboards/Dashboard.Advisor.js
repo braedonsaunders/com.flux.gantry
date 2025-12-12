@@ -53,7 +53,7 @@
             glowDuration: 400,            // was 500
             explodeDuration: 1050,        // was 1200, +10% slower then 20% faster
             orbitDuration: 1000,          // was 1500
-            convergeDuration: 1100,       // was 1700
+            convergeDuration: 880,        // 20% faster converge to input
             shineDuration: 480,           // was 600
             colors: [
                 { r: 99, g: 102, b: 241 },   // Indigo
@@ -124,7 +124,7 @@
                     size: this.config.particleSize.min + Math.random() * (this.config.particleSize.max - this.config.particleSize.min),
                     baseSize: 0,
                     opacity: 0,
-                    targetOpacity: 0.5 + Math.random() * 0.2,
+                    targetOpacity: 0.3 + Math.random() * 0.15, // More subtle
                     colorIndex: colorIndex,
                     colorOffset: Math.random() * Math.PI * 2,
                     expandX: 0,
@@ -229,26 +229,24 @@
         },
 
         /**
-         * Orbit: 3D orbital motion around brain center + input glow starts
+         * Orbit: smooth 3D orbital motion - no jolting, seamless from explode
          */
         startOrbit: function() {
             this.phase = 'orbit';
             const startTime = Date.now();
             const center = this.getBrainCenter();
-
-            // Get input for early glow
             const chatInput = document.getElementById('advisor-input-full');
 
-            // Calculate orbital parameters for each particle
+            // Store starting positions and calculate orbital parameters
             this.particles.forEach((p, i) => {
-                // Distance from center determines orbit radius
+                p.orbitStartX = p.x;
+                p.orbitStartY = p.y;
                 const dx = p.x - center.x;
                 const dy = p.y - center.y;
                 p.orbitRadius = Math.sqrt(dx * dx + dy * dy);
                 p.orbitAngle = Math.atan2(dy, dx);
-                p.orbitSpeed = 0.8 + Math.random() * 0.6; // Varying speeds
-                p.orbitTilt = 0.3 + Math.random() * 0.4; // 3D tilt factor
-                p.orbitPhase = Math.random() * Math.PI * 2;
+                p.orbitSpeed = 0.4 + Math.random() * 0.3; // Slower, smoother
+                p.orbitTilt = 0.15 + Math.random() * 0.2; // Subtler 3D
             });
 
             const animateOrbit = () => {
@@ -258,29 +256,33 @@
                 const progress = Math.min(elapsed / this.config.orbitDuration, 1);
                 this.globalTime += 16;
 
-                // 3D orbital motion around brain center
+                // Blend factor - smoothly ramp into orbital motion
+                const blendIn = Math.min(1, progress * 4); // First 25% is blending in
+
                 this.particles.forEach((p, i) => {
                     const time = elapsed * 0.001;
                     const angle = p.orbitAngle + time * p.orbitSpeed;
-
-                    // 3D orbit - x/y with z-depth affecting y position (perspective)
-                    const zAngle = time * p.orbitSpeed * 0.7 + p.orbitPhase;
+                    const zAngle = time * p.orbitSpeed * 0.5;
                     const zFactor = Math.sin(zAngle) * p.orbitTilt;
 
-                    p.x = center.x + Math.cos(angle) * p.orbitRadius;
-                    p.y = center.y + Math.sin(angle) * p.orbitRadius * (0.6 + zFactor * 0.4);
+                    // Target orbital position
+                    const orbX = center.x + Math.cos(angle) * p.orbitRadius;
+                    const orbY = center.y + Math.sin(angle) * p.orbitRadius * (0.85 + zFactor * 0.15);
 
-                    // Size varies with "depth" for 3D effect
-                    p.size = p.baseSize * (0.8 + zFactor * 0.4);
+                    // Smooth blend from start position to orbital position
+                    p.x = p.orbitStartX + (orbX - p.orbitStartX) * blendIn;
+                    p.y = p.orbitStartY + (orbY - p.orbitStartY) * blendIn;
+
+                    // Subtle size variation
+                    p.size = p.baseSize * (0.9 + zFactor * 0.2);
                 });
 
                 this.draw();
 
-                // Start input glow early (at 50% through orbit)
+                // Start input glow early
                 if (chatInput && progress > 0.5) {
                     const glowProgress = (progress - 0.5) * 2;
-                    const glowSize = 10 + 15 * glowProgress;
-                    chatInput.style.boxShadow = `0 0 ${glowSize}px rgba(99, 102, 241, ${0.2 * glowProgress})`;
+                    chatInput.style.boxShadow = `0 0 ${10 + 15 * glowProgress}px rgba(99, 102, 241, ${0.15 * glowProgress})`;
                 }
 
                 if (progress < 1) {
@@ -1483,6 +1485,11 @@
             });
 
             container.innerHTML = html;
+
+            // If animation already completed (ambient phase), show cards immediately
+            if (GeometricAnimation.phase === 'ambient' || GeometricAnimation.phase === 'idle') {
+                container.classList.add('cards-visible');
+            }
 
             // Bind click events for score-category cards
             container.querySelectorAll('.score-category-card').forEach(function(card) {
