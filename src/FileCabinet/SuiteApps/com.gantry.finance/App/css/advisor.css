@@ -594,7 +594,7 @@ body.dark-mode .typing-indicator span {
     display: flex;
     flex-wrap: wrap;
     gap: 6px;
-    margin-bottom: 4px;
+    margin-bottom: 0;
 }
 
 .tool-call {
@@ -2407,7 +2407,7 @@ body.dark-mode .message-text .md-heading {
 }
 
 .message-rich {
-    margin-top: 16px;
+    margin-top: 0;
     width: 100%;
 }
 
