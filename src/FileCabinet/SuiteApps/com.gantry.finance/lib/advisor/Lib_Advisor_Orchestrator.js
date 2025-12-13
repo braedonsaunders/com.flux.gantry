@@ -16,14 +16,14 @@
 define([
     'N/log',
     './Lib_Advisor_StreamingAgent',
-    './Lib_Advisor_ProgressStore',
+    './Lib_Advisor_Cache',
     './Lib_Advisor_AIProviders',
     './Lib_Advisor_Utils',
     './Lib_Advisor_Tools'
 ], function(
     log,
     StreamingAgent,
-    ProgressStore,
+    Cache,
     AIProviders,
     Utils,
     Tools
@@ -49,7 +49,7 @@ define([
         const aiSettings = params.aiSettings || {};
 
         // Generate request ID
-        const requestId = ProgressStore.generateRequestId();
+        const requestId = Cache.generateRequestId();
 
         // Enable debug mode if requested
         Utils.resetDebugModeCache();
@@ -67,8 +67,8 @@ define([
             const conversationalResponse = matchConversationalPattern(message);
             if (conversationalResponse) {
                 // Create progress entry without agent state
-                ProgressStore.create(requestId, message, null);
-                ProgressStore.complete(requestId, {
+                Cache.create(requestId, message, null);
+                Cache.complete(requestId, {
                     answer: conversationalResponse,
                     richContent: [{ type: 'text', content: conversationalResponse }],
                     sessionContext: sessionContext,
@@ -86,7 +86,7 @@ define([
             const agentState = StreamingAgent.initState(message, sessionContext, requestId, history);
 
             // Create progress entry
-            ProgressStore.create(requestId, message, agentState);
+            Cache.create(requestId, message, agentState);
 
             log.debug('ProcessChatAsync returning immediately', {
                 requestId: requestId,
@@ -108,7 +108,7 @@ define([
 
             // Ensure cache entry exists even on error so polling doesn't return not_found
             try {
-                ProgressStore.fail(requestId, e.message);
+                Cache.fail(requestId, e.message);
             } catch (cacheError) {
                 log.error('Failed to store error state in cache', {
                     requestId: requestId,
@@ -149,7 +149,7 @@ define([
         }
 
         // Get current state first
-        const progressState = ProgressStore.get(requestId);
+        const progressState = Cache.get(requestId);
 
         if (!progressState) {
             // Enhanced diagnostic logging for cache misses
@@ -171,34 +171,34 @@ define([
         }
 
         // ATOMIC: Check if already complete or locked (prevents race conditions)
-        if (ProgressStore.isCompleteOrLocked(requestId)) {
-            return ProgressStore.getPollingResponse(requestId);
+        if (Cache.isCompleteOrLocked(requestId)) {
+            return Cache.getPollingResponse(requestId);
         }
 
         // If already complete or error, just return current state
         if (progressState.status === 'complete' || progressState.status === 'error') {
-            return ProgressStore.getPollingResponse(requestId);
+            return Cache.getPollingResponse(requestId);
         }
 
         // ═══════════════════════════════════════════════════════════════════════
         // PROCESSING LOCK: Prevent concurrent step execution
         // If another poll is already processing, just return current state
         // ═══════════════════════════════════════════════════════════════════════
-        if (!ProgressStore.acquireProcessingLock(requestId)) {
+        if (!Cache.acquireProcessingLock(requestId)) {
             log.debug('getStatus - another poll is processing, returning current state', {
                 requestId: requestId
             });
-            return ProgressStore.getPollingResponse(requestId);
+            return Cache.getPollingResponse(requestId);
         }
 
         // Still processing - run next step
         // NOTE: We have the processing lock, so only ONE poll executes this block at a time
         try {
             // Re-check status after acquiring lock (might have completed while waiting)
-            const freshState = ProgressStore.get(requestId);
+            const freshState = Cache.get(requestId);
             if (!freshState || freshState.status === 'complete' || freshState.status === 'error') {
-                ProgressStore.releaseProcessingLock(requestId);
-                return ProgressStore.getPollingResponse(requestId);
+                Cache.releaseProcessingLock(requestId);
+                return Cache.getPollingResponse(requestId);
             }
 
             const agentState = freshState.agentState;
@@ -206,10 +206,10 @@ define([
 
             // Save updated state
             if (stepResult.hasMore) {
-                ProgressStore.setAgentState(requestId, agentState);
+                Cache.setAgentState(requestId, agentState);
             } else if (stepResult.response) {
                 // Complete with response
-                ProgressStore.complete(requestId, {
+                Cache.complete(requestId, {
                     answer: stepResult.response.text,
                     richContent: stepResult.response.richContent,
                     sessionContext: stepResult.response.sessionContext,
@@ -226,8 +226,8 @@ define([
             });
 
             // Release processing lock and return updated polling response
-            ProgressStore.releaseProcessingLock(requestId);
-            return ProgressStore.getPollingResponse(requestId);
+            Cache.releaseProcessingLock(requestId);
+            return Cache.getPollingResponse(requestId);
 
         } catch (e) {
             // Enhanced error logging with provider info
@@ -254,11 +254,11 @@ define([
             log.error('getStatus step error', errorDetails);
 
             // Store failure state so subsequent polls don't retry
-            ProgressStore.fail(requestId, e.message);
+            Cache.fail(requestId, e.message);
 
             // Release processing lock before returning
-            ProgressStore.releaseProcessingLock(requestId);
-            return ProgressStore.getPollingResponse(requestId);
+            Cache.releaseProcessingLock(requestId);
+            return Cache.getPollingResponse(requestId);
         }
     }
 

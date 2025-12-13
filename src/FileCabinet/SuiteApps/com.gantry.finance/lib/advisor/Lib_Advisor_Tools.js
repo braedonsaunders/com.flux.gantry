@@ -27,8 +27,7 @@ define([
     './Lib_Advisor_EntityResolver',
     './Lib_Advisor_QueryExecutor',
     './Lib_Advisor_Utils',
-    './Lib_Advisor_DashboardCache',
-    './Lib_Advisor_DataStore',
+    './Lib_Advisor_Cache',
     '../Lib_Dashboard_Registry',
     '../Lib_Config',
     // Dashboard data modules - loaded as dependencies to avoid dynamic require() errors
@@ -48,8 +47,7 @@ define([
     EntityResolver,
     QueryExecutor,
     Utils,
-    DashboardCache,
-    DataStore,
+    Cache,
     DashboardRegistry,
     ConfigLib,
     // Dashboard data modules
@@ -4716,7 +4714,7 @@ Use for: "cash flow", "runway", "cash projection", "liquidity", "treasury", "wor
                     const rawData = CashflowData.getData(args);
 
                     // Process through intelligence layer - extracts key metrics, generates insights
-                    const intelligence = DashboardCache.process('cashflow', rawData, args.requestId);
+                    const intelligence = Cache.processDashboard('cashflow', rawData, args.requestId);
 
                     // Calculate rowCount from metrics for proper data detection
                     const metricsCount = Object.keys(intelligence?.metrics || {}).length;
@@ -4790,7 +4788,7 @@ PREFERRED for: "income statement", "P&L", "profit and loss", "financial health",
                     const rawData = HealthData.getData(args);
 
                     // Process through intelligence layer - extracts key metrics, generates insights
-                    const intelligence = DashboardCache.process('health', rawData, args.requestId);
+                    const intelligence = Cache.processDashboard('health', rawData, args.requestId);
                     const metricsCount = Object.keys(intelligence.metrics || {}).length;
 
                     return {
@@ -4849,7 +4847,7 @@ Use for: "burden rate", "overhead", "labor burden", "cost recovery", "fringe rat
                     const rawData = BurdenData.getData(args);
 
                     // Process through intelligence layer - extracts key metrics, generates insights
-                    const intelligence = DashboardCache.process('burden', rawData, args.requestId);
+                    const intelligence = Cache.processDashboard('burden', rawData, args.requestId);
                     const metricsCount = Object.keys(intelligence.metrics || {}).length;
 
                     return {
@@ -4913,7 +4911,7 @@ Use for: "utilization", "billable hours", "time tracking", "unbilled time", "emp
                     const rawData = TimeData.getData(args);
 
                     // Process through intelligence layer - extracts key metrics, generates insights
-                    const intelligence = DashboardCache.process('time', rawData, args.requestId);
+                    const intelligence = Cache.processDashboard('time', rawData, args.requestId);
                     const metricsCount = Object.keys(intelligence.metrics || {}).length;
 
                     return {
@@ -4968,7 +4966,7 @@ Use for: "fraud detection", "anomalies", "duplicates", "Benford's law", "suspici
                     const rawData = IntegrityData.getData(args);
 
                     // Process through intelligence layer - extracts key metrics, generates insights
-                    const intelligence = DashboardCache.process('integrity', rawData, args.requestId);
+                    const intelligence = Cache.processDashboard('integrity', rawData, args.requestId);
                     const metricsCount = Object.keys(intelligence.metrics || {}).length;
 
                     return {
@@ -5028,7 +5026,7 @@ Use for: "vendor performance", "procurement", "vendor leverage", "payment terms"
                     const rawData = VendorPerformanceData.getData(args);
 
                     // Process through intelligence layer - extracts key metrics, generates insights
-                    const intelligence = DashboardCache.process('vendorperformance', rawData, args.requestId);
+                    const intelligence = Cache.processDashboard('vendorperformance', rawData, args.requestId);
                     const metricsCount = Object.keys(intelligence.metrics || {}).length;
 
                     return {
@@ -5088,7 +5086,7 @@ Use for: "customer value", "CLV", "lifetime value", "RFM", "churn risk", "custom
                     const rawData = CustomerValueData.getData(args);
 
                     // Process through intelligence layer - extracts key metrics, generates insights
-                    const intelligence = DashboardCache.process('customervalue', rawData, args.requestId);
+                    const intelligence = Cache.processDashboard('customervalue', rawData, args.requestId);
                     const metricsCount = Object.keys(intelligence.metrics || {}).length;
 
                     return {
@@ -5148,7 +5146,7 @@ Use for: "spend velocity", "subscription creep", "shadow IT", "commitment cliff"
                     const rawData = SpendVelocityData.getData(args);
 
                     // Process through intelligence layer - extracts key metrics, generates insights
-                    const intelligence = DashboardCache.process('spendvelocity', rawData, args.requestId);
+                    const intelligence = Cache.processDashboard('spendvelocity', rawData, args.requestId);
                     const metricsCount = Object.keys(intelligence.metrics || {}).length;
 
                     return {
@@ -5223,7 +5221,7 @@ Use this for: "show me details", "list the vendors", "which customers", "break i
             },
             execute: function(args) {
                 try {
-                    const result = DashboardCache.loadCollection(
+                    const result = Cache.loadCollection(
                         args.refId,
                         args.collection,
                         {
@@ -5420,7 +5418,7 @@ EXAMPLES:
 
                     if (isDashboardRef && args.collection_name) {
                         // Load dashboard collection from DashboardCache
-                        const collectionResult = DashboardCache.loadCollection(
+                        const collectionResult = Cache.loadCollection(
                             refId,
                             args.collection_name,
                             {
@@ -5460,7 +5458,7 @@ EXAMPLES:
                     } else if (isDashboardRef && !args.collection_name) {
                         // Load dashboard metric
                         if (args.metric_name) {
-                            const metricResult = DashboardCache.getMetric(refId, args.metric_name);
+                            const metricResult = Cache.getMetric(refId, args.metric_name);
                             return {
                                 success: metricResult.success,
                                 source: 'dashboard_metric',
@@ -5485,7 +5483,7 @@ EXAMPLES:
                         // Try to load with provided requestId, then fall back to refId-only lookup
                         let data = null;
                         if (requestId) {
-                            data = DataStore.loadRows(requestId, refId, startRow, endRow);
+                            data = Cache.loadRows(requestId, refId, startRow, endRow);
                         }
 
                         if (!data) {

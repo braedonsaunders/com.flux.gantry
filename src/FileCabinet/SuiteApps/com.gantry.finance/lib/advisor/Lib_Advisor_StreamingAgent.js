@@ -25,12 +25,10 @@ define([
     'N/log',
     './Lib_Advisor_AIProviders',
     './Lib_Advisor_Tools',
-    './Lib_Advisor_DataStore',
-    './Lib_Advisor_ProgressStore',
+    './Lib_Advisor_Cache',
     './Lib_Advisor_Utils',
-    './Lib_Advisor_DashboardCache',
     '../Lib_Dashboard_Registry'
-], function(log, AIProviders, Tools, DataStore, ProgressStore, Utils, DashboardCache, DashboardRegistry) {
+], function(log, AIProviders, Tools, Cache, Utils, DashboardRegistry) {
     'use strict';
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -680,7 +678,7 @@ Response format (JSON only):
             let fullCollectionData = null;
             if (shouldInline && intelligence.refId) {
                 try {
-                    const collectionResult = DashboardCache.loadCollection(
+                    const collectionResult = Cache.loadCollection(
                         intelligence.refId,
                         collectionName,
                         { limit: COLLECTION_INLINE_THRESHOLD }
@@ -838,7 +836,7 @@ Response format (JSON only):
 
         // Create a data reference that looks like standard tool output
         // This allows RESPOND phase to consume it without special handling
-        const dataRef = DataStore.storeData(requestId, toolName, {
+        const dataRef = Cache.storeData(requestId, toolName, {
             success: true,
             rows: dashboardData.rows,
             columns: dashboardData.columns,
@@ -1051,10 +1049,10 @@ Response format (JSON only):
 
         if (state.stepIds[stepKey]) {
             // Update existing step
-            ProgressStore.updateStep(state.requestId, stepData);
+            Cache.updateStep(state.requestId, stepData);
         } else {
             // Add new step
-            ProgressStore.addStep(state.requestId, stepData);
+            Cache.addStep(state.requestId, stepData);
             state.stepIds[stepKey] = true;
         }
     }
@@ -1102,9 +1100,9 @@ Response format (JSON only):
         }
 
         if (data.update) {
-            ProgressStore.updateLastStep(state.requestId, stepData);
+            Cache.updateLastStep(state.requestId, stepData);
         } else {
-            ProgressStore.addStep(state.requestId, stepData);
+            Cache.addStep(state.requestId, stepData);
         }
     }
 
@@ -1473,7 +1471,7 @@ Response format (JSON only):
                 }
 
                 // Load the stored data to check its collections
-                const storedData = DataStore.loadRows(ref.requestId || state.requestId, ref.refId, 0, 1);
+                const storedData = Cache.loadRows(ref.requestId || state.requestId, ref.refId, 0, 1);
                 const intelligence = storedData.intelligence;
 
                 if (intelligence && intelligence.collections) {
@@ -1648,7 +1646,7 @@ Response format (JSON only):
             // Entity resolution tools cached for 5 minutes, data queries for 30 seconds
             // ═══════════════════════════════════════════════════════════════════════
             const toolStart = Date.now();
-            let result = DataStore.getCachedToolResult(toolName, args);
+            let result = Cache.getCachedToolResult(toolName, args);
             let fromCache = false;
 
             if (result) {
@@ -1659,7 +1657,7 @@ Response format (JSON only):
                 // Cache miss - execute the tool
                 result = Tools.executeTool(toolName, args);
                 // Cache successful results
-                DataStore.cacheToolResult(toolName, args, result);
+                Cache.cacheToolResult(toolName, args, result);
             }
             const toolDuration = Date.now() - toolStart;
             const totalDuration = Date.now() - invokeStart;
@@ -1668,7 +1666,7 @@ Response format (JSON only):
             let dataRef = null;
             if (result.success && result.rows && result.rows.length > 0) {
                 // Standard tool with rows
-                dataRef = DataStore.storeData(state.requestId, toolName, result);
+                dataRef = Cache.storeData(state.requestId, toolName, result);
                 state.dataReferences.push(dataRef);
                 // Track that we found data (for reflection)
                 state.reflection.dataFound = true;
@@ -2349,7 +2347,7 @@ Response format (JSON only):
 
             // Store data reference if we got rows
             if (queryResult.rows && queryResult.rows.length > 0) {
-                const dataRef = DataStore.storeData(state.requestId, 'synthesized_query', queryResult);
+                const dataRef = Cache.storeData(state.requestId, 'synthesized_query', queryResult);
                 state.dataReferences.push(dataRef);
                 state.reflection.dataFound = true;
 
@@ -2827,7 +2825,7 @@ Response format (JSON only):
 
             // Load actual rows from DataStore
             // Use ref.requestId for follow-up queries (data stored under original request)
-            const data = DataStore.loadRows(ref.requestId || state.requestId, ref.refId, 0, 49); // Up to 50 rows
+            const data = Cache.loadRows(ref.requestId || state.requestId, ref.refId, 0, 49); // Up to 50 rows
             if (!data || !data.rows) return;
 
             // ═══════════════════════════════════════════════════════════════════════
@@ -3034,7 +3032,7 @@ Response format (JSON only):
                 if (!dataRef) return match;
 
                 // Use dataRef.requestId for follow-up queries
-                const data = DataStore.loadRows(dataRef.requestId || state.requestId, dataRef.refId, 0, 49);
+                const data = Cache.loadRows(dataRef.requestId || state.requestId, dataRef.refId, 0, 49);
                 if (!data) return match;
 
                 const totalRows = data.range?.total || data.rows.length;
@@ -3390,7 +3388,7 @@ Response format (JSON only):
 
         // Build data references for prompt
         const dataRefStrings = state.dataReferences.map(ref =>
-            DataStore.formatReferenceForPrompt(ref)
+            Cache.formatReferenceForPrompt(ref)
         ).join('\n\n');
 
         const prompt = ANALYZE_PROMPT
@@ -3514,7 +3512,7 @@ Response format (JSON only):
         }
 
         try {
-            const result = DataStore.executeCommand(state.requestId, {
+            const result = Cache.executeCommand(state.requestId, {
                 action: cmd.action || 'LOAD_ROWS',
                 refId: cmd.refId,
                 start: cmd.start || 0,
@@ -3762,7 +3760,7 @@ Response format (JSON only):
             try {
                 // Load actual data rows
                 // Use ref.requestId for follow-up queries
-                const data = DataStore.loadRows(ref.requestId || state.requestId, ref.refId, 0, 19);
+                const data = Cache.loadRows(ref.requestId || state.requestId, ref.refId, 0, 19);
                 if (!data || !data.rows || data.rows.length === 0) {
                     log.debug('SCA addProgressiveTableBlocks - no rows for ref', { refId: ref.refId });
                     return;
@@ -3791,7 +3789,7 @@ Response format (JSON only):
                 };
 
                 // Add to progress store for immediate frontend rendering
-                ProgressStore.addBlock(state.requestId, tableBlock);
+                Cache.addBlock(state.requestId, tableBlock);
 
                 log.debug('SCA addProgressiveTableBlocks - added table block', {
                     requestId: state.requestId,
@@ -3912,7 +3910,7 @@ Response format (JSON only):
                     // OPTIMIZATION: Load all rows in one batch instead of N separate calls
                     // Use dataRef.requestId for follow-up queries
                     const maxRank = Math.max(...preview.map(p => p.rank || 0));
-                    const allData = DataStore.loadRows(dataRef.requestId || state.requestId, dataRef.refId, 0, maxRank);
+                    const allData = Cache.loadRows(dataRef.requestId || state.requestId, dataRef.refId, 0, maxRank);
                     const rowsMap = {};
                     if (allData && allData.rows) {
                         allData.rows.forEach((row, idx) => { rowsMap[idx] = row; });
@@ -4171,7 +4169,7 @@ Response format (JSON only):
         // Tables are added during INVOKE phase via addProgressiveTableBlocks()
         // but were never being included in the final response
         // ═══════════════════════════════════════════════════════════════════════
-        const progressState = ProgressStore.get(state.requestId);
+        const progressState = Cache.get(state.requestId);
         if (progressState && progressState.blocks && progressState.blocks.length > 0) {
             // Get table blocks from progressive rendering
             const tableBlocks = progressState.blocks.filter(b => b.type === 'table');

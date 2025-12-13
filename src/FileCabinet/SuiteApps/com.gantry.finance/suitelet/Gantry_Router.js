@@ -23,7 +23,7 @@ define([
     '../lib/Lib_CustomerValue_Data',
     '../lib/Lib_SpendVelocity_Data',
     '../lib/advisor/Lib_Advisor_Orchestrator',
-    '../lib/advisor/Lib_Advisor_ProgressStore',
+    '../lib/advisor/Lib_Advisor_Cache',
     '../lib/Lib_Model_Registry'
 ], function(
     log,
@@ -40,7 +40,7 @@ define([
     CustomerValueData,
     SpendVelocityData,
     AdvisorOrchestrator,
-    ProgressStore,
+    Cache,
     ModelRegistry
 ) {
     'use strict';
