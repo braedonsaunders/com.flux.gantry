@@ -52,9 +52,9 @@
             birthDuration: 800,
             glowDuration: 400,
             explodeDuration: 1400,        // Explosion outward
-            orbitDuration: 2200,          // Time spent orbiting (no separate float)
+            orbitDuration: 1200,          // Reduced orbit time
             convergeDuration: 1000,       // Stream into input
-            shineDuration: 650,           // Satisfying glow payoff
+            shineDuration: 800,           // Longer, more subtle shine
             colors: [
                 { r: 99, g: 102, b: 241 },   // Indigo
                 { r: 139, g: 92, b: 246 },   // Purple
@@ -403,18 +403,14 @@
 
                 this.draw();
 
-                // Glow only starts when particles actually arrive (t > 0.4 means close to target)
-                if (chatInput && nearestParticleProgress > 0.4) {
-                    if (!firstArrival) firstArrival = true;
-                    const glowProgress = (nearestParticleProgress - 0.4) / 0.6;
+                // Subtle glow builds as particles arrive - very understated
+                if (chatInput && nearestParticleProgress > 0.5) {
+                    const glowProgress = (nearestParticleProgress - 0.5) / 0.5;
                     const glowIntensity = this.easeOutQuart(glowProgress);
-                    const glowSize = 10 + 18 * glowIntensity;
-                    const outerSize = 20 + 25 * glowIntensity;
-                    const glowOpacity = 0.25 + 0.35 * glowIntensity;
-                    const outerOpacity = 0.12 + 0.18 * glowIntensity;
+                    // Very subtle - just a hint of color on the border
                     chatInput.style.boxShadow = `
-                        0 0 ${glowSize}px rgba(99, 102, 241, ${glowOpacity}),
-                        0 0 ${outerSize}px rgba(139, 92, 246, ${outerOpacity})
+                        0 0 ${2 + 4 * glowIntensity}px rgba(99, 102, 241, ${0.08 + 0.12 * glowIntensity}),
+                        inset 0 0 ${1 + 2 * glowIntensity}px rgba(99, 102, 241, ${0.03 * glowIntensity})
                     `;
                 }
 
@@ -434,49 +430,42 @@
                 return;
             }
 
-            if (inputWrapper) {
-                inputWrapper.classList.add('input-shine-active');
-            }
-
+            // Skip the CSS animation class - we'll do it purely in JS for subtlety
             const shineStart = Date.now();
 
             const animateShine = () => {
                 const elapsed = Date.now() - shineStart;
                 const progress = Math.min(elapsed / this.config.shineDuration, 1);
 
-                // Smooth envelope - quick rise, satisfying sustain, gentle fade
-                const envelope = progress < 0.15
-                    ? this.easeOutQuart(progress / 0.15) // Quick attack
-                    : progress < 0.7
-                        ? 1 // Sustain at peak
-                        : 1 - this.easeInOutQuad((progress - 0.7) / 0.3); // Gentle release
+                // Very gentle envelope - slow rise, slow fade
+                const envelope = progress < 0.3
+                    ? this.easeOutCubic(progress / 0.3) * 0.8 // Gentle rise to 80%
+                    : progress < 0.5
+                        ? 0.8 + this.easeInOutQuad((progress - 0.3) / 0.2) * 0.2 // Peak at 100%
+                        : 1 - this.easeInOutCubic((progress - 0.5) / 0.5); // Long gentle fade
 
-                // Premium shimmer - multiple frequencies for organic sparkle
-                const shimmer1 = Math.sin(progress * Math.PI * 6) * 0.15; // Fast sparkle
-                const shimmer2 = Math.sin(progress * Math.PI * 3.5 + 0.3) * 0.1; // Medium wave
-                const shimmer3 = Math.sin(progress * Math.PI * 2) * 0.08; // Slow pulse
-                const shimmerCombined = 1 + shimmer1 + shimmer2 + shimmer3;
+                // Subtle breathing - barely perceptible
+                const breath = Math.sin(progress * Math.PI * 3) * 0.1 + 1;
 
-                // Visible but elegant glow - layered for depth
-                const baseGlow = 12 * envelope * shimmerCombined;
-                const outerGlow = 20 * envelope * shimmerCombined;
-                const glowOpacity = 0.35 * envelope;
-                const outerOpacity = 0.15 * envelope;
+                // Premium subtle glow - whisper-quiet elegance
+                const glowSize = 3 + 5 * envelope * breath;
+                const glowOpacity = 0.06 + 0.1 * envelope;
 
-                // Premium multi-layer glow with color gradient
+                // Single subtle glow layer + delicate inner light
                 chatInput.style.boxShadow = `
-                    0 0 ${baseGlow}px rgba(99, 102, 241, ${glowOpacity}),
-                    0 0 ${outerGlow}px rgba(139, 92, 246, ${outerOpacity}),
-                    inset 0 0 ${3 * envelope}px rgba(255, 255, 255, ${0.1 * envelope})
+                    0 0 ${glowSize}px rgba(99, 102, 241, ${glowOpacity}),
+                    0 0 ${glowSize * 2}px rgba(99, 102, 241, ${glowOpacity * 0.3}),
+                    inset 0 1px 0 rgba(255, 255, 255, ${0.08 * envelope})
                 `;
+
+                // Subtle border color shift
+                chatInput.style.borderColor = `rgba(99, 102, 241, ${0.15 + 0.2 * envelope})`;
 
                 if (progress < 1) {
                     this.animationId = requestAnimationFrame(animateShine);
                 } else {
                     chatInput.style.boxShadow = '';
-                    if (inputWrapper) {
-                        inputWrapper.classList.remove('input-shine-active');
-                    }
+                    chatInput.style.borderColor = '';
                     this.startAmbient();
                 }
             };
