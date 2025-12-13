@@ -250,11 +250,11 @@ define([
 
             case 'SYNTAX_ERROR':
                 // Check for common SuiteQL-specific syntax issues
-                if (sql && /\bLIMIT\s+\d+/i.test(sql)) {
+                if (sql && /\b(LIMIT\s+\d+|FETCH\s+FIRST)/i.test(sql)) {
                     context.suggestions.push(
-                        'CRITICAL: SuiteQL does NOT support LIMIT syntax!',
-                        'Use: FETCH FIRST N ROWS ONLY (at end of query)',
-                        'Example: SELECT * FROM customer FETCH FIRST 100 ROWS ONLY'
+                        'CRITICAL: SuiteQL does NOT support LIMIT or FETCH FIRST syntax!',
+                        'Use ROWNUM for row limits: SELECT * FROM (your_query ORDER BY ...) WHERE ROWNUM <= N',
+                        'Example: SELECT * FROM (SELECT * FROM customer ORDER BY id) WHERE ROWNUM <= 100'
                     );
                 } else {
                     context.suggestions.push(
@@ -262,7 +262,7 @@ define([
                         'Verify JOIN syntax is complete',
                         'Check parentheses are balanced',
                         'Ensure string literals use single quotes',
-                        'Remember: Use FETCH FIRST N ROWS ONLY (not LIMIT)'
+                        'For row limits, use: SELECT * FROM (query) WHERE ROWNUM <= N'
                     );
                 }
                 break;

@@ -5,10 +5,11 @@
  * Only uploads files that have changed since the last sync
  *
  * Usage:
- *   node scripts/sync.js           # Sync changed files since last sync (local dev)
- *   node scripts/sync.js --ci      # Sync only files changed in latest commit (for CI/CD)
- *   node scripts/sync.js --all     # Force sync all files
- *   node scripts/sync.js --watch   # Watch for changes and auto-sync
+ *   node scripts/sync.js              # Sync changed files since last sync (local dev)
+ *   node scripts/sync.js --ci         # Sync only files changed in latest commit (for CI/CD)
+ *   node scripts/sync.js --all        # Force sync all files
+ *   node scripts/sync.js --watch      # Watch for changes and auto-sync
+ *   node scripts/sync.js --no-delete  # Skip deletion of removed files
  */
 
 const { execSync, spawn } = require('child_process');
@@ -125,6 +126,68 @@ function getGitCommitChangedFiles() {
     }
 }
 
+function getGitCommitDeletedFiles() {
+    try {
+        // Get files deleted in the latest commit using --diff-filter=D
+        const output = execSync('git diff --name-only --diff-filter=D HEAD~1 HEAD 2>/dev/null', {
+            encoding: 'utf8'
+        }).trim();
+
+        if (!output) return [];
+
+        return output.split('\n')
+            .filter(f => f.startsWith(FILE_CABINET_PATH))
+            .filter(f => SYNCABLE_EXTENSIONS.includes(path.extname(f).toLowerCase()));
+    } catch (e) {
+        return [];
+    }
+}
+
+function deleteFile(filePath) {
+    try {
+        // Transform local path to File Cabinet path
+        const fileCabinetPath = '/' + filePath.replace(/^src\/FileCabinet\//, '');
+
+        log(`Deleting: ${filePath}`);
+        log(`  File Cabinet path: ${fileCabinetPath}`);
+
+        const output = execSync(`suitecloud file:delete --paths "${fileCabinetPath}"`, {
+            encoding: 'utf8',
+            stdio: ['pipe', 'pipe', 'pipe']
+        });
+
+        if (output) {
+            log(`  Output: ${output.trim()}`, 'success');
+        }
+        return true;
+    } catch (e) {
+        const errorMsg = e.stderr || e.stdout || e.message;
+        log(`Failed to delete ${filePath}: ${errorMsg}`, 'error');
+        return false;
+    }
+}
+
+function deleteFiles(files) {
+    if (files.length === 0) {
+        return { success: 0, failed: 0 };
+    }
+
+    log(`Deleting ${files.length} file(s)...`);
+
+    let success = 0;
+    let failed = 0;
+
+    for (const file of files) {
+        if (deleteFile(file)) {
+            success++;
+        } else {
+            failed++;
+        }
+    }
+
+    return { success, failed };
+}
+
 function uploadFile(filePath) {
     try {
         // Transform local path to File Cabinet path
@@ -229,6 +292,7 @@ function main() {
     const forceAll = args.includes('--all');
     const ciMode = args.includes('--ci');
     const watchModeEnabled = args.includes('--watch');
+    const noDelete = args.includes('--no-delete');
 
     if (watchModeEnabled) {
         watchMode();
@@ -237,6 +301,7 @@ function main() {
 
     const state = loadSyncState();
     let filesToSync;
+    let filesToDelete = [];
 
     if (forceAll) {
         log('Force syncing all files...');
@@ -245,7 +310,13 @@ function main() {
         // CI mode: only sync files changed in the latest commit
         log('CI mode: detecting files changed in latest commit...');
         filesToSync = getGitCommitChangedFiles();
-        if (filesToSync.length === 0) {
+
+        // Detect deleted files unless --no-delete is specified
+        if (!noDelete) {
+            filesToDelete = getGitCommitDeletedFiles();
+        }
+
+        if (filesToSync.length === 0 && filesToDelete.length === 0) {
             log('No SuiteApp files changed in this commit', 'success');
             return;
         }
@@ -259,9 +330,18 @@ function main() {
         state.fileHashes = { ...state.fileHashes, ...newHashes };
     }
 
-    const { success, failed } = uploadFiles(filesToSync);
+    // Upload new/changed files
+    const { success: uploadSuccess, failed: uploadFailed } = uploadFiles(filesToSync);
 
-    if ((success > 0 || forceAll) && !ciMode) {
+    // Delete removed files
+    const { success: deleteSuccess, failed: deleteFailed } = deleteFiles(filesToDelete);
+
+    // Remove deleted files from sync state
+    for (const file of filesToDelete) {
+        delete state.fileHashes[file];
+    }
+
+    if ((uploadSuccess > 0 || forceAll) && !ciMode) {
         state.lastSync = new Date().toISOString();
         // Update hashes for synced files
         for (const file of filesToSync) {
@@ -270,11 +350,17 @@ function main() {
         saveSyncState(state);
     }
 
-    if (failed > 0) {
-        log(`Completed with errors: ${success} succeeded, ${failed} failed`, 'warn');
+    const totalSuccess = uploadSuccess + deleteSuccess;
+    const totalFailed = uploadFailed + deleteFailed;
+
+    if (totalFailed > 0) {
+        log(`Completed with errors: ${uploadSuccess} uploaded, ${deleteSuccess} deleted, ${totalFailed} failed`, 'warn');
         process.exit(1);
-    } else if (success > 0) {
-        log(`Successfully synced ${success} file(s)`, 'success');
+    } else if (totalSuccess > 0) {
+        const parts = [];
+        if (uploadSuccess > 0) parts.push(`${uploadSuccess} uploaded`);
+        if (deleteSuccess > 0) parts.push(`${deleteSuccess} deleted`);
+        log(`Successfully synced: ${parts.join(', ')}`, 'success');
     }
 }
 

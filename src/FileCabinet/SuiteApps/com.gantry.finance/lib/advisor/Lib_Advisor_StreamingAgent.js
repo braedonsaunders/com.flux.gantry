@@ -40,22 +40,120 @@ define([
         INTENT: 'intent',
         SELECT: 'select',
         INVOKE: 'invoke',
-        REFLECT: 'reflect',   // ReAct pattern - evaluate results and decide next action
-        SYNTHESIZE: 'synthesize', // NEW: LLM writes custom SQL when tools fail
-        RESPOND: 'respond',   // Merged analyze+format with data access
-        COMPLETE: 'complete',
-        // Legacy phases kept for backward compatibility
-        ANALYZE: 'analyze',
-        LOAD_DATA: 'load_data',
-        FORMAT: 'format'
+        REFLECT: 'reflect',      // ReAct pattern - evaluate results and decide next action
+        SYNTHESIZE: 'synthesize', // LLM writes custom SQL when tools fail
+        RESPOND: 'respond',      // Generate final response with data access
+        COMPLETE: 'complete'
     };
 
-    // Use fast/cheap tier for all lightweight calls
-    const FAST_TIER = 1;
+    // ═══════════════════════════════════════════════════════════════════════════
+    // ADAPTIVE INTELLIGENCE ROUTING (AIR)
+    // Task-aware model selection for optimal cost/quality balance
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    const TIERS = {
+        FAST: 1,      // Fast/cheap: Haiku, GPT-4o-mini, Gemini Flash - for classification, params
+        BALANCED: 2,  // Balanced: Sonnet, GPT-4o, Gemini Flash - for reasoning
+        PREMIUM: 3    // Premium: Opus, GPT-4, Gemini Pro - for complex analysis, SQL synthesis
+    };
+
+    /**
+     * Get the appropriate tier for a phase based on task requirements
+     * @param {string} phase - The SCA phase
+     * @param {Object} state - Current state for adaptive decisions
+     * @returns {number} The tier (1, 2, or 3)
+     */
+    function getTierForPhase(phase, state) {
+        switch (phase) {
+            // Fast tier - simple classification and structured output
+            case 'intent':
+            case 'select':
+            case 'invoke':
+            case 'recovery':
+                return TIERS.FAST;
+
+            // Balanced tier - requires reasoning about results
+            case 'reflect':
+                return TIERS.BALANCED;
+
+            // Premium tier - complex SQL generation needs best model
+            case 'synthesize':
+                return TIERS.PREMIUM;
+
+            // Adaptive - based on response complexity
+            case 'respond':
+                return getAdaptiveRespondTier(state);
+
+            default:
+                return TIERS.FAST;
+        }
+    }
+
+    /**
+     * Calculate response complexity to determine RESPOND tier
+     * Higher complexity = better model for quality answer
+     * @param {Object} state - Current state
+     * @returns {number} Complexity score (0-10)
+     */
+    function calculateResponseComplexity(state) {
+        let score = 0;
+
+        // Data volume factor
+        const totalRows = (state.dataReferences || []).reduce((sum, ref) =>
+            sum + (ref?.summary?.rowCount || 0), 0);
+        if (totalRows > 100) score += 2;
+        else if (totalRows > 20) score += 1;
+
+        // Data source diversity (multiple tools = more complex synthesis)
+        const successfulTools = (state.toolInvocations || []).filter(t => t.success).length;
+        if (successfulTools > 2) score += 2;
+        else if (successfulTools > 1) score += 1;
+
+        // Dashboard data (rich metrics require better synthesis)
+        if ((state.dataReferences || []).some(r => r.isDashboard)) score += 1;
+
+        // Question complexity from INTENT phase
+        if (state.intent) {
+            if (state.intent.intent === 'comparison') score += 2;
+            if (state.intent.intent === 'reporting') score += 1;
+            if ((state.intent.semantic_topics || []).length > 2) score += 1;
+        }
+
+        // Synthesized SQL (already complex path)
+        if (state.synthesizedQuery) score += 2;
+
+        // Multiple entities resolved (cross-entity analysis)
+        if (Object.keys(state.resolvedEntities || {}).length > 1) score += 1;
+
+        return Math.min(score, 10); // Cap at 10
+    }
+
+    /**
+     * Get tier for RESPOND phase based on complexity
+     * @param {Object} state - Current state
+     * @returns {number} The tier (1, 2, or 3)
+     */
+    function getAdaptiveRespondTier(state) {
+        const complexity = calculateResponseComplexity(state);
+
+        // Premium for complex multi-source analysis
+        if (complexity >= 5) {
+            log.debug('AIR: Premium tier for RESPOND', { complexity });
+            return TIERS.PREMIUM;
+        }
+
+        // Balanced for moderate complexity
+        if (complexity >= 2) {
+            log.debug('AIR: Balanced tier for RESPOND', { complexity });
+            return TIERS.BALANCED;
+        }
+
+        // Fast for simple summaries
+        log.debug('AIR: Fast tier for RESPOND', { complexity });
+        return TIERS.FAST;
+    }
+
     const MAX_TOOL_INVOCATIONS = 5;
-    const MAX_DATA_LOADS = 3;
-    const MAX_ANALYZE_ITERATIONS = 3;  // Prevent analyze loops
-    const MAX_FORMAT_ITERATIONS = 2;   // Prevent format loops
     const MAX_REFLECT_ITERATIONS = 3;  // Prevent infinite reflection loops
     const MAX_SYNTHESIZE_ITERATIONS = 3; // Max SQL generation/correction attempts
 
@@ -163,45 +261,16 @@ CRITICAL SEMANTIC GUIDANCE:
    - If a vendor was resolved, transaction likely involves payables (VendBill, VendPmt)
    - If a customer was resolved, transaction likely involves receivables (CustInvc, CustPmt)
 
+4. CLASSIFICATION DIMENSIONS (for resolve_classification):
+   - ALWAYS use dimension="auto" to search all dimensions UNLESS you are 100% certain of the type
+   - Common confusion: "Shop", "Engineering", "Sales" are typically DEPARTMENTS, not classes
+   - "class" = accounting classification for categorizing transactions
+   - "department" = organizational unit (teams, divisions, shops, etc.)
+   - "location" = physical place
+   - "subsidiary" = legal entity
+   - When in doubt, use "auto" - it searches everything!
+
 Response format: {"tool": "{tool_name}", "args": {...}}`;
-
-    const ANALYZE_PROMPT = `Analyze this data to answer the user's question. Respond with JSON only.
-
-QUESTION: "{question}"
-
-{data_references}
-
-Instructions:
-- Use the data summaries and previews provided
-- If you need more rows, respond with: {"action": "load_data", "refId": "ref_xxx", "start": 0, "end": 19}
-- If you have enough data, provide your analysis
-- Be specific with numbers and percentages
-
-Response format (if ready to answer):
-{"analysis": "Your detailed analysis here", "key_findings": ["finding1", "finding2"]}
-
-Response format (if need more data):
-{"action": "load_data", "refId": "ref_xxx", "start": 0, "end": 19}`;
-
-    const FORMAT_PROMPT = `Format this analysis as rich content blocks. Respond with JSON only.
-
-ANALYSIS:
-{analysis}
-
-KEY FINDINGS:
-{findings}
-
-DATA AVAILABLE:
-{data_summary}
-
-Create blocks array with these types:
-- text: {"type": "text", "content": "narrative text"}
-- metrics: {"type": "metrics", "items": [{"label": "X", "value": "$Y", "trend": "up|down|neutral"}]}
-- table: {"type": "table", "title": "X", "headers": [...], "rows": [[...], ...]}
-- list: {"type": "list", "title": "Key Insights", "items": ["item1", "item2"]}
-
-Response format:
-{"title": "Response Title", "summary": "One line summary", "blocks": [...]}`;
 
     // ═══════════════════════════════════════════════════════════════════════════
     // REFLECT PROMPT - ReAct Pattern (Reasoning + Acting)
@@ -266,36 +335,6 @@ Response format (JSON only):
 }}`;
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // LLM-DRIVEN TOOL RECOVERY PROMPT
-    // When tools fail, let LLM suggest alternatives based on context
-    // ═══════════════════════════════════════════════════════════════════════════
-
-    const RECOVERY_PROMPT = `A tool failed while answering a financial question. Suggest an alternative approach.
-
-QUESTION: "{question}"
-FAILED TOOL: {failed_tool}
-ERROR: {error}
-
-AVAILABLE TOOLS:
-{tool_list}
-
-ALREADY TRIED:
-{already_tried}
-
-Based on the error and question context, suggest:
-1. An alternative tool that could provide similar information
-2. Modified parameters that might work better
-3. Whether to give up and explain the limitation to the user
-
-Response format (JSON only):
-{{
-  "suggestion": "TRY_ALTERNATIVE|MODIFY_PARAMS|GIVE_UP",
-  "alternative_tool": "tool_name or null",
-  "reasoning": "Why this alternative might work",
-  "user_message": "Message to show user if giving up"
-}}`;
-
-    // ═══════════════════════════════════════════════════════════════════════════
     // SYNTHESIZE PROMPT - LLM Writes Custom SuiteQL
     // World-class SQL generation when pre-built tools fail
     // ═══════════════════════════════════════════════════════════════════════════
@@ -355,10 +394,11 @@ accountingperiod
 
 **SUITEQL SYNTAX RULES (CRITICAL!):**
 
-1. ROW LIMITS: Use "FETCH FIRST N ROWS ONLY" at the END of the query (NOT "LIMIT N"!)
-   ✓ SELECT * FROM customer FETCH FIRST 100 ROWS ONLY
+1. ROW LIMITS: Wrap query in subquery and use ROWNUM (NOT "LIMIT" or "FETCH FIRST"!)
+   ✓ SELECT * FROM (SELECT * FROM customer ORDER BY id) WHERE ROWNUM <= 100
    ✗ SELECT * FROM customer LIMIT 100
-   NOTE: For CTEs, put FETCH FIRST at the very end, after the final SELECT
+   ✗ SELECT * FROM customer FETCH FIRST 100 ROWS ONLY
+   NOTE: ROWNUM must be in outer WHERE clause because it's evaluated BEFORE ORDER BY
 
 2. DISPLAY NAMES: Use BUILTIN.DF() for foreign key display values
    ✓ BUILTIN.DF(transaction.entity) AS entity_name
@@ -384,35 +424,36 @@ accountingperiod
 7. CTEs (WITH clause): Supported! Rules for CTEs:
    - The main SELECT must reference a real table (not just CTEs)
    - Use CROSS JOIN to bring in CTE values
-   - Always include ORDER BY before FETCH FIRST
+   - For row limits with ORDER BY, wrap entire CTE query: SELECT * FROM (WITH ... SELECT ... ORDER BY ...) WHERE ROWNUM <= N
    - For scalar aggregates, prefer subqueries from DUAL instead of CTEs
 
 **COMMON PATTERNS:**
 
 YoY Comparison (using CTEs):
-WITH current_year AS (
-  SELECT account, SUM(amount) as amount
-  FROM transactionaccountingline tal
-  JOIN transaction t ON tal.transaction = t.id
-  WHERE t.trandate >= TO_DATE('2025-01-01', 'YYYY-MM-DD')
-    AND t.posting = 'T' AND t.voided = 'F'
-  GROUP BY account
-),
-prior_year AS (
-  SELECT account, SUM(amount) as amount
-  FROM transactionaccountingline tal
-  JOIN transaction t ON tal.transaction = t.id
-  WHERE t.trandate >= TO_DATE('2024-01-01', 'YYYY-MM-DD')
-    AND t.trandate < TO_DATE('2025-01-01', 'YYYY-MM-DD')
-    AND t.posting = 'T' AND t.voided = 'F'
-  GROUP BY account
-)
-SELECT c.account, BUILTIN.DF(c.account) AS account_name,
-  c.amount AS current_amount, p.amount AS prior_amount,
-  CASE WHEN p.amount > 0 THEN (c.amount - p.amount) / p.amount * 100 END AS yoy_pct
-FROM current_year c
-LEFT JOIN prior_year p ON c.account = p.account
-FETCH FIRST 100 ROWS ONLY
+SELECT * FROM (
+  WITH current_year AS (
+    SELECT account, SUM(amount) as amount
+    FROM transactionaccountingline tal
+    JOIN transaction t ON tal.transaction = t.id
+    WHERE t.trandate >= TO_DATE('2025-01-01', 'YYYY-MM-DD')
+      AND t.posting = 'T' AND t.voided = 'F'
+    GROUP BY account
+  ),
+  prior_year AS (
+    SELECT account, SUM(amount) as amount
+    FROM transactionaccountingline tal
+    JOIN transaction t ON tal.transaction = t.id
+    WHERE t.trandate >= TO_DATE('2024-01-01', 'YYYY-MM-DD')
+      AND t.trandate < TO_DATE('2025-01-01', 'YYYY-MM-DD')
+      AND t.posting = 'T' AND t.voided = 'F'
+    GROUP BY account
+  )
+  SELECT c.account, BUILTIN.DF(c.account) AS account_name,
+    c.amount AS current_amount, p.amount AS prior_amount,
+    CASE WHEN p.amount > 0 THEN (c.amount - p.amount) / p.amount * 100 END AS yoy_pct
+  FROM current_year c
+  LEFT JOIN prior_year p ON c.account = p.account
+) WHERE ROWNUM <= 100
 
 Cash Flow Projection (AR/AP due in next N days):
 SELECT
@@ -426,15 +467,16 @@ SELECT
 FROM DUAL
 
 Expense by Category:
-SELECT a.acctnumber, a.accountsearchdisplayname,
-  SUM(COALESCE(tal.debit,0) - COALESCE(tal.credit,0)) as amount
-FROM transactionaccountingline tal
-JOIN transaction t ON tal.transaction = t.id
-JOIN account a ON tal.account = a.id
-WHERE a.accttype = 'Expense' AND t.posting = 'T' AND t.voided = 'F'
-GROUP BY a.acctnumber, a.accountsearchdisplayname
-ORDER BY amount DESC
-FETCH FIRST 50 ROWS ONLY
+SELECT * FROM (
+  SELECT a.acctnumber, a.accountsearchdisplayname,
+    SUM(COALESCE(tal.debit,0) - COALESCE(tal.credit,0)) as amount
+  FROM transactionaccountingline tal
+  JOIN transaction t ON tal.transaction = t.id
+  JOIN account a ON tal.account = a.id
+  WHERE a.accttype = 'Expense' AND t.posting = 'T' AND t.voided = 'F'
+  GROUP BY a.acctnumber, a.accountsearchdisplayname
+  ORDER BY amount DESC
+) WHERE ROWNUM <= 50
 
 ═══════════════════════════════════════════════════════════════════════════════
 {error_context}
@@ -1132,7 +1174,7 @@ Response format (JSON only):
 
         try {
             const response = AIProviders.callAI(prompt, {
-                tier: FAST_TIER,
+                tier: getTierForPhase('intent', state),
                 temperature: 0.1,
                 maxTokens: 200,
                 jsonMode: true,
@@ -1296,7 +1338,7 @@ Response format (JSON only):
 
         try {
             const response = AIProviders.callAI(prompt, {
-                tier: FAST_TIER,
+                tier: getTierForPhase('select', state),
                 temperature: 0.1,
                 maxTokens: 200,
                 jsonMode: true,
@@ -1603,7 +1645,7 @@ Response format (JSON only):
 
         try {
             const response = AIProviders.callAI(prompt, {
-                tier: FAST_TIER,
+                tier: getTierForPhase('invoke', state),
                 temperature: 0.1,
                 maxTokens: 300,
                 jsonMode: true,
@@ -2026,7 +2068,7 @@ Response format (JSON only):
 
         try {
             const response = AIProviders.callAI(prompt, {
-                tier: FAST_TIER,
+                tier: getTierForPhase('reflect', state),
                 temperature: 0.2,
                 maxTokens: 500,
                 jsonMode: true,
@@ -2244,7 +2286,7 @@ Response format (JSON only):
 
         // Build error context if this is a retry
         const errorContext = state.synthesize.lastError ?
-            `PREVIOUS QUERY FAILED:\n\`\`\`sql\n${state.synthesize.queries[state.synthesize.queries.length - 1]?.sql || 'N/A'}\n\`\`\`\n\nERROR: ${state.synthesize.lastError}\n\nFix the error and try again. Common fixes:\n- Use FETCH FIRST N ROWS ONLY instead of LIMIT\n- Check column names against the schema\n- Use BUILTIN.DF() for display names\n- Verify table joins are correct` :
+            `PREVIOUS QUERY FAILED:\n\`\`\`sql\n${state.synthesize.queries[state.synthesize.queries.length - 1]?.sql || 'N/A'}\n\`\`\`\n\nERROR: ${state.synthesize.lastError}\n\nFix the error and try again. Common fixes:\n- Use ROWNUM for row limits: SELECT * FROM (your_query ORDER BY ...) WHERE ROWNUM <= N\n- Check column names against the schema\n- Use BUILTIN.DF() for display names\n- Verify table joins are correct` :
             '';
 
         const prompt = SYNTHESIZE_PROMPT
@@ -2266,9 +2308,9 @@ Response format (JSON only):
         });
 
         try {
-            // Call LLM to generate SQL
+            // Call LLM to generate SQL (PREMIUM tier for complex SQL synthesis)
             const response = AIProviders.callAI(prompt, {
-                tier: FAST_TIER,
+                tier: getTierForPhase('synthesize', state),
                 temperature: 0.2,
                 maxTokens: 1500,
                 jsonMode: true,
@@ -2578,7 +2620,7 @@ Response format (JSON only):
 
         try {
             const response = AIProviders.callAI(prompt, {
-                tier: FAST_TIER,
+                tier: getTierForPhase('recovery', state),
                 temperature: 0.2,
                 maxTokens: 300,
                 jsonMode: true,
@@ -2710,8 +2752,9 @@ Response format (JSON only):
         });
 
         try {
+            // Adaptive tier based on response complexity
             const response = AIProviders.callAI(prompt, {
-                tier: FAST_TIER,
+                tier: getTierForPhase('respond', state),
                 temperature: 0.3,
                 maxTokens: 2000,
                 jsonMode: true,
@@ -3331,358 +3374,6 @@ Response format (JSON only):
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // LEGACY PHASE FUNCTIONS (kept for backward compatibility)
-    // ═══════════════════════════════════════════════════════════════════════════
-
-    /**
-     * Phase 4: ANALYZE - Analyze data with lightweight context
-     * LEGACY: Now bypassed in favor of RESPOND phase
-     */
-    function executeAnalyzePhase(state) {
-        const phaseStart = Date.now();
-        state.analyzeIterations++;
-
-        // Circuit breaker: prevent infinite analyze loops
-        if (state.analyzeIterations >= MAX_ANALYZE_ITERATIONS) {
-            log.audit('SCA Analyze circuit breaker triggered', {
-                iterations: state.analyzeIterations,
-                requestId: state.requestId
-            });
-
-            state.analysis = synthesizeFromDataRefs(state);
-            state.phase = PHASES.FORMAT;
-
-            upsertThinkingStep(state, 'analyze', {
-                title: 'Analyzing results',
-                phase: 'analyze',
-                status: 'complete',
-                context: {
-                    circuitBreaker: true,
-                    iterations: state.analyzeIterations
-                }
-            });
-
-            return { success: true, nextPhase: PHASES.FORMAT };
-        }
-
-        // Check if we have any data to analyze
-        if (state.dataReferences.length === 0 && state.toolInvocations.every(t => !t.success)) {
-            // No data - provide a fallback response
-            state.analysis = {
-                analysis: "I wasn't able to find the data needed to answer your question. Please try rephrasing or providing more specific details.",
-                key_findings: []
-            };
-            state.phase = PHASES.FORMAT;
-
-            upsertThinkingStep(state, 'analyze', {
-                title: 'Analyzing results',
-                phase: 'analyze',
-                status: 'complete',
-                context: {
-                    noData: true
-                }
-            });
-
-            return { success: true, nextPhase: PHASES.FORMAT };
-        }
-
-        // Build data references for prompt
-        const dataRefStrings = state.dataReferences.map(ref =>
-            Cache.formatReferenceForPrompt(ref)
-        ).join('\n\n');
-
-        const prompt = ANALYZE_PROMPT
-            .replace('{question}', state.message)
-            .replace('{data_references}', dataRefStrings || 'No data available');
-
-        // Update thinking step (same step, just update status)
-        upsertThinkingStep(state, 'analyze', {
-            title: 'Analyzing results',
-            phase: 'analyze',
-            status: 'active',
-            context: {
-                dataRefs: state.dataReferences.length,
-                iteration: state.analyzeIterations
-            }
-        });
-
-        try {
-            const response = AIProviders.callAI(prompt, {
-                tier: FAST_TIER,
-                temperature: 0.2,
-                maxTokens: 1000,
-                jsonMode: true,
-                purpose: 'SCA:analyze'
-            });
-
-            const parsed = parseJsonResponse(response?.text);
-            const duration = Date.now() - phaseStart;
-            state.phaseTimings.analyze = (state.phaseTimings.analyze || 0) + duration;
-
-            // Check for load_data request
-            if (parsed?.action === 'load_data' && parsed.refId) {
-                if (state.iteration < MAX_DATA_LOADS) {
-                    state.phase = PHASES.LOAD_DATA;
-                    state.pendingDataLoad = parsed;
-
-                    upsertThinkingStep(state, 'analyze', {
-                        title: 'Analyzing results',
-                        phase: 'analyze',
-                        status: 'active',
-                        context: {
-                            loadingMoreData: true,
-                            refId: parsed.refId
-                        }
-                    });
-
-                    return { success: true, nextPhase: PHASES.LOAD_DATA };
-                }
-            }
-
-            // FLEXIBLE: Accept analysis with OR without action field
-            // LLM might return: {"analysis": "..."} or {"action": "respond", "analysis": "..."}
-            if (parsed?.analysis) {
-                state.analysis = {
-                    analysis: parsed.analysis,
-                    key_findings: parsed.key_findings || []
-                };
-                state.phase = PHASES.FORMAT;
-
-                upsertThinkingStep(state, 'analyze', {
-                    title: 'Analyzing results',
-                    phase: 'analyze',
-                    status: 'complete',
-                    duration: duration,
-                    context: {
-                        hasAnalysis: true,
-                        findingsCount: state.analysis.key_findings.length,
-                        iteration: state.analyzeIterations
-                    },
-                    debug: buildDebugInfo(prompt, response, state, {
-                        analysisLength: parsed.analysis?.length,
-                        findingsCount: parsed.key_findings?.length
-                    })
-                });
-
-                log.debug('SCA Analyze phase complete', { duration: duration });
-                return { success: true, nextPhase: PHASES.FORMAT };
-            }
-
-            // If we got here, response was invalid
-            throw new Error('Invalid analysis response - missing analysis field. Got: ' +
-                (response?.text?.substring(0, 100) || 'empty'));
-
-        } catch (e) {
-            const duration = Date.now() - phaseStart;
-            log.error('SCA Analyze phase failed', {
-                error: e.message,
-                duration: duration,
-                iteration: state.analyzeIterations
-            });
-            state.errors.push({ phase: 'analyze', error: e.message, timestamp: Date.now() });
-
-            // Synthesize a basic response from data summaries
-            state.analysis = synthesizeFromDataRefs(state);
-            state.phase = PHASES.FORMAT;
-
-            upsertThinkingStep(state, 'analyze', {
-                title: 'Analyzing results',
-                phase: 'analyze',
-                status: 'complete',
-                duration: duration,
-                context: {
-                    fallback: true,
-                    error: e.message.substring(0, 100),
-                    iteration: state.analyzeIterations
-                }
-            });
-
-            return { success: true, nextPhase: PHASES.FORMAT };
-        }
-    }
-
-    /**
-     * Phase 4b: LOAD_DATA - Load additional data on demand
-     */
-    function executeLoadDataPhase(state) {
-        const cmd = state.pendingDataLoad;
-        if (!cmd || !cmd.refId) {
-            state.phase = PHASES.ANALYZE;
-            return { success: true, nextPhase: PHASES.ANALYZE };
-        }
-
-        try {
-            const result = Cache.executeCommand(state.requestId, {
-                action: cmd.action || 'LOAD_ROWS',
-                refId: cmd.refId,
-                start: cmd.start || 0,
-                end: cmd.end || 19
-            });
-
-            if (result && result.rows) {
-                // Add loaded data to the reference
-                const existingRef = state.dataReferences.find(r => r.refId === cmd.refId);
-                if (existingRef) {
-                    existingRef.loadedRows = result.rows;
-                    existingRef.summary.loadedData = true;
-                }
-            }
-
-            state.pendingDataLoad = null;
-            state.phase = PHASES.ANALYZE;
-            state.iteration++;
-
-            log.debug('SCA Load data phase complete', { rowsLoaded: result?.rows?.length || 0 });
-            return { success: true, nextPhase: PHASES.ANALYZE };
-
-        } catch (e) {
-            log.error('SCA Load data phase failed', { error: e.message });
-            state.pendingDataLoad = null;
-            state.phase = PHASES.ANALYZE;
-            return { success: true, nextPhase: PHASES.ANALYZE };
-        }
-    }
-
-    /**
-     * Phase 5: FORMAT - Create rich response blocks
-     */
-    function executeFormatPhase(state) {
-        const phaseStart = Date.now();
-        state.formatIterations++;
-
-        // Circuit breaker: prevent infinite format loops
-        if (state.formatIterations >= MAX_FORMAT_ITERATIONS) {
-            log.audit('SCA Format circuit breaker triggered', {
-                iterations: state.formatIterations,
-                requestId: state.requestId
-            });
-
-            state.formattedResponse = {
-                title: 'Analysis Results',
-                summary: state.analysis?.analysis?.substring(0, 100) || 'Analysis complete',
-                blocks: [
-                    { type: 'text', content: state.analysis?.analysis || 'Unable to format response' }
-                ]
-            };
-            state.phase = PHASES.COMPLETE;
-
-            upsertThinkingStep(state, 'format', {
-                title: 'Formatting response',
-                phase: 'format',
-                status: 'complete',
-                context: {
-                    circuitBreaker: true,
-                    iterations: state.formatIterations
-                }
-            });
-
-            return { success: true, nextPhase: PHASES.COMPLETE };
-        }
-
-        const dataSummary = state.dataReferences.map(ref => {
-            const s = ref.summary;
-            return `${s.tool}: ${s.rowCount} rows, columns: ${(s.columns || []).join(', ')}`;
-        }).join('\n');
-
-        const prompt = FORMAT_PROMPT
-            .replace('{analysis}', state.analysis?.analysis || 'No analysis available')
-            .replace('{findings}', (state.analysis?.key_findings || []).join('\n') || 'No specific findings')
-            .replace('{data_summary}', dataSummary || 'No data');
-
-        upsertThinkingStep(state, 'format', {
-            title: 'Formatting response',
-            phase: 'format',
-            status: 'active',
-            context: {
-                iteration: state.formatIterations
-            }
-        });
-
-        try {
-            const response = AIProviders.callAI(prompt, {
-                tier: FAST_TIER,
-                temperature: 0.1,
-                maxTokens: 1500,
-                jsonMode: true,
-                purpose: 'SCA:format'
-            });
-
-            const parsed = parseJsonResponse(response?.text);
-            const duration = Date.now() - phaseStart;
-            state.phaseTimings.format = (state.phaseTimings.format || 0) + duration;
-
-            // FLEXIBLE: Accept response with blocks array
-            if (parsed && (parsed.blocks || parsed.title || parsed.summary)) {
-                state.formattedResponse = {
-                    title: parsed.title || 'Analysis Results',
-                    summary: parsed.summary || state.analysis?.analysis?.substring(0, 100) || '',
-                    blocks: parsed.blocks || [{ type: 'text', content: state.analysis?.analysis || '' }]
-                };
-                state.phase = PHASES.COMPLETE;
-
-                // Enrich table blocks with actual data
-                enrichTableBlocks(state);
-
-                upsertThinkingStep(state, 'format', {
-                    title: 'Formatting response',
-                    phase: 'format',
-                    status: 'complete',
-                    duration: duration,
-                    context: {
-                        blockCount: state.formattedResponse.blocks.length,
-                        blockTypes: state.formattedResponse.blocks.map(b => b.type)
-                    },
-                    debug: buildDebugInfo(prompt, response, state, {
-                        responseTitle: parsed.title,
-                        blockCount: parsed.blocks?.length
-                    })
-                });
-
-                log.debug('SCA Format phase complete', {
-                    blockCount: state.formattedResponse.blocks.length,
-                    duration: duration
-                });
-                return { success: true, nextPhase: PHASES.COMPLETE };
-            }
-
-            throw new Error('Invalid format response - missing blocks/title/summary');
-
-        } catch (e) {
-            const duration = Date.now() - phaseStart;
-            log.error('SCA Format phase failed', {
-                error: e.message,
-                duration: duration,
-                iteration: state.formatIterations
-            });
-            state.errors.push({ phase: 'format', error: e.message, timestamp: Date.now() });
-
-            // Create basic formatted response
-            state.formattedResponse = {
-                title: 'Analysis Results',
-                summary: state.analysis?.analysis?.substring(0, 100) || 'Analysis complete',
-                blocks: [
-                    { type: 'text', content: state.analysis?.analysis || 'Unable to format response' }
-                ]
-            };
-            state.phase = PHASES.COMPLETE;
-
-            upsertThinkingStep(state, 'format', {
-                title: 'Formatting response',
-                phase: 'format',
-                status: 'complete',
-                duration: duration,
-                context: {
-                    fallback: true,
-                    error: e.message.substring(0, 100),
-                    iteration: state.formatIterations
-                }
-            });
-
-            return { success: true, nextPhase: PHASES.COMPLETE };
-        }
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════════
     // HELPER FUNCTIONS
     // ═══════════════════════════════════════════════════════════════════════════
 
@@ -4069,9 +3760,6 @@ Response format (JSON only):
                 if (result.nextPhase === PHASES.RESPOND) {
                     return { hasMore: true, phase: PHASES.RESPOND };
                 }
-                if (result.nextPhase === PHASES.ANALYZE) {
-                    return { hasMore: true, phase: PHASES.ANALYZE };
-                }
                 return { hasMore: true, phase: PHASES.INVOKE };
 
             // ═══════════════════════════════════════════════════════════════════════
@@ -4108,24 +3796,6 @@ Response format (JSON only):
 
             case PHASES.RESPOND:
                 result = executeRespondPhase(state);
-                if (result.nextPhase === PHASES.COMPLETE) {
-                    return {
-                        hasMore: false,
-                        response: buildFinalResponse(state)
-                    };
-                }
-                return { hasMore: true, phase: result.nextPhase };
-
-            case PHASES.ANALYZE:
-                result = executeAnalyzePhase(state);
-                return { hasMore: true, phase: result.nextPhase };
-
-            case PHASES.LOAD_DATA:
-                result = executeLoadDataPhase(state);
-                return { hasMore: true, phase: result.nextPhase };
-
-            case PHASES.FORMAT:
-                result = executeFormatPhase(state);
                 if (result.nextPhase === PHASES.COMPLETE) {
                     return {
                         hasMore: false,

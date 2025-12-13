@@ -371,7 +371,15 @@ define(['N/log'], function(log) {
     }
 
     /**
-     * Check if query has a proper SuiteQL row limit (FETCH FIRST)
+     * Check if query has a proper SuiteQL row limit (ROWNUM)
+     * Note: FETCH FIRST is NOT supported by SuiteQL despite being Oracle syntax
+     */
+    function hasRownumLimit(sql) {
+        return /ROWNUM\s*<=?\s*\d+/i.test(sql);
+    }
+
+    /**
+     * Check if query has FETCH FIRST clause (Oracle 12c+ syntax, NOT valid in SuiteQL)
      */
     function hasFetchFirst(sql) {
         return /FETCH\s+FIRST\s+\d+\s+ROWS?\s+ONLY/i.test(sql);
@@ -385,59 +393,101 @@ define(['N/log'], function(log) {
     }
 
     /**
-     * Check if query has any row limit (for backward compatibility)
+     * Check if query has any row limit
      */
     function hasRowLimit(sql) {
-        return hasFetchFirst(sql) ||
-               /ROWNUM\s*<=?\s*\d+/i.test(sql) ||
+        return hasRownumLimit(sql) ||
+               hasFetchFirst(sql) ||
                hasLimitClause(sql);
     }
 
     /**
-     * Convert LIMIT N to FETCH FIRST N ROWS ONLY (SuiteQL syntax)
+     * Convert LIMIT N to ROWNUM (SuiteQL syntax)
      * LLMs often write standard SQL LIMIT which SuiteQL doesn't support
      */
-    function convertLimitToFetchFirst(sql) {
+    function convertLimitToRownum(sql, limit) {
         // Match LIMIT N (with optional OFFSET which SuiteQL also doesn't support)
         const limitMatch = sql.match(/\bLIMIT\s+(\d+)(?:\s+OFFSET\s+\d+)?/i);
         if (!limitMatch) {
-            return sql;
+            return wrapWithRownum(sql, limit);
         }
 
         const limitValue = parseInt(limitMatch[1], 10);
 
-        // Remove the LIMIT clause and add FETCH FIRST
+        // Remove the LIMIT clause
         let cleanSql = sql.replace(/\bLIMIT\s+\d+(?:\s+OFFSET\s+\d+)?/i, '').trim();
 
         // Remove any trailing semicolon
         cleanSql = cleanSql.replace(/;\s*$/, '');
 
-        return cleanSql + ` FETCH FIRST ${limitValue} ROWS ONLY`;
+        return wrapWithRownum(cleanSql, limitValue);
     }
 
     /**
-     * Add row limit to query if missing, or convert LIMIT to FETCH FIRST
-     * SuiteQL requires FETCH FIRST N ROWS ONLY syntax (not LIMIT)
+     * Convert FETCH FIRST N ROWS ONLY to ROWNUM (SuiteQL syntax)
+     * FETCH FIRST is Oracle 12c+ syntax that SuiteQL does NOT support
+     */
+    function convertFetchFirstToRownum(sql) {
+        const fetchMatch = sql.match(/FETCH\s+FIRST\s+(\d+)\s+ROWS?\s+ONLY/i);
+        if (!fetchMatch) {
+            return sql;
+        }
+
+        const limitValue = parseInt(fetchMatch[1], 10);
+
+        // Remove the FETCH FIRST clause
+        let cleanSql = sql.replace(/\s*FETCH\s+FIRST\s+\d+\s+ROWS?\s+ONLY/i, '').trim();
+
+        // Remove any trailing semicolon
+        cleanSql = cleanSql.replace(/;\s*$/, '');
+
+        return wrapWithRownum(cleanSql, limitValue);
+    }
+
+    /**
+     * Wrap a query with ROWNUM limit using subquery pattern
+     * This is required because ROWNUM is evaluated BEFORE ORDER BY
+     * Pattern: SELECT * FROM (original_query) WHERE ROWNUM <= N
+     */
+    function wrapWithRownum(sql, limit) {
+        // Remove any trailing semicolon
+        let cleanSql = sql.trim().replace(/;\s*$/, '');
+
+        // Wrap in subquery with ROWNUM
+        return `SELECT * FROM (${cleanSql}) WHERE ROWNUM <= ${limit}`;
+    }
+
+    /**
+     * Add row limit to query if missing, or convert invalid syntax to ROWNUM
+     * SuiteQL requires ROWNUM <= N syntax (not FETCH FIRST or LIMIT)
      */
     function ensureRowLimit(sql, limit = MAX_ROWS) {
         // Remove any trailing semicolon first
         let cleanSql = sql.trim().replace(/;\s*$/, '');
 
-        // If query already has proper FETCH FIRST, return as-is
-        if (hasFetchFirst(cleanSql)) {
+        // If query already has proper ROWNUM limit, return as-is
+        if (hasRownumLimit(cleanSql)) {
             return cleanSql;
         }
 
-        // If query has LIMIT (invalid SuiteQL), convert to FETCH FIRST
-        if (hasLimitClause(cleanSql)) {
-            log.debug('QueryValidator converting LIMIT to FETCH FIRST', {
+        // If query has FETCH FIRST (invalid SuiteQL), convert to ROWNUM
+        if (hasFetchFirst(cleanSql)) {
+            log.debug('QueryValidator converting FETCH FIRST to ROWNUM', {
                 originalSql: cleanSql.substring(0, 200)
             });
-            return convertLimitToFetchFirst(cleanSql);
+            return convertFetchFirstToRownum(cleanSql);
         }
 
-        // No limit at all - add FETCH FIRST
-        return cleanSql + ` FETCH FIRST ${limit} ROWS ONLY`;
+        // If query has LIMIT (invalid SuiteQL), convert to ROWNUM
+        if (hasLimitClause(cleanSql)) {
+            log.debug('QueryValidator converting LIMIT to ROWNUM', {
+                originalSql: cleanSql.substring(0, 200)
+            });
+            return convertLimitToRownum(cleanSql, limit);
+        }
+
+        // No limit at all - wrap with ROWNUM
+        return wrapWithRownum(cleanSql, limit);
     }
 
     /**
@@ -595,11 +645,12 @@ define(['N/log'], function(log) {
             suggestions.push('Use table aliases to qualify column names');
         }
 
-        // LIMIT syntax error - common LLM mistake
-        if (lowerError.includes('limit') || (lowerError.includes('syntax') && failedQuery && /\bLIMIT\b/i.test(failedQuery))) {
-            suggestions.push('SuiteQL does NOT support LIMIT syntax');
-            suggestions.push('Use: FETCH FIRST N ROWS ONLY (at end of query)');
-            suggestions.push('Example: SELECT * FROM transaction FETCH FIRST 100 ROWS ONLY');
+        // LIMIT or FETCH FIRST syntax error - common LLM mistake
+        if (lowerError.includes('limit') || lowerError.includes('fetch') ||
+            (lowerError.includes('syntax') && failedQuery && /\b(LIMIT|FETCH\s+FIRST)\b/i.test(failedQuery))) {
+            suggestions.push('SuiteQL does NOT support LIMIT or FETCH FIRST syntax');
+            suggestions.push('Use: ROWNUM <= N in WHERE clause, or wrap query in subquery');
+            suggestions.push('Example: SELECT * FROM (SELECT * FROM customer ORDER BY name) WHERE ROWNUM <= 100');
         }
 
         return suggestions;
@@ -608,7 +659,10 @@ define(['N/log'], function(log) {
     return {
         validateQuery: validateQuery,
         ensureRowLimit: ensureRowLimit,
-        convertLimitToFetchFirst: convertLimitToFetchFirst,
+        convertLimitToRownum: convertLimitToRownum,
+        convertFetchFirstToRownum: convertFetchFirstToRownum,
+        wrapWithRownum: wrapWithRownum,
+        hasRownumLimit: hasRownumLimit,
         hasFetchFirst: hasFetchFirst,
         hasLimitClause: hasLimitClause,
         hasRowLimit: hasRowLimit,
