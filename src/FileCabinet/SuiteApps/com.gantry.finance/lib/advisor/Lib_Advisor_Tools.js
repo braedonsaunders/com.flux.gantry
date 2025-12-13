@@ -6738,6 +6738,117 @@ ALWAYS use this tool for your final response instead of plain text.
             displayName: function(args) {
                 return 'Formatting response...';
             }
+        },
+
+        // ═══════════════════════════════════════════════════════════════════════════
+        // SCHEMA DISCOVERY TOOL
+        // Dynamically discover schema for any record type or SuiteQL table
+        // ═══════════════════════════════════════════════════════════════════════════
+
+        get_record_schema: {
+            name: 'get_record_schema',
+            shortDescription: 'Discover fields/columns for any record type or table',
+            category: 'utility',
+            description: `Dynamically discover the schema (fields, columns, sublists) for any NetSuite record type or SuiteQL table.
+
+USE THIS TOOL WHEN:
+- You need to know what fields/columns are available on a record or table
+- You want to write a SuiteQL query but need to know the column names
+- You need to find custom fields on a record type (custbody_*, custcol_*, custrecord_*)
+- User asks about a custom record type specific to their account
+- You need to understand the structure of a table before querying it
+
+SUPPORTS:
+- Standard record types: customer, vendor, employee, invoice, vendorbill, salesorder, etc.
+- Custom records: custrecord_*, customrecord_* (account-specific)
+- SuiteQL tables: transaction, transactionline, transactionaccountingline, account, item, etc.
+- Sublists: item lines, expense lines, partners, etc. (for scriptable records)
+
+COMMON TYPE ALIASES (for convenience):
+- bill/bills → vendorbill
+- inv/invoices → invoice
+- so/sales_order → salesorder
+- po/purchase_order → purchaseorder
+- journal/journals → journalentry
+- project/projects → job
+
+EXAMPLES:
+- Get vendor bill fields: { "record_type": "vendorbill" }
+- Get transaction table columns: { "record_type": "transaction" }
+- Get custom record schema: { "record_type": "customrecord_mylog" }
+- Get GL line columns: { "record_type": "transactionaccountingline" }`,
+            parameters: {
+                type: 'object',
+                properties: {
+                    record_type: {
+                        type: 'string',
+                        description: 'The record type ID or table name (e.g., "vendorbill", "transaction", "custrecord_mylog")'
+                    }
+                },
+                required: ['record_type']
+            },
+            execute: function(args) {
+                try {
+                    const recordType = args.record_type;
+
+                    if (!recordType || typeof recordType !== 'string') {
+                        return {
+                            success: false,
+                            error: 'record_type is required and must be a string',
+                            tool: 'get_record_schema'
+                        };
+                    }
+
+                    // Use the fully dynamic schema discovery from Utils
+                    const result = Utils.getRecordSchema(recordType);
+
+                    // Add tool metadata
+                    result.tool = 'get_record_schema';
+
+                    // Format output for LLM consumption
+                    if (result.success && result.schema) {
+                        const fields = result.schema.fields || {};
+                        const sublists = result.schema.sublists || {};
+
+                        // Create a compact field list for the LLM
+                        const fieldList = Object.keys(fields).sort();
+                        const customFields = fieldList.filter(f => f.startsWith('cust'));
+                        const standardFields = fieldList.filter(f => !f.startsWith('cust'));
+
+                        result.fieldList = {
+                            standard: standardFields.slice(0, 50), // First 50 standard fields
+                            custom: customFields, // All custom fields
+                            totalStandard: standardFields.length,
+                            totalCustom: customFields.length
+                        };
+
+                        // Sublist summary
+                        if (Object.keys(sublists).length > 0) {
+                            result.sublistSummary = {};
+                            for (const sublistId in sublists) {
+                                result.sublistSummary[sublistId] = {
+                                    fields: sublists[sublistId].fields || []
+                                };
+                            }
+                        }
+
+                        result.guidance = 'Use these field/column names in your SuiteQL queries or when building filters.';
+                    }
+
+                    return result;
+
+                } catch (e) {
+                    log.error('get_record_schema failed', { error: e.message, stack: e.stack });
+                    return {
+                        success: false,
+                        error: e.message,
+                        tool: 'get_record_schema'
+                    };
+                }
+            },
+            displayName: function(args) {
+                return 'Discovering schema for ' + (args.record_type || 'record') + '...';
+            }
         }
     };
 

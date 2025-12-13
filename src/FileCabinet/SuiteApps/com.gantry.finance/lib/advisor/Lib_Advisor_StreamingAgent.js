@@ -266,36 +266,6 @@ Response format (JSON only):
 }}`;
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // LLM-DRIVEN TOOL RECOVERY PROMPT
-    // When tools fail, let LLM suggest alternatives based on context
-    // ═══════════════════════════════════════════════════════════════════════════
-
-    const RECOVERY_PROMPT = `A tool failed while answering a financial question. Suggest an alternative approach.
-
-QUESTION: "{question}"
-FAILED TOOL: {failed_tool}
-ERROR: {error}
-
-AVAILABLE TOOLS:
-{tool_list}
-
-ALREADY TRIED:
-{already_tried}
-
-Based on the error and question context, suggest:
-1. An alternative tool that could provide similar information
-2. Modified parameters that might work better
-3. Whether to give up and explain the limitation to the user
-
-Response format (JSON only):
-{{
-  "suggestion": "TRY_ALTERNATIVE|MODIFY_PARAMS|GIVE_UP",
-  "alternative_tool": "tool_name or null",
-  "reasoning": "Why this alternative might work",
-  "user_message": "Message to show user if giving up"
-}}`;
-
-    // ═══════════════════════════════════════════════════════════════════════════
     // SYNTHESIZE PROMPT - LLM Writes Custom SuiteQL
     // World-class SQL generation when pre-built tools fail
     // ═══════════════════════════════════════════════════════════════════════════
