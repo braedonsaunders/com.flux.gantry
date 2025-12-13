@@ -2655,11 +2655,19 @@
                         this.updateProgressiveMessageBlocks(progressiveMsgId, status.blocks);
                     }
 
+                    // Update progressive narration (LLM-generated status text)
+                    if (status.narration) {
+                        this.updateProgressiveNarration(progressiveMsgId, status.narration);
+                    }
+
                     // Check if complete
                     if (status.status === 'complete') {
                         // Clear active request before finalizing
                         activeRequest = null;
                         this.saveSession();
+
+                        // Clear narration before showing final response
+                        this.clearProgressiveNarration(progressiveMsgId);
 
                         // Finalize the message with answer and rich content
                         this.finalizeProgressiveMessage(progressiveMsgId, {
@@ -2791,11 +2799,19 @@
                         this.updateProgressiveMessageBlocks(progressiveMsgId, status.blocks);
                     }
 
+                    // Update progressive narration (LLM-generated status text)
+                    if (status.narration) {
+                        this.updateProgressiveNarration(progressiveMsgId, status.narration);
+                    }
+
                     // Check if complete
                     if (status.status === 'complete') {
                         // Clear active request
                         activeRequest = null;
                         this.saveSession();
+
+                        // Clear narration before showing final response
+                        this.clearProgressiveNarration(progressiveMsgId);
 
                         // Finalize the message
                         this.finalizeProgressiveMessage(progressiveMsgId, {
@@ -2865,6 +2881,9 @@
                                 <div class="thinking-node-ring delay"></div>
                             </div>
                         </div>
+                    </div>
+                    <div class="message-narration" id="${msgId}-narration" style="display: none;">
+                        <div class="narration-content"></div>
                     </div>
                     <div class="message-content" id="${msgId}-content" style="display: none;"></div>
                     <div class="message-rich" id="${msgId}-rich" style="display: none;"></div>
@@ -3323,6 +3342,95 @@
             });
 
             self.scrollToBottom();
+        },
+
+        /**
+         * Update progressive message with narration text
+         * Handles premium dissolve/materialize transitions between narration states
+         */
+        updateProgressiveNarration: function(msgId, narration) {
+            if (!narration || !narration.text) return;
+
+            const narrationContainer = document.getElementById(msgId + '-narration');
+            if (!narrationContainer) return;
+
+            // Get the content element
+            const contentEl = narrationContainer.querySelector('.narration-content');
+            if (!contentEl) return;
+
+            // Check if this is the same narration we already displayed
+            const currentText = narrationContainer.getAttribute('data-narration-text');
+            if (currentText === narration.text) return;
+
+            // Get phase icon
+            const phaseIcons = {
+                'intent': '<i class="fas fa-crosshairs"></i>',
+                'select': '<i class="fas fa-th-list"></i>',
+                'invoke': '<i class="fas fa-bolt"></i>',
+                'reflect': '<i class="fas fa-brain"></i>',
+                'synthesize': '<i class="fas fa-magic"></i>',
+                'respond': '<i class="fas fa-comment-dots"></i>'
+            };
+            const icon = phaseIcons[narration.phase] || '<i class="fas fa-comment-dots"></i>';
+
+            // If there's existing content, dissolve it out first
+            if (currentText) {
+                // Add dissolve-out class
+                contentEl.classList.add('narration-dissolve-out');
+
+                // After dissolve completes, update and materialize in
+                setTimeout(() => {
+                    contentEl.innerHTML = icon + ' <span class="narration-text">' + this.escapeHtml(narration.text) + '</span>';
+                    narrationContainer.setAttribute('data-narration-text', narration.text);
+                    narrationContainer.setAttribute('data-narration-phase', narration.phase || '');
+                    contentEl.classList.remove('narration-dissolve-out');
+                    contentEl.classList.add('narration-materialize-in');
+
+                    // Remove animation class after completion
+                    setTimeout(() => {
+                        contentEl.classList.remove('narration-materialize-in');
+                    }, 400);
+                }, 300);
+            } else {
+                // First narration - just materialize in
+                contentEl.innerHTML = icon + ' <span class="narration-text">' + this.escapeHtml(narration.text) + '</span>';
+                narrationContainer.setAttribute('data-narration-text', narration.text);
+                narrationContainer.setAttribute('data-narration-phase', narration.phase || '');
+                narrationContainer.style.display = 'block';
+                contentEl.classList.add('narration-materialize-in');
+
+                // Remove animation class after completion
+                setTimeout(() => {
+                    contentEl.classList.remove('narration-materialize-in');
+                }, 400);
+            }
+
+            this.scrollToBottom();
+        },
+
+        /**
+         * Clear narration when final response arrives
+         * Uses elegant dissolve animation
+         */
+        clearProgressiveNarration: function(msgId) {
+            const narrationContainer = document.getElementById(msgId + '-narration');
+            if (!narrationContainer) return;
+
+            const contentEl = narrationContainer.querySelector('.narration-content');
+            if (!contentEl) return;
+
+            // Only animate if there was content
+            if (narrationContainer.getAttribute('data-narration-text')) {
+                contentEl.classList.add('narration-dissolve-out');
+
+                setTimeout(() => {
+                    narrationContainer.style.display = 'none';
+                    contentEl.innerHTML = '';
+                    narrationContainer.removeAttribute('data-narration-text');
+                    narrationContainer.removeAttribute('data-narration-phase');
+                    contentEl.classList.remove('narration-dissolve-out');
+                }, 300);
+            }
         },
 
         /**
@@ -5257,16 +5365,33 @@
         },
 
         /**
-         * Get icon for step type
+         * Get icon for step type - uses contextual phase icons when available
          */
         getStepIcon: function(step) {
-            const icons = {
+            // Phase-specific icons for SCA pipeline steps
+            const phaseIcons = {
+                'intent': '<i class="fas fa-crosshairs"></i>',
+                'select': '<i class="fas fa-th-list"></i>',
+                'invoke': '<i class="fas fa-bolt"></i>',
+                'reflect': '<i class="fas fa-brain"></i>',
+                'synthesize': '<i class="fas fa-magic"></i>',
+                'respond': '<i class="fas fa-comment-dots"></i>'
+            };
+
+            // Check for phase in step context first
+            const phase = step.context && step.context.phase;
+            if (phase && phaseIcons[phase.toLowerCase()]) {
+                return phaseIcons[phase.toLowerCase()];
+            }
+
+            // Type-specific icons (fallback)
+            const typeIcons = {
                 'thinking': '<i class="fas fa-brain"></i>',
                 'deep_thinking': '<i class="fas fa-brain"></i>',
                 'reflection': '<i class="fas fa-lightbulb"></i>',
                 'strategy_pivot': '<i class="fas fa-random"></i>',
                 'plan_adaptation': '<i class="fas fa-project-diagram"></i>',
-                'classification': '<i class="fas fa-sitemap"></i>',
+                'classification': '<i class="fas fa-crosshairs"></i>',
                 'template': '<i class="fas fa-file-code"></i>',
                 'ai': '<i class="fas fa-robot"></i>',
                 'query': '<i class="fas fa-database"></i>',
@@ -5278,14 +5403,14 @@
                 'planning': '<i class="fas fa-route"></i>',
                 'agent_step': '<i class="fas fa-cogs"></i>',
                 'tool': '<i class="fas fa-wrench"></i>',
-                'tool_call': '<i class="fas fa-tools"></i>',
+                'tool_call': '<i class="fas fa-bolt"></i>',
                 'resolving': '<i class="fas fa-search-plus"></i>',
                 'entity_resolution': '<i class="fas fa-search-plus"></i>',
                 'text_response_warning': '<i class="fas fa-comment-slash"></i>',
                 'synthesizing': '<i class="fas fa-magic"></i>',
                 'pre_resolution': '<i class="fas fa-tag"></i>'
             };
-            return icons[step.type] || '<i class="fas fa-cog"></i>';
+            return typeIcons[step.type] || '<i class="fas fa-cog"></i>';
         },
         
         /**
