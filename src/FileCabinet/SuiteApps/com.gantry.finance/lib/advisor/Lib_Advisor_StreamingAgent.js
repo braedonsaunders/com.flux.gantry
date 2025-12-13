@@ -163,6 +163,15 @@ CRITICAL SEMANTIC GUIDANCE:
    - If a vendor was resolved, transaction likely involves payables (VendBill, VendPmt)
    - If a customer was resolved, transaction likely involves receivables (CustInvc, CustPmt)
 
+4. CLASSIFICATION DIMENSIONS (for resolve_classification):
+   - ALWAYS use dimension="auto" to search all dimensions UNLESS you are 100% certain of the type
+   - Common confusion: "Shop", "Engineering", "Sales" are typically DEPARTMENTS, not classes
+   - "class" = accounting classification for categorizing transactions
+   - "department" = organizational unit (teams, divisions, shops, etc.)
+   - "location" = physical place
+   - "subsidiary" = legal entity
+   - When in doubt, use "auto" - it searches everything!
+
 Response format: {"tool": "{tool_name}", "args": {...}}`;
 
     const ANALYZE_PROMPT = `Analyze this data to answer the user's question. Respond with JSON only.
