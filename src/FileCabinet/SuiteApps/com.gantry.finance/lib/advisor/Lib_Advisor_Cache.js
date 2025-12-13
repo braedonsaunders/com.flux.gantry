@@ -472,6 +472,11 @@ define(['N/cache', 'N/log', '../Lib_Dashboard_Registry'], function(cache, log, D
             duration: Date.now() - state.startTime
         };
 
+        // Include progressive narration if available (from agent state)
+        if (state.agentState && state.agentState.narration && state.agentState.narration.text) {
+            response.narration = state.agentState.narration;
+        }
+
         if (state.blocks && state.blocks.length > 0) {
             response.blocks = state.blocks;
         }

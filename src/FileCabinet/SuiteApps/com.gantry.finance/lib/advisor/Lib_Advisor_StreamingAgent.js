@@ -97,8 +97,9 @@ Analyze the SEMANTIC MEANING of the question. Extract:
 2. Any named entities mentioned (customer names, vendor names, account names, etc.)
 3. The time scope if mentioned
 4. Semantic topics - determine what financial domains this question relates to based on meaning (e.g., receivables, payables, revenue, expenses, cash management, profitability)
+5. A brief user-friendly narration (max 10 words) describing what you're analyzing, specific to their question
 
-Response format: {"intent": "category", "entities": ["named items"], "time_scope": "ytd|mtd|last_30|custom|none", "needs_resolution": true|false, "references_previous": true|false, "semantic_topics": ["topic1", "topic2"]}`;
+Response format: {"intent": "category", "entities": ["named items"], "time_scope": "ytd|mtd|last_30|custom|none", "needs_resolution": true|false, "references_previous": true|false, "semantic_topics": ["topic1", "topic2"], "userNarration": "Looking into your customer revenue..."}`;
 
     const SELECT_PROMPT = `Select tools to answer this {intent} question. Respond with JSON only.
 {date_context}
@@ -124,7 +125,9 @@ DRILL-DOWN QUERIES:
 - Use load_cached_data with the ref_id from the previous dashboard response and the collection_name
 - Collection names are listed in previous responses (e.g., weeklyProjection, arBuckets, apBuckets, criticalWeeks, topCustomers)
 
-Response format: {"tools": ["tool1", "tool2"], "reasoning": "brief explanation"}`;
+Also include a brief userNarration (max 10 words) describing what data you'll fetch, specific to their question.
+
+Response format: {"tools": ["tool1", "tool2"], "reasoning": "brief explanation", "userNarration": "I'll analyze your customer transactions..."}`;
 
     const INVOKE_PROMPT = `Call this tool. Respond with JSON only.
 {date_context}
@@ -226,7 +229,8 @@ Response format (JSON only):
     "clarification_question": "question_if_clarify",
     "explanation": "explanation_if_give_up"
   }},
-  "reasoning": "Why this action is the best choice"
+  "reasoning": "Why this action is the best choice",
+  "userNarration": "Brief insight about what you found (max 10 words, specific to data)"
 }}`;
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -868,6 +872,15 @@ Response format (JSON only):
                 enabled: true                  // Whether to attempt synthesis before giving up
             },
 
+            // ═══════════════════════════════════════════════════════════════════════
+            // Progressive Narration - User-friendly status messages during processing
+            // ═══════════════════════════════════════════════════════════════════════
+            narration: {
+                text: null,                    // Current narration text to display
+                phase: null,                   // Phase that generated this narration
+                timestamp: null                // When narration was set
+            },
+
             // Follow-up context - preserve data from previous exchanges
             previousDataRefs: sessionContext?.lastDataRefs || null
         };
@@ -1084,6 +1097,13 @@ Response format (JSON only):
                 state.intent = parsed;
                 state.phase = PHASES.SELECT;
 
+                // Store progressive narration for frontend display
+                state.narration = {
+                    text: parsed.userNarration || 'Analyzing your question...',
+                    phase: 'intent',
+                    timestamp: Date.now()
+                };
+
                 // Update step with results
                 upsertThinkingStep(state, 'intent', {
                     title: 'Understanding your question',
@@ -1257,6 +1277,13 @@ Response format (JSON only):
 
                 state.selectedTools = selectedTools;
                 state.phase = PHASES.INVOKE;
+
+                // Store progressive narration for frontend display
+                state.narration = {
+                    text: parsed.userNarration || 'Gathering your financial data...',
+                    phase: 'select',
+                    timestamp: Date.now()
+                };
 
                 upsertThinkingStep(state, 'select', {
                     title: 'Selecting analysis tools',
@@ -1464,9 +1491,8 @@ Response format (JSON only):
         // Check if we have more tools to invoke
         const invokedCount = state.toolInvocations.length;
         if (invokedCount >= state.selectedTools.length) {
-            // All tools invoked - ADD TABLE BLOCKS IMMEDIATELY before moving to reflect
-            // This enables progressive rendering: tables appear BEFORE LLM generates narrative
-            addProgressiveTableBlocks(state);
+            // All tools invoked - tables will appear in final response, not progressively
+            // Progressive narration provides context during processing instead
 
             // ═══════════════════════════════════════════════════════════════════════
             // ReAct Pattern: Move to REFLECT phase to evaluate results
@@ -1713,6 +1739,22 @@ Response format (JSON only):
                 fromCache: fromCache,
                 duration: totalDuration
             });
+
+            // Update progressive narration with template based on results
+            const toolDisplayName = Tools.getToolDisplayName(toolName, args);
+            if (result.success && invocation.rowCount > 0) {
+                state.narration = {
+                    text: 'Found ' + invocation.rowCount.toLocaleString() + ' results from ' + toolDisplayName.toLowerCase() + '...',
+                    phase: 'invoke',
+                    timestamp: Date.now()
+                };
+            } else if (result.success) {
+                state.narration = {
+                    text: 'Processed ' + toolDisplayName.toLowerCase() + '...',
+                    phase: 'invoke',
+                    timestamp: Date.now()
+                };
+            }
 
             return { success: true, nextPhase: PHASES.INVOKE }; // Continue with next tool
 
@@ -1993,6 +2035,13 @@ Response format (JSON only):
 
             // Handle the decided action
             const nextPhase = handleReflectAction(state, parsed);
+
+            // Store progressive narration for frontend display
+            state.narration = {
+                text: parsed.userNarration || 'Analyzing patterns in your data...',
+                phase: 'reflect',
+                timestamp: Date.now()
+            };
 
             // Update thinking step
             upsertThinkingStep(state, 'reflect', {
@@ -2333,10 +2382,7 @@ Response format (JSON only):
                 duration: queryDuration
             });
 
-            // Add progressive table block for immediate rendering
-            if (queryResult.rows && queryResult.rows.length > 0) {
-                addProgressiveTableBlocks(state);
-            }
+            // Tables will appear in final response - progressive narration provides context
 
             // Proceed to RESPOND with the data
             state.phase = PHASES.RESPOND;
