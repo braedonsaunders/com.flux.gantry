@@ -355,10 +355,11 @@ accountingperiod
 
 **SUITEQL SYNTAX RULES (CRITICAL!):**
 
-1. ROW LIMITS: Use "FETCH FIRST N ROWS ONLY" at the END of the query (NOT "LIMIT N"!)
-   ✓ SELECT * FROM customer FETCH FIRST 100 ROWS ONLY
+1. ROW LIMITS: Wrap query in subquery and use ROWNUM (NOT "LIMIT" or "FETCH FIRST"!)
+   ✓ SELECT * FROM (SELECT * FROM customer ORDER BY id) WHERE ROWNUM <= 100
    ✗ SELECT * FROM customer LIMIT 100
-   NOTE: For CTEs, put FETCH FIRST at the very end, after the final SELECT
+   ✗ SELECT * FROM customer FETCH FIRST 100 ROWS ONLY
+   NOTE: ROWNUM must be in outer WHERE clause because it's evaluated BEFORE ORDER BY
 
 2. DISPLAY NAMES: Use BUILTIN.DF() for foreign key display values
    ✓ BUILTIN.DF(transaction.entity) AS entity_name
@@ -384,35 +385,36 @@ accountingperiod
 7. CTEs (WITH clause): Supported! Rules for CTEs:
    - The main SELECT must reference a real table (not just CTEs)
    - Use CROSS JOIN to bring in CTE values
-   - Always include ORDER BY before FETCH FIRST
+   - For row limits with ORDER BY, wrap entire CTE query: SELECT * FROM (WITH ... SELECT ... ORDER BY ...) WHERE ROWNUM <= N
    - For scalar aggregates, prefer subqueries from DUAL instead of CTEs
 
 **COMMON PATTERNS:**
 
 YoY Comparison (using CTEs):
-WITH current_year AS (
-  SELECT account, SUM(amount) as amount
-  FROM transactionaccountingline tal
-  JOIN transaction t ON tal.transaction = t.id
-  WHERE t.trandate >= TO_DATE('2025-01-01', 'YYYY-MM-DD')
-    AND t.posting = 'T' AND t.voided = 'F'
-  GROUP BY account
-),
-prior_year AS (
-  SELECT account, SUM(amount) as amount
-  FROM transactionaccountingline tal
-  JOIN transaction t ON tal.transaction = t.id
-  WHERE t.trandate >= TO_DATE('2024-01-01', 'YYYY-MM-DD')
-    AND t.trandate < TO_DATE('2025-01-01', 'YYYY-MM-DD')
-    AND t.posting = 'T' AND t.voided = 'F'
-  GROUP BY account
-)
-SELECT c.account, BUILTIN.DF(c.account) AS account_name,
-  c.amount AS current_amount, p.amount AS prior_amount,
-  CASE WHEN p.amount > 0 THEN (c.amount - p.amount) / p.amount * 100 END AS yoy_pct
-FROM current_year c
-LEFT JOIN prior_year p ON c.account = p.account
-FETCH FIRST 100 ROWS ONLY
+SELECT * FROM (
+  WITH current_year AS (
+    SELECT account, SUM(amount) as amount
+    FROM transactionaccountingline tal
+    JOIN transaction t ON tal.transaction = t.id
+    WHERE t.trandate >= TO_DATE('2025-01-01', 'YYYY-MM-DD')
+      AND t.posting = 'T' AND t.voided = 'F'
+    GROUP BY account
+  ),
+  prior_year AS (
+    SELECT account, SUM(amount) as amount
+    FROM transactionaccountingline tal
+    JOIN transaction t ON tal.transaction = t.id
+    WHERE t.trandate >= TO_DATE('2024-01-01', 'YYYY-MM-DD')
+      AND t.trandate < TO_DATE('2025-01-01', 'YYYY-MM-DD')
+      AND t.posting = 'T' AND t.voided = 'F'
+    GROUP BY account
+  )
+  SELECT c.account, BUILTIN.DF(c.account) AS account_name,
+    c.amount AS current_amount, p.amount AS prior_amount,
+    CASE WHEN p.amount > 0 THEN (c.amount - p.amount) / p.amount * 100 END AS yoy_pct
+  FROM current_year c
+  LEFT JOIN prior_year p ON c.account = p.account
+) WHERE ROWNUM <= 100
 
 Cash Flow Projection (AR/AP due in next N days):
 SELECT
@@ -426,15 +428,16 @@ SELECT
 FROM DUAL
 
 Expense by Category:
-SELECT a.acctnumber, a.accountsearchdisplayname,
-  SUM(COALESCE(tal.debit,0) - COALESCE(tal.credit,0)) as amount
-FROM transactionaccountingline tal
-JOIN transaction t ON tal.transaction = t.id
-JOIN account a ON tal.account = a.id
-WHERE a.accttype = 'Expense' AND t.posting = 'T' AND t.voided = 'F'
-GROUP BY a.acctnumber, a.accountsearchdisplayname
-ORDER BY amount DESC
-FETCH FIRST 50 ROWS ONLY
+SELECT * FROM (
+  SELECT a.acctnumber, a.accountsearchdisplayname,
+    SUM(COALESCE(tal.debit,0) - COALESCE(tal.credit,0)) as amount
+  FROM transactionaccountingline tal
+  JOIN transaction t ON tal.transaction = t.id
+  JOIN account a ON tal.account = a.id
+  WHERE a.accttype = 'Expense' AND t.posting = 'T' AND t.voided = 'F'
+  GROUP BY a.acctnumber, a.accountsearchdisplayname
+  ORDER BY amount DESC
+) WHERE ROWNUM <= 50
 
 ═══════════════════════════════════════════════════════════════════════════════
 {error_context}
@@ -2244,7 +2247,7 @@ Response format (JSON only):
 
         // Build error context if this is a retry
         const errorContext = state.synthesize.lastError ?
-            `PREVIOUS QUERY FAILED:\n\`\`\`sql\n${state.synthesize.queries[state.synthesize.queries.length - 1]?.sql || 'N/A'}\n\`\`\`\n\nERROR: ${state.synthesize.lastError}\n\nFix the error and try again. Common fixes:\n- Use FETCH FIRST N ROWS ONLY instead of LIMIT\n- Check column names against the schema\n- Use BUILTIN.DF() for display names\n- Verify table joins are correct` :
+            `PREVIOUS QUERY FAILED:\n\`\`\`sql\n${state.synthesize.queries[state.synthesize.queries.length - 1]?.sql || 'N/A'}\n\`\`\`\n\nERROR: ${state.synthesize.lastError}\n\nFix the error and try again. Common fixes:\n- Use ROWNUM for row limits: SELECT * FROM (your_query ORDER BY ...) WHERE ROWNUM <= N\n- Check column names against the schema\n- Use BUILTIN.DF() for display names\n- Verify table joins are correct` :
             '';
 
         const prompt = SYNTHESIZE_PROMPT
