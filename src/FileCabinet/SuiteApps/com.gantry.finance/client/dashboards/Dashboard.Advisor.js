@@ -1908,18 +1908,9 @@
                 });
             });
             
-            // Show panel, hide score-categories with animation
-            // Use visibility/opacity instead of display to prevent layout shift
-            if (scoreCategoriesEl) {
-                scoreCategoriesEl.style.visibility = 'hidden';
-                scoreCategoriesEl.style.opacity = '0';
-                scoreCategoriesEl.style.pointerEvents = 'none';
-            }
-            panelEl.style.display = 'block';
-            // Trigger animation after display change
-            requestAnimationFrame(() => {
-                panelEl.classList.add('visible');
-            });
+            // Show panel, hide score-categories
+            if (scoreCategoriesEl) scoreCategoriesEl.classList.add('panel-open');
+            panelEl.classList.add('visible');
         },
 
         /**
@@ -1931,20 +1922,9 @@
 
             if (panelEl) {
                 panelEl.classList.remove('visible');
-                // Wait for animation to complete before hiding
-                setTimeout(() => {
-                    panelEl.style.display = 'none';
-                    if (scoreCategoriesEl) {
-                        // Restore visibility instead of display to prevent layout shift
-                        scoreCategoriesEl.style.visibility = '';
-                        scoreCategoriesEl.style.opacity = '';
-                        scoreCategoriesEl.style.pointerEvents = '';
-                    }
-                }, 300);
-            } else if (scoreCategoriesEl) {
-                scoreCategoriesEl.style.visibility = '';
-                scoreCategoriesEl.style.opacity = '';
-                scoreCategoriesEl.style.pointerEvents = '';
+            }
+            if (scoreCategoriesEl) {
+                scoreCategoriesEl.classList.remove('panel-open');
             }
         },
         
