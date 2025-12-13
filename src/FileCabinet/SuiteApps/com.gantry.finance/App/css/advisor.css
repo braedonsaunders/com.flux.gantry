@@ -5221,6 +5221,180 @@ body.dark-mode .progressive-text {
     color: #e2e8f0;
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   TYPEWRITER TEXT REVEAL ANIMATION
+   Premium word-by-word reveal with blur-to-sharp materialization effect
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Container for animated text content */
+.typewriter-container {
+    position: relative;
+}
+
+/* Individual word wrapper for animation */
+.typewriter-word {
+    display: inline;
+    opacity: 0;
+    filter: blur(4px);
+    transform: translateY(2px);
+    animation: wordReveal 0.12s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* Block-level elements need display adjustment */
+.typewriter-block {
+    display: block;
+    opacity: 0;
+    filter: blur(4px);
+    transform: translateY(4px);
+    animation: blockReveal 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* Keyframes for word reveal - blur to sharp with micro-lift */
+@keyframes wordReveal {
+    0% {
+        opacity: 0;
+        filter: blur(4px);
+        transform: translateY(2px);
+    }
+    100% {
+        opacity: 1;
+        filter: blur(0);
+        transform: translateY(0);
+    }
+}
+
+/* Keyframes for block-level reveal (tables, code blocks) */
+@keyframes blockReveal {
+    0% {
+        opacity: 0;
+        filter: blur(4px);
+        transform: translateY(4px);
+    }
+    100% {
+        opacity: 1;
+        filter: blur(0);
+        transform: translateY(0);
+    }
+}
+
+/* Skip animation class - for instant reveal */
+.typewriter-skip .typewriter-word,
+.typewriter-skip .typewriter-block {
+    animation: none;
+    opacity: 1;
+    filter: none;
+    transform: none;
+}
+
+/* Completed animation state */
+.typewriter-complete .typewriter-word,
+.typewriter-complete .typewriter-block {
+    animation: none;
+    opacity: 1;
+    filter: none;
+    transform: none;
+}
+
+/* Table row cascade animation */
+.typewriter-table-row {
+    opacity: 0;
+    transform: translateY(4px);
+    animation: tableRowReveal 0.15s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes tableRowReveal {
+    0% {
+        opacity: 0;
+        transform: translateY(4px);
+    }
+    100% {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* Metric counter animation */
+.typewriter-metric {
+    opacity: 0;
+    transform: scale(0.95);
+    animation: metricReveal 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes metricReveal {
+    0% {
+        opacity: 0;
+        transform: scale(0.95);
+    }
+    100% {
+        opacity: 1;
+        transform: scale(1);
+    }
+}
+
+/* Code block reveal with subtle glow */
+.typewriter-code {
+    opacity: 0;
+    filter: blur(2px);
+    animation: codeReveal 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes codeReveal {
+    0% {
+        opacity: 0;
+        filter: blur(2px);
+    }
+    50% {
+        opacity: 1;
+        filter: blur(0);
+        box-shadow: 0 0 20px rgba(59, 130, 246, 0.15);
+    }
+    100% {
+        opacity: 1;
+        filter: blur(0);
+        box-shadow: none;
+    }
+}
+
+/* Dark mode code reveal glow */
+body.dark-mode .typewriter-code {
+    animation-name: codeRevealDark;
+}
+
+@keyframes codeRevealDark {
+    0% {
+        opacity: 0;
+        filter: blur(2px);
+    }
+    50% {
+        opacity: 1;
+        filter: blur(0);
+        box-shadow: 0 0 20px rgba(96, 165, 250, 0.2);
+    }
+    100% {
+        opacity: 1;
+        filter: blur(0);
+        box-shadow: none;
+    }
+}
+
+/* Progressive block animation enhancement */
+.progressive-block.typewriter-animate {
+    animation: progressiveBlockReveal 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes progressiveBlockReveal {
+    0% {
+        opacity: 0;
+        filter: blur(4px);
+        transform: translateY(6px);
+    }
+    100% {
+        opacity: 1;
+        filter: blur(0);
+        transform: translateY(0);
+    }
+}
+
 /* === REDUCED MOTION SUPPORT === */
 @media (prefers-reduced-motion: reduce) {
     .thought-node,
@@ -5230,7 +5404,13 @@ body.dark-mode .progressive-text {
     .orbital-dots span,
     .thinking-trail span,
     .node-tooltip,
-    .expansion-panel {
+    .expansion-panel,
+    .typewriter-word,
+    .typewriter-block,
+    .typewriter-table-row,
+    .typewriter-metric,
+    .typewriter-code,
+    .progressive-block.typewriter-animate {
         animation: none !important;
         transition: none !important;
     }
@@ -5247,6 +5427,18 @@ body.dark-mode .progressive-text {
 
     .synapse-line {
         stroke-dashoffset: 0;
+    }
+
+    /* Typewriter elements show instantly with reduced motion */
+    .typewriter-word,
+    .typewriter-block,
+    .typewriter-table-row,
+    .typewriter-metric,
+    .typewriter-code,
+    .progressive-block.typewriter-animate {
+        opacity: 1;
+        filter: none;
+        transform: none;
     }
 }
 
