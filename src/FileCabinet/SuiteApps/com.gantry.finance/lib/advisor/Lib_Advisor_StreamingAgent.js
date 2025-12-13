@@ -535,7 +535,9 @@ CRITICAL INSTRUCTIONS - READ CAREFULLY:
 3. DO NOT create table blocks - tables are rendered separately.
    Only create: text, metrics, list blocks.
 
-4. For metrics, ALWAYS use tokens for the value field:
+4. For metrics:
+   - Labels must be MAX 4 WORDS (e.g., "Total Revenue", "Outstanding Balance", "Avg Order Value")
+   - ALWAYS use tokens for the value field:
    {{"label": "Total Revenue", "value": "{{{{data.stats.total:currency}}}}"}}
 
 5. In narrative, cite specific data points using tokens:
