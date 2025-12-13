@@ -5534,8 +5534,8 @@ USE SPARINGLY - prefer specific data tools when available.
 Only use for complex queries that combine multiple data sources.
 
 CRITICAL SuiteQL SYNTAX (NOT standard SQL!):
-- Row limits: Use "FETCH FIRST N ROWS ONLY" at END of query (NOT "LIMIT N")
-  Example: SELECT * FROM customer FETCH FIRST 100 ROWS ONLY
+- Row limits: Use ROWNUM in subquery wrapper (NOT "LIMIT" or "FETCH FIRST")
+  Example: SELECT * FROM (SELECT * FROM customer ORDER BY id) WHERE ROWNUM <= 100
 - String comparison: Use single quotes ('value'), NOT double quotes
 - Boolean fields: Use 'T' for true, 'F' for false (e.g., posting = 'T')
 - Date comparison: Use TO_DATE('2024-01-01', 'YYYY-MM-DD')

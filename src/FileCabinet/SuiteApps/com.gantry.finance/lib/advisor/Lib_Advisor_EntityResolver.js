@@ -128,22 +128,23 @@ define([
             const termSafe = escapeSql(term);
             const termSafeLike = escapeSqlLike(term);
             const query = `
-                SELECT
-                    id,
-                    ${config.nameField} AS name,
-                    ${config.codeField} AS code,
-                    CASE
-                        WHEN LOWER(${config.nameField}) = LOWER('${termSafe}') THEN 1.00
-                        WHEN LOWER(${config.nameField}) LIKE LOWER('${termSafeLike}') || '%' ESCAPE '\\' THEN 0.90
-                        WHEN LOWER(${config.nameField}) LIKE '%' || LOWER('${termSafeLike}') || '%' ESCAPE '\\' THEN 0.75
-                        ELSE 0.50
-                    END AS match_score
-                FROM ${config.table}
-                WHERE isinactive = 'F'
-                  AND (LOWER(${config.nameField}) LIKE '%' || LOWER('${termSafeLike}') || '%' ESCAPE '\\'
-                       OR LOWER(${config.codeField}) LIKE '%' || LOWER('${termSafeLike}') || '%' ESCAPE '\\')
-                ORDER BY match_score DESC
-                FETCH FIRST 10 ROWS ONLY
+                SELECT * FROM (
+                    SELECT
+                        id,
+                        ${config.nameField} AS name,
+                        ${config.codeField} AS code,
+                        CASE
+                            WHEN LOWER(${config.nameField}) = LOWER('${termSafe}') THEN 1.00
+                            WHEN LOWER(${config.nameField}) LIKE LOWER('${termSafeLike}') || '%' ESCAPE '\\' THEN 0.90
+                            WHEN LOWER(${config.nameField}) LIKE '%' || LOWER('${termSafeLike}') || '%' ESCAPE '\\' THEN 0.75
+                            ELSE 0.50
+                        END AS match_score
+                    FROM ${config.table}
+                    WHERE isinactive = 'F'
+                      AND (LOWER(${config.nameField}) LIKE '%' || LOWER('${termSafeLike}') || '%' ESCAPE '\\'
+                           OR LOWER(${config.codeField}) LIKE '%' || LOWER('${termSafeLike}') || '%' ESCAPE '\\')
+                    ORDER BY match_score DESC
+                ) WHERE ROWNUM <= 10
             `;
             
             try {
@@ -372,21 +373,23 @@ define([
         let query;
         if (termSafeLike) {
             query = `
-                SELECT id, ${config.nameField} AS name, ${config.codeField} AS code
-                FROM ${config.table}
-                WHERE isinactive = 'F'
-                  AND (LOWER(${config.nameField}) LIKE '%' || LOWER('${termSafeLike}') || '%' ESCAPE '\\'
-                       OR LOWER(${config.codeField}) LIKE '%' || LOWER('${termSafeLike}') || '%' ESCAPE '\\')
-                ORDER BY ${config.nameField}
-                FETCH FIRST 50 ROWS ONLY
+                SELECT * FROM (
+                    SELECT id, ${config.nameField} AS name, ${config.codeField} AS code
+                    FROM ${config.table}
+                    WHERE isinactive = 'F'
+                      AND (LOWER(${config.nameField}) LIKE '%' || LOWER('${termSafeLike}') || '%' ESCAPE '\\'
+                           OR LOWER(${config.codeField}) LIKE '%' || LOWER('${termSafeLike}') || '%' ESCAPE '\\')
+                    ORDER BY ${config.nameField}
+                ) WHERE ROWNUM <= 50
             `;
         } else {
             query = `
-                SELECT id, ${config.nameField} AS name, ${config.codeField} AS code
-                FROM ${config.table}
-                WHERE isinactive = 'F'
-                ORDER BY ${config.nameField}
-                FETCH FIRST 1000 ROWS ONLY
+                SELECT * FROM (
+                    SELECT id, ${config.nameField} AS name, ${config.codeField} AS code
+                    FROM ${config.table}
+                    WHERE isinactive = 'F'
+                    ORDER BY ${config.nameField}
+                ) WHERE ROWNUM <= 1000
             `;
         }
 

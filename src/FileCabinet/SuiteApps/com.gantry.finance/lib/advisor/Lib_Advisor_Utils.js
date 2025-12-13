@@ -125,10 +125,11 @@ define(['N/log', 'N/runtime', 'N/record', 'N/query', '../Lib_Config'], function(
         
         // Remove ALL semicolons (NetSuite N/query doesn't allow them)
         cleaned = cleaned.replace(/;/g, '');
-        
-        // Remove any FETCH FIRST that got duplicated (exact duplicates)
+
+        // Remove any duplicated row limit clauses
         cleaned = cleaned.replace(/(FETCH\s+FIRST\s+\d+\s+ROWS\s+ONLY)\s+\1/gi, '$1');
-        
+        cleaned = cleaned.replace(/(ROWNUM\s*<=\s*\d+)\s+\1/gi, '$1');
+
         // Clean up extra whitespace from comment removal
         cleaned = cleaned.replace(/\n\s*\n/g, '\n').trim();
         
