@@ -38,6 +38,7 @@
         ctx: null,
         particles: [],
         animationId: null,
+        birthTimeoutId: null,  // Track setTimeout for cleanup
         phase: 'idle',
         isActive: false,
         globalTime: 0,
@@ -64,17 +65,27 @@
         },
 
         init: function() {
+            // Clean up any existing state first to prevent memory leaks
+            this.cleanup();
+
             this.canvas = document.getElementById('geometric-canvas');
             if (!this.canvas) return;
 
             this.ctx = this.canvas.getContext('2d');
+            this.canvas.style.opacity = '1';
             this.resize();
-            this.boundResize = this.resize.bind(this);
+
+            // Only create one resize listener
+            if (!this.boundResize) {
+                this.boundResize = this.resize.bind(this);
+            }
             window.addEventListener('resize', this.boundResize);
 
             this.isActive = true;
+            this.phase = 'idle';
             this.globalTime = 0;
-            this.cameraOffsetX = 0; // For camera rotation effect
+            this.cameraX = 0;
+            this.cameraY = 0;
             this.createParticles();
             this.startBirth();
         },
@@ -125,6 +136,10 @@
                 // Size scales with depth - near particles are larger
                 const baseSize = (this.config.particleSize.min + Math.random() * (this.config.particleSize.max - this.config.particleSize.min)) * depth;
 
+                // Darker particles with more variation (0.08 to 0.25 range)
+                const baseOpacity = 0.08 + Math.random() * 0.17;
+                const depthOpacity = baseOpacity * (0.5 + depth * 0.5); // Far = darker, near = slightly brighter
+
                 this.particles.push({
                     x: center.x,
                     y: center.y,
@@ -135,13 +150,13 @@
                     size: baseSize,
                     baseSize: baseSize,
                     opacity: 0,
-                    targetOpacity: (0.2 + Math.random() * 0.2) * depth, // Far particles more transparent
+                    targetOpacity: depthOpacity,
                     colorIndex: colorIndex,
                     colorOffset: Math.random() * Math.PI * 2,
                     expandX: 0,
                     expandY: 0,
-                    depth: depth, // 3D depth layer
-                    orbitAngle: Math.random() * Math.PI * 2 // Individual orbit angle for 3D rotation
+                    depth: depth,
+                    orbitAngle: Math.random() * Math.PI * 2
                 });
             }
         },
@@ -182,8 +197,9 @@
                 heroOrb.classList.add('orb-charging');
             }
 
-            // Just wait for glow duration, then explode
-            setTimeout(() => {
+            // Just wait for glow duration, then explode (track timeout for cleanup)
+            this.birthTimeoutId = setTimeout(() => {
+                this.birthTimeoutId = null;
                 if (heroOrb) heroOrb.classList.remove('orb-charging');
                 if (this.isActive) this.startExplode();
             }, this.config.glowDuration);
@@ -244,11 +260,13 @@
                 this.globalTime += 16;
                 const time = elapsed * 0.001;
 
-                // Phase blending factors
+                // Phase blending factors - start orbit blend early for seamless transition
                 const explosionProgress = Math.min(elapsed / this.config.explodeDuration, 1);
-                const blendStart = this.config.explodeDuration * 0.6; // Start blending orbit at 60% of explosion
-                const blendProgress = Math.max(0, Math.min(1, (elapsed - blendStart) / this.config.orbitBlendDuration));
-                const orbitBlend = this.easeInOutQuad(blendProgress); // Smooth S-curve blend
+                const blendStart = this.config.explodeDuration * 0.35; // Start blending at 35% - much earlier
+                const blendDuration = this.config.orbitBlendDuration * 1.5; // Longer blend period
+                const blendProgress = Math.max(0, Math.min(1, (elapsed - blendStart) / blendDuration));
+                // Use smoother easing - cubic for buttery transition
+                const orbitBlend = this.easeInOutCubic(blendProgress);
 
                 // Show cards mid-explosion
                 if (!cardsShown && explosionProgress > 0.5) {
@@ -581,19 +599,32 @@
         cleanup: function() {
             this.isActive = false;
             this.phase = 'idle';
+
+            // Cancel any pending animation frame
             if (this.animationId) {
                 cancelAnimationFrame(this.animationId);
                 this.animationId = null;
             }
-            if (this.ctx) {
+
+            // Cancel any pending timeout (from startBirth)
+            if (this.birthTimeoutId) {
+                clearTimeout(this.birthTimeoutId);
+                this.birthTimeoutId = null;
+            }
+
+            // Clear the canvas
+            if (this.ctx && this.canvas) {
                 this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
             }
-            if (this.canvas) {
-                this.canvas.style.opacity = '0';
-            }
+
+            // Remove resize listener
             if (this.boundResize) {
                 window.removeEventListener('resize', this.boundResize);
             }
+
+            // Clear particles array to free memory
+            this.particles = [];
+
             // Clean up orb class if still present
             const heroOrb = document.querySelector('.hero-orb');
             if (heroOrb) heroOrb.classList.remove('orb-charging');
@@ -5701,15 +5732,8 @@
             const commandCenter = document.getElementById('advisor-welcome-full');
             if (commandCenter) commandCenter.style.display = '';
 
-            // Reset and restart the geometric animation
-            GeometricAnimation.cleanup();
-            // Reset canvas opacity
-            const canvas = document.getElementById('geometric-canvas');
-            if (canvas) canvas.style.opacity = '1';
-            // Small delay then restart animation
-            setTimeout(() => {
-                GeometricAnimation.init();
-            }, 100);
+            // Reset and restart the geometric animation (init handles cleanup internally)
+            GeometricAnimation.init();
 
             // Reset score-category cards visibility for animation replay
             const scoreCategories = document.getElementById('score-categories');
