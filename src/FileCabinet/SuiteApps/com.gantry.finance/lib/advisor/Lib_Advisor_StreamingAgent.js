@@ -46,8 +46,113 @@ define([
         COMPLETE: 'complete'
     };
 
-    // Use fast/cheap tier for all lightweight calls
-    const FAST_TIER = 1;
+    // ═══════════════════════════════════════════════════════════════════════════
+    // ADAPTIVE INTELLIGENCE ROUTING (AIR)
+    // Task-aware model selection for optimal cost/quality balance
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    const TIERS = {
+        FAST: 1,      // Fast/cheap: Haiku, GPT-4o-mini, Gemini Flash - for classification, params
+        BALANCED: 2,  // Balanced: Sonnet, GPT-4o, Gemini Flash - for reasoning
+        PREMIUM: 3    // Premium: Opus, GPT-4, Gemini Pro - for complex analysis, SQL synthesis
+    };
+
+    /**
+     * Get the appropriate tier for a phase based on task requirements
+     * @param {string} phase - The SCA phase
+     * @param {Object} state - Current state for adaptive decisions
+     * @returns {number} The tier (1, 2, or 3)
+     */
+    function getTierForPhase(phase, state) {
+        switch (phase) {
+            // Fast tier - simple classification and structured output
+            case 'intent':
+            case 'select':
+            case 'invoke':
+            case 'recovery':
+                return TIERS.FAST;
+
+            // Balanced tier - requires reasoning about results
+            case 'reflect':
+                return TIERS.BALANCED;
+
+            // Premium tier - complex SQL generation needs best model
+            case 'synthesize':
+                return TIERS.PREMIUM;
+
+            // Adaptive - based on response complexity
+            case 'respond':
+                return getAdaptiveRespondTier(state);
+
+            default:
+                return TIERS.FAST;
+        }
+    }
+
+    /**
+     * Calculate response complexity to determine RESPOND tier
+     * Higher complexity = better model for quality answer
+     * @param {Object} state - Current state
+     * @returns {number} Complexity score (0-10)
+     */
+    function calculateResponseComplexity(state) {
+        let score = 0;
+
+        // Data volume factor
+        const totalRows = (state.dataReferences || []).reduce((sum, ref) =>
+            sum + (ref?.summary?.rowCount || 0), 0);
+        if (totalRows > 100) score += 2;
+        else if (totalRows > 20) score += 1;
+
+        // Data source diversity (multiple tools = more complex synthesis)
+        const successfulTools = (state.toolInvocations || []).filter(t => t.success).length;
+        if (successfulTools > 2) score += 2;
+        else if (successfulTools > 1) score += 1;
+
+        // Dashboard data (rich metrics require better synthesis)
+        if ((state.dataReferences || []).some(r => r.isDashboard)) score += 1;
+
+        // Question complexity from INTENT phase
+        if (state.intent) {
+            if (state.intent.intent === 'comparison') score += 2;
+            if (state.intent.intent === 'reporting') score += 1;
+            if ((state.intent.semantic_topics || []).length > 2) score += 1;
+        }
+
+        // Synthesized SQL (already complex path)
+        if (state.synthesizedQuery) score += 2;
+
+        // Multiple entities resolved (cross-entity analysis)
+        if (Object.keys(state.resolvedEntities || {}).length > 1) score += 1;
+
+        return Math.min(score, 10); // Cap at 10
+    }
+
+    /**
+     * Get tier for RESPOND phase based on complexity
+     * @param {Object} state - Current state
+     * @returns {number} The tier (1, 2, or 3)
+     */
+    function getAdaptiveRespondTier(state) {
+        const complexity = calculateResponseComplexity(state);
+
+        // Premium for complex multi-source analysis
+        if (complexity >= 5) {
+            log.debug('AIR: Premium tier for RESPOND', { complexity });
+            return TIERS.PREMIUM;
+        }
+
+        // Balanced for moderate complexity
+        if (complexity >= 2) {
+            log.debug('AIR: Balanced tier for RESPOND', { complexity });
+            return TIERS.BALANCED;
+        }
+
+        // Fast for simple summaries
+        log.debug('AIR: Fast tier for RESPOND', { complexity });
+        return TIERS.FAST;
+    }
+
     const MAX_TOOL_INVOCATIONS = 5;
     const MAX_REFLECT_ITERATIONS = 3;  // Prevent infinite reflection loops
     const MAX_SYNTHESIZE_ITERATIONS = 3; // Max SQL generation/correction attempts
@@ -1057,7 +1162,7 @@ Response format (JSON only):
 
         try {
             const response = AIProviders.callAI(prompt, {
-                tier: FAST_TIER,
+                tier: getTierForPhase('intent', state),
                 temperature: 0.1,
                 maxTokens: 200,
                 jsonMode: true,
@@ -1221,7 +1326,7 @@ Response format (JSON only):
 
         try {
             const response = AIProviders.callAI(prompt, {
-                tier: FAST_TIER,
+                tier: getTierForPhase('select', state),
                 temperature: 0.1,
                 maxTokens: 200,
                 jsonMode: true,
@@ -1528,7 +1633,7 @@ Response format (JSON only):
 
         try {
             const response = AIProviders.callAI(prompt, {
-                tier: FAST_TIER,
+                tier: getTierForPhase('invoke', state),
                 temperature: 0.1,
                 maxTokens: 300,
                 jsonMode: true,
@@ -1951,7 +2056,7 @@ Response format (JSON only):
 
         try {
             const response = AIProviders.callAI(prompt, {
-                tier: FAST_TIER,
+                tier: getTierForPhase('reflect', state),
                 temperature: 0.2,
                 maxTokens: 500,
                 jsonMode: true,
@@ -2191,9 +2296,9 @@ Response format (JSON only):
         });
 
         try {
-            // Call LLM to generate SQL
+            // Call LLM to generate SQL (PREMIUM tier for complex SQL synthesis)
             const response = AIProviders.callAI(prompt, {
-                tier: FAST_TIER,
+                tier: getTierForPhase('synthesize', state),
                 temperature: 0.2,
                 maxTokens: 1500,
                 jsonMode: true,
@@ -2503,7 +2608,7 @@ Response format (JSON only):
 
         try {
             const response = AIProviders.callAI(prompt, {
-                tier: FAST_TIER,
+                tier: getTierForPhase('recovery', state),
                 temperature: 0.2,
                 maxTokens: 300,
                 jsonMode: true,
@@ -2635,8 +2740,9 @@ Response format (JSON only):
         });
 
         try {
+            // Adaptive tier based on response complexity
             const response = AIProviders.callAI(prompt, {
-                tier: FAST_TIER,
+                tier: getTierForPhase('respond', state),
                 temperature: 0.3,
                 maxTokens: 2000,
                 jsonMode: true,
