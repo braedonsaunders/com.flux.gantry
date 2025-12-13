@@ -70,6 +70,12 @@
             this.canvas = document.getElementById('geometric-canvas');
             if (!this.canvas) return;
 
+            // Suppress CSS focus glow during animation - particles will create it
+            const chatInput = document.getElementById('advisor-input-full');
+            if (chatInput) {
+                chatInput.classList.add('animation-active');
+            }
+
             this.ctx = this.canvas.getContext('2d');
             this.canvas.style.opacity = '1';
             this.resize();
@@ -430,42 +436,55 @@
                 return;
             }
 
-            // Skip the CSS animation class - we'll do it purely in JS for subtlety
+            // Particle-to-Focus Morph: animate glow, then hand off to CSS focus state
             const shineStart = Date.now();
+
+            // CSS focus state values we're morphing TO
+            const targetBorderColor = 'rgba(99, 102, 241, 0.25)';
 
             const animateShine = () => {
                 const elapsed = Date.now() - shineStart;
                 const progress = Math.min(elapsed / this.config.shineDuration, 1);
 
-                // Very gentle envelope - slow rise, slow fade
+                // Envelope: rise to peak, then morph toward CSS focus values
                 const envelope = progress < 0.3
-                    ? this.easeOutCubic(progress / 0.3) * 0.8 // Gentle rise to 80%
+                    ? this.easeOutCubic(progress / 0.3) * 0.8 // Rise to 80%
                     : progress < 0.5
                         ? 0.8 + this.easeInOutQuad((progress - 0.3) / 0.2) * 0.2 // Peak at 100%
-                        : 1 - this.easeInOutCubic((progress - 0.5) / 0.5); // Long gentle fade
+                        : 1 - this.easeOutCubic((progress - 0.5) / 0.5) * 0.6; // Settle to 40% (CSS-like)
 
-                // Subtle breathing - barely perceptible
-                const breath = Math.sin(progress * Math.PI * 3) * 0.1 + 1;
+                // Subtle breathing during rise, calm during settle
+                const breath = progress < 0.5
+                    ? Math.sin(progress * Math.PI * 3) * 0.1 + 1
+                    : 1;
 
-                // Premium subtle glow - whisper-quiet elegance
+                // Glow morphs from particle energy to CSS focus ring
                 const glowSize = 3 + 5 * envelope * breath;
-                const glowOpacity = 0.06 + 0.1 * envelope;
+                const glowOpacity = 0.04 + 0.12 * envelope;
 
-                // Single subtle glow layer + delicate inner light
+                // Calculate ring size - grows from 0 to 3px (CSS focus ring size)
+                const ringProgress = progress > 0.4 ? (progress - 0.4) / 0.6 : 0;
+                const ringSize = 3 * this.easeOutCubic(ringProgress);
+                const ringOpacity = 0.04 * ringProgress;
+
                 chatInput.style.boxShadow = `
+                    0 1px 2px rgba(0, 0, 0, 0.03),
                     0 0 ${glowSize}px rgba(99, 102, 241, ${glowOpacity}),
-                    0 0 ${glowSize * 2}px rgba(99, 102, 241, ${glowOpacity * 0.3}),
-                    inset 0 1px 0 rgba(255, 255, 255, ${0.08 * envelope})
+                    0 0 0 ${ringSize}px rgba(99, 102, 241, ${ringOpacity}),
+                    inset 0 1px 0 rgba(255, 255, 255, ${0.5 + 0.2 * envelope})
                 `;
 
-                // Subtle border color shift
-                chatInput.style.borderColor = `rgba(99, 102, 241, ${0.15 + 0.2 * envelope})`;
+                // Border morphs to CSS focus color
+                const borderOpacity = 0.15 + 0.1 * envelope;
+                chatInput.style.borderColor = `rgba(99, 102, 241, ${borderOpacity})`;
 
                 if (progress < 1) {
                     this.animationId = requestAnimationFrame(animateShine);
                 } else {
+                    // Seamless handoff: remove inline styles and class, CSS takes over
                     chatInput.style.boxShadow = '';
                     chatInput.style.borderColor = '';
+                    chatInput.classList.remove('animation-active');
                     this.startAmbient();
                 }
             };
@@ -619,6 +638,14 @@
             // Clean up orb class if still present
             const heroOrb = document.querySelector('.hero-orb');
             if (heroOrb) heroOrb.classList.remove('orb-charging');
+
+            // Remove animation-active class to restore CSS focus glow
+            const chatInput = document.getElementById('advisor-input-full');
+            if (chatInput) {
+                chatInput.classList.remove('animation-active');
+                chatInput.style.boxShadow = '';
+                chatInput.style.borderColor = '';
+            }
         },
 
         // Easing functions
