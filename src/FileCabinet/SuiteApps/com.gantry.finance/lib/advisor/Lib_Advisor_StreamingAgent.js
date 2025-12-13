@@ -1213,6 +1213,31 @@ Response format (JSON only):
         const phaseStart = Date.now();
 
         // ═══════════════════════════════════════════════════════════════════════
+        // CONVERSATIONAL QUERIES - Skip tool selection entirely for greetings/chitchat
+        // No point asking LLM to select tools when we know none are needed
+        // ═══════════════════════════════════════════════════════════════════════
+        if (state.intent && state.intent.intent === 'general') {
+            state.selectedTools = [];
+            state.phase = PHASES.RESPOND;
+
+            upsertThinkingStep(state, 'select', {
+                title: 'Selecting analysis tools',
+                phase: 'select',
+                status: 'complete',
+                duration: Date.now() - phaseStart,
+                context: {
+                    intent: 'general',
+                    selectedTools: [],
+                    conversational: true,
+                    skippedToolSelection: true
+                }
+            });
+
+            log.debug('SCA SELECT phase - general/conversational intent, skipping to RESPOND');
+            return { success: true, nextPhase: PHASES.RESPOND };
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
         // FOLLOW-UP DATA REUSE vs DRILL-DOWN DETECTION
         // Check if user is asking for DRILL-DOWN details (specific collection data)
         // or just referencing previous data for context
