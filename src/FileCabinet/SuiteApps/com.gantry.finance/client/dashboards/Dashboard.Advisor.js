@@ -44,9 +44,9 @@
         orbitAngle: 0,
 
         config: {
-            particleCount: 70,
-            connectionDistance: 90,
-            particleSize: { min: 1.5, max: 2.5 },
+            particleCount: 120,
+            connectionDistance: 70,
+            particleSize: { min: 1.0, max: 3.0 },
             // All timings sped up 20% (multiplied by 0.8)
             birthDuration: 800,           // was 1000
             pauseDuration: 200,           // was 300
@@ -54,7 +54,7 @@
             explodeDuration: 1050,        // was 1200, +10% slower then 20% faster
             orbitDuration: 600,           // Shorter float time
             convergeDuration: 700,        // Fast suction into input
-            shineDuration: 480,           // was 600
+            shineDuration: 350,           // Quick elegant shimmer
             colors: [
                 { r: 99, g: 102, b: 241 },   // Indigo
                 { r: 139, g: 92, b: 246 },   // Purple
@@ -108,11 +108,22 @@
             this.particles = [];
             const center = this.getBrainCenter();
 
+            // Initialize global camera state for 3D panning effect
+            this.cameraX = 0;
+            this.cameraY = 0;
+            this.cameraTargetX = 0;
+            this.cameraTargetY = 0;
+
             for (let i = 0; i < this.config.particleCount; i++) {
                 const angle = (i / this.config.particleCount) * Math.PI * 2 + Math.random() * 0.3;
                 const colorIndex = i % this.config.colors.length;
                 const orbitRadius = 150 + Math.random() * 250;
                 const orbitSpeed = 0.3 + Math.random() * 0.4;
+
+                // Depth layer for 3D parallax (0.3 = far, 1.0 = near)
+                const depth = 0.3 + Math.random() * 0.7;
+                // Size scales with depth - near particles are larger
+                const baseSize = (this.config.particleSize.min + Math.random() * (this.config.particleSize.max - this.config.particleSize.min)) * depth;
 
                 this.particles.push({
                     x: center.x,
@@ -121,14 +132,16 @@
                     orbitRadius: orbitRadius,
                     orbitSpeed: orbitSpeed,
                     orbitOffset: Math.random() * Math.PI * 2,
-                    size: this.config.particleSize.min + Math.random() * (this.config.particleSize.max - this.config.particleSize.min),
-                    baseSize: 0,
+                    size: baseSize,
+                    baseSize: baseSize,
                     opacity: 0,
-                    targetOpacity: 0.3 + Math.random() * 0.15, // More subtle
+                    targetOpacity: (0.2 + Math.random() * 0.2) * depth, // Far particles more transparent
                     colorIndex: colorIndex,
                     colorOffset: Math.random() * Math.PI * 2,
                     expandX: 0,
-                    expandY: 0
+                    expandY: 0,
+                    depth: depth, // 3D depth layer
+                    orbitAngle: Math.random() * Math.PI * 2 // Individual orbit angle for 3D rotation
                 });
             }
         },
@@ -229,7 +242,7 @@
         },
 
         /**
-         * Orbit: organic floating motion - particles drift naturally
+         * Orbit: 3D parallax with smooth camera panning - particles orbit around center
          */
         startOrbit: function() {
             this.phase = 'orbit';
@@ -243,19 +256,30 @@
                 scoreCategories.classList.add('cards-visible');
             }
 
-            // Store starting positions and set up organic drift parameters
+            // Global orbit center - particles will orbit around this point
+            const orbitCenterX = this.canvas.width / 2;
+            const orbitCenterY = this.canvas.height * 0.45;
+
+            // Store starting positions and set up 3D orbit parameters
             this.particles.forEach((p, i) => {
                 p.orbitStartX = p.x;
                 p.orbitStartY = p.y;
-                // Multiple frequencies for organic movement
-                p.driftFreqX = 0.3 + Math.random() * 0.4;
-                p.driftFreqY = 0.25 + Math.random() * 0.35;
-                p.driftFreqZ = 0.2 + Math.random() * 0.3;
-                p.driftPhaseX = Math.random() * Math.PI * 2;
-                p.driftPhaseY = Math.random() * Math.PI * 2;
-                p.driftPhaseZ = Math.random() * Math.PI * 2;
-                p.driftAmplitude = 15 + Math.random() * 25; // How far they drift
+                // Distance from orbit center
+                p.orbitDistX = p.x - orbitCenterX;
+                p.orbitDistY = p.y - orbitCenterY;
+                // 3D orbit parameters
+                p.orbitSpeed3D = 0.15 + Math.random() * 0.1; // Slow, majestic rotation
+                p.orbitPhase3D = Math.random() * Math.PI * 2;
+                // Subtle individual drift on top of global rotation
+                p.microDriftFreq = 0.4 + Math.random() * 0.3;
+                p.microDriftPhase = Math.random() * Math.PI * 2;
+                p.microDriftAmp = 8 + Math.random() * 12;
             });
+
+            // Camera pan parameters - slow, smooth drift
+            let cameraPanAngle = 0;
+            const cameraPanSpeed = 0.08; // Very slow rotation
+            const cameraPanRadius = 25; // Subtle movement
 
             const animateOrbit = () => {
                 if (!this.isActive || this.phase !== 'orbit') return;
@@ -265,31 +289,51 @@
                 this.globalTime += 16;
                 const time = elapsed * 0.001;
 
+                // Smooth camera pan - creates "floating through space" feel
+                cameraPanAngle += cameraPanSpeed * 0.016;
+                this.cameraTargetX = Math.sin(cameraPanAngle) * cameraPanRadius;
+                this.cameraTargetY = Math.cos(cameraPanAngle * 0.7) * cameraPanRadius * 0.6;
+                // Smooth interpolation to target
+                this.cameraX += (this.cameraTargetX - this.cameraX) * 0.03;
+                this.cameraY += (this.cameraTargetY - this.cameraY) * 0.03;
+
                 // Gentle blend in
                 const blendIn = Math.min(1, progress * 3);
 
                 this.particles.forEach((p, i) => {
-                    // Organic floating motion using multiple sine waves
-                    const driftX = Math.sin(time * p.driftFreqX + p.driftPhaseX) * p.driftAmplitude * 0.7
-                                 + Math.sin(time * p.driftFreqX * 1.7 + p.driftPhaseY) * p.driftAmplitude * 0.3;
-                    const driftY = Math.sin(time * p.driftFreqY + p.driftPhaseY) * p.driftAmplitude * 0.5
-                                 + Math.cos(time * p.driftFreqY * 1.3 + p.driftPhaseX) * p.driftAmplitude * 0.3;
-                    const driftZ = Math.sin(time * p.driftFreqZ + p.driftPhaseZ);
+                    // Global 3D rotation around orbit center
+                    const rotAngle = time * p.orbitSpeed3D + p.orbitPhase3D;
 
-                    // Apply organic drift from start position
-                    p.x = p.orbitStartX + driftX * blendIn;
-                    p.y = p.orbitStartY + driftY * blendIn;
+                    // 3D rotation effect - particles at different depths rotate at different apparent speeds
+                    const depthRotation = rotAngle * p.depth;
+                    const rotatedX = p.orbitDistX * Math.cos(depthRotation * 0.3) - p.orbitDistY * Math.sin(depthRotation * 0.15) * 0.3;
+                    const rotatedY = p.orbitDistY * Math.cos(depthRotation * 0.2) + p.orbitDistX * Math.sin(depthRotation * 0.15) * 0.2;
 
-                    // Subtle size "breathing"
-                    p.size = p.baseSize * (0.9 + driftZ * 0.15);
+                    // Micro-drift for organic feel
+                    const microX = Math.sin(time * p.microDriftFreq + p.microDriftPhase) * p.microDriftAmp;
+                    const microY = Math.cos(time * p.microDriftFreq * 0.8 + p.microDriftPhase) * p.microDriftAmp * 0.7;
+
+                    // Parallax - near particles (high depth) move more with camera
+                    const parallaxX = this.cameraX * p.depth * 1.5;
+                    const parallaxY = this.cameraY * p.depth * 1.5;
+
+                    // Combine: base position + rotation + micro-drift + parallax
+                    p.x = orbitCenterX + rotatedX + (microX + parallaxX) * blendIn;
+                    p.y = orbitCenterY + rotatedY + (microY + parallaxY) * blendIn;
+
+                    // 3D depth breathing - size pulses subtly based on "z position" in rotation
+                    const zPhase = Math.sin(rotAngle + p.orbitPhase3D);
+                    p.size = p.baseSize * (0.85 + zPhase * 0.2);
+                    // Opacity also affected by depth position
+                    p.opacity = p.targetOpacity * (0.7 + zPhase * 0.3);
                 });
 
                 this.draw();
 
-                // Start input glow early
+                // Start input glow early - subtle buildup
                 if (chatInput && progress > 0.5) {
                     const glowProgress = (progress - 0.5) * 2;
-                    chatInput.style.boxShadow = `0 0 ${10 + 15 * glowProgress}px rgba(99, 102, 241, ${0.15 * glowProgress})`;
+                    chatInput.style.boxShadow = `0 0 ${4 + 6 * glowProgress}px rgba(99, 102, 241, ${0.1 * glowProgress})`;
                 }
 
                 if (progress < 1) {
@@ -357,16 +401,13 @@
 
                 this.draw();
 
-                // Progressive glow on chat input
+                // Progressive glow on chat input - subtle buildup
                 if (chatInput && progress > 0.3) {
                     const glowProgress = (progress - 0.3) / 0.7;
                     const glowIntensity = this.easeOutQuart(glowProgress);
-                    const glowSize = 15 + 30 * glowIntensity;
-                    const glowOpacity = 0.3 + 0.4 * glowIntensity;
-                    chatInput.style.boxShadow = `
-                        0 0 ${glowSize}px rgba(99, 102, 241, ${glowOpacity}),
-                        0 0 ${glowSize * 2}px rgba(139, 92, 246, ${glowOpacity * 0.5})
-                    `;
+                    const glowSize = 6 + 8 * glowIntensity;
+                    const glowOpacity = 0.15 + 0.2 * glowIntensity;
+                    chatInput.style.boxShadow = `0 0 ${glowSize}px rgba(99, 102, 241, ${glowOpacity})`;
                 }
 
                 if (progress < 1) {
@@ -395,28 +436,32 @@
                 const elapsed = Date.now() - shineStart;
                 const progress = Math.min(elapsed / this.config.shineDuration, 1);
 
-                const pulse = Math.sin(progress * Math.PI);
-                const glowSize = 25 + 40 * pulse;
-                const glowOpacity = 0.5 + 0.4 * pulse;
+                // Multi-frequency shimmer - 3 overlapping waves for organic sparkle
+                const shimmer1 = Math.sin(progress * Math.PI * 4) * 0.5 + 0.5; // Fast pulse
+                const shimmer2 = Math.sin(progress * Math.PI * 2.5 + 0.5) * 0.3 + 0.5; // Medium
+                const shimmer3 = Math.sin(progress * Math.PI * 1.5) * 0.2 + 0.5; // Slow envelope
 
+                // Combine shimmers with envelope that fades in and out
+                const envelope = Math.sin(progress * Math.PI); // Overall fade in/out
+                const combinedShimmer = (shimmer1 * 0.5 + shimmer2 * 0.3 + shimmer3 * 0.2) * envelope;
+
+                // Subtle, premium glow - much smaller than before
+                const glowSize = 8 + 7 * combinedShimmer;
+                const glowOpacity = 0.2 + 0.25 * combinedShimmer;
+
+                // Clean, elegant single-layer glow with subtle inner highlight
                 chatInput.style.boxShadow = `
                     0 0 ${glowSize}px rgba(99, 102, 241, ${glowOpacity}),
-                    0 0 ${glowSize * 1.5}px rgba(139, 92, 246, ${glowOpacity * 0.6}),
-                    0 0 ${glowSize * 2}px rgba(6, 182, 212, ${glowOpacity * 0.3}),
-                    inset 0 0 ${glowSize * 0.3}px rgba(255, 255, 255, ${pulse * 0.2})
+                    inset 0 0 ${2 + combinedShimmer * 2}px rgba(255, 255, 255, ${combinedShimmer * 0.15})
                 `;
 
-                if (inputWrapper) {
-                    const scale = 1 + pulse * 0.01;
-                    inputWrapper.style.transform = `scale(${scale})`;
-                }
+                // No scale transform - keeps it premium and subtle
 
                 if (progress < 1) {
                     this.animationId = requestAnimationFrame(animateShine);
                 } else {
                     chatInput.style.boxShadow = '';
                     if (inputWrapper) {
-                        inputWrapper.style.transform = '';
                         inputWrapper.classList.remove('input-shine-active');
                     }
                     this.startAmbient();
@@ -513,33 +558,26 @@
             if (!this.ctx) return;
             this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
 
-            const len = this.particles.length;
+            // Sort particles by depth for proper 3D layering (far particles drawn first)
+            const sortedParticles = [...this.particles].sort((a, b) => (a.depth || 0.5) - (b.depth || 0.5));
 
-            // Draw connections during non-ambient phases
-            if (len <= 60 && this.phase !== 'ambient') {
-                this.ctx.lineWidth = 0.5;
-                for (let i = 0; i < len; i++) {
-                    const p1 = this.particles[i];
-                    for (let j = i + 1; j < len; j++) {
-                        const p2 = this.particles[j];
-                        const dx = p1.x - p2.x;
-                        const dy = p1.y - p2.y;
-                        const distSq = dx * dx + dy * dy;
-                        const maxDistSq = this.config.connectionDistance * this.config.connectionDistance;
+            // Draw particles with subtle glow for depth
+            sortedParticles.forEach(p => {
+                const depth = p.depth || 0.5;
 
-                        if (distSq < maxDistSq) {
-                            const opacity = (1 - distSq / maxDistSq) * Math.min(p1.opacity, p2.opacity) * 0.4;
-                            this.ctx.strokeStyle = this.getParticleColor(p1, opacity);
-                            this.ctx.beginPath();
-                            this.ctx.moveTo(p1.x, p1.y);
-                            this.ctx.lineTo(p2.x, p2.y);
-                            this.ctx.stroke();
-                        }
-                    }
+                // Add subtle glow for near particles (premium effect)
+                if (depth > 0.7 && p.opacity > 0.15) {
+                    const glowSize = p.size * 2.5;
+                    const gradient = this.ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, glowSize);
+                    gradient.addColorStop(0, this.getParticleColor(p, p.opacity * 0.3));
+                    gradient.addColorStop(1, this.getParticleColor(p, 0));
+                    this.ctx.beginPath();
+                    this.ctx.arc(p.x, p.y, glowSize, 0, Math.PI * 2);
+                    this.ctx.fillStyle = gradient;
+                    this.ctx.fill();
                 }
-            }
 
-            this.particles.forEach(p => {
+                // Draw particle core
                 this.ctx.beginPath();
                 this.ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
                 this.ctx.fillStyle = this.getParticleColor(p, p.opacity);
@@ -1908,13 +1946,9 @@
                 });
             });
             
-            // Show panel, hide score-categories with animation
-            if (scoreCategoriesEl) scoreCategoriesEl.style.display = 'none';
-            panelEl.style.display = 'block';
-            // Trigger animation after display change
-            requestAnimationFrame(() => {
-                panelEl.classList.add('visible');
-            });
+            // Show panel, hide score-categories
+            if (scoreCategoriesEl) scoreCategoriesEl.classList.add('panel-open');
+            panelEl.classList.add('visible');
         },
 
         /**
@@ -1926,15 +1960,9 @@
 
             if (panelEl) {
                 panelEl.classList.remove('visible');
-                // Wait for animation to complete before hiding
-                setTimeout(() => {
-                    panelEl.style.display = 'none';
-                    if (scoreCategoriesEl) {
-                        scoreCategoriesEl.style.display = 'flex';
-                    }
-                }, 300);
-            } else if (scoreCategoriesEl) {
-                scoreCategoriesEl.style.display = 'flex';
+            }
+            if (scoreCategoriesEl) {
+                scoreCategoriesEl.classList.remove('panel-open');
             }
         },
         

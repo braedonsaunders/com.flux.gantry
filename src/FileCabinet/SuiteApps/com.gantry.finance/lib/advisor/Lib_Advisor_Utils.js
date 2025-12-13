@@ -14,7 +14,7 @@
  * - Partial response building
  * - Debug mode management
  */
-define(['N/log', 'N/runtime', 'N/record', '../Lib_Config'], function(log, runtime, record, ConfigLib) {
+define(['N/log', 'N/runtime', 'N/record', 'N/query', '../Lib_Config'], function(log, runtime, record, query, ConfigLib) {
     'use strict';
 
     // ═══════════════════════════════════════════════════════════════
@@ -125,10 +125,11 @@ define(['N/log', 'N/runtime', 'N/record', '../Lib_Config'], function(log, runtim
         
         // Remove ALL semicolons (NetSuite N/query doesn't allow them)
         cleaned = cleaned.replace(/;/g, '');
-        
-        // Remove any FETCH FIRST that got duplicated (exact duplicates)
+
+        // Remove any duplicated row limit clauses
         cleaned = cleaned.replace(/(FETCH\s+FIRST\s+\d+\s+ROWS\s+ONLY)\s+\1/gi, '$1');
-        
+        cleaned = cleaned.replace(/(ROWNUM\s*<=\s*\d+)\s+\1/gi, '$1');
+
         // Clean up extra whitespace from comment removal
         cleaned = cleaned.replace(/\n\s*\n/g, '\n').trim();
         
@@ -302,52 +303,6 @@ define(['N/log', 'N/runtime', 'N/record', '../Lib_Config'], function(log, runtim
     }
     
     /**
-     * Build a partial response when we need to exit early due to governance/timeout
-     */
-    function buildPartialResponse(toolResults, steps, startTime, reason, debugLog) {
-        // Summarize what we have so far
-        const queryResults = toolResults.filter(tr => 
-            (tr.tool === 'query' || tr.tool === 'execute_template') && tr.result?.success
-        );
-        
-        let partialAnswer = 'I had to stop early due to ' + reason + '. ';
-        if (queryResults.length > 0) {
-            partialAnswer += `Here's what I found so far:\n\n`;
-            queryResults.forEach((qr, i) => {
-                partialAnswer += `**Query ${i + 1}**: ${qr.purpose || 'Data retrieval'}\n`;
-                partialAnswer += `- Found ${qr.result.rowCount} rows\n`;
-            });
-        } else {
-            partialAnswer += 'I was unable to complete any queries before running out of resources.';
-        }
-        
-        steps.push({
-            type: 'warning',
-            title: 'Early termination',
-            status: 'warning',
-            content: reason,
-            timestamp: Date.now()
-        });
-        
-        const result = {
-            text: '',
-            richContent: [{ type: 'text', content: partialAnswer }],
-            blocksFormat: true,
-            steps: steps,
-            duration: Date.now() - startTime,
-            partialResult: true,
-            reason: reason
-        };
-        
-        // Attach debug log if provided
-        if (debugLog) {
-            result._agentDebugLog = debugLog;
-        }
-        
-        return result;
-    }
-
-    /**
      * Format a date as YYYY-MM-DD
      */
     function formatDateYMD(d) {
@@ -415,27 +370,6 @@ define(['N/log', 'N/runtime', 'N/record', '../Lib_Config'], function(log, runtim
         };
         
         return statusMap[statusCode] || statusCode;
-    }
-
-    // ═══════════════════════════════════════════════════════════════
-    // TOPIC EXTRACTION - DEPRECATED
-    // Topic extraction is now handled by the LLM in the INTENT phase
-    // using semantic understanding rather than keyword matching.
-    // The LLM returns topics in the 'semantic_topics' field of the intent response.
-    // This stub is kept for backward compatibility only.
-    // ═══════════════════════════════════════════════════════════════
-
-    /**
-     * @deprecated Use LLM-based semantic topic extraction instead.
-     * Topics are now determined by the INTENT phase LLM call which returns
-     * 'semantic_topics' based on meaning rather than keyword matching.
-     * This function returns an empty array - callers should use intent.semantic_topics instead.
-     */
-    function extractTopicsFromQuery(message, description) {
-        // REMOVED: Keyword-based topic extraction has been eliminated.
-        // The LLM in the INTENT phase now classifies topics semantically.
-        // See INTENT_PROMPT in Lib_Advisor_StreamingAgent.js
-        return [];
     }
 
     /**
@@ -525,188 +459,95 @@ define(['N/log', 'N/runtime', 'N/record', '../Lib_Config'], function(log, runtim
         return lines.join('\n');
     }
 
+    // ═══════════════════════════════════════════════════════════════
+    // SCHEMA DISCOVERY (Fully Dynamic)
+    // Discovers schema for ANY record type or SuiteQL table dynamically
+    // No hardcoded schemas - uses N/record and N/query at runtime
+    // ═══════════════════════════════════════════════════════════════
+
     /**
-     * Compress a conversation history for storage/transmission
-     * RECOMMENDATION 5: Semantic compression for efficient memory usage
-     * @param {array} history - Full conversation history
-     * @param {object} options - Compression options
-     * @returns {object} Compressed history with metadata
+     * Dynamically discover table/record schema via SuiteQL
+     * Used as fallback when record.create() fails (for SuiteQL-only tables)
+     * @param {string} tableName - The table name to discover
+     * @returns {Object} Schema information or error
      */
-    function compressConversationHistory(history, options) {
-        if (!history || !Array.isArray(history) || history.length === 0) {
-            return { compressed: [], metadata: { messageCount: 0 } };
+    function discoverTableSchema(tableName) {
+        try {
+            // Run a query to get column metadata (fetch 0 rows, just need metadata)
+            const sql = 'SELECT * FROM ' + tableName + ' FETCH FIRST 1 ROWS ONLY';
+            const results = query.runSuiteQL({ query: sql });
+
+            // Get column metadata from result
+            const columns = results.columns || [];
+            const fields = {};
+
+            columns.forEach(function(col) {
+                const fieldId = col.fieldId || col.alias || 'unknown';
+                fields[fieldId] = {
+                    id: fieldId,
+                    label: col.label || fieldId,
+                    type: col.type || 'unknown',
+                    isCustom: fieldId.startsWith('cust')
+                };
+            });
+
+            const fieldCount = Object.keys(fields).length;
+
+            log.debug('Schema Discovery (SuiteQL)', {
+                tableName: tableName,
+                fieldCount: fieldCount
+            });
+
+            return {
+                success: true,
+                schema: {
+                    type: tableName,
+                    fields: fields,
+                    sublists: {},
+                    isCustomRecord: tableName.startsWith('customrecord') || tableName.startsWith('custrecord'),
+                    isSuiteQLTable: true
+                },
+                fieldCount: fieldCount,
+                sublistCount: 0,
+                summary: tableName + ': ' + fieldCount + ' fields (SuiteQL table)',
+                hint: 'This is a SuiteQL table. Use these fields in SuiteQL queries.'
+            };
+        } catch (e) {
+            log.debug('SuiteQL Schema Discovery Failed', {
+                tableName: tableName,
+                error: e.message
+            });
+            return null; // Signal that SuiteQL discovery failed
         }
-
-        options = options || {};
-        const keepRecent = options.keepRecent || 4;
-        const maxTotal = options.maxTotal || 10;
-
-        const result = {
-            compressed: [],
-            metadata: {
-                originalCount: history.length,
-                intentChain: [],
-                entities: {},
-                topics: []
-            }
-        };
-
-        // Extract metadata from all messages
-        history.forEach(msg => {
-            // Track intent chain
-            if (msg.intent) {
-                result.metadata.intentChain.push(msg.intent);
-            }
-            // Track topics
-            if (msg.topics && Array.isArray(msg.topics)) {
-                msg.topics.forEach(t => {
-                    if (!result.metadata.topics.includes(t)) {
-                        result.metadata.topics.push(t);
-                    }
-                });
-            }
-            // Track resolved entities
-            if (msg.resolvedEntities) {
-                Object.assign(result.metadata.entities, msg.resolvedEntities);
-            }
-        });
-
-        // Keep recent messages in full
-        const recent = history.slice(-keepRecent);
-
-        // Compress older messages to summaries
-        const older = history.slice(0, -keepRecent);
-        const olderCompressed = older.slice(-maxTotal + keepRecent).map(msg => ({
-            role: msg.role,
-            summary: (msg.content || msg.text || '').substring(0, 100),
-            intent: msg.intent,
-            timestamp: msg.timestamp
-        }));
-
-        result.compressed = [...olderCompressed, ...recent];
-        result.metadata.messageCount = result.compressed.length;
-
-        return result;
     }
 
-    // ═══════════════════════════════════════════════════════════════
-    // SCHEMA DISCOVERY
-    // ═══════════════════════════════════════════════════════════════
-    // STATIC SCHEMAS FOR SUITEQL-ONLY TABLES
-    // These tables can be queried via SuiteQL but are NOT scriptable record types
-    // so record.create() will fail for them
-    // ═══════════════════════════════════════════════════════════════
-    const SUITEQL_TABLE_SCHEMAS = {
-        'transaction': {
-            description: 'Main transaction header table - use specific types like vendorbill, invoice for record API',
-            fields: ['id', 'tranid', 'trandate', 'type', 'entity', 'subsidiary', 'department', 'class', 'location', 
-                     'foreigntotal', 'netamount', 'taxtotal', 'status', 'posting', 'voided', 'memo', 'currency',
-                     'exchangerate', 'createddate', 'lastmodifieddate', 'postingperiod', 'approvalstatus',
-                     'custbody_*'],
-            joins: ['transactionline', 'transactionaccountingline', 'entity', 'subsidiary']
-        },
-        'transactionline': {
-            description: 'Transaction line items - JOIN to transaction via transactionline.transaction = transaction.id',
-            fields: ['id', 'transaction', 'linesequencenumber', 'item', 'quantity', 'rate', 'amount', 'netamount',
-                     'department', 'class', 'location', 'subsidiary', 'mainline', 'taxline', 'memo', 'isclosed',
-                     'custcol_*'],
-            joins: ['transaction', 'item', 'department', 'location', 'class']
-        },
-        'transactionaccountingline': {
-            description: 'GL impact lines - use for detailed expense/account analysis',
-            fields: ['id', 'transaction', 'transactionline', 'account', 'amount', 'debit', 'credit', 
-                     'posting', 'accountingbook', 'subsidiary', 'department', 'class', 'location'],
-            joins: ['transaction', 'account', 'transactionline']
-        },
-        'account': {
-            description: 'Chart of accounts',
-            fields: ['id', 'acctnumber', 'accttype', 'accountsearchdisplayname', 'displaynamewithhierarchy',
-                     'fullname', 'description', 'isinactive', 'issummary', 'parent', 'subsidiary'],
-            joins: ['transaction (via transactionaccountingline)']
-        },
-        'accountingperiod': {
-            description: 'Fiscal periods',
-            fields: ['id', 'periodname', 'startdate', 'enddate', 'isyear', 'isquarter', 'isadjust', 
-                     'closed', 'alllocked', 'parent', 'fiscalcalendar'],
-            joins: ['transaction']
-        },
-        'expense': {
-            description: 'NOT A VALID RECORD TYPE - Use "expensereport" for expense reports, or query transactionaccountingline with account.accttype = "Expense"',
-            fields: [],
-            error: true,
-            alternatives: ['expensereport', 'vendorbill', 'transactionaccountingline WHERE account.accttype = \'Expense\'']
-        },
-        'expenses': {
-            description: 'NOT A VALID RECORD TYPE - Same as "expense"',
-            fields: [],
-            error: true,
-            alternatives: ['expensereport', 'vendorbill', 'transactionaccountingline WHERE account.accttype = \'Expense\'']
-        }
-    };
-
     /**
-     * Dynamically get schema for any NetSuite record type
-     * Uses dummy record creation to inspect available fields
-     * Falls back to static schemas for SuiteQL-only tables
-     * @param {string} recordType - The record type ID (e.g., 'customer', 'custrecord_my_log')
+     * Dynamically get schema for any NetSuite record type or SuiteQL table
+     * FULLY DYNAMIC - no hardcoded schemas
+     *
+     * Discovery strategy:
+     * 1. First try N/record.create() for scriptable record types
+     * 2. If that fails, try SuiteQL to discover table columns
+     *
+     * @param {string} recordType - The record/table type (e.g., 'customer', 'transaction', 'custrecord_xyz')
      * @returns {Object} Schema information or error
      */
     function getRecordSchema(recordType) {
         if (!recordType || typeof recordType !== 'string') {
-            return { 
-                success: false, 
+            return {
+                success: false,
                 error: 'Record type must be a non-empty string',
                 recordType: recordType
             };
         }
-        
+
         const normalizedType = recordType.toLowerCase().trim();
-        
+
         // ═══════════════════════════════════════════════════════════════
-        // CHECK STATIC SCHEMAS FIRST
-        // These are SuiteQL tables that can't be created via record API
+        // COMMON TYPE ALIASES (convenience mapping)
+        // Maps user-friendly names to NetSuite internal type IDs
         // ═══════════════════════════════════════════════════════════════
-        if (SUITEQL_TABLE_SCHEMAS[normalizedType]) {
-            const staticSchema = SUITEQL_TABLE_SCHEMAS[normalizedType];
-            
-            // Handle error cases (like "expense" which isn't a real type)
-            if (staticSchema.error) {
-                return {
-                    success: false,
-                    error: staticSchema.description,
-                    recordType: normalizedType,
-                    alternatives: staticSchema.alternatives,
-                    hint: 'Use one of the alternatives: ' + staticSchema.alternatives.join(', ')
-                };
-            }
-            
-            // Return static schema
-            log.debug('Schema Discovery (static)', { recordType: normalizedType });
-            return {
-                success: true,
-                schema: {
-                    type: normalizedType,
-                    fields: staticSchema.fields.reduce((acc, f) => {
-                        acc[f] = { id: f, label: f, type: 'static', isCustom: f.includes('cust') };
-                        return acc;
-                    }, {}),
-                    sublists: {},
-                    isCustomRecord: false,
-                    isSuiteQLOnly: true
-                },
-                fieldCount: staticSchema.fields.length,
-                sublistCount: 0,
-                summary: `${normalizedType}: ${staticSchema.fields.length} known fields (SuiteQL table)`,
-                description: staticSchema.description,
-                joins: staticSchema.joins,
-                hint: 'This is a SuiteQL table, not a scriptable record type. Use these fields in SuiteQL queries.'
-            };
-        }
-        
-        // ═══════════════════════════════════════════════════════════════
-        // MAP COMMON TYPE NAMES TO ACTUAL RECORD TYPES
-        // ═══════════════════════════════════════════════════════════════
-        const typeMapping = {
+        const typeAliases = {
             'bill': 'vendorbill',
             'bills': 'vendorbill',
             'vendor_bill': 'vendorbill',
@@ -732,28 +573,31 @@ define(['N/log', 'N/runtime', 'N/record', '../Lib_Config'], function(log, runtim
             'project': 'job',
             'projects': 'job'
         };
-        
-        const mappedType = typeMapping[normalizedType] || normalizedType;
-        
+
+        const mappedType = typeAliases[normalizedType] || normalizedType;
+
+        // ═══════════════════════════════════════════════════════════════
+        // STRATEGY 1: Try N/record.create() for scriptable record types
+        // ═══════════════════════════════════════════════════════════════
         try {
-            // Create dummy record to inspect fields (lightweight, doesn't save)
             const rec = record.create({ type: mappedType, isDynamic: true });
             const fields = rec.getFields();
-            
+
             const schema = {
                 type: mappedType,
                 fields: {},
                 sublists: {},
-                isCustomRecord: mappedType.startsWith('customrecord') || mappedType.startsWith('custrecord')
+                isCustomRecord: mappedType.startsWith('customrecord') || mappedType.startsWith('custrecord'),
+                discoveryMethod: 'record'
             };
-            
+
             // Map Body Fields
             fields.forEach(function(fieldId) {
-                // Skip internal system fields that aren't useful for queries
+                // Skip internal system fields
                 if (fieldId.startsWith('sys') || fieldId.startsWith('_') || fieldId.startsWith('nsapi')) {
                     return;
                 }
-                
+
                 try {
                     const f = rec.getField({ fieldId: fieldId });
                     if (f) {
@@ -762,87 +606,89 @@ define(['N/log', 'N/runtime', 'N/record', '../Lib_Config'], function(log, runtim
                             label: f.label || fieldId,
                             type: f.type,
                             isMandatory: f.isMandatory || false,
-                            isCustom: fieldId.startsWith('custbody') || 
+                            isCustom: fieldId.startsWith('custbody') ||
                                       fieldId.startsWith('custrecord') ||
                                       fieldId.startsWith('custentity') ||
                                       fieldId.startsWith('custitem') ||
                                       fieldId.startsWith('custevent')
                         };
                     }
-                } catch (e) {
-                    // Skip fields that can't be inspected (permissions, etc.)
+                } catch (fieldErr) {
+                    // Skip fields that can't be inspected
                 }
             });
-            
-            // Map Sublists (Critical for Joins)
+
+            // Map Sublists
             try {
                 const sublists = rec.getSublists();
                 if (sublists && sublists.length > 0) {
                     sublists.forEach(function(sublistId) {
-                        schema.sublists[sublistId] = { 
+                        schema.sublists[sublistId] = {
                             id: sublistId,
-                            // Try to get sublist fields if possible
                             fields: []
                         };
                         try {
                             const sublistFields = rec.getSublistFields({ sublistId: sublistId });
                             if (sublistFields) {
-                                schema.sublists[sublistId].fields = sublistFields.slice(0, 20); // First 20 fields
+                                schema.sublists[sublistId].fields = sublistFields.slice(0, 30);
                             }
-                        } catch (e) {
-                            // Sublist field inspection failed, that's OK
+                        } catch (subErr) {
+                            // Sublist field inspection failed
                         }
                     });
                 }
-            } catch (e) {
+            } catch (sublistErr) {
                 // Not all records have sublists
             }
-            
+
             const fieldCount = Object.keys(schema.fields).length;
             const sublistCount = Object.keys(schema.sublists).length;
-            
-            log.debug('Schema Discovery', {
+
+            log.debug('Schema Discovery (Record)', {
                 recordType: mappedType,
                 fieldCount: fieldCount,
                 sublistCount: sublistCount
             });
-            
-            return { 
-                success: true, 
+
+            return {
+                success: true,
                 schema: schema,
                 fieldCount: fieldCount,
                 sublistCount: sublistCount,
-                summary: `${mappedType}: ${fieldCount} fields, ${sublistCount} sublists`
+                summary: mappedType + ': ' + fieldCount + ' fields, ' + sublistCount + ' sublists'
             };
-            
-        } catch (e) {
-            // Common reasons: record type doesn't exist, not scriptable, insufficient permissions
-            log.debug('Schema Discovery Failed', {
+
+        } catch (recordErr) {
+            // ═══════════════════════════════════════════════════════════════
+            // STRATEGY 2: Try SuiteQL for tables that aren't scriptable records
+            // (e.g., transaction, transactionline, account, etc.)
+            // ═══════════════════════════════════════════════════════════════
+            log.debug('Record creation failed, trying SuiteQL discovery', {
                 recordType: mappedType,
-                error: e.message
+                error: recordErr.message
             });
-            
-            // Provide helpful suggestions based on what they tried
-            let hint = '';
-            let alternatives = [];
-            
-            if (normalizedType.includes('expens')) {
-                hint = 'For expense data, use "expensereport" or query transactionaccountingline with account.accttype = \'Expense\'';
-                alternatives = ['expensereport', 'vendorbill'];
-            } else if (normalizedType === 'transaction' || normalizedType === 'transactionline') {
-                hint = 'This is a SuiteQL table only. For the record API, use specific types: vendorbill, invoice, salesorder, etc.';
-                alternatives = ['vendorbill', 'invoice', 'salesorder', 'purchaseorder', 'journalentry'];
-            } else {
-                alternatives = ['vendorbill', 'invoice', 'salesorder', 'customer', 'vendor'];
+
+            const suiteqlResult = discoverTableSchema(mappedType);
+
+            if (suiteqlResult && suiteqlResult.success) {
+                return suiteqlResult;
             }
-            
-            return { 
-                success: false, 
-                error: `Could not load schema for '${recordType}'. ` +
-                       `It may not be a scriptable record type, may not exist, or you may lack permissions.`,
+
+            // ═══════════════════════════════════════════════════════════════
+            // BOTH STRATEGIES FAILED - provide helpful error message
+            // ═══════════════════════════════════════════════════════════════
+            return {
+                success: false,
+                error: 'Could not discover schema for "' + recordType + '". ' +
+                       'It may not be a valid record type or table, or you may lack permissions.',
                 recordType: recordType,
-                hint: hint,
-                alternatives: alternatives
+                triedMethods: ['record.create()', 'SuiteQL SELECT'],
+                suggestions: [
+                    'Check spelling of record/table name',
+                    'For custom records, use the full ID (e.g., custrecord_myrecord)',
+                    'Common tables: transaction, transactionline, customer, vendor, item, account',
+                    'Common records: vendorbill, invoice, salesorder, purchaseorder, journalentry'
+                ]
             };
         }
     }
@@ -925,220 +771,6 @@ define(['N/log', 'N/runtime', 'N/record', '../Lib_Config'], function(log, runtim
         return details;
     }
 
-    // ═══════════════════════════════════════════════════════════════
-    // CONSOLIDATED ERROR HANDLING
-    // Standard error handler for SCA phases - ensures consistent
-    // error logging, state tracking, and error propagation.
-    // ═══════════════════════════════════════════════════════════════
-
-    /**
-     * Handle errors that occur during SCA phase execution
-     * Provides consistent:
-     * - Error logging with full context
-     * - State tracking (adds to state.errors array)
-     * - User-friendly error message generation
-     * - Error propagation for retry/recovery logic
-     *
-     * @param {string} phase - The SCA phase where error occurred (intent, select, invoke, respond)
-     * @param {Error|Object} error - The error object
-     * @param {Object} state - The current streaming state
-     * @param {Object} [context] - Additional context (tool name, args, etc.)
-     * @returns {Object} Standardized error result
-     */
-    function handlePhaseError(phase, error, state, context) {
-        context = context || {};
-
-        // Extract comprehensive error details
-        const errorDetails = extractErrorDetails(error);
-
-        // Build standardized error record
-        const errorRecord = {
-            phase: phase,
-            message: errorDetails.message || 'Unknown error',
-            code: errorDetails.code,
-            timestamp: Date.now(),
-            duration: context.startTime ? (Date.now() - context.startTime) : undefined,
-            tool: context.tool,
-            args: context.args
-        };
-
-        // Add to state.errors if state is provided
-        if (state && state.errors) {
-            state.errors.push(errorRecord);
-        }
-
-        // Log with appropriate severity based on phase
-        const logContext = {
-            phase: phase,
-            error: errorDetails.message,
-            requestId: state?.requestId,
-            ...context
-        };
-
-        // Use audit for phase failures (these are significant)
-        log.error(`SCA ${phase.toUpperCase()} phase error`, logContext);
-
-        // Build user-friendly message
-        let userMessage = 'An error occurred while processing your request.';
-        switch (phase) {
-            case 'intent':
-                userMessage = 'I had trouble understanding your question. Please try rephrasing.';
-                break;
-            case 'select':
-                userMessage = 'I had trouble selecting the right analysis tools. Please try again.';
-                break;
-            case 'invoke':
-                userMessage = context.tool
-                    ? `I encountered an issue while running ${context.tool}. ${errorRecord.message}`
-                    : 'I encountered an issue while fetching data. Please try again.';
-                break;
-            case 'respond':
-            case 'analyze':
-            case 'format':
-                userMessage = 'I had trouble generating the response. Please try again.';
-                break;
-        }
-
-        return {
-            success: false,
-            phase: phase,
-            error: errorRecord,
-            userMessage: userMessage,
-            recoverable: phase !== 'intent' && phase !== 'respond',  // Most errors are recoverable
-            retryable: true
-        };
-    }
-
-    /**
-     * Check if an error result indicates a recoverable failure
-     *
-     * @param {Object} errorResult - Result from handlePhaseError
-     * @returns {boolean} True if the error might be recoverable
-     */
-    function isRecoverableError(errorResult) {
-        if (!errorResult || errorResult.success !== false) return false;
-        return errorResult.recoverable === true || errorResult.retryable === true;
-    }
-
-    /**
-     * Apply pivot transformation to convert long-format data to wide-format
-     * Example: rows with (account, department, amount) become rows with (account, Dept1, Dept2, ...)
-     *
-     * @param {Array} rows - Original rows in long format
-     * @param {Array} columns - Original column names
-     * @param {Object} pivotConfig - Configuration for pivot
-     *   - rowField: Field to use as row identifier (e.g., 'account_name')
-     *   - columnField: Field whose values become column headers (e.g., 'department')
-     *   - valueField: Field containing values to pivot (e.g., 'amount')
-     *   - rowGroupField: Optional field for grouping rows (e.g., 'account_type_name')
-     *   - showTotalColumn: Whether to add a total column
-     * @returns {Object} { rows: pivotedRows, columns: newColumns }
-     */
-    function applyPivotTransformation(rows, columns, pivotConfig) {
-        if (!rows || !rows.length || !pivotConfig || !pivotConfig.enabled) {
-            return { rows: rows, columns: columns };
-        }
-
-        var rowField = pivotConfig.rowField;
-        var columnField = pivotConfig.columnField;
-        var valueField = pivotConfig.valueField;
-        var rowGroupField = pivotConfig.rowGroupField;
-        var showTotalColumn = pivotConfig.showTotalColumn !== false;
-
-        // Collect unique column values (these become new column headers)
-        var columnValues = [];
-        var columnValueSet = {};
-        rows.forEach(function(row) {
-            var colVal = row[columnField];
-            if (colVal && !columnValueSet[colVal]) {
-                columnValueSet[colVal] = true;
-                columnValues.push(colVal);
-            }
-        });
-
-        // Sort column values alphabetically
-        columnValues.sort();
-
-        // Build map of rowKey -> pivoted row data
-        var rowMap = {};
-        var rowOrder = []; // Preserve original ordering
-
-        rows.forEach(function(row) {
-            var rowKey = row[rowField];
-            var colVal = row[columnField];
-            var value = row[valueField] || 0;
-
-            if (!rowMap[rowKey]) {
-                rowMap[rowKey] = {
-                    _rowKey: rowKey,
-                    _total: 0
-                };
-
-                // Copy non-pivot fields to the pivoted row
-                columns.forEach(function(col) {
-                    if (col !== columnField && col !== valueField) {
-                        rowMap[rowKey][col] = row[col];
-                    }
-                });
-
-                // Initialize all pivot columns to 0
-                columnValues.forEach(function(cv) {
-                    rowMap[rowKey][cv] = 0;
-                });
-
-                rowOrder.push(rowKey);
-            }
-
-            // Set the value for this column
-            rowMap[rowKey][colVal] = value;
-            rowMap[rowKey]._total += value;
-        });
-
-        // Build pivoted rows in original order
-        var pivotedRows = rowOrder.map(function(rowKey) {
-            var row = rowMap[rowKey];
-            var result = {};
-
-            // Copy non-pivot fields first
-            columns.forEach(function(col) {
-                if (col !== columnField && col !== valueField && row[col] !== undefined) {
-                    result[col] = row[col];
-                }
-            });
-
-            // Add pivot columns
-            columnValues.forEach(function(cv) {
-                result[cv] = row[cv];
-            });
-
-            // Add total column if requested
-            if (showTotalColumn) {
-                result['Total'] = row._total;
-            }
-
-            return result;
-        });
-
-        // Build new column list
-        var newColumns = [];
-        columns.forEach(function(col) {
-            if (col !== columnField && col !== valueField) {
-                newColumns.push(col);
-            }
-        });
-        newColumns = newColumns.concat(columnValues);
-        if (showTotalColumn) {
-            newColumns.push('Total');
-        }
-
-        return {
-            rows: pivotedRows,
-            columns: newColumns,
-            pivotApplied: true,
-            groupBy: rowGroupField // Preserve groupBy for the pivoted table
-        };
-    }
-
     return {
         // Constants
         DEFAULT_MAX_TOKENS: DEFAULT_MAX_TOKENS,
@@ -1155,7 +787,6 @@ define(['N/log', 'N/runtime', 'N/record', '../Lib_Config'], function(log, runtim
 
         // Governance
         checkGovernance: checkGovernance,
-        buildPartialResponse: buildPartialResponse,
 
         // Formatting
         formatDateYMD: formatDateYMD,
@@ -1163,22 +794,11 @@ define(['N/log', 'N/runtime', 'N/record', '../Lib_Config'], function(log, runtim
         formatChatHistoryAsText: formatChatHistoryAsText,
         mapStatus: mapStatus,
 
-        // Session
-        extractTopicsFromQuery: extractTopicsFromQuery,
-
-        // Conversation Memory Compression (Recommendation 5)
-        compressConversationHistory: compressConversationHistory,
-
-        // Schema Discovery
+        // Schema Discovery (for LLM tools)
         getRecordSchema: getRecordSchema,
 
-        // Data Transformation
-        applyPivotTransformation: applyPivotTransformation,
-
-        // Error handling (consolidated)
+        // Error handling
         extractErrorDetails: extractErrorDetails,
-        handlePhaseError: handlePhaseError,
-        isRecoverableError: isRecoverableError,
 
         // Debug mode (centralized control for all advisor modules)
         isDebugMode: isDebugMode,
