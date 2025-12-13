@@ -106,6 +106,38 @@ define(['N/log', 'N/runtime', 'N/record', 'N/query', '../Lib_Config'], function(
         }
     }
 
+    // ═══════════════════════════════════════════════════════════════
+    // SQL ESCAPING (Single Source of Truth)
+    // Used by EntityResolver, Tools, and any module building SuiteQL
+    // ═══════════════════════════════════════════════════════════════
+
+    /**
+     * Escape SQL string to prevent injection
+     * Use for values in WHERE clauses with = operator
+     * @param {string} str - String to escape
+     * @returns {string} Escaped string safe for SQL
+     */
+    function escapeSql(str) {
+        if (str === null || str === undefined) return '';
+        return String(str).replace(/'/g, "''");
+    }
+
+    /**
+     * Escape SQL LIKE pattern characters (% and _) in addition to SQL escaping
+     * Use when the value will be used in a LIKE clause
+     * @param {string} str - String to escape
+     * @returns {string} Escaped string safe for LIKE clauses
+     */
+    function escapeSqlLike(str) {
+        if (str === null || str === undefined) return '';
+        // First escape SQL quotes, then escape LIKE wildcards
+        return String(str).replace(/'/g, "''").replace(/%/g, '\\%').replace(/_/g, '\\_');
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // QUERY UTILITIES
+    // ═══════════════════════════════════════════════════════════════
+
     /**
      * Clean SQL query from markdown and other artifacts
      */
@@ -371,6 +403,146 @@ define(['N/log', 'N/runtime', 'N/record', 'N/query', '../Lib_Config'], function(
         
         return statusMap[statusCode] || statusCode;
     }
+
+    // ═══════════════════════════════════════════════════════════════
+    // VALUE FORMATTERS (Single Source of Truth)
+    // Used by Cache, QueryExecutor, and any module formatting output
+    // ═══════════════════════════════════════════════════════════════
+
+    /**
+     * Format a number as currency with intelligent scaling
+     * @param {number} value - The value to format
+     * @param {Object} [options] - Formatting options
+     * @param {boolean} [options.compact=true] - Use K/M abbreviations for large numbers
+     * @param {boolean} [options.showSign=true] - Show negative sign
+     * @param {number} [options.decimals=0] - Decimal places for non-compact format
+     * @returns {string} Formatted currency string
+     */
+    function formatCurrency(value, options) {
+        if (value === null || value === undefined || isNaN(value)) return 'N/A';
+        options = options || {};
+        const compact = options.compact !== false;
+        const showSign = options.showSign !== false;
+        const decimals = options.decimals || 0;
+
+        const num = Number(value);
+        const absNum = Math.abs(num);
+        const sign = (showSign && num < 0) ? '-' : '';
+
+        if (compact) {
+            if (absNum >= 1000000) return sign + '$' + (absNum / 1000000).toFixed(2) + 'M';
+            if (absNum >= 1000) return sign + '$' + (absNum / 1000).toFixed(1) + 'K';
+        }
+
+        return sign + '$' + absNum.toLocaleString('en-US', {
+            minimumFractionDigits: decimals,
+            maximumFractionDigits: decimals
+        });
+    }
+
+    /**
+     * Format a number as percentage
+     * @param {number} value - The value to format (e.g., 45.5 for 45.5%)
+     * @param {number} [decimals=1] - Decimal places
+     * @returns {string} Formatted percentage string
+     */
+    function formatPercent(value, decimals) {
+        if (value === null || value === undefined || isNaN(value)) return 'N/A';
+        decimals = decimals !== undefined ? decimals : 1;
+        return Number(value).toFixed(decimals) + '%';
+    }
+
+    /**
+     * Format a number with locale-aware thousands separators
+     * @param {number} value - The value to format
+     * @param {Object} [options] - Formatting options
+     * @param {number} [options.decimals=0] - Decimal places
+     * @param {boolean} [options.compact=false] - Use K/M abbreviations
+     * @returns {string} Formatted number string
+     */
+    function formatNumber(value, options) {
+        if (value === null || value === undefined || isNaN(value)) return 'N/A';
+        options = options || {};
+        const decimals = options.decimals || 0;
+        const compact = options.compact === true;
+        const num = Number(value);
+        const absNum = Math.abs(num);
+        const sign = num < 0 ? '-' : '';
+
+        if (compact) {
+            if (absNum >= 1000000) return sign + (absNum / 1000000).toFixed(1) + 'M';
+            if (absNum >= 1000) return sign + (absNum / 1000).toFixed(1) + 'K';
+        }
+
+        return num.toLocaleString('en-US', {
+            minimumFractionDigits: decimals,
+            maximumFractionDigits: decimals
+        });
+    }
+
+    /**
+     * Format a date value
+     * @param {string|Date} value - The date to format
+     * @param {string} [format='short'] - Format style: 'short', 'medium', 'iso'
+     * @returns {string} Formatted date string
+     */
+    function formatDate(value, format) {
+        if (!value) return '—';
+
+        try {
+            const date = value instanceof Date ? value : new Date(value);
+            if (isNaN(date.getTime())) return String(value);
+
+            format = format || 'short';
+
+            switch (format) {
+                case 'iso':
+                    return date.toISOString().split('T')[0]; // YYYY-MM-DD
+                case 'medium':
+                    return date.toLocaleDateString('en-US', {
+                        month: 'long',
+                        day: 'numeric',
+                        year: 'numeric'
+                    });
+                case 'short':
+                default:
+                    return date.toLocaleDateString('en-US', {
+                        month: 'short',
+                        day: 'numeric',
+                        year: 'numeric'
+                    });
+            }
+        } catch (e) {
+            return String(value);
+        }
+    }
+
+    /**
+     * Format a value based on detected or specified type
+     * @param {*} value - The value to format
+     * @param {string} type - Type hint: 'currency', 'percent', 'number', 'date', 'score'
+     * @returns {string} Formatted value
+     */
+    function formatValue(value, type) {
+        switch (type) {
+            case 'currency':
+                return formatCurrency(value);
+            case 'percent':
+                return formatPercent(value);
+            case 'number':
+                return formatNumber(value);
+            case 'date':
+                return formatDate(value);
+            case 'score':
+                return value !== null && value !== undefined ? value + '/100' : 'N/A';
+            default:
+                return value !== null && value !== undefined ? String(value) : 'N/A';
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // CONVERSATION HISTORY
+    // ═══════════════════════════════════════════════════════════════
 
     /**
      * Format chat history as text for inclusion in prompt
@@ -778,6 +950,10 @@ define(['N/log', 'N/runtime', 'N/record', 'N/query', '../Lib_Config'], function(
         GOVERNANCE_THRESHOLD_QUERY: GOVERNANCE_THRESHOLD_QUERY,
         SCA_TOKEN_LIMITS: SCA_TOKEN_LIMITS,
 
+        // SQL escaping (single source of truth)
+        escapeSql: escapeSql,
+        escapeSqlLike: escapeSqlLike,
+
         // Query utilities
         cleanQuery: cleanQuery,
 
@@ -788,7 +964,14 @@ define(['N/log', 'N/runtime', 'N/record', 'N/query', '../Lib_Config'], function(
         // Governance
         checkGovernance: checkGovernance,
 
-        // Formatting
+        // Value formatters (single source of truth)
+        formatCurrency: formatCurrency,
+        formatPercent: formatPercent,
+        formatNumber: formatNumber,
+        formatDate: formatDate,
+        formatValue: formatValue,
+
+        // Legacy formatters (kept for compatibility)
         formatDateYMD: formatDateYMD,
         formatResultsCompact: formatResultsCompact,
         formatChatHistoryAsText: formatChatHistoryAsText,
