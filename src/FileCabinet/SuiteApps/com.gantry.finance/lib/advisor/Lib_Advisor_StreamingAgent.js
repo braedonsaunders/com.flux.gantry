@@ -1325,12 +1325,34 @@ Response format (JSON only):
                     .filter(t => t !== 'format_response')
                     .slice(0, MAX_TOOL_INVOCATIONS);
 
-                // Ensure we have at least one tool
+                // Get default tools if LLM didn't select any
                 if (selectedTools.length === 0) {
                     selectedTools = getDefaultToolsForIntent(state.intent.intent);
                 }
 
                 state.selectedTools = selectedTools;
+
+                // OPTIMIZATION: Skip directly to RESPOND for conversational queries (no tools needed)
+                if (selectedTools.length === 0 && state.intent.intent === 'general') {
+                    state.phase = PHASES.RESPOND;
+
+                    upsertThinkingStep(state, 'select', {
+                        title: 'Selecting analysis tools',
+                        phase: 'select',
+                        status: 'complete',
+                        duration: duration,
+                        context: {
+                            intent: state.intent.intent,
+                            selectedTools: [],
+                            conversational: true
+                        },
+                        debug: buildDebugInfo(prompt, response, state, { parsedSelection: parsed })
+                    });
+
+                    log.debug('SCA Select phase - conversational query, skipping to RESPOND');
+                    return { success: true, nextPhase: PHASES.RESPOND };
+                }
+
                 state.phase = PHASES.INVOKE;
 
                 upsertThinkingStep(state, 'select', {
@@ -1358,6 +1380,27 @@ Response format (JSON only):
 
             // Default to a sensible tool based on intent
             state.selectedTools = getDefaultToolsForIntent(state.intent.intent);
+
+            // OPTIMIZATION: Skip directly to RESPOND for conversational queries
+            if (state.selectedTools.length === 0 && state.intent.intent === 'general') {
+                state.phase = PHASES.RESPOND;
+
+                upsertThinkingStep(state, 'select', {
+                    title: 'Selecting analysis tools',
+                    phase: 'select',
+                    status: 'complete',
+                    duration: duration,
+                    context: {
+                        selectedTools: [],
+                        conversational: true,
+                        fallback: true,
+                        error: e.message
+                    }
+                });
+
+                return { success: true, nextPhase: PHASES.RESPOND };
+            }
+
             state.phase = PHASES.INVOKE;
 
             upsertThinkingStep(state, 'select', {
@@ -2634,6 +2677,38 @@ Response format (JSON only):
         const phaseStart = Date.now();
 
         // ═══════════════════════════════════════════════════════════════════════
+        // CONVERSATIONAL HANDLING - Greetings, chitchat, general questions
+        // When intent is 'general', provide a friendly conversational response
+        // ═══════════════════════════════════════════════════════════════════════
+        if (state.intent && state.intent.intent === 'general') {
+            const conversationalResponse = generateConversationalResponse(state);
+            const duration = Date.now() - phaseStart;
+
+            state.formattedResponse = {
+                title: 'Response',
+                summary: conversationalResponse.substring(0, 100),
+                blocks: [{
+                    type: 'text',
+                    content: conversationalResponse
+                }]
+            };
+            state.phase = PHASES.COMPLETE;
+
+            upsertThinkingStep(state, 'respond', {
+                title: 'Generating response',
+                phase: 'respond',
+                status: 'complete',
+                duration: duration,
+                context: {
+                    phase: 'respond',
+                    conversational: true
+                }
+            });
+
+            return { success: true, nextPhase: PHASES.COMPLETE };
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
         // HANDLE REFLECTION OUTCOMES
         // Use context from REFLECT phase to provide intelligent responses
         // ═══════════════════════════════════════════════════════════════════════
@@ -3342,6 +3417,44 @@ Response format (JSON only):
         return parts.join(' ') || 'Analysis complete.';
     }
 
+    /**
+     * Generate a conversational response for general/non-financial queries
+     * Uses LLM to provide friendly, contextual responses to greetings and chitchat
+     */
+    function generateConversationalResponse(state) {
+        const historyContext = buildHistoryContext(state);
+
+        const prompt = `You are a friendly financial assistant for NetSuite. The user sent a conversational message (greeting, chitchat, or general question).
+
+${historyContext}
+USER MESSAGE: "${state.message}"
+
+Respond naturally and conversationally. Be warm and helpful. If it's a greeting, greet them back.
+Mention that you can help with financial questions - revenue, expenses, customers, vendors, transactions, P&L, aging reports, etc.
+Keep your response concise (1-3 sentences).
+Do NOT use markdown formatting or special characters.
+Do NOT make up any financial data.
+
+Response:`;
+
+        try {
+            const response = AIProviders.callAI(prompt, {
+                tier: FAST_TIER,
+                temperature: 0.7,
+                maxTokens: 150
+            });
+
+            if (response && response.trim()) {
+                return response.trim();
+            }
+        } catch (e) {
+            log.debug('Conversational response generation failed', { error: e.message });
+        }
+
+        // Fallback if LLM fails
+        return "Hello! I'm your financial assistant. I can help you explore your NetSuite data - ask me about revenue, expenses, customers, vendors, aging reports, or any financial metrics!";
+    }
+
     // ═══════════════════════════════════════════════════════════════════════════
     // LEGACY PHASE FUNCTIONS (kept for backward compatibility)
     // ═══════════════════════════════════════════════════════════════════════════
@@ -3874,7 +3987,9 @@ Response format (JSON only):
             'dashboard': ['dashboard_health'],
             'comparison': ['compare_periods'],
             'transaction': ['get_transaction_detail'],
-            'general': ['get_fiscal_context'],
+            // FIXED: general intent (greetings, chitchat) should NOT invoke tools
+            // Let the conversational handler in RESPOND phase deal with it
+            'general': [],
             // FIXED: follow_up intent should NOT invoke new tools - it should use cached data
             // Empty array signals to skip INVOKE phase and go directly to RESPOND with existing data
             'follow_up': []
