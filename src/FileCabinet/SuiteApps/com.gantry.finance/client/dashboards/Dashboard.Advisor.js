@@ -1691,189 +1691,157 @@
         },
         
         /**
-         * Query categories data - organized by template categories
-         * Maps to actual templates in Lib_Advisor_Templates.js
+         * Query categories data - 8 categories aligned with health score dashboard tiles
+         * Each category maps to a dashboard: cashflow, health, spendvelocity, burden, time, customervalue, vendorperformance, integrity
          */
         queryCategories: {
-            financials: {
-                name: 'Financial Statements',
-                icon: 'fa-file-invoice-dollar',
-                color: 'linear-gradient(135deg, #7c3aed 0%, #5b21b6 100%)',
-                queries: [
-                    { text: 'Income Statement', question: 'Show the full income statement' },
-                    { text: 'Balance Sheet', question: 'Show balance sheet' },
-                    { text: 'Trial Balance', question: 'Show trial balance YTD' },
-                    { text: 'Department P&L', question: 'Show P&L for ', prefill: true, placeholder: 'Enter department name' },
-                    { text: 'Comparative P&L', question: 'Show comparative P&L this year vs last year' }
-                ]
-            },
+            // ═══════════════════════════════════════════════════════════════════
+            // CASH FLOW - Dashboard: cashflow
+            // ═══════════════════════════════════════════════════════════════════
             cash: {
-                name: 'Cash & Liquidity',
-                icon: 'fa-coins',
+                name: 'Cash Flow',
+                icon: 'fa-money-bill-wave',
                 color: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
                 queries: [
-                    { text: 'Cash position', question: "What's our current cash position?" },
-                    { text: 'Bank balances', question: 'Show all bank account balances' },
-                    { text: 'Cash forecast', question: 'What will our cash position be in 30 days?' },
-                    { text: 'Cash runway', question: 'How many months of runway do we have?' }
+                    { text: 'Cash Position', question: "What's our current cash position?" },
+                    { text: 'Cash Runway', question: 'How many weeks of runway do we have?' },
+                    { text: 'Burn Rate', question: "What's our weekly burn rate?" },
+                    { text: 'Cash Forecast', question: 'What will our cash be in 30 days?' },
+                    { text: 'Critical Weeks', question: 'When might we face cash constraints?' },
+                    { text: 'Bank Balances', question: 'Show all bank account balances' },
+                    { text: 'Working Capital', question: "What's our working capital position?" },
+                    { text: 'AR/AP Impact', question: 'How do AR and AP affect our cash flow?' }
                 ]
             },
-            ar: {
-                name: 'Accounts Receivable',
-                icon: 'fa-hand-holding-usd',
-                color: 'linear-gradient(135deg, #06b6d4 0%, #0891b2 100%)',
-                queries: [
-                    { text: 'AR Aging Summary', question: 'Show AR aging summary' },
-                    { text: 'AR Aging Detail', question: 'Show detailed AR aging by customer' },
-                    { text: 'Past Due AR', question: 'Which invoices are past due?' },
-                    { text: 'Top AR Balances', question: 'Who are our top AR customers?' },
-                    { text: 'Days Sales Outstanding', question: "What's our DSO?" },
-                    { text: 'Customer Payments', question: 'Show recent customer payments' },
-                    { text: 'Days to Pay', question: 'Show average days to pay by customer' }
-                ]
-            },
-            ap: {
-                name: 'Accounts Payable',
-                icon: 'fa-file-invoice',
-                color: 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)',
-                queries: [
-                    { text: 'AP Aging', question: 'Show AP aging summary' },
-                    { text: 'Bills Due', question: 'What bills are due this week?' },
-                    { text: 'Past Due Bills', question: 'Which bills are past due?' },
-                    { text: 'Top Vendors', question: 'Who are our top vendors by spend?' },
-                    { text: 'Days Payable', question: "What's our DPO?" },
-                    { text: 'Vendor Spend YoY', question: 'Show vendor spend comparison year over year' }
-                ]
-            },
+            // ═══════════════════════════════════════════════════════════════════
+            // REVENUE - Dashboard: health (P&L)
+            // Absorbs: financials (income statement, balance sheet, trial balance)
+            // ═══════════════════════════════════════════════════════════════════
             revenue: {
-                name: 'Revenue & Sales',
+                name: 'Revenue',
                 icon: 'fa-chart-line',
                 color: 'linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)',
                 queries: [
-                    { text: 'Top Customers', question: 'Who are our top 10 customers this year?' },
-                    { text: 'Revenue by Dept', question: 'Show revenue by department YTD' },
-                    { text: 'Monthly Trend', question: 'Show monthly revenue trend' },
-                    { text: 'YTD by Customer', question: 'Show YTD revenue by customer' },
-                    { text: 'Weekly Revenue', question: 'What was revenue last week?' },
-                    { text: 'Customer for Dept', question: 'Top customers for ', prefill: true, placeholder: 'Enter department' }
-                ]
-            },
-            profitability: {
-                name: 'Profitability',
-                icon: 'fa-balance-scale',
-                color: 'linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%)',
-                queries: [
-                    { text: 'Net Profit YTD', question: 'What is our net profit year to date?' },
+                    { text: 'Health Score', question: "What's our financial health score?" },
+                    { text: 'Income Statement', question: 'Show the full income statement' },
+                    { text: 'Balance Sheet', question: 'Show balance sheet' },
+                    { text: 'P&L Summary', question: 'Show P&L summary year to date' },
                     { text: 'Gross Margin', question: "What's our gross margin?" },
-                    { text: 'Margin by Dept', question: 'Show gross margin by department' },
-                    { text: 'Department Margins', question: 'Which departments have the best margins?' }
+                    { text: 'YoY Comparison', question: 'How does this year compare to last year?' },
+                    { text: 'Department P&L', question: 'Show P&L for ', prefill: true, placeholder: 'Enter department name' },
+                    { text: 'Monthly Trend', question: 'Show monthly revenue trend' }
                 ]
             },
+            // ═══════════════════════════════════════════════════════════════════
+            // EXPENSES - Dashboard: spendvelocity
+            // ═══════════════════════════════════════════════════════════════════
             expenses: {
                 name: 'Expenses',
                 icon: 'fa-receipt',
                 color: 'linear-gradient(135deg, #f97316 0%, #ea580c 100%)',
                 queries: [
+                    { text: 'Spend Health', question: "What's our spend health score?" },
                     { text: 'Expense Breakdown', question: 'Break down expenses by category YTD' },
-                    { text: 'Expenses by Dept', question: 'Show expenses by department' },
-                    { text: 'Monthly Expenses', question: 'Show monthly expense trend' },
-                    { text: 'Top Expense Accounts', question: 'What are our largest expense accounts?' }
+                    { text: 'Spend Velocity', question: 'Which vendors have accelerating spend?' },
+                    { text: 'Subscription Creep', question: 'Are there boiling frog spending patterns?' },
+                    { text: 'Shadow IT', question: 'Are there shadow IT tools spreading?' },
+                    { text: 'Anomalies', question: 'Which expense accounts show anomalies?' },
+                    { text: 'By Department', question: 'Show expenses by department' },
+                    { text: 'Monthly Trend', question: 'Show monthly expense trend' }
                 ]
             },
-            orders: {
-                name: 'Orders & Pipeline',
-                icon: 'fa-shopping-cart',
-                color: 'linear-gradient(135deg, #ec4899 0%, #db2777 100%)',
+            // ═══════════════════════════════════════════════════════════════════
+            // MARGINS - Dashboard: burden
+            // Absorbs: gl (GL activity, journal entries)
+            // ═══════════════════════════════════════════════════════════════════
+            profitability: {
+                name: 'Margins',
+                icon: 'fa-balance-scale',
+                color: 'linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%)',
                 queries: [
-                    { text: 'Open Sales Orders', question: 'Show open sales orders' },
-                    { text: 'SO Backlog', question: 'What is our sales order backlog?' },
-                    { text: 'Recent Orders', question: 'Show orders placed this week' },
-                    { text: 'Open POs', question: 'Show open purchase orders' }
+                    { text: 'Burden Rate', question: "What's our current burden rate?" },
+                    { text: 'vs Target', question: 'How does burden compare to our target?' },
+                    { text: 'Overhead Breakdown', question: 'Show overhead costs by category' },
+                    { text: 'Department Burden', question: 'Which departments have highest burden?' },
+                    { text: 'Gross Margin', question: 'Show gross margin by department' },
+                    { text: 'Net Margin', question: "What's our net profit margin?" },
+                    { text: 'GL Activity', question: 'Show GL activity for ', prefill: true, placeholder: 'Enter account name' },
+                    { text: 'Journal Entries', question: 'Show recent journal entries' }
                 ]
             },
-            gl: {
-                name: 'General Ledger',
-                icon: 'fa-book',
-                color: 'linear-gradient(135deg, #6366f1 0%, #4f46e5 100%)',
-                queries: [
-                    { text: 'Account Activity', question: 'Show GL activity for ', prefill: true, placeholder: 'Enter account name' },
-                    { text: 'Journal Entries', question: 'Show recent journal entries' },
-                    { text: 'Transaction Detail', question: 'Show GL detail for transaction #', prefill: true, placeholder: 'Enter transaction ID' }
-                ]
-            },
+            // ═══════════════════════════════════════════════════════════════════
+            // LABOR - Dashboard: time
+            // ═══════════════════════════════════════════════════════════════════
             labor: {
-                name: 'Labor & Time',
+                name: 'Labor',
                 icon: 'fa-user-clock',
                 color: 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)',
                 queries: [
-                    { text: 'Hours by Employee', question: 'Show hours by employee this month' },
-                    { text: 'Billable Hours', question: 'Show billable hours by employee' },
-                    { text: 'Utilization Rate', question: 'Show utilization rate by employee' }
+                    { text: 'Utilization', question: "What's our team utilization rate?" },
+                    { text: 'By Employee', question: 'Show utilization by employee' },
+                    { text: 'Unbilled Time', question: 'How much unbilled time do we have?' },
+                    { text: 'Effective Rate', question: "What's our effective billing rate?" },
+                    { text: 'By Customer', question: 'Which customers consume the most time?' },
+                    { text: 'Billable Hours', question: 'Show billable hours this month' },
+                    { text: 'Monthly Trend', question: 'Show utilization trend by month' },
+                    { text: 'Non-Billable', question: 'Where is non-billable time going?' }
                 ]
             },
-            inventory: {
-                name: 'Inventory',
-                icon: 'fa-boxes',
-                color: 'linear-gradient(135deg, #84cc16 0%, #65a30d 100%)',
-                queries: [
-                    { text: 'Stock Levels', question: 'Show current inventory levels' },
-                    { text: 'Low Stock', question: 'What items are below reorder point?' },
-                    { text: 'Inventory Value', question: 'What is total inventory value?' },
-                    { text: 'Stock Movement', question: 'Show inventory movement this month' }
-                ]
-            },
-            transactions: {
-                name: 'Find Transaction',
-                icon: 'fa-search',
-                color: 'linear-gradient(135deg, #64748b 0%, #475569 100%)',
-                queries: [
-                    { text: 'Find Invoice', question: 'Find invoice #', prefill: true, placeholder: 'Enter invoice number' },
-                    { text: 'Find Bill', question: 'Find vendor bill #', prefill: true, placeholder: 'Enter bill number' },
-                    { text: 'Find SO', question: 'Find sales order #', prefill: true, placeholder: 'Enter SO number' },
-                    { text: 'Find PO', question: 'Find purchase order #', prefill: true, placeholder: 'Enter PO number' },
-                    { text: "Today's Invoices", question: 'Show invoices created today' },
-                    { text: 'Customer Invoices', question: 'Show invoices for ', prefill: true, placeholder: 'Enter customer name' },
-                    { text: 'Latest Invoice', question: 'Show the latest invoice' },
-                    { text: 'Latest Bill', question: 'Show the latest vendor bill' }
-                ]
-            },
+            // ═══════════════════════════════════════════════════════════════════
+            // CUSTOMERS - Dashboard: customervalue
+            // Absorbs: ar (AR aging, DSO, customer payments)
+            // ═══════════════════════════════════════════════════════════════════
             customers: {
                 name: 'Customers',
                 icon: 'fa-users',
                 color: 'linear-gradient(135deg, #06b6d4 0%, #0891b2 100%)',
                 queries: [
-                    { text: 'Top Customers', question: 'Who are our top 10 customers by revenue?' },
-                    { text: 'Customer List', question: 'Show all active customers' },
-                    { text: 'Customer Revenue', question: 'Show revenue by customer YTD' },
-                    { text: 'Customer Trends', question: 'Show customer revenue trends over time' },
-                    { text: 'New Customers', question: 'Show new customers this quarter' },
-                    { text: 'Customer Details', question: 'Show details for customer ', prefill: true, placeholder: 'Enter customer name' }
+                    { text: 'Customer Score', question: "What's our customer intelligence score?" },
+                    { text: 'Churn Risk', question: 'Which customers are at risk of churning?' },
+                    { text: 'Lifetime Value', question: "What's our customer lifetime value?" },
+                    { text: 'Top Customers', question: 'Who are our top 10 customers?' },
+                    { text: 'AR Aging', question: 'Show AR aging summary' },
+                    { text: 'Past Due AR', question: 'Which invoices are past due?' },
+                    { text: 'DSO', question: "What's our days sales outstanding?" },
+                    { text: 'Customer Payments', question: 'Show recent customer payments' }
                 ]
             },
+            // ═══════════════════════════════════════════════════════════════════
+            // VENDORS - Dashboard: vendorperformance
+            // Absorbs: ap (AP aging, DPO, bills due)
+            // ═══════════════════════════════════════════════════════════════════
             vendors: {
                 name: 'Vendors',
                 icon: 'fa-handshake',
                 color: 'linear-gradient(135deg, #ec4899 0%, #db2777 100%)',
                 queries: [
+                    { text: 'Vendor Score', question: "What's our vendor performance score?" },
+                    { text: 'Renewal Radar', question: 'Which vendors are due for renewal?' },
+                    { text: 'Maverick Spend', question: 'Do we have spend without purchase orders?' },
                     { text: 'Top Vendors', question: 'Who are our top vendors by spend?' },
-                    { text: 'Vendor List', question: 'Show all active vendors' },
-                    { text: 'Vendor Spend YTD', question: 'Show spend by vendor year to date' },
-                    { text: 'Vendor Bills', question: 'Show recent vendor bills' },
-                    { text: 'Vendor Performance', question: 'Show vendor payment history and terms' },
-                    { text: 'Vendor Details', question: 'Show details for vendor ', prefill: true, placeholder: 'Enter vendor name' }
+                    { text: 'AP Aging', question: 'Show AP aging summary' },
+                    { text: 'Bills Due', question: 'What bills are due this week?' },
+                    { text: 'DPO', question: "What's our days payable outstanding?" },
+                    { text: 'Past Due Bills', question: 'Which bills are past due?' }
                 ]
             },
+            // ═══════════════════════════════════════════════════════════════════
+            // DATA QUALITY - Dashboard: integrity (Sentinel)
+            // Absorbs: transactions (find invoice/bill/SO/PO)
+            // ═══════════════════════════════════════════════════════════════════
             dataquality: {
-                name: 'Sentinel',
+                name: 'Data Quality',
                 icon: 'fa-shield-alt',
                 color: 'linear-gradient(135deg, #6366f1 0%, #4f46e5 100%)',
                 queries: [
-                    { text: 'Flagged Transactions', question: 'Show all flagged transactions this month' },
-                    { text: 'Duplicate Check', question: 'Are there any potential duplicate bills?' },
-                    { text: 'Benford Analysis', question: 'Which transactions deviate from Benford\'s Law?' },
-                    { text: 'Weekend Entries', question: 'Show transactions entered on weekends' },
-                    { text: 'Anomaly Detection', question: 'Show suspicious or anomalous transactions' },
-                    { text: 'Risk Summary', question: 'What is our current transaction risk score?' }
+                    { text: 'Risk Score', question: 'What is our transaction risk score?' },
+                    { text: 'Flagged Items', question: 'Show flagged transactions this month' },
+                    { text: 'Duplicates', question: 'Are there potential duplicate bills?' },
+                    { text: "Benford's Law", question: "Which transactions fail Benford's Law?" },
+                    { text: 'Find Invoice', question: 'Find invoice #', prefill: true, placeholder: 'Enter invoice number' },
+                    { text: 'Find Bill', question: 'Find vendor bill #', prefill: true, placeholder: 'Enter bill number' },
+                    { text: 'Find SO/PO', question: 'Find sales order #', prefill: true, placeholder: 'Enter SO or PO number' },
+                    { text: 'Latest Activity', question: 'Show transactions created today' }
                 ]
             }
         },
