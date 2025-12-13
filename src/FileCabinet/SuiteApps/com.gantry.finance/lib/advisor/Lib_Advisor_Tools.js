@@ -23,11 +23,11 @@ define([
     'N/log',
     'N/search',
     'N/dataset',
+    'N/workbook',
     './Lib_Advisor_EntityResolver',
     './Lib_Advisor_QueryExecutor',
     './Lib_Advisor_Utils',
-    './Lib_Advisor_DashboardCache',
-    './Lib_Advisor_DataStore',
+    './Lib_Advisor_Cache',
     '../Lib_Dashboard_Registry',
     '../Lib_Config',
     // Dashboard data modules - loaded as dependencies to avoid dynamic require() errors
@@ -43,11 +43,11 @@ define([
     log,
     search,
     dataset,
+    workbook,
     EntityResolver,
     QueryExecutor,
     Utils,
-    DashboardCache,
-    DataStore,
+    Cache,
     DashboardRegistry,
     ConfigLib,
     // Dashboard data modules
@@ -4714,7 +4714,7 @@ Use for: "cash flow", "runway", "cash projection", "liquidity", "treasury", "wor
                     const rawData = CashflowData.getData(args);
 
                     // Process through intelligence layer - extracts key metrics, generates insights
-                    const intelligence = DashboardCache.process('cashflow', rawData, args.requestId);
+                    const intelligence = Cache.processDashboard('cashflow', rawData, args.requestId);
 
                     // Calculate rowCount from metrics for proper data detection
                     const metricsCount = Object.keys(intelligence?.metrics || {}).length;
@@ -4788,7 +4788,7 @@ PREFERRED for: "income statement", "P&L", "profit and loss", "financial health",
                     const rawData = HealthData.getData(args);
 
                     // Process through intelligence layer - extracts key metrics, generates insights
-                    const intelligence = DashboardCache.process('health', rawData, args.requestId);
+                    const intelligence = Cache.processDashboard('health', rawData, args.requestId);
                     const metricsCount = Object.keys(intelligence.metrics || {}).length;
 
                     return {
@@ -4847,7 +4847,7 @@ Use for: "burden rate", "overhead", "labor burden", "cost recovery", "fringe rat
                     const rawData = BurdenData.getData(args);
 
                     // Process through intelligence layer - extracts key metrics, generates insights
-                    const intelligence = DashboardCache.process('burden', rawData, args.requestId);
+                    const intelligence = Cache.processDashboard('burden', rawData, args.requestId);
                     const metricsCount = Object.keys(intelligence.metrics || {}).length;
 
                     return {
@@ -4911,7 +4911,7 @@ Use for: "utilization", "billable hours", "time tracking", "unbilled time", "emp
                     const rawData = TimeData.getData(args);
 
                     // Process through intelligence layer - extracts key metrics, generates insights
-                    const intelligence = DashboardCache.process('time', rawData, args.requestId);
+                    const intelligence = Cache.processDashboard('time', rawData, args.requestId);
                     const metricsCount = Object.keys(intelligence.metrics || {}).length;
 
                     return {
@@ -4966,7 +4966,7 @@ Use for: "fraud detection", "anomalies", "duplicates", "Benford's law", "suspici
                     const rawData = IntegrityData.getData(args);
 
                     // Process through intelligence layer - extracts key metrics, generates insights
-                    const intelligence = DashboardCache.process('integrity', rawData, args.requestId);
+                    const intelligence = Cache.processDashboard('integrity', rawData, args.requestId);
                     const metricsCount = Object.keys(intelligence.metrics || {}).length;
 
                     return {
@@ -5026,7 +5026,7 @@ Use for: "vendor performance", "procurement", "vendor leverage", "payment terms"
                     const rawData = VendorPerformanceData.getData(args);
 
                     // Process through intelligence layer - extracts key metrics, generates insights
-                    const intelligence = DashboardCache.process('vendorperformance', rawData, args.requestId);
+                    const intelligence = Cache.processDashboard('vendorperformance', rawData, args.requestId);
                     const metricsCount = Object.keys(intelligence.metrics || {}).length;
 
                     return {
@@ -5086,7 +5086,7 @@ Use for: "customer value", "CLV", "lifetime value", "RFM", "churn risk", "custom
                     const rawData = CustomerValueData.getData(args);
 
                     // Process through intelligence layer - extracts key metrics, generates insights
-                    const intelligence = DashboardCache.process('customervalue', rawData, args.requestId);
+                    const intelligence = Cache.processDashboard('customervalue', rawData, args.requestId);
                     const metricsCount = Object.keys(intelligence.metrics || {}).length;
 
                     return {
@@ -5146,7 +5146,7 @@ Use for: "spend velocity", "subscription creep", "shadow IT", "commitment cliff"
                     const rawData = SpendVelocityData.getData(args);
 
                     // Process through intelligence layer - extracts key metrics, generates insights
-                    const intelligence = DashboardCache.process('spendvelocity', rawData, args.requestId);
+                    const intelligence = Cache.processDashboard('spendvelocity', rawData, args.requestId);
                     const metricsCount = Object.keys(intelligence.metrics || {}).length;
 
                     return {
@@ -5221,7 +5221,7 @@ Use this for: "show me details", "list the vendors", "which customers", "break i
             },
             execute: function(args) {
                 try {
-                    const result = DashboardCache.loadCollection(
+                    const result = Cache.loadCollection(
                         args.refId,
                         args.collection,
                         {
@@ -5418,7 +5418,7 @@ EXAMPLES:
 
                     if (isDashboardRef && args.collection_name) {
                         // Load dashboard collection from DashboardCache
-                        const collectionResult = DashboardCache.loadCollection(
+                        const collectionResult = Cache.loadCollection(
                             refId,
                             args.collection_name,
                             {
@@ -5458,7 +5458,7 @@ EXAMPLES:
                     } else if (isDashboardRef && !args.collection_name) {
                         // Load dashboard metric
                         if (args.metric_name) {
-                            const metricResult = DashboardCache.getMetric(refId, args.metric_name);
+                            const metricResult = Cache.getMetric(refId, args.metric_name);
                             return {
                                 success: metricResult.success,
                                 source: 'dashboard_metric',
@@ -5483,7 +5483,7 @@ EXAMPLES:
                         // Try to load with provided requestId, then fall back to refId-only lookup
                         let data = null;
                         if (requestId) {
-                            data = DataStore.loadRows(requestId, refId, startRow, endRow);
+                            data = Cache.loadRows(requestId, refId, startRow, endRow);
                         }
 
                         if (!data) {
@@ -6122,6 +6122,400 @@ The dataset is executed and returns results similar to a saved search or SuiteQL
             },
             displayName: function(args) {
                 return 'Running dataset ' + (args.dataset_id || '') + '...';
+            }
+        },
+
+        // ═══════════════════════════════════════════════════════════════════════════
+        // WORKBOOK TOOLS - Using real N/workbook module for SuiteAnalytics Workbooks
+        // ═══════════════════════════════════════════════════════════════════════════
+
+        list_workbooks: {
+            name: 'list_workbooks',
+            shortDescription: 'List all SuiteAnalytics workbooks',
+            category: 'data',
+            description: `List all available workbooks created in SuiteAnalytics.
+Workbooks contain pivot tables, charts, and data visualizations built from datasets.
+Use this to discover what pre-built analytical workbooks are available.
+
+Use this when:
+- User asks "what workbooks are available?"
+- User mentions a workbook by name and you need to find its ID
+- You want to see what pre-built analytics exist
+- User wants pivot table or aggregated data (workbooks have pivots, datasets have raw data)`,
+            parameters: {
+                type: 'object',
+                properties: {
+                    max_results: {
+                        type: 'number',
+                        description: 'Maximum number of workbooks to return (default: 50, max: 200)'
+                    }
+                },
+                required: []
+            },
+            execute: function(args) {
+                const maxResults = Math.min(args.max_results || 50, 200);
+
+                log.debug('list_workbooks', { maxResults: maxResults });
+
+                try {
+                    // Use N/workbook.list() to get all available workbooks
+                    const allWorkbooks = workbook.list();
+
+                    if (!allWorkbooks || allWorkbooks.length === 0) {
+                        return {
+                            success: true,
+                            workbooks: [],
+                            count: 0,
+                            message: 'No workbooks found. Workbooks are created in SuiteAnalytics.',
+                            tip: 'Use list_datasets for datasets, or list_saved_searches for saved searches.',
+                            tool: 'list_workbooks'
+                        };
+                    }
+
+                    // Format workbook list
+                    const workbooks = allWorkbooks.slice(0, maxResults).map(function(wb) {
+                        return {
+                            id: wb.id,
+                            name: wb.name || wb.id,
+                            description: wb.description || 'SuiteAnalytics Workbook'
+                        };
+                    });
+
+                    return {
+                        success: true,
+                        workbooks: workbooks,
+                        count: workbooks.length,
+                        totalAvailable: allWorkbooks.length,
+                        usage: 'Use run_workbook({ workbook_id: "id" }) to execute a workbook pivot',
+                        tool: 'list_workbooks'
+                    };
+
+                } catch (e) {
+                    log.error('list_workbooks error', { error: e.message, stack: e.stack });
+
+                    // Provide helpful error message
+                    let errorMessage = e.message;
+                    if (e.message.indexOf('INSUFFICIENT_PERMISSION') > -1) {
+                        errorMessage = 'Insufficient permissions to list workbooks. The SuiteAnalytics Workbook feature may not be enabled or accessible.';
+                    }
+
+                    return {
+                        success: false,
+                        error: errorMessage,
+                        tip: 'Workbooks require SuiteAnalytics Workbook. Use list_saved_searches for saved searches instead.',
+                        tool: 'list_workbooks'
+                    };
+                }
+            },
+            displayName: function(args) {
+                return 'Listing available workbooks...';
+            }
+        },
+
+        run_workbook: {
+            name: 'run_workbook',
+            shortDescription: 'Execute a SuiteAnalytics workbook component',
+            category: 'data',
+            description: `Run a SuiteAnalytics workbook and return data from pivots, charts, or tables.
+
+Workbooks can contain:
+- PIVOTS: Pre-aggregated data with groupings and measures (e.g., revenue by department)
+- CHARTS: Visual data (bar, line, pie) - returns the underlying data that feeds the chart
+- TABLES: Raw data tables
+
+Use list_workbooks first to discover available workbooks.
+
+By default runs the first pivot table. Use component_type and component_id for specific components.`,
+            parameters: {
+                type: 'object',
+                properties: {
+                    workbook_id: {
+                        type: 'string',
+                        description: 'The internal ID of the workbook to run (use list_workbooks to find IDs)'
+                    },
+                    component_type: {
+                        type: 'string',
+                        description: 'Type of component to run: "pivot", "chart", or "table" (default: "pivot")'
+                    },
+                    component_id: {
+                        type: 'string',
+                        description: 'Optional: specific component ID within the workbook. If not provided, uses the first component of the specified type.'
+                    },
+                    max_results: {
+                        type: 'number',
+                        description: 'Maximum number of rows to return (default: 500, max: 1000)'
+                    }
+                },
+                required: ['workbook_id']
+            },
+            execute: function(args) {
+                const workbookId = args.workbook_id;
+                const componentType = (args.component_type || 'pivot').toLowerCase();
+                const componentId = args.component_id || args.pivot_id; // backwards compat
+                const maxResults = Math.min(args.max_results || 500, 1000);
+
+                log.debug('run_workbook', { workbookId: workbookId, componentType: componentType, componentId: componentId, maxResults: maxResults });
+
+                if (!workbookId) {
+                    return {
+                        success: false,
+                        error: 'workbook_id is required. Use list_workbooks to find available workbooks.',
+                        tool: 'run_workbook'
+                    };
+                }
+
+                try {
+                    // Load the workbook
+                    const loadedWorkbook = workbook.load({ id: workbookId });
+
+                    if (!loadedWorkbook) {
+                        return {
+                            success: false,
+                            error: 'Workbook not found: ' + workbookId,
+                            tip: 'Use list_workbooks to see available workbooks',
+                            tool: 'run_workbook'
+                        };
+                    }
+
+                    // Build workbook contents summary
+                    const workbookContents = {
+                        pivots: (loadedWorkbook.pivots || []).map(function(p) { return { id: p.id, name: p.name }; }),
+                        charts: (loadedWorkbook.charts || []).map(function(c) { return { id: c.id, name: c.name, type: c.chartType }; }),
+                        tables: (loadedWorkbook.tables || []).map(function(t) { return { id: t.id, name: t.name }; })
+                    };
+
+                    // Helper function to extract rows from result iterator
+                    function extractRows(resultSet, maxRows) {
+                        const rows = [];
+                        let rowCount = 0;
+                        const iterator = resultSet.iterator();
+
+                        iterator.each(function(result) {
+                            if (rowCount >= maxRows) {
+                                return false;
+                            }
+
+                            const row = {};
+                            const resultValues = result.getAllValues();
+
+                            for (var key in resultValues) {
+                                if (resultValues.hasOwnProperty(key)) {
+                                    row[key] = resultValues[key];
+                                }
+                            }
+                            rows.push(row);
+                            rowCount++;
+
+                            return true;
+                        });
+
+                        return rows;
+                    }
+
+                    // Run based on component type
+                    if (componentType === 'pivot') {
+                        const pivots = loadedWorkbook.pivots;
+                        if (!pivots || pivots.length === 0) {
+                            return {
+                                success: false,
+                                error: 'No pivot tables found in workbook: ' + workbookId,
+                                workbookContents: workbookContents,
+                                tip: 'Try component_type: "chart" or "table" instead.',
+                                tool: 'run_workbook'
+                            };
+                        }
+
+                        // Select the pivot
+                        var selectedPivot = null;
+                        if (componentId) {
+                            for (var i = 0; i < pivots.length; i++) {
+                                if (pivots[i].id === componentId) {
+                                    selectedPivot = pivots[i];
+                                    break;
+                                }
+                            }
+                            if (!selectedPivot) {
+                                return {
+                                    success: false,
+                                    error: 'Pivot not found: ' + componentId,
+                                    workbookContents: workbookContents,
+                                    tool: 'run_workbook'
+                                };
+                            }
+                        } else {
+                            selectedPivot = pivots[0];
+                        }
+
+                        const pivotResult = selectedPivot.run();
+                        const rows = extractRows(pivotResult, maxResults);
+                        const columns = rows.length > 0 ? Object.keys(rows[0]) : [];
+
+                        return {
+                            success: true,
+                            workbookId: workbookId,
+                            workbookName: loadedWorkbook.name || workbookId,
+                            componentType: 'pivot',
+                            componentId: selectedPivot.id,
+                            componentName: selectedPivot.name || selectedPivot.id,
+                            workbookContents: workbookContents,
+                            columns: columns,
+                            rows: rows,
+                            rowCount: rows.length,
+                            hasMore: rows.length >= maxResults,
+                            tool: 'run_workbook'
+                        };
+
+                    } else if (componentType === 'chart') {
+                        const charts = loadedWorkbook.charts;
+                        if (!charts || charts.length === 0) {
+                            return {
+                                success: false,
+                                error: 'No charts found in workbook: ' + workbookId,
+                                workbookContents: workbookContents,
+                                tip: 'Try component_type: "pivot" or "table" instead.',
+                                tool: 'run_workbook'
+                            };
+                        }
+
+                        // Select the chart
+                        var selectedChart = null;
+                        if (componentId) {
+                            for (var j = 0; j < charts.length; j++) {
+                                if (charts[j].id === componentId) {
+                                    selectedChart = charts[j];
+                                    break;
+                                }
+                            }
+                            if (!selectedChart) {
+                                return {
+                                    success: false,
+                                    error: 'Chart not found: ' + componentId,
+                                    workbookContents: workbookContents,
+                                    tool: 'run_workbook'
+                                };
+                            }
+                        } else {
+                            selectedChart = charts[0];
+                        }
+
+                        // Get chart data - charts have underlying data we can extract
+                        const chartResult = selectedChart.run();
+                        const chartRows = extractRows(chartResult, maxResults);
+                        const chartColumns = chartRows.length > 0 ? Object.keys(chartRows[0]) : [];
+
+                        return {
+                            success: true,
+                            workbookId: workbookId,
+                            workbookName: loadedWorkbook.name || workbookId,
+                            componentType: 'chart',
+                            componentId: selectedChart.id,
+                            componentName: selectedChart.name || selectedChart.id,
+                            chartType: selectedChart.chartType,
+                            chartInfo: {
+                                type: selectedChart.chartType,
+                                note: 'Chart data returned. UI can render as ' + selectedChart.chartType + ' chart.'
+                            },
+                            workbookContents: workbookContents,
+                            columns: chartColumns,
+                            rows: chartRows,
+                            rowCount: chartRows.length,
+                            hasMore: chartRows.length >= maxResults,
+                            tool: 'run_workbook'
+                        };
+
+                    } else if (componentType === 'table') {
+                        const tables = loadedWorkbook.tables;
+                        if (!tables || tables.length === 0) {
+                            return {
+                                success: false,
+                                error: 'No tables found in workbook: ' + workbookId,
+                                workbookContents: workbookContents,
+                                tip: 'Try component_type: "pivot" or "chart" instead.',
+                                tool: 'run_workbook'
+                            };
+                        }
+
+                        // Select the table
+                        var selectedTable = null;
+                        if (componentId) {
+                            for (var k = 0; k < tables.length; k++) {
+                                if (tables[k].id === componentId) {
+                                    selectedTable = tables[k];
+                                    break;
+                                }
+                            }
+                            if (!selectedTable) {
+                                return {
+                                    success: false,
+                                    error: 'Table not found: ' + componentId,
+                                    workbookContents: workbookContents,
+                                    tool: 'run_workbook'
+                                };
+                            }
+                        } else {
+                            selectedTable = tables[0];
+                        }
+
+                        const tableResult = selectedTable.run();
+                        const tableRows = extractRows(tableResult, maxResults);
+                        const tableColumns = tableRows.length > 0 ? Object.keys(tableRows[0]) : [];
+
+                        return {
+                            success: true,
+                            workbookId: workbookId,
+                            workbookName: loadedWorkbook.name || workbookId,
+                            componentType: 'table',
+                            componentId: selectedTable.id,
+                            componentName: selectedTable.name || selectedTable.id,
+                            workbookContents: workbookContents,
+                            columns: tableColumns,
+                            rows: tableRows,
+                            rowCount: tableRows.length,
+                            hasMore: tableRows.length >= maxResults,
+                            tool: 'run_workbook'
+                        };
+
+                    } else {
+                        return {
+                            success: false,
+                            error: 'Invalid component_type: ' + componentType + '. Use "pivot", "chart", or "table".',
+                            workbookContents: workbookContents,
+                            tool: 'run_workbook'
+                        };
+                    }
+
+                } catch (e) {
+                    log.error('run_workbook error', {
+                        workbookId: workbookId,
+                        componentType: componentType,
+                        componentId: componentId,
+                        error: e.message,
+                        stack: e.stack
+                    });
+
+                    // Provide helpful error messages
+                    let errorMessage = e.message;
+                    let tip = 'Use list_workbooks to verify the workbook exists.';
+
+                    if (e.message.indexOf('INVALID_KEY_OR_REF') > -1 || e.message.indexOf('Invalid workbook') > -1) {
+                        errorMessage = 'Workbook not found: ' + workbookId;
+                    } else if (e.message.indexOf('INSUFFICIENT_PERMISSION') > -1) {
+                        errorMessage = 'Insufficient permissions to run this workbook.';
+                        tip = 'Check that you have access to SuiteAnalytics Workbook and this specific workbook.';
+                    }
+
+                    return {
+                        success: false,
+                        error: errorMessage,
+                        workbookId: workbookId,
+                        tip: tip,
+                        tool: 'run_workbook'
+                    };
+                }
+            },
+            displayName: function(args) {
+                var componentInfo = args.component_type ? ' (' + args.component_type + ')' : '';
+                return 'Running workbook ' + (args.workbook_id || '') + componentInfo + '...';
             }
         },
 

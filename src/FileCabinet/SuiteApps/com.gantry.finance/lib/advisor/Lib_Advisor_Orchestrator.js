@@ -7,124 +7,28 @@
  *
  * ARCHITECTURE:
  * - Streaming Context Architecture (SCA) for fast, lightweight LLM calls
- * - Legacy Agent mode available via USE_STREAMING_AGENT flag
  * - Progressive rendering via polling
  *
  * FLOW:
- * 1. processChat() - Main entry point (synchronous, waits for completion)
- * 2. processChatAsync() - Returns request_id immediately, use polling for updates
- * 3. getStatus() - Poll for progress updates, each poll advances one phase
+ * 1. processChatAsync() - Returns request_id immediately, use polling for updates
+ * 2. getStatus() - Poll for progress updates, each poll advances one phase
  */
 define([
     'N/log',
-    './Lib_Advisor_Agent',
     './Lib_Advisor_StreamingAgent',
-    './Lib_Advisor_ProgressStore',
+    './Lib_Advisor_Cache',
     './Lib_Advisor_AIProviders',
-    './Lib_Advisor_ResponseBuilder',
     './Lib_Advisor_Utils',
-    './Lib_Advisor_Tools',
-    '../Lib_Config'
+    './Lib_Advisor_Tools'
 ], function(
     log,
-    Agent,
     StreamingAgent,
-    ProgressStore,
+    Cache,
     AIProviders,
-    ResponseBuilder,
     Utils,
-    Tools,
-    ConfigLib
+    Tools
 ) {
     'use strict';
-
-    // ═══════════════════════════════════════════════════════════════════════════
-    // STREAMING CONTEXT ARCHITECTURE (SCA) MODE
-    // When enabled, uses multi-phase lightweight LLM calls instead of monolithic
-    // ═══════════════════════════════════════════════════════════════════════════
-
-    // Set to true to enable Streaming Context Architecture (default: true)
-    // Set to false to use legacy single-call agent
-    const USE_STREAMING_AGENT = true;
-
-    // ═══════════════════════════════════════════════════════════════════════════
-    // MAIN ENTRY POINT - Synchronous (backward compatible)
-    // ═══════════════════════════════════════════════════════════════════════════
-
-    /**
-     * Process a chat message and return AI-generated response
-     * This is the synchronous version that waits for completion.
-     *
-     * @param {Object} params - Chat parameters
-     * @param {string} params.message - User's message
-     * @param {Array} params.history - Conversation history
-     * @param {Object} params.sessionContext - Persistent session context
-     * @param {Object} params.aiSettings - AI settings including debugMode
-     * @returns {Object} Response with text, steps, richContent, etc.
-     */
-    function processChat(params) {
-        const startTime = Date.now();
-        const message = params.message || '';
-        const history = params.history || [];
-        const sessionContext = params.sessionContext || {};
-        const aiSettings = params.aiSettings || {};
-
-        // Enable debug mode if requested
-        Utils.resetDebugModeCache();
-        if (aiSettings.debugMode === true) {
-            Utils.setForceDebugMode(true);
-        }
-
-        log.debug('ProcessChat v2 starting', {
-            messageLength: message.length,
-            historyLength: history.length,
-            hasSessionContext: !!sessionContext
-        });
-
-        try {
-            // Check for simple conversational patterns (no LLM needed)
-            const conversationalResponse = matchConversationalPattern(message);
-            if (conversationalResponse) {
-                return {
-                    text: '',
-                    richContent: [{ type: 'text', content: conversationalResponse }],
-                    blocksFormat: true,
-                    steps: [],
-                    duration: Date.now() - startTime,
-                    sessionContext: sessionContext
-                };
-            }
-
-            // Run the agent synchronously
-            const result = Agent.runAgentSync(message, history, sessionContext, {
-                debugMode: aiSettings.debugMode
-            });
-
-            // Ensure session context is preserved
-            result.sessionContext = result.sessionContext || sessionContext;
-
-            return result;
-
-        } catch (e) {
-            log.error('Orchestrator v2 Error', { message: e.message, stack: e.stack });
-
-            return {
-                text: '',
-                richContent: [{ type: 'text', content: 'An unexpected error occurred: ' + e.message }],
-                blocksFormat: true,
-                steps: [{
-                    type: 'error',
-                    title: 'System Error',
-                    content: e.message,
-                    status: 'error',
-                    timestamp: Date.now()
-                }],
-                duration: Date.now() - startTime,
-                sessionContext: sessionContext,
-                error: true
-            };
-        }
-    }
 
     // ═══════════════════════════════════════════════════════════════════════════
     // ASYNC ENTRY POINT - For Progressive Rendering
@@ -145,7 +49,7 @@ define([
         const aiSettings = params.aiSettings || {};
 
         // Generate request ID
-        const requestId = ProgressStore.generateRequestId();
+        const requestId = Cache.generateRequestId();
 
         // Enable debug mode if requested
         Utils.resetDebugModeCache();
@@ -153,7 +57,7 @@ define([
             Utils.setForceDebugMode(true);
         }
 
-        log.debug('ProcessChatAsync starting (step-by-step mode)', {
+        log.debug('ProcessChatAsync starting', {
             requestId: requestId,
             messageLength: message.length
         });
@@ -163,8 +67,8 @@ define([
             const conversationalResponse = matchConversationalPattern(message);
             if (conversationalResponse) {
                 // Create progress entry without agent state
-                ProgressStore.create(requestId, message, null);
-                ProgressStore.complete(requestId, {
+                Cache.create(requestId, message, null);
+                Cache.complete(requestId, {
                     answer: conversationalResponse,
                     richContent: [{ type: 'text', content: conversationalResponse }],
                     sessionContext: sessionContext,
@@ -178,68 +82,14 @@ define([
                 };
             }
 
-            // ═══════════════════════════════════════════════════════════════
-            // STREAMING CONTEXT ARCHITECTURE (SCA) vs LEGACY AGENT
-            // ═══════════════════════════════════════════════════════════════
+            // Initialize Streaming Agent
+            const agentState = StreamingAgent.initState(message, sessionContext, requestId, history);
 
-            let agentState;
+            // Create progress entry
+            Cache.create(requestId, message, agentState);
 
-            if (USE_STREAMING_AGENT) {
-                // NEW: Use Streaming Agent with multi-phase lightweight calls
-                log.debug('Using Streaming Context Architecture (SCA)', { requestId: requestId });
-
-                agentState = StreamingAgent.initState(message, sessionContext, requestId, history);
-                agentState.useStreamingAgent = true; // Flag for getStatus to know which agent to use
-
-                // Create progress entry
-                ProgressStore.create(requestId, message, agentState);
-
-                // Initial step will be added by first phase execution
-
-            } else {
-                // LEGACY: Use traditional single-call agent
-                log.debug('Using Legacy Agent', { requestId: requestId });
-
-                agentState = Agent.initAgentState(message, history, sessionContext, requestId, {
-                    debugMode: aiSettings.debugMode
-                });
-
-                // Create progress entry WITH agent state
-                ProgressStore.create(requestId, message, agentState);
-
-                // Add initial thinking step as a placeholder that will be updated
-                // by the AI planning call on first poll.
-                const thinkingStep = {
-                    type: 'thinking',
-                    title: 'Understanding your question...',
-                    status: 'in_progress',
-                    context: {
-                        question: message,
-                        status: 'Creating analysis plan...'
-                    }
-                };
-
-                // Add extended debug info when debug mode is enabled
-                if (Utils.isDebugMode()) {
-                    const resolvedEntities = sessionContext.resolvedEntities || {};
-                    const toolDefs = Tools.getToolDefinitions();
-                    thinkingStep.debug = {
-                        userMessage: message,
-                        historyLength: history.length,
-                        sessionEntities: Object.keys(resolvedEntities),
-                        resolvedEntityDetails: resolvedEntities,
-                        availableTools: toolDefs.map(t => t.name)
-                    };
-                    thinkingStep.title = 'Understanding your question (Debug Mode ON)';
-                }
-
-                ProgressStore.addStep(requestId, thinkingStep);
-            }
-
-            // TRULY ASYNC: Return immediately - first LLM step runs on first poll
             log.debug('ProcessChatAsync returning immediately', {
                 requestId: requestId,
-                mode: USE_STREAMING_AGENT ? 'SCA' : 'legacy',
                 provider: aiSettings.provider || 'default'
             });
 
@@ -258,7 +108,7 @@ define([
 
             // Ensure cache entry exists even on error so polling doesn't return not_found
             try {
-                ProgressStore.fail(requestId, e.message);
+                Cache.fail(requestId, e.message);
             } catch (cacheError) {
                 log.error('Failed to store error state in cache', {
                     requestId: requestId,
@@ -299,7 +149,7 @@ define([
         }
 
         // Get current state first
-        const progressState = ProgressStore.get(requestId);
+        const progressState = Cache.get(requestId);
 
         if (!progressState) {
             // Enhanced diagnostic logging for cache misses
@@ -321,89 +171,63 @@ define([
         }
 
         // ATOMIC: Check if already complete or locked (prevents race conditions)
-        if (ProgressStore.isCompleteOrLocked(requestId)) {
-            return ProgressStore.getPollingResponse(requestId);
+        if (Cache.isCompleteOrLocked(requestId)) {
+            return Cache.getPollingResponse(requestId);
         }
 
         // If already complete or error, just return current state
         if (progressState.status === 'complete' || progressState.status === 'error') {
-            return ProgressStore.getPollingResponse(requestId);
+            return Cache.getPollingResponse(requestId);
         }
 
         // ═══════════════════════════════════════════════════════════════════════
         // PROCESSING LOCK: Prevent concurrent step execution
         // If another poll is already processing, just return current state
         // ═══════════════════════════════════════════════════════════════════════
-        if (!ProgressStore.acquireProcessingLock(requestId)) {
+        if (!Cache.acquireProcessingLock(requestId)) {
             log.debug('getStatus - another poll is processing, returning current state', {
                 requestId: requestId
             });
-            return ProgressStore.getPollingResponse(requestId);
+            return Cache.getPollingResponse(requestId);
         }
 
         // Still processing - run next step
         // NOTE: We have the processing lock, so only ONE poll executes this block at a time
         try {
             // Re-check status after acquiring lock (might have completed while waiting)
-            const freshState = ProgressStore.get(requestId);
+            const freshState = Cache.get(requestId);
             if (!freshState || freshState.status === 'complete' || freshState.status === 'error') {
-                ProgressStore.releaseProcessingLock(requestId);
-                return ProgressStore.getPollingResponse(requestId);
+                Cache.releaseProcessingLock(requestId);
+                return Cache.getPollingResponse(requestId);
             }
 
-            let stepResult;
+            const agentState = freshState.agentState;
+            const stepResult = StreamingAgent.runStep(agentState);
 
-            // Check which agent to use based on state flag
-            const useStreaming = freshState.agentState?.useStreamingAgent === true;
-
-            if (useStreaming) {
-                // ═══════════════════════════════════════════════════════════
-                // STREAMING CONTEXT ARCHITECTURE (SCA)
-                // Multi-phase lightweight calls - each phase is 1-3 seconds
-                // ═══════════════════════════════════════════════════════════
-                const agentState = freshState.agentState;
-
-                stepResult = StreamingAgent.runStep(agentState);
-
-                // Save updated state
-                if (stepResult.hasMore) {
-                    ProgressStore.setAgentState(requestId, agentState);
-                } else if (stepResult.response) {
-                    // Complete with response
-                    ProgressStore.complete(requestId, {
-                        answer: stepResult.response.text,
-                        richContent: stepResult.response.richContent,
-                        sessionContext: stepResult.response.sessionContext,
-                        model: AIProviders.getCurrentModelInfo().model,
-                        provider: AIProviders.getCurrentModelInfo().provider
-                    });
-                }
-
-                log.debug('getStatus ran SCA step', {
-                    requestId: requestId,
-                    phase: agentState.phase,
-                    hasMore: stepResult.hasMore,
-                    hasResponse: !!stepResult.response
-                });
-
-            } else {
-                // ═══════════════════════════════════════════════════════════
-                // LEGACY AGENT
-                // Single-call approach (backward compatibility)
-                // ═══════════════════════════════════════════════════════════
-                stepResult = Agent.runAgentStep(requestId);
-
-                log.debug('getStatus ran legacy step', {
-                    requestId: requestId,
-                    hasMore: stepResult.hasMore,
-                    hasError: !!stepResult.error,
-                    iteration: progressState.agentState?.iteration || 0
+            // Save updated state
+            if (stepResult.hasMore) {
+                Cache.setAgentState(requestId, agentState);
+            } else if (stepResult.response) {
+                // Complete with response
+                Cache.complete(requestId, {
+                    answer: stepResult.response.text,
+                    richContent: stepResult.response.richContent,
+                    sessionContext: stepResult.response.sessionContext,
+                    model: AIProviders.getCurrentModelInfo().model,
+                    provider: AIProviders.getCurrentModelInfo().provider
                 });
             }
+
+            log.debug('getStatus ran step', {
+                requestId: requestId,
+                phase: agentState.phase,
+                hasMore: stepResult.hasMore,
+                hasResponse: !!stepResult.response
+            });
 
             // Release processing lock and return updated polling response
-            ProgressStore.releaseProcessingLock(requestId);
-            return ProgressStore.getPollingResponse(requestId);
+            Cache.releaseProcessingLock(requestId);
+            return Cache.getPollingResponse(requestId);
 
         } catch (e) {
             // Enhanced error logging with provider info
@@ -430,11 +254,11 @@ define([
             log.error('getStatus step error', errorDetails);
 
             // Store failure state so subsequent polls don't retry
-            ProgressStore.fail(requestId, e.message);
+            Cache.fail(requestId, e.message);
 
             // Release processing lock before returning
-            ProgressStore.releaseProcessingLock(requestId);
-            return ProgressStore.getPollingResponse(requestId);
+            Cache.releaseProcessingLock(requestId);
+            return Cache.getPollingResponse(requestId);
         }
     }
 
@@ -512,13 +336,11 @@ define([
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // BACKWARD COMPATIBILITY EXPORTS
-    // Re-export commonly used functions from submodules
+    // EXPORTS
     // ═══════════════════════════════════════════════════════════════════════════
 
     return {
         // Main entry points
-        processChat: processChat,
         processChatAsync: processChatAsync,
         getStatus: getStatus,
 
@@ -528,12 +350,9 @@ define([
         getCurrentModelInfo: AIProviders.getCurrentModelInfo,
         getUsage: AIProviders.getUsage,
 
-        // Tools (new)
+        // Tools
         getTools: Tools.getToolDefinitions,
         executeTool: Tools.executeTool,
-
-        // Response building
-        buildResponse: ResponseBuilder.buildResponse,
 
         // Utilities
         cleanQuery: Utils.cleanQuery,
@@ -541,6 +360,6 @@ define([
         checkGovernance: Utils.checkGovernance,
 
         // Version identifier
-        VERSION: '2.0'
+        VERSION: '3.0'
     };
 });
