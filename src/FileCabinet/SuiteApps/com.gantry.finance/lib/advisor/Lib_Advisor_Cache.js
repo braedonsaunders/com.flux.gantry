@@ -650,13 +650,6 @@ define(['N/cache', 'N/log', '../Lib_Dashboard_Registry'], function(cache, log, D
         }
 
         const summary = generateDataSummary(result, toolName);
-
-        // FIXED: Preserve tool-specific summary (e.g., P&L totals from income_statement)
-        // This enables better fallback narratives when LLM response fails
-        if (result.summary) {
-            summary.toolSummary = result.summary;
-        }
-
         return {
             refId: refId,
             requestId: requestId,
