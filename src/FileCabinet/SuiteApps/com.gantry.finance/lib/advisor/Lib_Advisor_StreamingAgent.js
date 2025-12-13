@@ -2938,63 +2938,30 @@ Response format (JSON only):
             const duration = Date.now() - phaseStart;
             state.phaseTimings.respond = duration;
 
-            if (parsed) {
+            if (parsed && parsed.blocks && Array.isArray(parsed.blocks)) {
                 // ═══════════════════════════════════════════════════════════════════════
-                // BLOCK SEQUENCE ARCHITECTURE: Support both new and legacy formats
-                // New format: { blocks: [...] } - LLM controls sequence
-                // Legacy format: { narrative, metrics, findings } - fixed order
+                // BLOCK SEQUENCE ARCHITECTURE: LLM controls block order and content
                 // ═══════════════════════════════════════════════════════════════════════
 
-                let resolvedBlocks = [];
-                let formatUsed = 'legacy';
-                let summary = '';
+                const resolvedBlocks = resolveBlockSequence(parsed.blocks, state);
 
-                if (isBlockSequenceFormat(parsed)) {
-                    // New block sequence format - LLM controls order
-                    formatUsed = 'blocks';
-                    resolvedBlocks = resolveBlockSequence(parsed.blocks, state);
+                // Extract summary from first text block
+                const firstTextBlock = resolvedBlocks.find(b => b.type === 'text');
+                const summary = firstTextBlock?.content?.substring(0, 150) || '';
 
-                    // Extract summary from first text block
-                    const firstTextBlock = resolvedBlocks.find(b => b.type === 'text');
-                    summary = firstTextBlock?.content?.substring(0, 150) || '';
-
-                    log.debug('SCA Respond: using block sequence format', {
-                        blockCount: resolvedBlocks.length,
-                        blockTypes: resolvedBlocks.map(b => b.type)
-                    });
-                } else {
-                    // Legacy format - convert to blocks
-                    formatUsed = 'legacy';
-                    resolvedBlocks = convertLegacyToBlocks(parsed, state);
-                    summary = parsed.narrative?.substring(0, 150) || '';
-
-                    log.debug('SCA Respond: using legacy format (converted to blocks)', {
-                        blockCount: resolvedBlocks.length
-                    });
-                }
+                log.debug('SCA Respond: block sequence format', {
+                    blockCount: resolvedBlocks.length,
+                    blockTypes: resolvedBlocks.map(b => b.type)
+                });
 
                 // Build formatted response
                 state.formattedResponse = {
                     title: 'Analysis Results',
                     summary: summary,
-                    blocks: resolvedBlocks,
-                    // Track format for debugging/analytics
-                    _formatUsed: formatUsed
+                    blocks: resolvedBlocks
                 };
 
                 state.phase = PHASES.COMPLETE;
-
-                // Build debug context based on format
-                const debugContext = formatUsed === 'blocks' ? {
-                    blockCount: resolvedBlocks.length,
-                    blockTypes: resolvedBlocks.map(b => b.type).join(','),
-                    hasCharts: resolvedBlocks.some(b => b.type === 'chart'),
-                    hasTables: resolvedBlocks.some(b => b.type === 'table')
-                } : {
-                    responseLength: summary.length,
-                    metricsCount: resolvedBlocks.filter(b => b.type === 'metrics').length,
-                    findingsCount: resolvedBlocks.filter(b => b.type === 'list').length
-                };
 
                 upsertThinkingStep(state, 'respond', {
                     title: 'Generating response',
@@ -3002,18 +2969,22 @@ Response format (JSON only):
                     status: 'complete',
                     duration: duration,
                     context: {
-                        blockCount: state.formattedResponse.blocks.length,
+                        blockCount: resolvedBlocks.length,
                         tokensResolved: true,
-                        formatUsed: formatUsed
+                        hasCharts: resolvedBlocks.some(b => b.type === 'chart'),
+                        hasTables: resolvedBlocks.some(b => b.type === 'table')
                     },
-                    debug: buildDebugInfo(prompt, response, state, debugContext)
+                    debug: buildDebugInfo(prompt, response, state, {
+                        blockCount: resolvedBlocks.length,
+                        blockTypes: resolvedBlocks.map(b => b.type).join(',')
+                    })
                 });
 
-                log.debug('SCA Respond phase complete', { duration: duration, formatUsed: formatUsed });
+                log.debug('SCA Respond phase complete', { duration: duration });
                 return { success: true, nextPhase: PHASES.COMPLETE };
             }
 
-            throw new Error('Invalid respond output - missing required fields');
+            throw new Error('Invalid respond output - expected blocks array');
 
         } catch (e) {
             const duration = Date.now() - phaseStart;
@@ -3213,33 +3184,6 @@ Response format (JSON only):
             count: primaryStats.count,
             column: primaryCol
         };
-    }
-
-    /**
-     * Resolve all {{tokens}} in the LLM response with real data values
-     */
-    function resolveAllTokens(parsed, state) {
-        const result = {
-            narrative: resolveTokensInText(parsed.narrative || '', state),
-            metrics: [],
-            findings: []
-        };
-
-        // Resolve metrics
-        if (parsed.metrics && Array.isArray(parsed.metrics)) {
-            result.metrics = parsed.metrics.map(m => ({
-                label: m.label || '',
-                value: resolveTokensInText(String(m.value || ''), state),
-                trend: m.trend || 'neutral'
-            }));
-        }
-
-        // Resolve findings
-        if (parsed.findings && Array.isArray(parsed.findings)) {
-            result.findings = parsed.findings.map(f => resolveTokensInText(String(f), state));
-        }
-
-        return result;
     }
 
     /**
@@ -3680,57 +3624,6 @@ Response format (JSON only):
             });
             return null;
         }
-    }
-
-    /**
-     * Check if LLM response uses the new blocks array format
-     * @param {Object} parsed - Parsed LLM response
-     * @returns {boolean} True if using blocks format
-     */
-    function isBlockSequenceFormat(parsed) {
-        return parsed && Array.isArray(parsed.blocks);
-    }
-
-    /**
-     * Convert legacy format (narrative/metrics/findings) to blocks array
-     * For backwards compatibility during migration
-     * @param {Object} parsed - Legacy format response
-     * @param {Object} state - Current state
-     * @returns {Array} Blocks array
-     */
-    function convertLegacyToBlocks(parsed, state) {
-        const blocks = [];
-
-        // Add narrative as text block
-        if (parsed.narrative) {
-            blocks.push({
-                type: 'text',
-                content: resolveTokensInText(parsed.narrative, state)
-            });
-        }
-
-        // Add metrics block
-        if (parsed.metrics && Array.isArray(parsed.metrics) && parsed.metrics.length > 0) {
-            blocks.push({
-                type: 'metrics',
-                items: parsed.metrics.map(m => ({
-                    label: m.label || '',
-                    value: resolveTokensInText(String(m.value || ''), state),
-                    trend: m.trend || 'neutral'
-                }))
-            });
-        }
-
-        // Add findings as list block
-        if (parsed.findings && Array.isArray(parsed.findings) && parsed.findings.length > 0) {
-            blocks.push({
-                type: 'list',
-                title: 'Key Findings',
-                items: parsed.findings.map(f => resolveTokensInText(String(f), state))
-            });
-        }
-
-        return blocks;
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -4392,59 +4285,37 @@ Response:`;
         // BLOCK COEXISTENCE: Merge progressive tables with LLM-placed blocks
         // - Progressive tables are added during INVOKE phase (fast, immediate UX)
         // - LLM can also place tables/charts via block sequence format
-        // - Don't duplicate: if LLM placed a table for a dataRef, skip the progressive one
+        // - If LLM placed any tables, don't add progressive tables (avoid duplicates)
         // ═══════════════════════════════════════════════════════════════════════
         const progressState = Cache.get(state.requestId);
-        if (progressState && progressState.blocks && progressState.blocks.length > 0) {
-            // Get table blocks from progressive rendering
+        const llmPlacedTables = richContent.some(b => b.type === 'table' && b.llmPlaced);
+
+        if (!llmPlacedTables && progressState?.blocks?.length > 0) {
+            // LLM didn't place any tables - merge progressive tables
             const progressiveTableBlocks = progressState.blocks.filter(b => b.type === 'table');
 
             if (progressiveTableBlocks.length > 0) {
-                // Check which dataRefs already have LLM-placed tables
-                const llmPlacedDataRefs = new Set(
-                    richContent
-                        .filter(b => b.type === 'table' && b.llmPlaced && b.dataRef)
-                        .map(b => b.dataRef)
-                );
+                // Insert after first text block
+                const textBlockIndex = richContent.findIndex(b => b.type === 'text');
+                const insertPosition = textBlockIndex >= 0 ? textBlockIndex + 1 : 0;
 
-                // Only include progressive tables that weren't placed by LLM
-                const tablesToMerge = progressiveTableBlocks.filter(tb =>
-                    !tb.dataRef || !llmPlacedDataRefs.has(tb.dataRef)
-                );
+                richContent = [
+                    ...richContent.slice(0, insertPosition),
+                    ...progressiveTableBlocks,
+                    ...richContent.slice(insertPosition)
+                ];
 
-                if (tablesToMerge.length > 0) {
-                    // Check if LLM used block sequence format with explicit table placement
-                    const llmUsedBlockSequence = formatted._formatUsed === 'blocks';
-                    const llmPlacedAnyTable = richContent.some(b => b.type === 'table' && b.llmPlaced);
-
-                    if (llmUsedBlockSequence && llmPlacedAnyTable) {
-                        // LLM decided table placement - don't add more progressive tables
-                        log.debug('Skipping progressive tables: LLM used block sequence with explicit table placement', {
-                            requestId: state.requestId,
-                            skippedCount: tablesToMerge.length,
-                            llmTableCount: richContent.filter(b => b.type === 'table').length
-                        });
-                    } else {
-                        // Legacy format or no LLM tables - merge progressive tables as before
-                        // Insert tables after first text block but before metrics/findings
-                        const textBlockIndex = richContent.findIndex(b => b.type === 'text');
-                        const insertPosition = textBlockIndex >= 0 ? textBlockIndex + 1 : 0;
-
-                        richContent = [
-                            ...richContent.slice(0, insertPosition),
-                            ...tablesToMerge,
-                            ...richContent.slice(insertPosition)
-                        ];
-
-                        log.debug('Merged progressive table blocks into richContent', {
-                            requestId: state.requestId,
-                            tableCount: tablesToMerge.length,
-                            totalBlocks: richContent.length,
-                            formatUsed: formatted._formatUsed || 'legacy'
-                        });
-                    }
-                }
+                log.debug('Merged progressive table blocks into richContent', {
+                    requestId: state.requestId,
+                    tableCount: progressiveTableBlocks.length,
+                    totalBlocks: richContent.length
+                });
             }
+        } else if (llmPlacedTables) {
+            log.debug('Skipping progressive tables: LLM placed tables explicitly', {
+                requestId: state.requestId,
+                llmTableCount: richContent.filter(b => b.type === 'table').length
+            });
         }
 
         // FIXED: Surface errors visibly in the response
