@@ -655,6 +655,255 @@
     };
 
     /**
+     * TypewriterAnimation - Premium text reveal animation
+     * Word-by-word materialization with blur-to-sharp effect
+     */
+    const TypewriterAnimation = {
+        // Configuration
+        config: {
+            wordDelay: 35,          // Base delay between words (ms)
+            blockDelay: 80,         // Delay for block elements (ms)
+            tableRowDelay: 50,      // Stagger delay for table rows (ms)
+            metricDelay: 100,       // Delay for metric items (ms)
+            maxAnimationTime: 3000, // Cap total animation time (ms)
+            skipThreshold: 500      // Words above this count skip animation
+        },
+
+        // Check if user prefers reduced motion
+        prefersReducedMotion: function() {
+            return window.matchMedia &&
+                   window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        },
+
+        /**
+         * Animate text content with word-by-word reveal
+         * @param {HTMLElement} container - Container element
+         * @param {string} html - HTML content to animate
+         * @param {Object} options - Animation options
+         * @returns {Promise} Resolves when animation completes
+         */
+        animateText: function(container, html, options) {
+            options = options || {};
+            const self = this;
+
+            return new Promise(function(resolve) {
+                // Skip animation if reduced motion preferred
+                if (self.prefersReducedMotion()) {
+                    container.innerHTML = html;
+                    container.classList.add('typewriter-complete');
+                    resolve();
+                    return;
+                }
+
+                // Parse HTML and wrap words
+                const wrapped = self.wrapWordsInHtml(html);
+                container.innerHTML = wrapped.html;
+                container.classList.add('typewriter-container');
+
+                // Calculate delays
+                const wordCount = wrapped.wordCount;
+                const blockCount = wrapped.blockCount;
+
+                // Skip animation for very long content
+                if (wordCount > self.config.skipThreshold) {
+                    container.classList.add('typewriter-skip');
+                    resolve();
+                    return;
+                }
+
+                // Calculate total time and adjust delays if needed
+                let totalTime = (wordCount * self.config.wordDelay) +
+                               (blockCount * self.config.blockDelay);
+                let speedMultiplier = 1;
+
+                if (totalTime > self.config.maxAnimationTime) {
+                    speedMultiplier = self.config.maxAnimationTime / totalTime;
+                }
+
+                // Apply animation delays via CSS custom properties
+                const words = container.querySelectorAll('.typewriter-word');
+                const blocks = container.querySelectorAll('.typewriter-block');
+                let delay = 0;
+
+                words.forEach(function(word, index) {
+                    delay = index * self.config.wordDelay * speedMultiplier;
+                    word.style.animationDelay = delay + 'ms';
+                });
+
+                blocks.forEach(function(block, index) {
+                    const blockDelay = (words.length * self.config.wordDelay +
+                                       index * self.config.blockDelay) * speedMultiplier;
+                    block.style.animationDelay = blockDelay + 'ms';
+                });
+
+                // Calculate completion time
+                const completionTime = Math.min(
+                    totalTime * speedMultiplier + 200,
+                    self.config.maxAnimationTime + 200
+                );
+
+                // Mark complete after animation
+                setTimeout(function() {
+                    container.classList.add('typewriter-complete');
+                    resolve();
+                }, completionTime);
+            });
+        },
+
+        /**
+         * Wrap words in spans for animation, preserving HTML structure
+         * @param {string} html - HTML content
+         * @returns {Object} { html, wordCount, blockCount }
+         */
+        wrapWordsInHtml: function(html) {
+            const self = this;
+            let wordCount = 0;
+            let blockCount = 0;
+
+            // Create a temporary container
+            const temp = document.createElement('div');
+            temp.innerHTML = html;
+
+            // Process text nodes recursively
+            function processNode(node) {
+                if (node.nodeType === Node.TEXT_NODE) {
+                    const text = node.textContent;
+                    if (text.trim()) {
+                        const words = text.split(/(\s+)/);
+                        const fragment = document.createDocumentFragment();
+
+                        words.forEach(function(word) {
+                            if (word.trim()) {
+                                const span = document.createElement('span');
+                                span.className = 'typewriter-word';
+                                span.textContent = word;
+                                fragment.appendChild(span);
+                                wordCount++;
+                            } else if (word) {
+                                fragment.appendChild(document.createTextNode(word));
+                            }
+                        });
+
+                        node.parentNode.replaceChild(fragment, node);
+                    }
+                } else if (node.nodeType === Node.ELEMENT_NODE) {
+                    // Skip certain elements - animate as blocks
+                    const blockTags = ['TABLE', 'PRE', 'CODE', 'UL', 'OL', 'BLOCKQUOTE', 'IMG'];
+                    if (blockTags.indexOf(node.tagName) !== -1) {
+                        node.classList.add('typewriter-block');
+                        blockCount++;
+                        return; // Don't process children
+                    }
+
+                    // Handle code spans specially
+                    if (node.tagName === 'CODE' && node.parentNode.tagName !== 'PRE') {
+                        node.classList.add('typewriter-word');
+                        wordCount++;
+                        return;
+                    }
+
+                    // Process children
+                    const children = Array.from(node.childNodes);
+                    children.forEach(processNode);
+                }
+            }
+
+            // Process all top-level nodes
+            Array.from(temp.childNodes).forEach(processNode);
+
+            return {
+                html: temp.innerHTML,
+                wordCount: wordCount,
+                blockCount: blockCount
+            };
+        },
+
+        /**
+         * Animate table rows with cascade effect
+         * @param {HTMLElement} table - Table element
+         * @param {number} baseDelay - Starting delay offset
+         */
+        animateTableRows: function(table, baseDelay) {
+            const self = this;
+            baseDelay = baseDelay || 0;
+
+            if (self.prefersReducedMotion()) return;
+
+            const rows = table.querySelectorAll('tbody tr');
+            rows.forEach(function(row, index) {
+                row.classList.add('typewriter-table-row');
+                row.style.animationDelay = (baseDelay + index * self.config.tableRowDelay) + 'ms';
+            });
+        },
+
+        /**
+         * Animate metrics with staggered reveal
+         * @param {HTMLElement} container - Metrics container
+         * @param {number} baseDelay - Starting delay offset
+         */
+        animateMetrics: function(container, baseDelay) {
+            const self = this;
+            baseDelay = baseDelay || 0;
+
+            if (self.prefersReducedMotion()) return;
+
+            const metrics = container.querySelectorAll('.metric-item, .progressive-metric');
+            metrics.forEach(function(metric, index) {
+                metric.classList.add('typewriter-metric');
+                metric.style.animationDelay = (baseDelay + index * self.config.metricDelay) + 'ms';
+            });
+        },
+
+        /**
+         * Animate code blocks with glow effect
+         * @param {HTMLElement} codeBlock - Code block element
+         * @param {number} delay - Animation delay
+         */
+        animateCodeBlock: function(codeBlock, delay) {
+            const self = this;
+            delay = delay || 0;
+
+            if (self.prefersReducedMotion()) return;
+
+            codeBlock.classList.add('typewriter-code');
+            codeBlock.style.animationDelay = delay + 'ms';
+        },
+
+        /**
+         * Animate progressive blocks during polling
+         * @param {HTMLElement} block - Block element
+         */
+        animateProgressiveBlock: function(block) {
+            const self = this;
+
+            if (self.prefersReducedMotion()) return;
+
+            block.classList.add('typewriter-animate');
+
+            // Animate table rows if it's a table block
+            const table = block.querySelector('table');
+            if (table) {
+                self.animateTableRows(table, 100);
+            }
+
+            // Animate metrics if present
+            const metricsContainer = block.querySelector('.progressive-metrics');
+            if (metricsContainer) {
+                self.animateMetrics(metricsContainer, 50);
+            }
+        },
+
+        /**
+         * Skip animation and show content immediately
+         * @param {HTMLElement} container - Container element
+         */
+        skipAnimation: function(container) {
+            container.classList.add('typewriter-skip');
+            container.classList.add('typewriter-complete');
+        }
+    };
+
+    /**
      * Advisor Controller
      */
     const AdvisorController = {
@@ -2638,17 +2887,25 @@
                     richHtml += this.renderRichContent(item);
                 });
                 if (richHtml) {
-                    richEl.innerHTML = richHtml;
                     richEl.style.display = 'block';
+                    // Apply typewriter animation to rich content
+                    TypewriterAnimation.animateText(richEl, richHtml).then(() => {
+                        // After animation, animate any tables and metrics
+                        const tables = richEl.querySelectorAll('table');
+                        tables.forEach(table => TypewriterAnimation.animateTableRows(table, 0));
+                        const metricsContainers = richEl.querySelectorAll('.metrics-group, .metric-item');
+                        metricsContainers.forEach(container => TypewriterAnimation.animateMetrics(container, 0));
+                    });
                 }
                 // Hide text fallback since we have rich content
                 if (contentEl) {
                     contentEl.style.display = 'none';
                 }
             } else if (contentEl && response.text) {
-                // Fallback: no rich content, show plain text
-                contentEl.innerHTML = this.formatText(response.text);
+                // Fallback: no rich content, show plain text with typewriter animation
+                const formattedText = this.formatText(response.text);
                 contentEl.style.display = 'block';
+                TypewriterAnimation.animateText(contentEl, formattedText);
             }
 
             // Add to messages array for history
@@ -2764,11 +3021,13 @@
 
                 // Insert after steps but before any existing content
                 const stepsContainer = document.getElementById(msgId + '-steps');
-                const bubble = msgEl.querySelector('.advisor-message-bubble');
-                if (bubble && stepsContainer) {
+                const bubble = msgEl.querySelector('.message-bubble');
+                if (stepsContainer) {
                     stepsContainer.after(blocksContainer);
                 } else if (bubble) {
                     bubble.appendChild(blocksContainer);
+                } else {
+                    msgEl.appendChild(blocksContainer);
                 }
             }
 
@@ -2798,6 +3057,9 @@
 
                 blocksContainer.appendChild(blockEl);
                 blocksContainer._renderedBlockIds.add(block.id);
+
+                // Apply typewriter animation to the new block
+                TypewriterAnimation.animateProgressiveBlock(blockEl);
 
                 console.log('[Advisor] Rendered progressive block:', block.type, block.id);
             });
