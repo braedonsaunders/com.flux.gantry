@@ -298,7 +298,7 @@
         },
 
         /**
-         * Orbit: Particles orbit around center with 3D parallax and camera pan
+         * Orbit: Particles orbit around center with strong 3D parallax and camera pan
          */
         startOrbit: function() {
             this.phase = 'orbit';
@@ -310,10 +310,12 @@
 
             let cameraPanAngle = 0;
 
-            // Store current positions as orbit base
+            // Store current positions - these are the "home" positions particles orbit around
             this.particles.forEach(p => {
                 p.orbitBaseX = p.x - orbitCenterX;
                 p.orbitBaseY = p.y - orbitCenterY;
+                p.orbitStartX = p.x; // Store exact start position for smooth blend-in
+                p.orbitStartY = p.y;
             });
 
             const animateOrbit = () => {
@@ -324,47 +326,50 @@
                 this.globalTime += 16;
                 const time = elapsed * 0.001;
 
-                // Smooth camera pan
-                cameraPanAngle += 0.04 * 0.016;
-                const cameraPanRadius = 25;
-                this.cameraX += (Math.sin(cameraPanAngle) * cameraPanRadius - this.cameraX) * 0.02;
-                this.cameraY += (Math.cos(cameraPanAngle * 0.7) * cameraPanRadius * 0.5 - this.cameraY) * 0.02;
+                // Blend factor - smoothly ramp up orbit intensity to avoid position jump
+                const orbitIntensity = Math.min(1, elapsed / 500); // 500ms to reach full orbit
+
+                // Strong camera pan for cinematic feel
+                cameraPanAngle += 0.12 * 0.016; // Faster pan
+                const cameraPanRadius = 40; // Larger radius
+                this.cameraX += (Math.sin(cameraPanAngle) * cameraPanRadius - this.cameraX) * 0.025;
+                this.cameraY += (Math.cos(cameraPanAngle * 0.6) * cameraPanRadius * 0.6 - this.cameraY) * 0.025;
 
                 this.particles.forEach(p => {
                     const rotAngle = time * p.orbitSpeed3D + p.orbitPhase3D;
                     const depthRotation = rotAngle * p.depth;
 
-                    // 3D rotation around orbit center
-                    const cos = Math.cos(depthRotation * 0.2);
-                    const sin = Math.sin(depthRotation * 0.1);
-                    const rotatedX = p.orbitBaseX * cos - p.orbitBaseY * sin * 0.3;
-                    const rotatedY = p.orbitBaseY * cos + p.orbitBaseX * sin * 0.2;
+                    // STRONGER 3D rotation - much more visible orbital motion
+                    const cos = Math.cos(depthRotation * 0.6); // Was 0.2
+                    const sin = Math.sin(depthRotation * 0.4); // Was 0.1
+                    const rotatedX = p.orbitBaseX * cos - p.orbitBaseY * sin * 0.5; // Was 0.3
+                    const rotatedY = p.orbitBaseY * cos + p.orbitBaseX * sin * 0.4; // Was 0.2
 
-                    // Micro-drift for organic feel
-                    const microX = Math.sin(time * p.microDriftFreq + p.microDriftPhase) * p.microDriftAmp;
-                    const microY = Math.cos(time * p.microDriftFreq * 0.8 + p.microDriftPhase) * p.microDriftAmp * 0.7;
+                    // Stronger micro-drift
+                    const microX = Math.sin(time * p.microDriftFreq + p.microDriftPhase) * p.microDriftAmp * 1.5;
+                    const microY = Math.cos(time * p.microDriftFreq * 0.8 + p.microDriftPhase) * p.microDriftAmp;
 
-                    // Parallax from camera
-                    const parallaxX = this.cameraX * p.depth * 2;
-                    const parallaxY = this.cameraY * p.depth * 2;
+                    // Stronger parallax from camera
+                    const parallaxX = this.cameraX * p.depth * 2.5;
+                    const parallaxY = this.cameraY * p.depth * 2.5;
 
-                    p.x = orbitCenterX + rotatedX + microX + parallaxX;
-                    p.y = orbitCenterY + rotatedY + microY + parallaxY;
+                    // Target orbit position
+                    const orbitX = orbitCenterX + rotatedX + microX + parallaxX;
+                    const orbitY = orbitCenterY + rotatedY + microY + parallaxY;
 
-                    // Subtle size/opacity breathing
+                    // Blend from start position to orbit position (prevents jump)
+                    p.x = p.orbitStartX + (orbitX - p.orbitStartX) * orbitIntensity;
+                    p.y = p.orbitStartY + (orbitY - p.orbitStartY) * orbitIntensity;
+
+                    // Size/opacity breathing
                     const zPhase = Math.sin(rotAngle + p.orbitPhase3D);
-                    p.size = p.baseSize * (0.9 + zPhase * 0.15);
-                    p.opacity = p.targetOpacity * (0.8 + zPhase * 0.2);
+                    p.size = p.baseSize * (0.85 + zPhase * 0.2);
+                    p.opacity = p.targetOpacity * (0.75 + zPhase * 0.25);
                 });
 
                 this.draw();
 
-                // Subtle input glow buildup toward end
-                if (chatInput && progress > 0.7) {
-                    const glowProgress = (progress - 0.7) / 0.3;
-                    chatInput.style.boxShadow = `0 0 ${5 + 8 * glowProgress}px rgba(99, 102, 241, ${0.12 * glowProgress})`;
-                }
-
+                // No glow during orbit - save it for convergence
                 if (progress < 1) {
                     this.animationId = requestAnimationFrame(animateOrbit);
                 } else {
@@ -376,7 +381,7 @@
         },
 
         /**
-         * Converge: Particles stream into the input center like a focused beam
+         * Converge: Particles stream tightly into the input center
          */
         startConverge: function() {
             this.phase = 'converge';
@@ -389,20 +394,25 @@
             const targetX = chatRect ? chatRect.left + chatRect.width / 2 : this.canvas.width / 2;
             const targetY = chatRect ? chatRect.top + chatRect.height / 2 : this.canvas.height * 0.9;
 
-            // Sort particles by distance from target for staggered stream effect
-            const sortedIndices = this.particles
-                .map((p, i) => ({ i, dist: Math.hypot(p.x - targetX, p.y - targetY) }))
-                .sort((a, b) => b.dist - a.dist) // Farthest first
-                .map(item => item.i);
+            // Sort particles by distance - farthest start first for stream effect
+            const distances = this.particles.map((p, i) => ({
+                i,
+                dist: Math.hypot(p.x - targetX, p.y - targetY)
+            }));
+            distances.sort((a, b) => b.dist - a.dist);
 
             this.particles.forEach((p, i) => {
                 p.originX = p.x;
                 p.originY = p.y;
                 p.originSize = p.size;
                 p.originOpacity = p.opacity;
-                // Stagger based on sorted order (farthest start first, creates stream effect)
-                p.streamOrder = sortedIndices.indexOf(i) / this.particles.length;
+                // TIGHT stagger - all particles move almost together for concentrated stream
+                const sortedIndex = distances.findIndex(d => d.i === i);
+                p.streamOrder = sortedIndex / this.particles.length;
             });
+
+            // Track when first particles arrive for glow timing
+            let firstArrival = false;
 
             const animateConverge = () => {
                 if (!this.isActive || this.phase !== 'converge') return;
@@ -411,37 +421,45 @@
                 const progress = Math.min(elapsed / this.config.convergeDuration, 1);
                 this.globalTime += 16;
 
+                let nearestParticleProgress = 0;
+
                 this.particles.forEach((p, i) => {
-                    // Stream stagger - particles flow in sequence based on distance
-                    const stagger = p.streamOrder * 0.5; // 50% of duration for stagger spread
-                    const particleProgress = Math.max(0, Math.min(1, (progress - stagger) / (1 - stagger * 0.8)));
+                    // MUCH TIGHTER stagger - only 15% spread (was 50%)
+                    const stagger = p.streamOrder * 0.15;
+                    const particleProgress = Math.max(0, Math.min(1, (progress - stagger) / (1 - stagger)));
 
                     if (particleProgress > 0) {
-                        // Accelerating easing - slow start, fast finish (like being sucked in)
-                        const t = this.easeInQuad(particleProgress);
+                        // Stronger acceleration - really sucked in
+                        const t = Math.pow(particleProgress, 2.5); // Stronger than easeInQuad
 
-                        // Direct line to target center - concentrated stream
+                        // Direct line to exact center
                         p.x = p.originX + (targetX - p.originX) * t;
                         p.y = p.originY + (targetY - p.originY) * t;
 
-                        // Shrink as they approach (disappear into the input)
-                        p.size = p.originSize * (1 - t * 0.8);
+                        // Shrink rapidly as they approach
+                        p.size = p.originSize * Math.max(0.1, 1 - t * 0.9);
 
-                        // Fade out as they reach target
-                        p.opacity = p.originOpacity * (1 - t * 0.7);
+                        // Fade out near the end
+                        p.opacity = p.originOpacity * Math.max(0, 1 - Math.pow(t, 1.5) * 0.85);
+
+                        // Track closest particle for glow timing
+                        if (t > nearestParticleProgress) {
+                            nearestParticleProgress = t;
+                        }
                     }
                 });
 
                 this.draw();
 
-                // Glow intensifies as stream flows in
-                if (chatInput && progress > 0.1) {
-                    const glowProgress = (progress - 0.1) / 0.9;
+                // Glow only starts when particles actually arrive (t > 0.4 means close to target)
+                if (chatInput && nearestParticleProgress > 0.4) {
+                    if (!firstArrival) firstArrival = true;
+                    const glowProgress = (nearestParticleProgress - 0.4) / 0.6;
                     const glowIntensity = this.easeOutQuart(glowProgress);
-                    const glowSize = 8 + 14 * glowIntensity;
-                    const outerSize = 16 + 20 * glowIntensity;
-                    const glowOpacity = 0.2 + 0.3 * glowIntensity;
-                    const outerOpacity = 0.1 + 0.15 * glowIntensity;
+                    const glowSize = 10 + 18 * glowIntensity;
+                    const outerSize = 20 + 25 * glowIntensity;
+                    const glowOpacity = 0.25 + 0.35 * glowIntensity;
+                    const outerOpacity = 0.12 + 0.18 * glowIntensity;
                     chatInput.style.boxShadow = `
                         0 0 ${glowSize}px rgba(99, 102, 241, ${glowOpacity}),
                         0 0 ${outerSize}px rgba(139, 92, 246, ${outerOpacity})
