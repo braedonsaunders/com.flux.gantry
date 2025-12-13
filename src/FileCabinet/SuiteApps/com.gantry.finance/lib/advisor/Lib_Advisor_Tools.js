@@ -6671,7 +6671,7 @@ ALWAYS use this tool for your final response instead of plain text.
                                     items: {
                                         type: 'object',
                                         properties: {
-                                            label: { type: 'string', description: 'Label for the metric or list item text' },
+                                            label: { type: 'string', description: 'Label for the metric (MAX 4 WORDS) or list item text' },
                                             value: { type: 'string', description: 'Value for the metric' },
                                             change: { type: 'string', description: 'Change indicator (e.g., "+5%")' },
                                             trend: { type: 'string', enum: ['up', 'down'], description: 'Trend direction' }
