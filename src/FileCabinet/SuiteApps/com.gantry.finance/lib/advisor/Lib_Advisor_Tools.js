@@ -63,26 +63,11 @@ define([
     'use strict';
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // HELPER FUNCTIONS
+    // SQL ESCAPING (from Utils - single source of truth)
     // ═══════════════════════════════════════════════════════════════════════════
 
-    /**
-     * Escape SQL string to prevent injection
-     */
-    function escapeSql(str) {
-        if (!str) return '';
-        return String(str).replace(/'/g, "''");
-    }
-
-    /**
-     * Escape SQL LIKE pattern characters (% and _) in addition to SQL escaping
-     * Use this when the value will be used in a LIKE clause
-     */
-    function escapeSqlLike(str) {
-        if (!str) return '';
-        // First escape SQL quotes, then escape LIKE wildcards
-        return String(str).replace(/'/g, "''").replace(/%/g, '\\%').replace(/_/g, '\\_');
-    }
+    const escapeSql = Utils.escapeSql;
+    const escapeSqlLike = Utils.escapeSqlLike;
 
     // ═══════════════════════════════════════════════════════════════════════════
     // RUNTIME SORT COLUMN VALIDATION

@@ -24,8 +24,9 @@
 define([
     'N/log',
     './Lib_Advisor_QueryExecutor',
-    './Lib_Advisor_AIProviders'
-], function(log, QueryExecutor, AIProviders) {
+    './Lib_Advisor_AIProviders',
+    './Lib_Advisor_Utils'
+], function(log, QueryExecutor, AIProviders, Utils) {
     'use strict';
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -67,23 +68,9 @@ define([
         MINIMUM_ACCEPTABLE_CONFIDENCE: 0.50
     };
 
-    /**
-     * Escape SQL string to prevent injection
-     */
-    function escapeSql(str) {
-        if (!str) return '';
-        return String(str).replace(/'/g, "''");
-    }
-
-    /**
-     * Escape SQL LIKE pattern characters (% and _) in addition to SQL escaping
-     * Use this when the value will be used in a LIKE clause
-     */
-    function escapeSqlLike(str) {
-        if (!str) return '';
-        // First escape SQL quotes, then escape LIKE wildcards
-        return String(str).replace(/'/g, "''").replace(/%/g, '\\%').replace(/_/g, '\\_');
-    }
+    // Use centralized SQL escaping from Utils
+    const escapeSql = Utils.escapeSql;
+    const escapeSqlLike = Utils.escapeSqlLike;
 
     // ═══════════════════════════════════════════════════════════════════════════
     // PRIMARY RESOLUTION INTERFACE (v2 - LLM-driven)
