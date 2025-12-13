@@ -1909,7 +1909,12 @@
             });
             
             // Show panel, hide score-categories with animation
-            if (scoreCategoriesEl) scoreCategoriesEl.style.display = 'none';
+            // Use visibility/opacity instead of display to prevent layout shift
+            if (scoreCategoriesEl) {
+                scoreCategoriesEl.style.visibility = 'hidden';
+                scoreCategoriesEl.style.opacity = '0';
+                scoreCategoriesEl.style.pointerEvents = 'none';
+            }
             panelEl.style.display = 'block';
             // Trigger animation after display change
             requestAnimationFrame(() => {
@@ -1930,11 +1935,16 @@
                 setTimeout(() => {
                     panelEl.style.display = 'none';
                     if (scoreCategoriesEl) {
-                        scoreCategoriesEl.style.display = 'flex';
+                        // Restore visibility instead of display to prevent layout shift
+                        scoreCategoriesEl.style.visibility = '';
+                        scoreCategoriesEl.style.opacity = '';
+                        scoreCategoriesEl.style.pointerEvents = '';
                     }
                 }, 300);
             } else if (scoreCategoriesEl) {
-                scoreCategoriesEl.style.display = 'flex';
+                scoreCategoriesEl.style.visibility = '';
+                scoreCategoriesEl.style.opacity = '';
+                scoreCategoriesEl.style.pointerEvents = '';
             }
         },
         

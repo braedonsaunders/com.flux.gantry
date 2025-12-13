@@ -5377,7 +5377,8 @@ body.dark-mode .progressive-text {
     max-width: 700px;
     margin: 0 auto;
     padding: 0 10px;
-    /* Start hidden, JS will show after animation */
+    /* Smooth transition for show/hide when opening query panel */
+    transition: opacity 0.2s ease, visibility 0.2s ease;
 }
 
 .score-categories.visible {
