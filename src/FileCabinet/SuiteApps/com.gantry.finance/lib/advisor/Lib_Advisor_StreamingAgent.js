@@ -1320,9 +1320,11 @@ Response format (JSON only):
             state.phaseTimings.select = duration;
 
             if (parsed && parsed.tools && parsed.tools.length > 0) {
-                // Filter out format_response if LLM selected it (shouldn't happen but safety check)
+                // Normalize tool selection - handle both string format and object format
+                // LLM might return: ["tool_name"] OR [{tool_name: "name", parameters: {}}]
                 let selectedTools = parsed.tools
-                    .filter(t => t !== 'format_response')
+                    .map(t => typeof t === 'string' ? t : (t.tool_name || t.name || null))
+                    .filter(t => t && t !== 'format_response')
                     .slice(0, MAX_TOOL_INVOCATIONS);
 
                 // Get default tools if LLM didn't select any
