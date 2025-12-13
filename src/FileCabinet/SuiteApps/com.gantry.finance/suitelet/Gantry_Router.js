@@ -24,6 +24,7 @@ define([
     '../lib/Lib_SpendVelocity_Data',
     '../lib/advisor/Lib_Advisor_Orchestrator',
     '../lib/advisor/Lib_Advisor_Cache',
+    '../lib/advisor/Lib_Advisor_Utils',
     '../lib/Lib_Model_Registry'
 ], function(
     log,
@@ -41,37 +42,18 @@ define([
     SpendVelocityData,
     AdvisorOrchestrator,
     Cache,
+    AdvisorUtils,
     ModelRegistry
 ) {
     'use strict';
-    
-    // Cache for debug mode
-    let _debugModeCache = null;
-    let _debugModeCacheTime = 0;
-    const DEBUG_CACHE_TTL = 60000;
-    
-    function isDebugMode() {
-        const now = Date.now();
-        if (_debugModeCache === null || (now - _debugModeCacheTime) > DEBUG_CACHE_TTL) {
-            try {
-                const mainConfig = ConfigLib.getStoredConfiguration('main');
-                _debugModeCache = mainConfig && mainConfig.advisorDebugMode === true;
-            } catch (e) {
-                _debugModeCache = false;
-            }
-            _debugModeCacheTime = now;
-        }
-        return _debugModeCache;
-    }
-    
-    function debugLog(title, details) {
-        if (isDebugMode()) log.debug(title, details);
-    }
-    
+
+    // Use centralized debug mode from Lib_Advisor_Utils
+    const debugLog = AdvisorUtils.debugLog;
+
     function auditLog(title, details) {
-        if (isDebugMode()) log.audit(title, details);
+        if (AdvisorUtils.isDebugMode()) log.audit(title, details);
     }
-    
+
     /**
      * Data library mapping - maps dashboard IDs to their data modules
      * Metadata comes from Lib_Dashboard_Registry
