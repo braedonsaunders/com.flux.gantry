@@ -3321,21 +3321,66 @@ Response format (JSON only):
 
     /**
      * Build fallback narrative from data summaries when LLM fails
-     * AGENTIC FIX: Uses formatStatValue for consistent currency formatting
+     * IMPROVED: Uses tool-specific summaries (e.g., P&L totals) when available
      */
     function buildFallbackNarrative(state) {
         const parts = [];
 
         state.dataReferences.forEach(ref => {
             const summary = ref.summary || {};
-            const toolName = getToolDisplayName(summary.tool) || 'Query';
-            parts.push(`${toolName}: ${summary.rowCount || 0} results found.`);
+            const toolName = summary.tool || 'Query';
 
-            if (summary.stats) {
-                if (summary.stats.total !== undefined) {
-                    // Use formatStatValue for consistent negative currency formatting
-                    parts.push(`Total: ${formatStatValue(summary.stats.total, 'total')}`);
+            // Check for tool-specific summaries first (e.g., income statement P&L)
+            if (summary.toolSummary) {
+                const ts = summary.toolSummary;
+
+                // Income Statement / P&L specific formatting
+                if (ts.totalRevenue !== undefined || ts.netIncome !== undefined) {
+                    parts.push(`**Income Statement Summary:**`);
+                    if (ts.totalRevenue !== undefined) {
+                        parts.push(`Revenue: ${formatStatValue(ts.totalRevenue, 'currency')}`);
+                    }
+                    if (ts.totalCOGS !== undefined) {
+                        parts.push(`COGS: ${formatStatValue(ts.totalCOGS, 'currency')}`);
+                    }
+                    if (ts.grossProfit !== undefined) {
+                        parts.push(`Gross Profit: ${formatStatValue(ts.grossProfit, 'currency')}${ts.grossMargin ? ` (${ts.grossMargin})` : ''}`);
+                    }
+                    if (ts.totalExpenses !== undefined) {
+                        parts.push(`Operating Expenses: ${formatStatValue(ts.totalExpenses, 'currency')}`);
+                    }
+                    if (ts.netIncome !== undefined) {
+                        parts.push(`**Net Income: ${formatStatValue(ts.netIncome, 'currency')}**${ts.netMargin ? ` (${ts.netMargin})` : ''}`);
+                    }
+                    return; // Skip generic summary for this ref
                 }
+
+                // Balance Sheet specific formatting
+                if (ts.totalAssets !== undefined || ts.totalLiabilities !== undefined) {
+                    parts.push(`**Balance Sheet Summary:**`);
+                    if (ts.totalAssets !== undefined) parts.push(`Total Assets: ${formatStatValue(ts.totalAssets, 'currency')}`);
+                    if (ts.totalLiabilities !== undefined) parts.push(`Total Liabilities: ${formatStatValue(ts.totalLiabilities, 'currency')}`);
+                    if (ts.totalEquity !== undefined) parts.push(`Total Equity: ${formatStatValue(ts.totalEquity, 'currency')}`);
+                    return;
+                }
+
+                // Department profitability specific formatting
+                if (ts.total_revenue !== undefined && ts.department_count !== undefined) {
+                    parts.push(`**Department Profitability:** ${ts.department_count} departments`);
+                    parts.push(`Total Revenue: ${formatStatValue(ts.total_revenue, 'currency')}`);
+                    if (ts.total_net_income !== undefined) {
+                        parts.push(`Total Net Income: ${formatStatValue(ts.total_net_income, 'currency')}`);
+                    }
+                    return;
+                }
+            }
+
+            // Generic fallback for tools without specific summaries
+            const displayName = getToolDisplayName(toolName) || toolName;
+            parts.push(`${displayName}: ${summary.rowCount || 0} results found.`);
+
+            if (summary.stats && summary.stats.total !== undefined) {
+                parts.push(`Total: ${formatStatValue(summary.stats.total, 'total')}`);
             }
         });
 
