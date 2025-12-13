@@ -532,34 +532,57 @@ CRITICAL INSTRUCTIONS - READ CAREFULLY:
    - {{{{data.stats.total_outstanding_ar:currency}}}} → sum of outstanding_ar column
    - {{{{data.stats.total_revenue:currency}}}} → sum of total_revenue column
 
-3. DO NOT create table blocks - tables are rendered separately.
-   Only create: text, metrics, list blocks.
+3. OUTPUT FORMAT - Return a JSON object with a "blocks" array.
+   You decide the sequence and mix of blocks to tell the best story.
 
-4. For metrics:
-   - Labels must be MAX 4 WORDS (e.g., "Total Revenue", "Outstanding Balance", "Avg Order Value")
-   - ALWAYS use tokens for the value field:
-   {{"label": "Total Revenue", "value": "{{{{data.stats.total:currency}}}}"}}
+4. AVAILABLE BLOCK TYPES:
+   - text: {{"type": "text", "content": "Markdown text with {{{{tokens}}}}"}}
+   - metrics: {{"type": "metrics", "items": [{{"label": "Max 4 Words", "value": "{{{{token}}}}", "trend": "up|down|neutral"}}]}}
+   - table: {{"type": "table", "dataRef": "ref_xxx", "title": "Optional Title"}}
+   - chart: {{"type": "chart", "chartType": "bar|line|pie", "dataRef": "ref_xxx", "x": "column_name", "y": "column_name", "title": "Optional"}}
+   - list: {{"type": "list", "title": "Optional Title", "items": ["item1", "item2"]}}
 
-5. In narrative, cite specific data points using tokens:
-   "{{{{data.rows[0].customer_name}}}} leads with {{{{data.rows[0].total_revenue:currency}}}}."
+5. BLOCK GUIDELINES:
+   - Start with context (text block explaining what you're showing)
+   - Place metrics early for quick insights (max 4 metrics)
+   - Interleave text explanations between data visualizations
+   - Use tables for detailed data (≥5 rows), charts for patterns/comparisons (<15 items)
+   - Charts: pie for composition, bar for comparison, line for trends over time
+   - End with findings/recommendations (list block)
+   - Aim for 3-7 blocks total for a natural narrative flow
 
-6. TRUNCATION AWARENESS: If a data section shows "truncated: true", inform the user:
-   - Mention that more data may be available
-   - Suggest they can ask for more results or use more specific filters
-   - Example: "Showing the top 500 results. Ask if you'd like to see more or apply filters."
+6. For metrics:
+   - Labels must be MAX 4 WORDS (e.g., "Total Revenue", "Outstanding Balance")
+   - ALWAYS use tokens for the value field
+
+7. For charts:
+   - Use the dataRef from the DATA section header (e.g., "ref_cust_abc123")
+   - x and y must be actual column names from the data
+   - Only create charts when the data has appropriate structure
+
+8. For tables:
+   - Reference the dataRef to include the full data
+   - Tables will show all rows with pagination
+
+9. TRUNCATION AWARENESS: If a data section shows "truncated: true", mention that more data is available.
 
 ═══════════════════════════════════════════════════════════════════════════════
 
 Response format (JSON only):
 {{
-  "narrative": "Analysis text referencing {{{{tokens}}}} for specific values",
-  "metrics": [
-    {{"label": "Total Revenue", "value": "{{{{data.stats.total:currency}}}}", "trend": "neutral"}},
-    {{"label": "Average", "value": "{{{{data.stats.average:currency}}}}", "trend": "neutral"}}
-  ],
-  "findings": [
-    "Insight about {{{{data.rows[0].customer_name}}}} with {{{{data.rows[0].total_revenue:currency}}}}",
-    "Another key finding with data reference"
+  "blocks": [
+    {{"type": "text", "content": "Here's an analysis of your data for {{{{data.rows[0].customer_name}}}}..."}},
+    {{"type": "metrics", "items": [
+      {{"label": "Total Revenue", "value": "{{{{data.stats.total:currency}}}}", "trend": "up"}},
+      {{"label": "Record Count", "value": "{{{{data.stats.count}}}}", "trend": "neutral"}}
+    ]}},
+    {{"type": "text", "content": "The distribution shows interesting patterns:"}},
+    {{"type": "chart", "chartType": "bar", "dataRef": "ref_xxx", "x": "customer_name", "y": "total_revenue", "title": "Revenue by Customer"}},
+    {{"type": "table", "dataRef": "ref_xxx", "title": "Detailed Breakdown"}},
+    {{"type": "list", "title": "Key Findings", "items": [
+      "{{{{data.rows[0].customer_name}}}} leads with {{{{data.rows[0].total_revenue:currency}}}}",
+      "Top 3 account for majority of total"
+    ]}}
   ]
 }}`;
 
@@ -2915,41 +2938,28 @@ Response format (JSON only):
             const duration = Date.now() - phaseStart;
             state.phaseTimings.respond = duration;
 
-            if (parsed) {
-                // Resolve all {{tokens}} in the response
-                const resolved = resolveAllTokens(parsed, state);
+            if (parsed && parsed.blocks && Array.isArray(parsed.blocks)) {
+                // ═══════════════════════════════════════════════════════════════════════
+                // BLOCK SEQUENCE ARCHITECTURE: LLM controls block order and content
+                // ═══════════════════════════════════════════════════════════════════════
 
-                // Build formatted response from resolved content
+                const resolvedBlocks = resolveBlockSequence(parsed.blocks, state);
+
+                // Extract summary from first text block
+                const firstTextBlock = resolvedBlocks.find(b => b.type === 'text');
+                const summary = firstTextBlock?.content?.substring(0, 150) || '';
+
+                log.debug('SCA Respond: block sequence format', {
+                    blockCount: resolvedBlocks.length,
+                    blockTypes: resolvedBlocks.map(b => b.type)
+                });
+
+                // Build formatted response
                 state.formattedResponse = {
                     title: 'Analysis Results',
-                    summary: resolved.narrative?.substring(0, 150) || '',
-                    blocks: []
+                    summary: summary,
+                    blocks: resolvedBlocks
                 };
-
-                // Add narrative text block
-                if (resolved.narrative) {
-                    state.formattedResponse.blocks.push({
-                        type: 'text',
-                        content: resolved.narrative
-                    });
-                }
-
-                // Add metrics block
-                if (resolved.metrics && resolved.metrics.length > 0) {
-                    state.formattedResponse.blocks.push({
-                        type: 'metrics',
-                        items: resolved.metrics
-                    });
-                }
-
-                // Add findings as list
-                if (resolved.findings && resolved.findings.length > 0) {
-                    state.formattedResponse.blocks.push({
-                        type: 'list',
-                        title: 'Key Findings',
-                        items: resolved.findings
-                    });
-                }
 
                 state.phase = PHASES.COMPLETE;
 
@@ -2959,13 +2969,14 @@ Response format (JSON only):
                     status: 'complete',
                     duration: duration,
                     context: {
-                        blockCount: state.formattedResponse.blocks.length,
-                        tokensResolved: true
+                        blockCount: resolvedBlocks.length,
+                        tokensResolved: true,
+                        hasCharts: resolvedBlocks.some(b => b.type === 'chart'),
+                        hasTables: resolvedBlocks.some(b => b.type === 'table')
                     },
                     debug: buildDebugInfo(prompt, response, state, {
-                        responseLength: resolved.narrative?.length,
-                        metricsCount: resolved.metrics?.length,
-                        findingsCount: resolved.findings?.length
+                        blockCount: resolvedBlocks.length,
+                        blockTypes: resolvedBlocks.map(b => b.type).join(',')
                     })
                 });
 
@@ -2973,7 +2984,7 @@ Response format (JSON only):
                 return { success: true, nextPhase: PHASES.COMPLETE };
             }
 
-            throw new Error('Invalid respond output - missing required fields');
+            throw new Error('Invalid respond output - expected blocks array');
 
         } catch (e) {
             const duration = Date.now() - phaseStart;
@@ -3026,7 +3037,7 @@ Response format (JSON only):
             // This provides LLM with formatted metrics, insights, and collection info
             // ═══════════════════════════════════════════════════════════════════════
             if (data.isDashboard && data.textSummary) {
-                let section = `═══ DASHBOARD INTELLIGENCE: ${data.dashboardName || toolName} ═══\n\n`;
+                let section = `═══ DASHBOARD INTELLIGENCE: ${data.dashboardName || toolName} [dataRef: "${ref.refId}"] ═══\n\n`;
                 section += data.textSummary;
 
                 // Add token reference guide for dashboard metrics
@@ -3060,7 +3071,7 @@ Response format (JSON only):
             // STANDARD DATA PROCESSING (non-dashboard tools)
             // ═══════════════════════════════════════════════════════════════════════
             const totalRows = data.range?.total || data.rows.length;
-            let section = `═══ DATA: ${toolName} (${totalRows} total rows) ═══\n`;
+            let section = `═══ DATA: ${toolName} (${totalRows} total rows) [dataRef: "${ref.refId}"] ═══\n`;
             section += `Columns: ${data.columns.join(', ')}\n\n`;
 
             // Compute aggregate stats from schema
@@ -3105,6 +3116,7 @@ Response format (JSON only):
             section += `\nTOKEN REFERENCE GUIDE:\n`;
             section += `  Rows: {{data.rows[N].column_name}} or {{data.rows[N].column_name:currency}}\n`;
             section += `  Stats: {{data.stats.total}}, {{data.stats.count}}, {{data.stats.average}}\n`;
+            section += `  For table/chart blocks: use dataRef "${ref.refId}"\n`;
 
             // List columns with numeric stats
             if (summary.schema) {
@@ -3172,33 +3184,6 @@ Response format (JSON only):
             count: primaryStats.count,
             column: primaryCol
         };
-    }
-
-    /**
-     * Resolve all {{tokens}} in the LLM response with real data values
-     */
-    function resolveAllTokens(parsed, state) {
-        const result = {
-            narrative: resolveTokensInText(parsed.narrative || '', state),
-            metrics: [],
-            findings: []
-        };
-
-        // Resolve metrics
-        if (parsed.metrics && Array.isArray(parsed.metrics)) {
-            result.metrics = parsed.metrics.map(m => ({
-                label: m.label || '',
-                value: resolveTokensInText(String(m.value || ''), state),
-                trend: m.trend || 'neutral'
-            }));
-        }
-
-        // Resolve findings
-        if (parsed.findings && Array.isArray(parsed.findings)) {
-            result.findings = parsed.findings.map(f => resolveTokensInText(String(f), state));
-        }
-
-        return result;
     }
 
     /**
@@ -3367,6 +3352,278 @@ Response format (JSON only):
             return value.toLocaleString('en-US');
         }
         return String(value);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // BLOCK SEQUENCE ARCHITECTURE - LLM-controlled block ordering
+    // Allows LLM to interleave text, metrics, tables, charts in any order
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Resolve a blocks array from LLM response
+     * Processes each block type and resolves tokens, builds tables/charts from dataRefs
+     * @param {Array} blocks - Array of block objects from LLM
+     * @param {Object} state - Current state with dataReferences
+     * @returns {Array} Resolved blocks ready for rendering
+     */
+    function resolveBlockSequence(blocks, state) {
+        if (!blocks || !Array.isArray(blocks)) {
+            log.debug('resolveBlockSequence: invalid blocks input', { blocks: typeof blocks });
+            return [];
+        }
+
+        const resolvedBlocks = [];
+        const maxCharts = 2; // Limit charts per response for performance
+        let chartCount = 0;
+
+        for (const block of blocks) {
+            try {
+                const validatedBlock = validateBlock(block);
+                if (!validatedBlock) {
+                    log.debug('resolveBlockSequence: invalid block skipped', { block: JSON.stringify(block).substring(0, 100) });
+                    continue;
+                }
+
+                switch (validatedBlock.type) {
+                    case 'text':
+                        resolvedBlocks.push({
+                            type: 'text',
+                            content: resolveTokensInText(validatedBlock.content || '', state)
+                        });
+                        break;
+
+                    case 'metrics':
+                        if (validatedBlock.items && Array.isArray(validatedBlock.items)) {
+                            const resolvedItems = validatedBlock.items.slice(0, 4).map(m => ({
+                                label: String(m.label || '').substring(0, 50),
+                                value: resolveTokensInText(String(m.value || ''), state),
+                                trend: ['up', 'down', 'neutral'].includes(m.trend) ? m.trend : 'neutral'
+                            }));
+                            if (resolvedItems.length > 0) {
+                                resolvedBlocks.push({
+                                    type: 'metrics',
+                                    items: resolvedItems
+                                });
+                            }
+                        }
+                        break;
+
+                    case 'list':
+                        if (validatedBlock.items && Array.isArray(validatedBlock.items)) {
+                            const resolvedItems = validatedBlock.items.map(item =>
+                                resolveTokensInText(String(item), state)
+                            );
+                            resolvedBlocks.push({
+                                type: 'list',
+                                title: validatedBlock.title || undefined,
+                                items: resolvedItems
+                            });
+                        }
+                        break;
+
+                    case 'table':
+                        const tableBlock = buildTableBlockFromRef(validatedBlock, state);
+                        if (tableBlock) {
+                            resolvedBlocks.push(tableBlock);
+                        }
+                        break;
+
+                    case 'chart':
+                        if (chartCount < maxCharts) {
+                            const chartBlock = buildChartBlock(validatedBlock, state);
+                            if (chartBlock) {
+                                resolvedBlocks.push(chartBlock);
+                                chartCount++;
+                            }
+                        } else {
+                            log.debug('resolveBlockSequence: max charts reached, skipping', { chartCount });
+                        }
+                        break;
+
+                    default:
+                        log.debug('resolveBlockSequence: unknown block type', { type: validatedBlock.type });
+                }
+            } catch (e) {
+                log.error('resolveBlockSequence: error processing block', {
+                    blockType: block?.type,
+                    error: e.message
+                });
+            }
+        }
+
+        return resolvedBlocks;
+    }
+
+    /**
+     * Validate a block object has required fields
+     * @param {Object} block - Block to validate
+     * @returns {Object|null} Validated block or null if invalid
+     */
+    function validateBlock(block) {
+        if (!block || typeof block !== 'object') return null;
+        if (!block.type || typeof block.type !== 'string') return null;
+
+        const validTypes = ['text', 'metrics', 'list', 'table', 'chart'];
+        if (!validTypes.includes(block.type)) return null;
+
+        // Type-specific validation
+        switch (block.type) {
+            case 'text':
+                if (!block.content && block.content !== '') return null;
+                break;
+            case 'metrics':
+                if (!block.items || !Array.isArray(block.items)) return null;
+                break;
+            case 'list':
+                if (!block.items || !Array.isArray(block.items)) return null;
+                break;
+            case 'table':
+                if (!block.dataRef) return null;
+                break;
+            case 'chart':
+                if (!block.dataRef || !block.chartType) return null;
+                if (!block.x || !block.y) return null;
+                break;
+        }
+
+        return block;
+    }
+
+    /**
+     * Find a dataRef by its refId
+     * @param {string} refId - The reference ID to find
+     * @param {Object} state - Current state with dataReferences
+     * @returns {Object|null} The dataRef object or null
+     */
+    function findDataRefByRefId(refId, state) {
+        if (!refId || !state.dataReferences) return null;
+        return state.dataReferences.find(ref => ref.refId === refId) || null;
+    }
+
+    /**
+     * Build a table block from a dataRef
+     * @param {Object} block - Block with dataRef and optional title
+     * @param {Object} state - Current state with dataReferences
+     * @returns {Object|null} Table block or null if dataRef invalid
+     */
+    function buildTableBlockFromRef(block, state) {
+        const dataRef = findDataRefByRefId(block.dataRef, state);
+        if (!dataRef) {
+            log.debug('buildTableBlockFromRef: dataRef not found', { refId: block.dataRef });
+            return null;
+        }
+
+        try {
+            // Load data from cache
+            const data = Cache.loadRows(dataRef.requestId || state.requestId, dataRef.refId, 0, 49);
+            if (!data || !data.rows || data.rows.length === 0) {
+                log.debug('buildTableBlockFromRef: no data for ref', { refId: block.dataRef });
+                return null;
+            }
+
+            const summary = dataRef.summary || {};
+            const toolDisplayName = block.title || getToolDisplayName(summary.tool) || 'Results';
+
+            // Build table block with REAL data (same structure as progressive tables)
+            const displayColumns = data.columns.slice(0, 8);
+            return {
+                type: 'table',
+                title: toolDisplayName,
+                dataRef: dataRef.refId,
+                totalRows: data.totalRows || data.rows.length,
+                headers: displayColumns,
+                rows: data.rows.slice(0, 25).map(row => {
+                    return displayColumns.map(col => formatCellValue(row[col], col));
+                }),
+                summary: {
+                    rowCount: data.totalRows || data.rows.length,
+                    columns: data.columns.length,
+                    aggregates: summary.aggregates
+                },
+                // Mark as LLM-placed to distinguish from progressive tables
+                llmPlaced: true
+            };
+        } catch (e) {
+            log.error('buildTableBlockFromRef: error building table', {
+                refId: block.dataRef,
+                error: e.message
+            });
+            return null;
+        }
+    }
+
+    /**
+     * Build a chart block from a dataRef
+     * @param {Object} block - Block with dataRef, chartType, x, y columns
+     * @param {Object} state - Current state with dataReferences
+     * @returns {Object|null} Chart block or null if invalid
+     */
+    function buildChartBlock(block, state) {
+        const dataRef = findDataRefByRefId(block.dataRef, state);
+        if (!dataRef) {
+            log.debug('buildChartBlock: dataRef not found', { refId: block.dataRef });
+            return null;
+        }
+
+        try {
+            // Load data from cache (limit rows for chart performance)
+            const data = Cache.loadRows(dataRef.requestId || state.requestId, dataRef.refId, 0, 49);
+            if (!data || !data.rows || data.rows.length === 0) {
+                log.debug('buildChartBlock: no data for ref', { refId: block.dataRef });
+                return null;
+            }
+
+            // Validate x and y columns exist
+            const xCol = block.x;
+            const yCol = block.y;
+            if (!data.columns.includes(xCol) || !data.columns.includes(yCol)) {
+                log.debug('buildChartBlock: invalid columns', {
+                    x: xCol,
+                    y: yCol,
+                    availableColumns: data.columns
+                });
+                return null;
+            }
+
+            // Validate chart type
+            const validChartTypes = ['bar', 'line', 'pie'];
+            const chartType = validChartTypes.includes(block.chartType) ? block.chartType : 'bar';
+
+            // Limit data points for chart readability
+            const maxDataPoints = chartType === 'pie' ? 10 : 20;
+            const chartRows = data.rows.slice(0, maxDataPoints);
+
+            // Build chart data structure (Plotly-compatible)
+            const chartData = {
+                labels: chartRows.map(row => formatCellValue(row[xCol], xCol)),
+                values: chartRows.map(row => {
+                    const val = row[yCol];
+                    return typeof val === 'number' ? val : parseFloat(val) || 0;
+                })
+            };
+
+            // Determine title
+            const title = block.title || `${yCol} by ${xCol}`;
+
+            return {
+                type: 'chart',
+                chartType: chartType,
+                title: title,
+                data: chartData,
+                config: {
+                    xKey: xCol,
+                    yKey: yCol
+                },
+                dataRef: dataRef.refId
+            };
+        } catch (e) {
+            log.error('buildChartBlock: error building chart', {
+                refId: block.dataRef,
+                chartType: block.chartType,
+                error: e.message
+            });
+            return null;
+        }
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -4025,33 +4282,40 @@ Response:`;
         let richContent = formatted.blocks || [];
 
         // ═══════════════════════════════════════════════════════════════════════
-        // FIX: Merge progressive table blocks from ProgressStore into richContent
-        // Tables are added during INVOKE phase via addProgressiveTableBlocks()
-        // but were never being included in the final response
+        // BLOCK COEXISTENCE: Merge progressive tables with LLM-placed blocks
+        // - Progressive tables are added during INVOKE phase (fast, immediate UX)
+        // - LLM can also place tables/charts via block sequence format
+        // - If LLM placed any tables, don't add progressive tables (avoid duplicates)
         // ═══════════════════════════════════════════════════════════════════════
         const progressState = Cache.get(state.requestId);
-        if (progressState && progressState.blocks && progressState.blocks.length > 0) {
-            // Get table blocks from progressive rendering
-            const tableBlocks = progressState.blocks.filter(b => b.type === 'table');
-            if (tableBlocks.length > 0) {
-                // Insert tables after text blocks but before metrics/findings
-                // Find the position after text blocks
+        const llmPlacedTables = richContent.some(b => b.type === 'table' && b.llmPlaced);
+
+        if (!llmPlacedTables && progressState?.blocks?.length > 0) {
+            // LLM didn't place any tables - merge progressive tables
+            const progressiveTableBlocks = progressState.blocks.filter(b => b.type === 'table');
+
+            if (progressiveTableBlocks.length > 0) {
+                // Insert after first text block
                 const textBlockIndex = richContent.findIndex(b => b.type === 'text');
                 const insertPosition = textBlockIndex >= 0 ? textBlockIndex + 1 : 0;
 
-                // Insert table blocks at the appropriate position
                 richContent = [
                     ...richContent.slice(0, insertPosition),
-                    ...tableBlocks,
+                    ...progressiveTableBlocks,
                     ...richContent.slice(insertPosition)
                 ];
 
                 log.debug('Merged progressive table blocks into richContent', {
                     requestId: state.requestId,
-                    tableCount: tableBlocks.length,
+                    tableCount: progressiveTableBlocks.length,
                     totalBlocks: richContent.length
                 });
             }
+        } else if (llmPlacedTables) {
+            log.debug('Skipping progressive tables: LLM placed tables explicitly', {
+                requestId: state.requestId,
+                llmTableCount: richContent.filter(b => b.type === 'table').length
+            });
         }
 
         // FIXED: Surface errors visibly in the response
