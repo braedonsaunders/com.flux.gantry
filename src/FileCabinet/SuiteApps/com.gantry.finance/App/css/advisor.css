@@ -5378,11 +5378,19 @@ body.dark-mode .progressive-text {
     margin: 0 auto;
     padding: 0 10px;
     /* Smooth transition for show/hide when opening query panel */
-    transition: opacity 0.2s ease, visibility 0.2s ease;
+    transition: opacity 0.25s ease, transform 0.25s ease;
 }
 
 .score-categories.visible {
     opacity: 1;
+}
+
+/* When query panel is open, fade out score categories */
+.score-categories.panel-open {
+    opacity: 0;
+    pointer-events: none;
+    position: absolute;
+    visibility: hidden;
 }
 
 .score-categories.animate-in {
@@ -5787,12 +5795,18 @@ body.dark-mode .progressive-text {
     padding: 0 10px;
     opacity: 0;
     transform: translateY(8px);
-    transition: opacity 0.3s ease, transform 0.3s ease;
+    transition: opacity 0.25s ease, transform 0.25s ease;
+    pointer-events: none;
+    position: absolute;
+    visibility: hidden;
 }
 
 .query-panel.visible {
     opacity: 1;
     transform: translateY(0);
+    pointer-events: auto;
+    position: relative;
+    visibility: visible;
 }
 
 .query-panel-back {
