@@ -44,17 +44,17 @@
         orbitAngle: 0,
 
         config: {
-            particleCount: 120,
+            particleCount: 280,
             connectionDistance: 70,
-            particleSize: { min: 1.0, max: 3.0 },
-            // All timings sped up 20% (multiplied by 0.8)
-            birthDuration: 800,           // was 1000
-            pauseDuration: 200,           // was 300
-            glowDuration: 400,            // was 500
-            explodeDuration: 1050,        // was 1200, +10% slower then 20% faster
-            orbitDuration: 600,           // Shorter float time
-            convergeDuration: 700,        // Fast suction into input
-            shineDuration: 350,           // Quick elegant shimmer
+            particleSize: { min: 0.8, max: 2.8 },
+            // Timing for smooth, premium animation
+            birthDuration: 800,
+            glowDuration: 400,
+            explodeDuration: 1800,        // Longer explosion with integrated orbit
+            orbitBlendDuration: 800,      // Time to blend into full orbit mode
+            floatDuration: 1200,          // Time floating before converge
+            convergeDuration: 900,        // Elegant flow to input
+            shineDuration: 650,           // Satisfying glow payoff
             colors: [
                 { r: 99, g: 102, b: 241 },   // Indigo
                 { r: 139, g: 92, b: 246 },   // Purple
@@ -190,160 +190,142 @@
         },
 
         /**
-         * Explode: particles blow up FROM the orb center to fill the screen
+         * Explode + Float: Seamless explosion that smoothly transitions into orbital floating
+         * No abrupt phase change - motion evolves continuously
          */
         startExplode: function() {
             this.phase = 'explode';
             const startTime = Date.now();
             const center = this.getBrainCenter();
-            const padding = 60;
+            const padding = 80;
+            const chatInput = document.getElementById('advisor-input-full');
 
-            // Reset particles to center and assign explosion targets
-            this.particles.forEach(p => {
+            // Global orbit center for the float phase
+            const orbitCenterX = this.canvas.width / 2;
+            const orbitCenterY = this.canvas.height * 0.45;
+
+            // Initialize camera for smooth panning
+            this.cameraX = 0;
+            this.cameraY = 0;
+            let cameraPanAngle = 0;
+
+            // Reset particles to center and set up all motion parameters upfront
+            this.particles.forEach((p, i) => {
                 p.originX = center.x;
                 p.originY = center.y;
                 p.x = center.x;
                 p.y = center.y;
+
+                // Explosion target - where particle lands after burst
                 p.expandX = padding + Math.random() * (this.canvas.width - padding * 2);
                 p.expandY = padding + Math.random() * (this.canvas.height - padding * 2);
-                p.baseSize = p.size; // Store for orbit 3D effect
+
+                // Pre-calculate orbit parameters so motion can blend in during explosion
+                p.orbitSpeed3D = 0.12 + Math.random() * 0.08;
+                p.orbitPhase3D = Math.random() * Math.PI * 2;
+                p.microDriftFreq = 0.3 + Math.random() * 0.25;
+                p.microDriftPhase = Math.random() * Math.PI * 2;
+                p.microDriftAmp = 12 + Math.random() * 18;
+
+                // Stagger for wave-like explosion
+                p.stagger = (i / this.particles.length) * 0.15;
             });
 
-            const animateExplode = () => {
+            // Show cards once explosion is underway
+            let cardsShown = false;
+
+            const totalDuration = this.config.explodeDuration + this.config.orbitBlendDuration + this.config.floatDuration;
+
+            const animateExplodeAndFloat = () => {
                 if (!this.isActive || this.phase !== 'explode') return;
 
                 const elapsed = Date.now() - startTime;
-                const progress = Math.min(elapsed / this.config.explodeDuration, 1);
-                this.globalTime += 16;
-
-                // Explosive expansion with dramatic easing
-                const eased = this.easeOutExpo(progress);
-
-                this.particles.forEach((p, i) => {
-                    const stagger = (i / this.particles.length) * 0.2;
-                    const particleProgress = Math.max(0, (progress - stagger) / (1 - stagger));
-                    const particleEased = this.easeOutExpo(particleProgress);
-
-                    p.x = p.originX + (p.expandX - p.originX) * particleEased;
-                    p.y = p.originY + (p.expandY - p.originY) * particleEased;
-                    p.opacity = p.targetOpacity * Math.min(1, particleProgress * 1.5);
-                });
-
-                this.draw();
-
-                if (progress < 1) {
-                    this.animationId = requestAnimationFrame(animateExplode);
-                } else {
-                    this.startOrbit();
-                }
-            };
-
-            this.animationId = requestAnimationFrame(animateExplode);
-        },
-
-        /**
-         * Orbit: 3D parallax with smooth camera panning - particles orbit around center
-         */
-        startOrbit: function() {
-            this.phase = 'orbit';
-            const startTime = Date.now();
-            const center = this.getBrainCenter();
-            const chatInput = document.getElementById('advisor-input-full');
-
-            // Show cards immediately when orbit starts (particles have exploded)
-            var scoreCategories = document.getElementById('score-categories');
-            if (scoreCategories) {
-                scoreCategories.classList.add('cards-visible');
-            }
-
-            // Global orbit center - particles will orbit around this point
-            const orbitCenterX = this.canvas.width / 2;
-            const orbitCenterY = this.canvas.height * 0.45;
-
-            // Store starting positions and set up 3D orbit parameters
-            this.particles.forEach((p, i) => {
-                p.orbitStartX = p.x;
-                p.orbitStartY = p.y;
-                // Distance from orbit center
-                p.orbitDistX = p.x - orbitCenterX;
-                p.orbitDistY = p.y - orbitCenterY;
-                // 3D orbit parameters
-                p.orbitSpeed3D = 0.15 + Math.random() * 0.1; // Slow, majestic rotation
-                p.orbitPhase3D = Math.random() * Math.PI * 2;
-                // Subtle individual drift on top of global rotation
-                p.microDriftFreq = 0.4 + Math.random() * 0.3;
-                p.microDriftPhase = Math.random() * Math.PI * 2;
-                p.microDriftAmp = 8 + Math.random() * 12;
-            });
-
-            // Camera pan parameters - slow, smooth drift
-            let cameraPanAngle = 0;
-            const cameraPanSpeed = 0.08; // Very slow rotation
-            const cameraPanRadius = 25; // Subtle movement
-
-            const animateOrbit = () => {
-                if (!this.isActive || this.phase !== 'orbit') return;
-
-                const elapsed = Date.now() - startTime;
-                const progress = Math.min(elapsed / this.config.orbitDuration, 1);
+                const totalProgress = Math.min(elapsed / totalDuration, 1);
                 this.globalTime += 16;
                 const time = elapsed * 0.001;
 
-                // Smooth camera pan - creates "floating through space" feel
-                cameraPanAngle += cameraPanSpeed * 0.016;
-                this.cameraTargetX = Math.sin(cameraPanAngle) * cameraPanRadius;
-                this.cameraTargetY = Math.cos(cameraPanAngle * 0.7) * cameraPanRadius * 0.6;
-                // Smooth interpolation to target
-                this.cameraX += (this.cameraTargetX - this.cameraX) * 0.03;
-                this.cameraY += (this.cameraTargetY - this.cameraY) * 0.03;
+                // Phase blending factors
+                const explosionProgress = Math.min(elapsed / this.config.explodeDuration, 1);
+                const blendStart = this.config.explodeDuration * 0.6; // Start blending orbit at 60% of explosion
+                const blendProgress = Math.max(0, Math.min(1, (elapsed - blendStart) / this.config.orbitBlendDuration));
+                const orbitBlend = this.easeInOutQuad(blendProgress); // Smooth S-curve blend
 
-                // Gentle blend in
-                const blendIn = Math.min(1, progress * 3);
+                // Show cards mid-explosion
+                if (!cardsShown && explosionProgress > 0.5) {
+                    cardsShown = true;
+                    var scoreCategories = document.getElementById('score-categories');
+                    if (scoreCategories) {
+                        scoreCategories.classList.add('cards-visible');
+                    }
+                }
+
+                // Camera pan - starts subtly during explosion, full effect during float
+                cameraPanAngle += 0.06 * 0.016 * (0.3 + orbitBlend * 0.7);
+                const cameraPanRadius = 20 + orbitBlend * 15;
+                this.cameraX += (Math.sin(cameraPanAngle) * cameraPanRadius - this.cameraX) * 0.02;
+                this.cameraY += (Math.cos(cameraPanAngle * 0.7) * cameraPanRadius * 0.5 - this.cameraY) * 0.02;
 
                 this.particles.forEach((p, i) => {
-                    // Global 3D rotation around orbit center
+                    // Staggered explosion progress
+                    const particleExplosion = Math.max(0, Math.min(1, (explosionProgress - p.stagger) / (1 - p.stagger)));
+                    const explosionEased = this.easeOutExpo(particleExplosion);
+
+                    // Base position from explosion
+                    const explosionX = p.originX + (p.expandX - p.originX) * explosionEased;
+                    const explosionY = p.originY + (p.expandY - p.originY) * explosionEased;
+
+                    // Orbit motion (calculated from current position relative to center)
+                    const distFromCenterX = explosionX - orbitCenterX;
+                    const distFromCenterY = explosionY - orbitCenterY;
+
                     const rotAngle = time * p.orbitSpeed3D + p.orbitPhase3D;
-
-                    // 3D rotation effect - particles at different depths rotate at different apparent speeds
                     const depthRotation = rotAngle * p.depth;
-                    const rotatedX = p.orbitDistX * Math.cos(depthRotation * 0.3) - p.orbitDistY * Math.sin(depthRotation * 0.15) * 0.3;
-                    const rotatedY = p.orbitDistY * Math.cos(depthRotation * 0.2) + p.orbitDistX * Math.sin(depthRotation * 0.15) * 0.2;
 
-                    // Micro-drift for organic feel
+                    // 3D-like rotation
+                    const rotatedX = distFromCenterX * Math.cos(depthRotation * 0.25) - distFromCenterY * Math.sin(depthRotation * 0.12) * 0.25;
+                    const rotatedY = distFromCenterY * Math.cos(depthRotation * 0.18) + distFromCenterX * Math.sin(depthRotation * 0.12) * 0.18;
+
+                    // Micro-drift for organic floating
                     const microX = Math.sin(time * p.microDriftFreq + p.microDriftPhase) * p.microDriftAmp;
                     const microY = Math.cos(time * p.microDriftFreq * 0.8 + p.microDriftPhase) * p.microDriftAmp * 0.7;
 
-                    // Parallax - near particles (high depth) move more with camera
-                    const parallaxX = this.cameraX * p.depth * 1.5;
-                    const parallaxY = this.cameraY * p.depth * 1.5;
+                    // Parallax from camera movement
+                    const parallaxX = this.cameraX * p.depth * 1.8;
+                    const parallaxY = this.cameraY * p.depth * 1.8;
 
-                    // Combine: base position + rotation + micro-drift + parallax
-                    p.x = orbitCenterX + rotatedX + (microX + parallaxX) * blendIn;
-                    p.y = orbitCenterY + rotatedY + (microY + parallaxY) * blendIn;
+                    // Orbit position (what it would be in full orbit mode)
+                    const orbitX = orbitCenterX + rotatedX + microX + parallaxX;
+                    const orbitY = orbitCenterY + rotatedY + microY + parallaxY;
 
-                    // 3D depth breathing - size pulses subtly based on "z position" in rotation
+                    // Blend between explosion trajectory and orbit motion
+                    p.x = explosionX + (orbitX - explosionX) * orbitBlend;
+                    p.y = explosionY + (orbitY - explosionY) * orbitBlend;
+
+                    // Opacity fades in during explosion
+                    const fadeIn = Math.min(1, particleExplosion * 2);
                     const zPhase = Math.sin(rotAngle + p.orbitPhase3D);
-                    p.size = p.baseSize * (0.85 + zPhase * 0.2);
-                    // Opacity also affected by depth position
-                    p.opacity = p.targetOpacity * (0.7 + zPhase * 0.3);
+                    p.opacity = p.targetOpacity * fadeIn * (0.75 + zPhase * 0.25 * orbitBlend);
+
+                    // Size breathing increases as we enter orbit mode
+                    p.size = p.baseSize * (1 - orbitBlend * 0.1 + zPhase * 0.15 * orbitBlend);
                 });
 
                 this.draw();
 
-                // Start input glow early - subtle buildup
-                if (chatInput && progress > 0.5) {
-                    const glowProgress = (progress - 0.5) * 2;
-                    chatInput.style.boxShadow = `0 0 ${4 + 6 * glowProgress}px rgba(99, 102, 241, ${0.1 * glowProgress})`;
+                // Subtle input glow buildup in final phase
+                if (chatInput && totalProgress > 0.7) {
+                    const glowProgress = (totalProgress - 0.7) / 0.3;
+                    chatInput.style.boxShadow = `0 0 ${5 + 8 * glowProgress}px rgba(99, 102, 241, ${0.12 * glowProgress})`;
                 }
 
-                if (progress < 1) {
-                    this.animationId = requestAnimationFrame(animateOrbit);
+                if (totalProgress < 1) {
+                    this.animationId = requestAnimationFrame(animateExplodeAndFloat);
                 } else {
                     this.startConverge();
                 }
             };
 
-            this.animationId = requestAnimationFrame(animateOrbit);
+            this.animationId = requestAnimationFrame(animateExplodeAndFloat);
         },
 
         /**
@@ -401,13 +383,19 @@
 
                 this.draw();
 
-                // Progressive glow on chat input - subtle buildup
-                if (chatInput && progress > 0.3) {
-                    const glowProgress = (progress - 0.3) / 0.7;
+                // Progressive glow buildup - accelerates as particles approach
+                if (chatInput && progress > 0.2) {
+                    const glowProgress = (progress - 0.2) / 0.8;
                     const glowIntensity = this.easeOutQuart(glowProgress);
-                    const glowSize = 6 + 8 * glowIntensity;
-                    const glowOpacity = 0.15 + 0.2 * glowIntensity;
-                    chatInput.style.boxShadow = `0 0 ${glowSize}px rgba(99, 102, 241, ${glowOpacity})`;
+                    // Glow grows as particles converge, peaking just before shine
+                    const glowSize = 6 + 10 * glowIntensity;
+                    const outerSize = 12 + 14 * glowIntensity;
+                    const glowOpacity = 0.15 + 0.25 * glowIntensity;
+                    const outerOpacity = 0.08 + 0.12 * glowIntensity;
+                    chatInput.style.boxShadow = `
+                        0 0 ${glowSize}px rgba(99, 102, 241, ${glowOpacity}),
+                        0 0 ${outerSize}px rgba(139, 92, 246, ${outerOpacity})
+                    `;
                 }
 
                 if (progress < 1) {
@@ -436,26 +424,31 @@
                 const elapsed = Date.now() - shineStart;
                 const progress = Math.min(elapsed / this.config.shineDuration, 1);
 
-                // Multi-frequency shimmer - 3 overlapping waves for organic sparkle
-                const shimmer1 = Math.sin(progress * Math.PI * 4) * 0.5 + 0.5; // Fast pulse
-                const shimmer2 = Math.sin(progress * Math.PI * 2.5 + 0.5) * 0.3 + 0.5; // Medium
-                const shimmer3 = Math.sin(progress * Math.PI * 1.5) * 0.2 + 0.5; // Slow envelope
+                // Smooth envelope - quick rise, satisfying sustain, gentle fade
+                const envelope = progress < 0.15
+                    ? this.easeOutQuart(progress / 0.15) // Quick attack
+                    : progress < 0.7
+                        ? 1 // Sustain at peak
+                        : 1 - this.easeInOutQuad((progress - 0.7) / 0.3); // Gentle release
 
-                // Combine shimmers with envelope that fades in and out
-                const envelope = Math.sin(progress * Math.PI); // Overall fade in/out
-                const combinedShimmer = (shimmer1 * 0.5 + shimmer2 * 0.3 + shimmer3 * 0.2) * envelope;
+                // Premium shimmer - multiple frequencies for organic sparkle
+                const shimmer1 = Math.sin(progress * Math.PI * 6) * 0.15; // Fast sparkle
+                const shimmer2 = Math.sin(progress * Math.PI * 3.5 + 0.3) * 0.1; // Medium wave
+                const shimmer3 = Math.sin(progress * Math.PI * 2) * 0.08; // Slow pulse
+                const shimmerCombined = 1 + shimmer1 + shimmer2 + shimmer3;
 
-                // Subtle, premium glow - much smaller than before
-                const glowSize = 8 + 7 * combinedShimmer;
-                const glowOpacity = 0.2 + 0.25 * combinedShimmer;
+                // Visible but elegant glow - layered for depth
+                const baseGlow = 12 * envelope * shimmerCombined;
+                const outerGlow = 20 * envelope * shimmerCombined;
+                const glowOpacity = 0.35 * envelope;
+                const outerOpacity = 0.15 * envelope;
 
-                // Clean, elegant single-layer glow with subtle inner highlight
+                // Premium multi-layer glow with color gradient
                 chatInput.style.boxShadow = `
-                    0 0 ${glowSize}px rgba(99, 102, 241, ${glowOpacity}),
-                    inset 0 0 ${2 + combinedShimmer * 2}px rgba(255, 255, 255, ${combinedShimmer * 0.15})
+                    0 0 ${baseGlow}px rgba(99, 102, 241, ${glowOpacity}),
+                    0 0 ${outerGlow}px rgba(139, 92, 246, ${outerOpacity}),
+                    inset 0 0 ${3 * envelope}px rgba(255, 255, 255, ${0.1 * envelope})
                 `;
-
-                // No scale transform - keeps it premium and subtle
 
                 if (progress < 1) {
                     this.animationId = requestAnimationFrame(animateShine);
