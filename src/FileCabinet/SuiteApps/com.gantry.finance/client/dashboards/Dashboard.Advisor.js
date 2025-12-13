@@ -205,7 +205,8 @@
         },
 
         /**
-         * Explode: Particles burst visibly FROM the brain, then smoothly transition to orbit
+         * Explode + Orbit: Single unified animation - no phase handoff, no jumps
+         * Particles explode outward while orbit motion gradually blends in
          */
         startExplode: function() {
             this.phase = 'explode';
@@ -213,171 +214,122 @@
             const center = this.getBrainCenter();
             const padding = 80;
 
-            // Orbit center (screen center, slightly above middle)
+            // Orbit center
             const orbitCenterX = this.canvas.width / 2;
             const orbitCenterY = this.canvas.height * 0.42;
 
-            // Initialize camera for smooth panning
+            // Camera state
             this.cameraX = 0;
             this.cameraY = 0;
             let cameraPanAngle = 0;
 
-            // Reset particles to brain center - they will visibly burst outward
+            // Total duration = explosion + orbit time
+            const totalDuration = this.config.explodeDuration + this.config.orbitDuration;
+
+            // Initialize all particles
             this.particles.forEach((p, i) => {
                 p.originX = center.x;
                 p.originY = center.y;
                 p.x = center.x;
                 p.y = center.y;
 
-                // Explosion target position
+                // Explosion target
                 p.expandX = padding + Math.random() * (this.canvas.width - padding * 2);
                 p.expandY = padding + Math.random() * (this.canvas.height - padding * 2);
 
-                // Orbit parameters
-                p.orbitSpeed3D = 0.08 + Math.random() * 0.06;
-                p.orbitPhase3D = Math.random() * Math.PI * 2;
-                p.microDriftFreq = 0.25 + Math.random() * 0.2;
+                // Orbit params - phase starts at 0 so no initial offset
+                p.orbitSpeed3D = 0.15 + Math.random() * 0.1;
+                p.microDriftFreq = 0.3 + Math.random() * 0.25;
                 p.microDriftPhase = Math.random() * Math.PI * 2;
-                p.microDriftAmp = 10 + Math.random() * 15;
+                p.microDriftAmp = 15 + Math.random() * 20;
 
-                // Very slight stagger for natural wave (not too much or particles appear late)
-                p.stagger = (i / this.particles.length) * 0.08;
+                // Slight stagger for explosion wave
+                p.stagger = (i / this.particles.length) * 0.06;
             });
 
             let cardsShown = false;
 
-            const animateExplode = () => {
+            const animate = () => {
                 if (!this.isActive || this.phase !== 'explode') return;
 
                 const elapsed = Date.now() - startTime;
-                const progress = Math.min(elapsed / this.config.explodeDuration, 1);
+                const totalProgress = Math.min(elapsed / totalDuration, 1);
+                const explosionProgress = Math.min(elapsed / this.config.explodeDuration, 1);
                 this.globalTime += 16;
                 const time = elapsed * 0.001;
 
                 // Show cards mid-explosion
-                if (!cardsShown && progress > 0.4) {
+                if (!cardsShown && explosionProgress > 0.35) {
                     cardsShown = true;
                     var scoreCategories = document.getElementById('score-categories');
                     if (scoreCategories) scoreCategories.classList.add('cards-visible');
                 }
 
-                // Camera pan builds up
-                cameraPanAngle += 0.05 * 0.016;
-                const cameraPanRadius = 15 * progress;
-                this.cameraX += (Math.sin(cameraPanAngle) * cameraPanRadius - this.cameraX) * 0.03;
-                this.cameraY += (Math.cos(cameraPanAngle * 0.7) * cameraPanRadius * 0.5 - this.cameraY) * 0.03;
+                // Camera pan - builds up during explosion, full during orbit
+                cameraPanAngle += 0.08 * 0.016;
+                const cameraPanRadius = 30 * Math.min(1, explosionProgress * 2);
+                this.cameraX += (Math.sin(cameraPanAngle) * cameraPanRadius - this.cameraX) * 0.02;
+                this.cameraY += (Math.cos(cameraPanAngle * 0.7) * cameraPanRadius * 0.5 - this.cameraY) * 0.02;
+
+                // Orbit blend: starts at 40% of explosion, full by end of explosion
+                const orbitBlendStart = 0.4;
+                const orbitBlend = explosionProgress < orbitBlendStart ? 0 :
+                    this.easeInOutQuad((explosionProgress - orbitBlendStart) / (1 - orbitBlendStart));
 
                 this.particles.forEach((p, i) => {
-                    // Staggered but quick - particles become visible almost immediately
-                    const particleProgress = Math.max(0, Math.min(1, (progress - p.stagger) / (1 - p.stagger)));
-                    const explosionEased = this.easeOutExpo(particleProgress);
+                    // EXPLOSION: burst from center to target
+                    const particleExplosion = Math.max(0, Math.min(1, (explosionProgress - p.stagger) / (1 - p.stagger)));
+                    const explosionEased = this.easeOutCubic(particleExplosion); // Smoother than expo
 
-                    // Position: explode from brain center to target
-                    p.x = p.originX + (p.expandX - p.originX) * explosionEased;
-                    p.y = p.originY + (p.expandY - p.originY) * explosionEased;
+                    const explosionX = p.originX + (p.expandX - p.originX) * explosionEased;
+                    const explosionY = p.originY + (p.expandY - p.originY) * explosionEased;
 
-                    // IMMEDIATE visibility - particles visible as soon as they start moving
-                    // Quick fade in over first 10% of particle's journey
-                    const fadeIn = Math.min(1, particleProgress * 10);
-                    p.opacity = p.targetOpacity * fadeIn;
+                    // ORBIT: motion relative to explosion destination
+                    // Use TIME-based angle (not random phase) so motion starts from 0
+                    const orbitAngle = time * p.orbitSpeed3D;
+                    const orbitDistX = p.expandX - orbitCenterX;
+                    const orbitDistY = p.expandY - orbitCenterY;
 
-                    // Size stays consistent during explosion
-                    p.size = p.baseSize;
-                });
+                    // 3D rotation - starts at 0 and grows with time
+                    const rotAmount = orbitAngle * p.depth;
+                    const cos = Math.cos(rotAmount * 0.5);
+                    const sin = Math.sin(rotAmount * 0.35);
+                    const rotatedX = orbitDistX * cos - orbitDistY * sin * 0.4;
+                    const rotatedY = orbitDistY * cos + orbitDistX * sin * 0.3;
 
-                this.draw();
+                    // Micro-drift
+                    const microX = Math.sin(time * p.microDriftFreq + p.microDriftPhase) * p.microDriftAmp;
+                    const microY = Math.cos(time * p.microDriftFreq * 0.8 + p.microDriftPhase) * p.microDriftAmp * 0.7;
 
-                if (progress < 1) {
-                    this.animationId = requestAnimationFrame(animateExplode);
-                } else {
-                    this.startOrbit();
-                }
-            };
+                    // Parallax
+                    const parallaxX = this.cameraX * p.depth * 2;
+                    const parallaxY = this.cameraY * p.depth * 2;
 
-            this.animationId = requestAnimationFrame(animateExplode);
-        },
-
-        /**
-         * Orbit: Particles orbit around center with strong 3D parallax and camera pan
-         */
-        startOrbit: function() {
-            this.phase = 'orbit';
-            const startTime = Date.now();
-            const chatInput = document.getElementById('advisor-input-full');
-
-            const orbitCenterX = this.canvas.width / 2;
-            const orbitCenterY = this.canvas.height * 0.42;
-
-            let cameraPanAngle = 0;
-
-            // Store current positions - these are the "home" positions particles orbit around
-            this.particles.forEach(p => {
-                p.orbitBaseX = p.x - orbitCenterX;
-                p.orbitBaseY = p.y - orbitCenterY;
-                p.orbitStartX = p.x; // Store exact start position for smooth blend-in
-                p.orbitStartY = p.y;
-            });
-
-            const animateOrbit = () => {
-                if (!this.isActive || this.phase !== 'orbit') return;
-
-                const elapsed = Date.now() - startTime;
-                const progress = Math.min(elapsed / this.config.orbitDuration, 1);
-                this.globalTime += 16;
-                const time = elapsed * 0.001;
-
-                // Blend factor - smoothly ramp up orbit intensity to avoid position jump
-                const orbitIntensity = Math.min(1, elapsed / 500); // 500ms to reach full orbit
-
-                // Strong camera pan for cinematic feel
-                cameraPanAngle += 0.12 * 0.016; // Faster pan
-                const cameraPanRadius = 40; // Larger radius
-                this.cameraX += (Math.sin(cameraPanAngle) * cameraPanRadius - this.cameraX) * 0.025;
-                this.cameraY += (Math.cos(cameraPanAngle * 0.6) * cameraPanRadius * 0.6 - this.cameraY) * 0.025;
-
-                this.particles.forEach(p => {
-                    const rotAngle = time * p.orbitSpeed3D + p.orbitPhase3D;
-                    const depthRotation = rotAngle * p.depth;
-
-                    // STRONGER 3D rotation - much more visible orbital motion
-                    const cos = Math.cos(depthRotation * 0.6); // Was 0.2
-                    const sin = Math.sin(depthRotation * 0.4); // Was 0.1
-                    const rotatedX = p.orbitBaseX * cos - p.orbitBaseY * sin * 0.5; // Was 0.3
-                    const rotatedY = p.orbitBaseY * cos + p.orbitBaseX * sin * 0.4; // Was 0.2
-
-                    // Stronger micro-drift
-                    const microX = Math.sin(time * p.microDriftFreq + p.microDriftPhase) * p.microDriftAmp * 1.5;
-                    const microY = Math.cos(time * p.microDriftFreq * 0.8 + p.microDriftPhase) * p.microDriftAmp;
-
-                    // Stronger parallax from camera
-                    const parallaxX = this.cameraX * p.depth * 2.5;
-                    const parallaxY = this.cameraY * p.depth * 2.5;
-
-                    // Target orbit position
+                    // Orbit target position
                     const orbitX = orbitCenterX + rotatedX + microX + parallaxX;
                     const orbitY = orbitCenterY + rotatedY + microY + parallaxY;
 
-                    // Blend from start position to orbit position (prevents jump)
-                    p.x = p.orbitStartX + (orbitX - p.orbitStartX) * orbitIntensity;
-                    p.y = p.orbitStartY + (orbitY - p.orbitStartY) * orbitIntensity;
+                    // BLEND explosion position with orbit position
+                    p.x = explosionX + (orbitX - explosionX) * orbitBlend;
+                    p.y = explosionY + (orbitY - explosionY) * orbitBlend;
 
-                    // Size/opacity breathing
-                    const zPhase = Math.sin(rotAngle + p.orbitPhase3D);
-                    p.size = p.baseSize * (0.85 + zPhase * 0.2);
-                    p.opacity = p.targetOpacity * (0.75 + zPhase * 0.25);
+                    // Visibility
+                    const fadeIn = Math.min(1, particleExplosion * 8);
+                    const zPhase = Math.sin(orbitAngle);
+                    p.opacity = p.targetOpacity * fadeIn * (0.8 + zPhase * 0.2 * orbitBlend);
+                    p.size = p.baseSize * (0.9 + zPhase * 0.15 * orbitBlend);
                 });
 
                 this.draw();
 
-                // No glow during orbit - save it for convergence
-                if (progress < 1) {
-                    this.animationId = requestAnimationFrame(animateOrbit);
+                if (totalProgress < 1) {
+                    this.animationId = requestAnimationFrame(animate);
                 } else {
                     this.startConverge();
                 }
             };
 
-            this.animationId = requestAnimationFrame(animateOrbit);
+            this.animationId = requestAnimationFrame(animate);
         },
 
         /**
