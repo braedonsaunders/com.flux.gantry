@@ -705,18 +705,43 @@
     };
 
     /**
-     * TypewriterAnimation - Premium text reveal animation
-     * Word-by-word materialization with blur-to-sharp effect
+     * ContentAnimator - Premium content-specific reveal animations
+     * Different animation styles for text, tables, metrics, lists, etc.
      */
-    const TypewriterAnimation = {
+    const ContentAnimator = {
         // Configuration
         config: {
-            wordDelay: 35,          // Base delay between words (ms)
-            blockDelay: 80,         // Delay for block elements (ms)
-            tableRowDelay: 50,      // Stagger delay for table rows (ms)
-            metricDelay: 100,       // Delay for metric items (ms)
-            maxAnimationTime: 3000, // Cap total animation time (ms)
-            skipThreshold: 500      // Words above this count skip animation
+            text: {
+                wordDelay: 35,           // ms between words
+                maxTime: 2500,           // max total animation time
+                skipThreshold: 400       // skip if more words than this
+            },
+            table: {
+                containerDelay: 0,       // container reveal
+                headerDelay: 100,        // header row delay
+                rowDelay: 40,            // stagger between rows
+                scanlineEnabled: true    // show scan-line effect
+            },
+            metrics: {
+                containerDelay: 0,
+                itemDelay: 80,           // stagger between metrics
+                counterDuration: 400,    // counter roll-up duration
+                counterEnabled: true     // enable number counter effect
+            },
+            list: {
+                titleDelay: 0,
+                itemDelay: 60            // stagger between list items
+            },
+            code: {
+                revealDelay: 0
+            },
+            chart: {
+                revealDelay: 0,
+                drawDuration: 800
+            },
+            alert: {
+                revealDelay: 0
+            }
         },
 
         // Check if user prefers reduced motion
@@ -726,95 +751,103 @@
         },
 
         /**
-         * Animate text content with word-by-word reveal
-         * @param {HTMLElement} container - Container element
-         * @param {string} html - HTML content to animate
-         * @param {Object} options - Animation options
+         * Animate a rich content block based on its type
+         * @param {HTMLElement} element - The content element
+         * @param {string} type - Content type (text, table, metrics, list, etc.)
+         * @param {Object} options - Additional options
          * @returns {Promise} Resolves when animation completes
          */
-        animateText: function(container, html, options) {
-            options = options || {};
+        animate: function(element, type, options) {
             const self = this;
+            options = options || {};
+
+            if (self.prefersReducedMotion()) {
+                element.classList.add('animate-skip');
+                return Promise.resolve();
+            }
+
+            switch (type) {
+                case 'text':
+                    return self.animateText(element, options);
+                case 'table':
+                    return self.animateTable(element, options);
+                case 'metrics':
+                    return self.animateMetrics(element, options);
+                case 'metric':
+                    return self.animateMetric(element, options);
+                case 'list':
+                    return self.animateList(element, options);
+                case 'code':
+                    return self.animateCode(element, options);
+                case 'chart':
+                    return self.animateChart(element, options);
+                case 'warning':
+                case 'success':
+                case 'info':
+                case 'error':
+                    return self.animateAlert(element, type, options);
+                default:
+                    // Generic fade-in for unknown types
+                    element.classList.add('animate-reveal');
+                    return Promise.resolve();
+            }
+        },
+
+        /**
+         * TEXT ANIMATION - Word-by-word blur-to-sharp reveal
+         */
+        animateText: function(element, options) {
+            const self = this;
+            const config = self.config.text;
 
             return new Promise(function(resolve) {
-                // Skip animation if reduced motion preferred
-                if (self.prefersReducedMotion()) {
-                    container.innerHTML = html;
-                    container.classList.add('typewriter-complete');
+                // Get the HTML content
+                const html = element.innerHTML;
+
+                // Wrap words in spans
+                const wrapped = self._wrapTextWords(html);
+
+                // Skip if too many words
+                if (wrapped.wordCount > config.skipThreshold) {
+                    element.classList.add('animate-skip');
                     resolve();
                     return;
                 }
 
-                // Parse HTML and wrap words
-                const wrapped = self.wrapWordsInHtml(html);
-                container.innerHTML = wrapped.html;
-                container.classList.add('typewriter-container');
+                // Apply wrapped content
+                element.innerHTML = wrapped.html;
+                element.classList.add('animate-text-container');
 
-                // Calculate delays
-                const wordCount = wrapped.wordCount;
-                const blockCount = wrapped.blockCount;
-
-                // Skip animation for very long content
-                if (wordCount > self.config.skipThreshold) {
-                    container.classList.add('typewriter-skip');
-                    resolve();
-                    return;
-                }
-
-                // Calculate total time and adjust delays if needed
-                let totalTime = (wordCount * self.config.wordDelay) +
-                               (blockCount * self.config.blockDelay);
+                // Calculate speed multiplier to cap total time
+                let totalTime = wrapped.wordCount * config.wordDelay;
                 let speedMultiplier = 1;
-
-                if (totalTime > self.config.maxAnimationTime) {
-                    speedMultiplier = self.config.maxAnimationTime / totalTime;
+                if (totalTime > config.maxTime) {
+                    speedMultiplier = config.maxTime / totalTime;
                 }
 
-                // Apply animation delays via CSS custom properties
-                const words = container.querySelectorAll('.typewriter-word');
-                const blocks = container.querySelectorAll('.typewriter-block');
-                let delay = 0;
-
+                // Apply staggered delays
+                const words = element.querySelectorAll('.animate-word');
                 words.forEach(function(word, index) {
-                    delay = index * self.config.wordDelay * speedMultiplier;
-                    word.style.animationDelay = delay + 'ms';
+                    word.style.animationDelay = (index * config.wordDelay * speedMultiplier) + 'ms';
                 });
-
-                blocks.forEach(function(block, index) {
-                    const blockDelay = (words.length * self.config.wordDelay +
-                                       index * self.config.blockDelay) * speedMultiplier;
-                    block.style.animationDelay = blockDelay + 'ms';
-                });
-
-                // Calculate completion time
-                const completionTime = Math.min(
-                    totalTime * speedMultiplier + 200,
-                    self.config.maxAnimationTime + 200
-                );
 
                 // Mark complete after animation
+                const completionTime = Math.min(totalTime * speedMultiplier, config.maxTime) + 200;
                 setTimeout(function() {
-                    container.classList.add('typewriter-complete');
+                    element.classList.add('animate-text-complete');
                     resolve();
                 }, completionTime);
             });
         },
 
         /**
-         * Wrap words in spans for animation, preserving HTML structure
-         * @param {string} html - HTML content
-         * @returns {Object} { html, wordCount, blockCount }
+         * Wrap text nodes in spans for word animation (text blocks only)
          */
-        wrapWordsInHtml: function(html) {
-            const self = this;
+        _wrapTextWords: function(html) {
             let wordCount = 0;
-            let blockCount = 0;
-
-            // Create a temporary container
             const temp = document.createElement('div');
             temp.innerHTML = html;
 
-            // Process text nodes recursively
             function processNode(node) {
                 if (node.nodeType === Node.TEXT_NODE) {
                     const text = node.textContent;
@@ -825,7 +858,7 @@
                         words.forEach(function(word) {
                             if (word.trim()) {
                                 const span = document.createElement('span');
-                                span.className = 'typewriter-word';
+                                span.className = 'animate-word';
                                 span.textContent = word;
                                 fragment.appendChild(span);
                                 wordCount++;
@@ -837,121 +870,319 @@
                         node.parentNode.replaceChild(fragment, node);
                     }
                 } else if (node.nodeType === Node.ELEMENT_NODE) {
-                    // Skip certain elements - animate as blocks
-                    const blockTags = ['TABLE', 'PRE', 'CODE', 'UL', 'OL', 'BLOCKQUOTE', 'IMG'];
-                    if (blockTags.indexOf(node.tagName) !== -1) {
-                        node.classList.add('typewriter-block');
-                        blockCount++;
-                        return; // Don't process children
-                    }
-
-                    // Handle code spans specially
-                    if (node.tagName === 'CODE' && node.parentNode.tagName !== 'PRE') {
-                        node.classList.add('typewriter-word');
-                        wordCount++;
+                    // Don't process inside code/pre tags
+                    if (node.tagName === 'CODE' || node.tagName === 'PRE') {
                         return;
                     }
-
                     // Process children
-                    const children = Array.from(node.childNodes);
-                    children.forEach(processNode);
+                    Array.from(node.childNodes).forEach(processNode);
                 }
             }
 
-            // Process all top-level nodes
             Array.from(temp.childNodes).forEach(processNode);
 
-            return {
-                html: temp.innerHTML,
-                wordCount: wordCount,
-                blockCount: blockCount
-            };
+            return { html: temp.innerHTML, wordCount: wordCount };
         },
 
         /**
-         * Animate table rows with cascade effect
-         * @param {HTMLElement} table - Table element
-         * @param {number} baseDelay - Starting delay offset
+         * TABLE ANIMATION - Header slide-in, row cascade with scan-line
          */
-        animateTableRows: function(table, baseDelay) {
+        animateTable: function(element, options) {
             const self = this;
-            baseDelay = baseDelay || 0;
+            const config = self.config.table;
 
-            if (self.prefersReducedMotion()) return;
+            return new Promise(function(resolve) {
+                // Find the table element
+                const table = element.tagName === 'TABLE' ? element : element.querySelector('table');
+                if (!table) {
+                    resolve();
+                    return;
+                }
 
-            const rows = table.querySelectorAll('tbody tr');
-            rows.forEach(function(row, index) {
-                row.classList.add('typewriter-table-row');
-                row.style.animationDelay = (baseDelay + index * self.config.tableRowDelay) + 'ms';
+                // Add animation wrapper class
+                const wrapper = table.closest('.table-wrapper, .progressive-table-container, .data-table') || table.parentElement;
+                if (wrapper) {
+                    wrapper.classList.add('animate-table');
+                }
+                table.classList.add('animate-table');
+
+                // Animate header
+                const headerRow = table.querySelector('thead tr');
+                if (headerRow) {
+                    headerRow.style.animationDelay = config.headerDelay + 'ms';
+                }
+
+                // Animate body rows with cascade
+                const rows = table.querySelectorAll('tbody tr');
+                rows.forEach(function(row, index) {
+                    row.style.animationDelay = (config.headerDelay + 150 + index * config.rowDelay) + 'ms';
+                });
+
+                // Add scan-line effect
+                if (config.scanlineEnabled && wrapper) {
+                    const scanline = document.createElement('div');
+                    scanline.className = 'animate-table-scanline';
+                    wrapper.appendChild(scanline);
+
+                    // Remove scanline after animation
+                    setTimeout(function() {
+                        scanline.remove();
+                    }, 700);
+                }
+
+                // Calculate completion time
+                const completionTime = config.headerDelay + 150 + (rows.length * config.rowDelay) + 200;
+                setTimeout(function() {
+                    if (wrapper) wrapper.classList.add('animate-table-complete');
+                    table.classList.add('animate-table-complete');
+                    resolve();
+                }, completionTime);
             });
         },
 
         /**
-         * Animate metrics with staggered reveal
-         * @param {HTMLElement} container - Metrics container
-         * @param {number} baseDelay - Starting delay offset
+         * METRICS ANIMATION - Counter roll-up with trend indicators
          */
-        animateMetrics: function(container, baseDelay) {
+        animateMetrics: function(element, options) {
             const self = this;
-            baseDelay = baseDelay || 0;
+            const config = self.config.metrics;
 
-            if (self.prefersReducedMotion()) return;
+            return new Promise(function(resolve) {
+                element.classList.add('animate-metrics-container');
 
-            const metrics = container.querySelectorAll('.metric-item, .progressive-metric');
-            metrics.forEach(function(metric, index) {
-                metric.classList.add('typewriter-metric');
-                metric.style.animationDelay = (baseDelay + index * self.config.metricDelay) + 'ms';
+                // Find all metric items
+                const metrics = element.querySelectorAll('.metric-item, .metric-card, .kpi-item, [class*="metric"]');
+                if (metrics.length === 0) {
+                    resolve();
+                    return;
+                }
+
+                metrics.forEach(function(metric, index) {
+                    metric.classList.add('animate-metric');
+                    metric.style.animationDelay = (config.containerDelay + index * config.itemDelay) + 'ms';
+
+                    // Counter animation for numeric values
+                    if (config.counterEnabled) {
+                        self._animateMetricCounter(metric, config.containerDelay + index * config.itemDelay + 100);
+                    }
+                });
+
+                // Completion
+                const completionTime = config.containerDelay + (metrics.length * config.itemDelay) + config.counterDuration + 100;
+                setTimeout(function() {
+                    element.classList.add('animate-metrics-complete');
+                    resolve();
+                }, completionTime);
             });
         },
 
         /**
-         * Animate code blocks with glow effect
-         * @param {HTMLElement} codeBlock - Code block element
-         * @param {number} delay - Animation delay
+         * Single metric animation
          */
-        animateCodeBlock: function(codeBlock, delay) {
+        animateMetric: function(element, options) {
             const self = this;
-            delay = delay || 0;
+            const config = self.config.metrics;
 
-            if (self.prefersReducedMotion()) return;
+            return new Promise(function(resolve) {
+                element.classList.add('animate-metric');
 
-            codeBlock.classList.add('typewriter-code');
-            codeBlock.style.animationDelay = delay + 'ms';
+                if (config.counterEnabled) {
+                    self._animateMetricCounter(element, 100);
+                }
+
+                setTimeout(function() {
+                    element.classList.add('animate-complete');
+                    resolve();
+                }, config.counterDuration + 200);
+            });
+        },
+
+        /**
+         * Animate counter roll-up effect for metric values
+         */
+        _animateMetricCounter: function(metricElement, startDelay) {
+            const self = this;
+            const config = self.config.metrics;
+
+            // Find the value element
+            const valueEl = metricElement.querySelector('.metric-value, .kpi-value, [class*="value"]');
+            if (!valueEl) return;
+
+            const finalText = valueEl.textContent;
+            const numericMatch = finalText.match(/[\d,]+\.?\d*/);
+
+            if (!numericMatch) return; // No number to animate
+
+            const finalValue = parseFloat(numericMatch[0].replace(/,/g, ''));
+            if (isNaN(finalValue)) return;
+
+            const prefix = finalText.substring(0, finalText.indexOf(numericMatch[0]));
+            const suffix = finalText.substring(finalText.indexOf(numericMatch[0]) + numericMatch[0].length);
+            const hasDecimals = numericMatch[0].includes('.');
+            const decimalPlaces = hasDecimals ? (numericMatch[0].split('.')[1] || '').length : 0;
+
+            // Start counter after delay
+            setTimeout(function() {
+                const startTime = performance.now();
+                const duration = config.counterDuration;
+
+                function updateCounter(currentTime) {
+                    const elapsed = currentTime - startTime;
+                    const progress = Math.min(elapsed / duration, 1);
+
+                    // Ease-out cubic
+                    const eased = 1 - Math.pow(1 - progress, 3);
+                    const currentValue = finalValue * eased;
+
+                    // Format the number
+                    let formattedValue;
+                    if (hasDecimals) {
+                        formattedValue = currentValue.toFixed(decimalPlaces);
+                    } else {
+                        formattedValue = Math.round(currentValue).toLocaleString();
+                    }
+
+                    valueEl.textContent = prefix + formattedValue + suffix;
+
+                    if (progress < 1) {
+                        requestAnimationFrame(updateCounter);
+                    } else {
+                        // Ensure final value is exact
+                        valueEl.textContent = finalText;
+                    }
+                }
+
+                requestAnimationFrame(updateCounter);
+            }, startDelay);
+        },
+
+        /**
+         * LIST ANIMATION - Cascade with bullet pop
+         */
+        animateList: function(element, options) {
+            const self = this;
+            const config = self.config.list;
+
+            return new Promise(function(resolve) {
+                element.classList.add('animate-list');
+
+                // Animate title if present
+                const title = element.querySelector('.list-title, h4, h5, strong:first-child');
+                if (title) {
+                    title.classList.add('animate-list-title');
+                }
+
+                // Find list items
+                const items = element.querySelectorAll('li');
+                items.forEach(function(item, index) {
+                    item.classList.add('animate-list-item');
+                    item.style.animationDelay = (config.titleDelay + (title ? 100 : 0) + index * config.itemDelay) + 'ms';
+                });
+
+                // Completion
+                const completionTime = config.titleDelay + (title ? 100 : 0) + (items.length * config.itemDelay) + 200;
+                setTimeout(function() {
+                    element.classList.add('animate-list-complete');
+                    resolve();
+                }, completionTime);
+            });
+        },
+
+        /**
+         * CODE ANIMATION - Terminal reveal with glow
+         */
+        animateCode: function(element, options) {
+            const self = this;
+
+            return new Promise(function(resolve) {
+                element.classList.add('animate-code');
+
+                setTimeout(function() {
+                    element.classList.add('animate-complete');
+                    resolve();
+                }, 400);
+            });
+        },
+
+        /**
+         * CHART ANIMATION - Draw-in effect
+         */
+        animateChart: function(element, options) {
+            const self = this;
+
+            return new Promise(function(resolve) {
+                element.classList.add('animate-chart');
+
+                // Animate SVG paths if present (for line charts)
+                const paths = element.querySelectorAll('path[class*="line"], path[class*="trace"]');
+                paths.forEach(function(path, index) {
+                    path.classList.add('animate-chart-path');
+                    path.style.animationDelay = (200 + index * 100) + 'ms';
+                });
+
+                // Animate bars if present
+                const bars = element.querySelectorAll('rect[class*="bar"], .bar');
+                bars.forEach(function(bar, index) {
+                    bar.classList.add('animate-chart-bar');
+                    bar.style.animationDelay = (200 + index * 50) + 'ms';
+                });
+
+                setTimeout(function() {
+                    element.classList.add('animate-complete');
+                    resolve();
+                }, 1000);
+            });
+        },
+
+        /**
+         * ALERT ANIMATION - Type-specific attention effects
+         */
+        animateAlert: function(element, alertType, options) {
+            return new Promise(function(resolve) {
+                element.classList.add('animate-alert');
+                element.classList.add('animate-alert-' + alertType);
+
+                setTimeout(function() {
+                    element.classList.add('animate-complete');
+                    resolve();
+                }, 500);
+            });
         },
 
         /**
          * Animate progressive blocks during polling
-         * @param {HTMLElement} block - Block element
          */
         animateProgressiveBlock: function(block) {
             const self = this;
 
             if (self.prefersReducedMotion()) return;
 
-            block.classList.add('typewriter-animate');
+            block.classList.add('animate-reveal');
 
-            // Animate table rows if it's a table block
+            // Detect and animate content type
             const table = block.querySelector('table');
             if (table) {
-                self.animateTableRows(table, 100);
+                self.animateTable(block);
+                return;
             }
 
-            // Animate metrics if present
-            const metricsContainer = block.querySelector('.progressive-metrics');
-            if (metricsContainer) {
-                self.animateMetrics(metricsContainer, 50);
+            const metrics = block.querySelector('.progressive-metrics, .metrics-group');
+            if (metrics) {
+                self.animateMetrics(metrics);
+                return;
             }
         },
 
         /**
          * Skip animation and show content immediately
-         * @param {HTMLElement} container - Container element
          */
-        skipAnimation: function(container) {
-            container.classList.add('typewriter-skip');
-            container.classList.add('typewriter-complete');
+        skip: function(element) {
+            element.classList.add('animate-skip');
         }
     };
+
+    // Alias for backward compatibility
+    const TypewriterAnimation = ContentAnimator;
 
     /**
      * Advisor Controller
@@ -2929,33 +3160,41 @@
             const contentEl = document.getElementById(msgId + '-content');
             const richEl = document.getElementById(msgId + '-rich');
             const hasRichContent = response.richContent && response.richContent.length > 0;
+            const self = this;
 
             if (hasRichContent && richEl) {
-                // Render ALL rich content items (text, tables, metrics, etc.)
-                let richHtml = '';
-                response.richContent.forEach(item => {
-                    richHtml += this.renderRichContent(item);
+                richEl.style.display = 'block';
+
+                // Render each content item separately so we can animate by type
+                let cumulativeDelay = 0;
+                response.richContent.forEach(function(item, index) {
+                    const itemHtml = self.renderRichContent(item);
+                    if (!itemHtml) return;
+
+                    // Create wrapper for this content block
+                    const wrapper = document.createElement('div');
+                    wrapper.className = 'rich-content-block rich-content-' + item.type;
+                    wrapper.innerHTML = itemHtml;
+                    richEl.appendChild(wrapper);
+
+                    // Animate based on content type with staggered delay
+                    setTimeout(function() {
+                        ContentAnimator.animate(wrapper, item.type);
+                    }, cumulativeDelay);
+
+                    // Stagger subsequent items
+                    cumulativeDelay += 150;
                 });
-                if (richHtml) {
-                    richEl.style.display = 'block';
-                    // Apply typewriter animation to rich content
-                    TypewriterAnimation.animateText(richEl, richHtml).then(() => {
-                        // After animation, animate any tables and metrics
-                        const tables = richEl.querySelectorAll('table');
-                        tables.forEach(table => TypewriterAnimation.animateTableRows(table, 0));
-                        const metricsContainers = richEl.querySelectorAll('.metrics-group, .metric-item');
-                        metricsContainers.forEach(container => TypewriterAnimation.animateMetrics(container, 0));
-                    });
-                }
+
                 // Hide text fallback since we have rich content
                 if (contentEl) {
                     contentEl.style.display = 'none';
                 }
             } else if (contentEl && response.text) {
                 // Fallback: no rich content, show plain text with typewriter animation
-                const formattedText = this.formatText(response.text);
+                contentEl.innerHTML = self.formatText(response.text);
                 contentEl.style.display = 'block';
-                TypewriterAnimation.animateText(contentEl, formattedText);
+                ContentAnimator.animate(contentEl, 'text');
             }
 
             // Add to messages array for history
@@ -3087,7 +3326,8 @@
             }
 
             // Render new blocks
-            blocks.forEach(block => {
+            const self = this;
+            blocks.forEach(function(block) {
                 if (blocksContainer._renderedBlockIds.has(block.id)) {
                     return; // Already rendered
                 }
@@ -3098,23 +3338,23 @@
 
                 if (block.type === 'table' && block.rows) {
                     // Render table with real data
-                    blockEl.innerHTML = this.renderProgressiveTable(block);
+                    blockEl.innerHTML = self.renderProgressiveTable(block);
                 } else if (block.type === 'metrics' && block.items) {
-                    blockEl.innerHTML = this.renderProgressiveMetrics(block);
+                    blockEl.innerHTML = self.renderProgressiveMetrics(block);
                 } else if (block.type === 'text' && block.content) {
-                    blockEl.innerHTML = '<div class="progressive-text">' + this.escapeHtml(block.content) + '</div>';
+                    blockEl.innerHTML = '<div class="progressive-text">' + self.escapeHtml(block.content) + '</div>';
                 }
 
                 blocksContainer.appendChild(blockEl);
                 blocksContainer._renderedBlockIds.add(block.id);
 
-                // Apply typewriter animation to the new block
-                TypewriterAnimation.animateProgressiveBlock(blockEl);
+                // Apply content-specific animation to the new block
+                ContentAnimator.animate(blockEl, block.type);
 
                 console.log('[Advisor] Rendered progressive block:', block.type, block.id);
             });
 
-            this.scrollToBottom();
+            self.scrollToBottom();
         },
 
         /**

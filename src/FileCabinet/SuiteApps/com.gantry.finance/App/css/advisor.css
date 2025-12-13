@@ -5222,17 +5222,19 @@ body.dark-mode .progressive-text {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   TYPEWRITER TEXT REVEAL ANIMATION
-   Premium word-by-word reveal with blur-to-sharp materialization effect
+   CONTENT-SPECIFIC REVEAL ANIMATIONS
+   Premium animations tailored to each content type
    ═══════════════════════════════════════════════════════════════════════════ */
 
-/* Container for animated text content */
-.typewriter-container {
+/* ─────────────────────────────────────────────────────────────────────────────
+   TEXT BLOCKS - Word-by-word blur-to-sharp materialization
+   ───────────────────────────────────────────────────────────────────────────── */
+
+.animate-text-container {
     position: relative;
 }
 
-/* Individual word wrapper for animation */
-.typewriter-word {
+.animate-word {
     display: inline;
     opacity: 0;
     filter: blur(4px);
@@ -5240,16 +5242,6 @@ body.dark-mode .progressive-text {
     animation: wordReveal 0.12s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
-/* Block-level elements need display adjustment */
-.typewriter-block {
-    display: block;
-    opacity: 0;
-    filter: blur(4px);
-    transform: translateY(4px);
-    animation: blockReveal 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-}
-
-/* Keyframes for word reveal - blur to sharp with micro-lift */
 @keyframes wordReveal {
     0% {
         opacity: 0;
@@ -5263,48 +5255,180 @@ body.dark-mode .progressive-text {
     }
 }
 
-/* Keyframes for block-level reveal (tables, code blocks) */
-@keyframes blockReveal {
+/* Completed state - remove animation overhead */
+.animate-text-complete .animate-word {
+    animation: none;
+    opacity: 1;
+    filter: none;
+    transform: none;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   TABLE BLOCKS - Data materialization with scan-line effect
+   ───────────────────────────────────────────────────────────────────────────── */
+
+.animate-table {
+    position: relative;
+    overflow: hidden;
+}
+
+/* Container reveal */
+.animate-table-container {
+    opacity: 0;
+    transform: scale(0.98);
+    animation: tableContainerReveal 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes tableContainerReveal {
     0% {
         opacity: 0;
-        filter: blur(4px);
-        transform: translateY(4px);
+        transform: scale(0.98);
     }
     100% {
         opacity: 1;
-        filter: blur(0);
-        transform: translateY(0);
+        transform: scale(1);
     }
 }
 
-/* Skip animation class - for instant reveal */
-.typewriter-skip .typewriter-word,
-.typewriter-skip .typewriter-block {
-    animation: none;
-    opacity: 1;
-    filter: none;
-    transform: none;
-}
-
-/* Completed animation state */
-.typewriter-complete .typewriter-word,
-.typewriter-complete .typewriter-block {
-    animation: none;
-    opacity: 1;
-    filter: none;
-    transform: none;
-}
-
-/* Table row cascade animation */
-.typewriter-table-row {
+/* Header row slides in from left */
+.animate-table thead tr {
     opacity: 0;
-    transform: translateY(4px);
-    animation: tableRowReveal 0.15s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    transform: translateX(-12px);
+    animation: tableHeaderReveal 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    animation-delay: 0.1s;
+}
+
+@keyframes tableHeaderReveal {
+    0% {
+        opacity: 0;
+        transform: translateX(-12px);
+    }
+    100% {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+/* Body rows cascade down */
+.animate-table tbody tr {
+    opacity: 0;
+    transform: translateY(8px);
+    animation: tableRowReveal 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
 @keyframes tableRowReveal {
     0% {
         opacity: 0;
+        transform: translateY(8px);
+    }
+    100% {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* Scan-line effect overlay */
+.animate-table-scanline {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: linear-gradient(90deg,
+        transparent 0%,
+        rgba(59, 130, 246, 0.4) 20%,
+        rgba(59, 130, 246, 0.8) 50%,
+        rgba(59, 130, 246, 0.4) 80%,
+        transparent 100%
+    );
+    animation: tableScanline 0.6s ease-out forwards;
+    pointer-events: none;
+    z-index: 10;
+}
+
+@keyframes tableScanline {
+    0% {
+        top: 0;
+        opacity: 1;
+    }
+    100% {
+        top: 100%;
+        opacity: 0;
+    }
+}
+
+body.dark-mode .animate-table-scanline {
+    background: linear-gradient(90deg,
+        transparent 0%,
+        rgba(96, 165, 250, 0.4) 20%,
+        rgba(96, 165, 250, 0.8) 50%,
+        rgba(96, 165, 250, 0.4) 80%,
+        transparent 100%
+    );
+}
+
+/* Table complete state */
+.animate-table-complete thead tr,
+.animate-table-complete tbody tr {
+    animation: none;
+    opacity: 1;
+    transform: none;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   METRICS BLOCKS - Counter roll-up with trend animation
+   ───────────────────────────────────────────────────────────────────────────── */
+
+.animate-metrics-container {
+    opacity: 0;
+    animation: metricsContainerReveal 0.15s ease-out forwards;
+}
+
+@keyframes metricsContainerReveal {
+    0% { opacity: 0; }
+    100% { opacity: 1; }
+}
+
+.animate-metric {
+    opacity: 0;
+    transform: scale(0.9) translateY(8px);
+    animation: metricReveal 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+
+@keyframes metricReveal {
+    0% {
+        opacity: 0;
+        transform: scale(0.9) translateY(8px);
+    }
+    100% {
+        opacity: 1;
+        transform: scale(1) translateY(0);
+    }
+}
+
+/* Metric label fades in first */
+.animate-metric .metric-label,
+.animate-metric .progressive-metric-label {
+    opacity: 0;
+    animation: metricLabelReveal 0.2s ease-out forwards;
+}
+
+@keyframes metricLabelReveal {
+    0% { opacity: 0; }
+    100% { opacity: 1; }
+}
+
+/* Metric value has counter effect via JS - this is the container animation */
+.animate-metric .metric-value,
+.animate-metric .progressive-metric-value {
+    opacity: 0;
+    animation: metricValueReveal 0.25s ease-out forwards;
+    animation-delay: 0.1s;
+}
+
+@keyframes metricValueReveal {
+    0% {
+        opacity: 0;
         transform: translateY(4px);
     }
     100% {
@@ -5313,14 +5437,158 @@ body.dark-mode .progressive-text {
     }
 }
 
-/* Metric counter animation */
-.typewriter-metric {
+/* Trend indicator slides in from its direction */
+.animate-metric .trend-indicator,
+.animate-metric .metric-trend {
     opacity: 0;
-    transform: scale(0.95);
-    animation: metricReveal 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    animation: trendReveal 0.2s ease-out forwards;
+    animation-delay: 0.3s;
 }
 
-@keyframes metricReveal {
+.animate-metric .trend-up {
+    transform: translateY(6px);
+}
+
+.animate-metric .trend-down {
+    transform: translateY(-6px);
+}
+
+@keyframes trendReveal {
+    0% {
+        opacity: 0;
+    }
+    100% {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* Metric complete state */
+.animate-metrics-complete .animate-metric,
+.animate-metrics-complete .metric-label,
+.animate-metrics-complete .metric-value,
+.animate-metrics-complete .trend-indicator {
+    animation: none;
+    opacity: 1;
+    transform: none;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   LIST BLOCKS - Cascade reveal with bullet pop
+   ───────────────────────────────────────────────────────────────────────────── */
+
+.animate-list {
+    position: relative;
+}
+
+.animate-list-item {
+    opacity: 0;
+    transform: translateX(-8px);
+    animation: listItemReveal 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes listItemReveal {
+    0% {
+        opacity: 0;
+        transform: translateX(-8px);
+    }
+    100% {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+/* Bullet/number marker pops in */
+.animate-list-item::marker {
+    animation: bulletPop 0.15s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+
+/* List title if present */
+.animate-list-title {
+    opacity: 0;
+    animation: listTitleReveal 0.2s ease-out forwards;
+}
+
+@keyframes listTitleReveal {
+    0% {
+        opacity: 0;
+        transform: translateY(-4px);
+    }
+    100% {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* List complete state */
+.animate-list-complete .animate-list-item,
+.animate-list-complete .animate-list-title {
+    animation: none;
+    opacity: 1;
+    transform: none;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   CODE BLOCKS - Terminal print with glow
+   ───────────────────────────────────────────────────────────────────────────── */
+
+.animate-code {
+    opacity: 0;
+    transform: translateY(4px);
+    animation: codeBlockReveal 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes codeBlockReveal {
+    0% {
+        opacity: 0;
+        transform: translateY(4px);
+        box-shadow: 0 0 0 rgba(59, 130, 246, 0);
+    }
+    50% {
+        opacity: 1;
+        transform: translateY(0);
+        box-shadow: 0 0 20px rgba(59, 130, 246, 0.15);
+    }
+    100% {
+        opacity: 1;
+        transform: translateY(0);
+        box-shadow: none;
+    }
+}
+
+body.dark-mode .animate-code {
+    animation-name: codeBlockRevealDark;
+}
+
+@keyframes codeBlockRevealDark {
+    0% {
+        opacity: 0;
+        transform: translateY(4px);
+        box-shadow: 0 0 0 rgba(96, 165, 250, 0);
+    }
+    50% {
+        opacity: 1;
+        transform: translateY(0);
+        box-shadow: 0 0 20px rgba(96, 165, 250, 0.2);
+    }
+    100% {
+        opacity: 1;
+        transform: translateY(0);
+        box-shadow: none;
+    }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   CHART BLOCKS - Draw-in animation
+   ───────────────────────────────────────────────────────────────────────────── */
+
+.animate-chart {
+    opacity: 0;
+    transform: scale(0.95);
+    animation: chartReveal 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes chartReveal {
     0% {
         opacity: 0;
         transform: scale(0.95);
@@ -5331,72 +5599,163 @@ body.dark-mode .progressive-text {
     }
 }
 
-/* Code block reveal with subtle glow */
-.typewriter-code {
+/* SVG path drawing animation for line charts */
+.animate-chart-path {
+    stroke-dasharray: 1000;
+    stroke-dashoffset: 1000;
+    animation: chartPathDraw 0.8s ease-out forwards;
+    animation-delay: 0.2s;
+}
+
+@keyframes chartPathDraw {
+    to {
+        stroke-dashoffset: 0;
+    }
+}
+
+/* Bar chart bars grow from bottom */
+.animate-chart-bar {
+    transform-origin: bottom center;
+    transform: scaleY(0);
+    animation: chartBarGrow 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+
+@keyframes chartBarGrow {
+    0% {
+        transform: scaleY(0);
+    }
+    100% {
+        transform: scaleY(1);
+    }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   ALERT BLOCKS - Attention-appropriate animations
+   ───────────────────────────────────────────────────────────────────────────── */
+
+.animate-alert {
     opacity: 0;
-    filter: blur(2px);
-    animation: codeReveal 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    transform: translateY(-8px);
+    animation: alertReveal 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
-@keyframes codeReveal {
+@keyframes alertReveal {
     0% {
         opacity: 0;
-        filter: blur(2px);
-    }
-    50% {
-        opacity: 1;
-        filter: blur(0);
-        box-shadow: 0 0 20px rgba(59, 130, 246, 0.15);
+        transform: translateY(-8px);
     }
     100% {
         opacity: 1;
-        filter: blur(0);
-        box-shadow: none;
-    }
-}
-
-/* Dark mode code reveal glow */
-body.dark-mode .typewriter-code {
-    animation-name: codeRevealDark;
-}
-
-@keyframes codeRevealDark {
-    0% {
-        opacity: 0;
-        filter: blur(2px);
-    }
-    50% {
-        opacity: 1;
-        filter: blur(0);
-        box-shadow: 0 0 20px rgba(96, 165, 250, 0.2);
-    }
-    100% {
-        opacity: 1;
-        filter: blur(0);
-        box-shadow: none;
-    }
-}
-
-/* Progressive block animation enhancement */
-.progressive-block.typewriter-animate {
-    animation: progressiveBlockReveal 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-}
-
-@keyframes progressiveBlockReveal {
-    0% {
-        opacity: 0;
-        filter: blur(4px);
-        transform: translateY(6px);
-    }
-    100% {
-        opacity: 1;
-        filter: blur(0);
         transform: translateY(0);
     }
 }
 
+/* Success alert - green border pulse */
+.animate-alert-success {
+    animation: alertReveal 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards,
+               successPulse 0.4s ease-out 0.2s;
+}
+
+@keyframes successPulse {
+    0% {
+        box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.4);
+    }
+    100% {
+        box-shadow: 0 0 0 8px rgba(34, 197, 94, 0);
+    }
+}
+
+/* Warning alert - subtle shake */
+.animate-alert-warning {
+    animation: alertReveal 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards,
+               warningShake 0.3s ease-out 0.2s;
+}
+
+@keyframes warningShake {
+    0%, 100% { transform: translateX(0); }
+    25% { transform: translateX(-2px); }
+    75% { transform: translateX(2px); }
+}
+
+/* Error alert - red flash */
+.animate-alert-error {
+    animation: alertReveal 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards,
+               errorFlash 0.3s ease-out 0.2s;
+}
+
+@keyframes errorFlash {
+    0% {
+        box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4);
+    }
+    50% {
+        box-shadow: 0 0 12px 2px rgba(239, 68, 68, 0.3);
+    }
+    100% {
+        box-shadow: none;
+    }
+}
+
+/* Info alert - blue left border grow */
+.animate-alert-info {
+    border-left-width: 0;
+    animation: alertReveal 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards,
+               infoBorderGrow 0.3s ease-out 0.2s forwards;
+}
+
+@keyframes infoBorderGrow {
+    0% {
+        border-left-width: 0;
+    }
+    100% {
+        border-left-width: 4px;
+    }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   PROGRESSIVE BLOCKS - During polling
+   ───────────────────────────────────────────────────────────────────────────── */
+
+.progressive-block.animate-reveal {
+    opacity: 0;
+    transform: translateY(8px);
+    animation: progressiveReveal 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes progressiveReveal {
+    0% {
+        opacity: 0;
+        transform: translateY(8px);
+    }
+    100% {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   UTILITY CLASSES
+   ───────────────────────────────────────────────────────────────────────────── */
+
+/* Skip all animations */
+.animate-skip,
+.animate-skip * {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+    filter: none !important;
+}
+
+/* Animation complete - clean up */
+.animate-complete {
+    animation: none;
+    opacity: 1;
+    transform: none;
+    filter: none;
+}
+
 /* === REDUCED MOTION SUPPORT === */
 @media (prefers-reduced-motion: reduce) {
+    /* Neural flow animations */
     .thought-node,
     .node-core,
     .node-connector,
@@ -5405,12 +5764,25 @@ body.dark-mode .typewriter-code {
     .thinking-trail span,
     .node-tooltip,
     .expansion-panel,
-    .typewriter-word,
-    .typewriter-block,
-    .typewriter-table-row,
-    .typewriter-metric,
-    .typewriter-code,
-    .progressive-block.typewriter-animate {
+    /* Content reveal animations */
+    .animate-word,
+    .animate-table,
+    .animate-table thead tr,
+    .animate-table tbody tr,
+    .animate-table-scanline,
+    .animate-metric,
+    .animate-list-item,
+    .animate-list-title,
+    .animate-code,
+    .animate-chart,
+    .animate-chart-path,
+    .animate-chart-bar,
+    .animate-alert,
+    .animate-alert-success,
+    .animate-alert-warning,
+    .animate-alert-error,
+    .animate-alert-info,
+    .progressive-block.animate-reveal {
         animation: none !important;
         transition: none !important;
     }
@@ -5429,16 +5801,25 @@ body.dark-mode .typewriter-code {
         stroke-dashoffset: 0;
     }
 
-    /* Typewriter elements show instantly with reduced motion */
-    .typewriter-word,
-    .typewriter-block,
-    .typewriter-table-row,
-    .typewriter-metric,
-    .typewriter-code,
-    .progressive-block.typewriter-animate {
+    /* All animated content shows instantly with reduced motion */
+    .animate-word,
+    .animate-table thead tr,
+    .animate-table tbody tr,
+    .animate-metric,
+    .animate-list-item,
+    .animate-list-title,
+    .animate-code,
+    .animate-chart,
+    .animate-alert,
+    .progressive-block.animate-reveal {
         opacity: 1;
         filter: none;
         transform: none;
+    }
+
+    /* Hide scan-line effect entirely */
+    .animate-table-scanline {
+        display: none;
     }
 }
 
