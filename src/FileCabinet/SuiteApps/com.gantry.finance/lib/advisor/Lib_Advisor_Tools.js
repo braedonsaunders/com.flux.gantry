@@ -411,6 +411,64 @@ define([
         return formatted;
     }
 
+    /**
+     * Get similar classification names for fuzzy suggestions
+     * When a classification isn't found, suggest similar names from all dimensions
+     * @param {string} term - The search term that wasn't found
+     * @returns {Array} Array of suggestion objects with name, dimension_type, and similarity
+     */
+    function getSimilarClassifications(term) {
+        try {
+            // Get all active classifications from all dimensions
+            const query = `
+                SELECT * FROM (
+                    SELECT name, 'class' AS dimension_type FROM classification WHERE isinactive = 'F'
+                    UNION ALL
+                    SELECT name, 'department' AS dimension_type FROM department WHERE isinactive = 'F'
+                    UNION ALL
+                    SELECT name, 'location' AS dimension_type FROM location WHERE isinactive = 'F'
+                    UNION ALL
+                    SELECT name, 'subsidiary' AS dimension_type FROM subsidiary WHERE isinactive = 'F'
+                ) WHERE ROWNUM <= 200
+            `;
+
+            const result = QueryExecutor.executeQuery(query);
+            if (!result.success || !result.rows || result.rows.length === 0) {
+                return [];
+            }
+
+            // Simple fuzzy matching - find names that share significant characters
+            const termLower = term.toLowerCase();
+            const suggestions = result.rows
+                .map(row => {
+                    const nameLower = row.name.toLowerCase();
+                    // Calculate similarity: check for substring match or character overlap
+                    let score = 0;
+                    if (nameLower.includes(termLower) || termLower.includes(nameLower)) {
+                        score = 80;
+                    } else {
+                        // Count matching characters
+                        const termChars = new Set(termLower.split(''));
+                        const nameChars = new Set(nameLower.split(''));
+                        let matches = 0;
+                        for (const c of termChars) {
+                            if (nameChars.has(c)) matches++;
+                        }
+                        score = Math.round((matches / Math.max(termChars.size, nameChars.size)) * 100);
+                    }
+                    return { name: row.name, dimension_type: row.dimension_type, score };
+                })
+                .filter(s => s.score >= 30) // Only include reasonably similar matches
+                .sort((a, b) => b.score - a.score)
+                .slice(0, 5); // Top 5 suggestions
+
+            return suggestions;
+        } catch (e) {
+            log.debug('getSimilarClassifications failed', { error: e.message });
+            return [];
+        }
+    }
+
     // ═══════════════════════════════════════════════════════════════════════════
     // TIER 1: DISCOVERY TOOLS
     // Find entities, accounts, classifications
@@ -630,11 +688,19 @@ Examples: "Travel expenses", "4000", "Bank accounts", "COGS"`,
 
         resolve_classification: {
             name: 'resolve_classification',
-            shortDescription: 'Find class/department/location/subsidiary → returns ID',
+            shortDescription: 'Find class/department/location/subsidiary → returns ID (use dimension="auto" when unsure)',
             category: 'discovery',
             description: `Find a NetSuite classification dimension: class, location, department, or subsidiary.
 Use when user mentions business segments, categories, regions, divisions, or departments.
-Examples: "Hotels", "West Coast", "Engineering", "US subsidiary"`,
+Examples: "Hotels", "West Coast", "Engineering", "US subsidiary"
+
+IMPORTANT: Use dimension="auto" (default) to search ALL dimensions simultaneously.
+Only specify a specific dimension if you are CERTAIN which type it is.
+- "auto" searches: class, department, location, subsidiary (RECOMMENDED)
+- "class" = accounting classification/category
+- "department" = organizational department (Engineering, Sales, Shop, etc.)
+- "location" = physical location
+- "subsidiary" = legal entity`,
             parameters: {
                 type: 'object',
                 properties: {
@@ -645,7 +711,7 @@ Examples: "Hotels", "West Coast", "Engineering", "US subsidiary"`,
                     dimension: {
                         type: 'string',
                         enum: ['class', 'location', 'department', 'subsidiary', 'auto'],
-                        description: 'Which dimension to search. Use "auto" to search all.'
+                        description: 'Which dimension to search. ALWAYS use "auto" unless you are certain of the type.'
                     }
                 },
                 required: ['term']
@@ -655,64 +721,95 @@ Examples: "Hotels", "West Coast", "Engineering", "US subsidiary"`,
                 // FIXED: Use escapeSqlLike for LIKE clauses to prevent SQL injection via wildcards
                 const termLike = escapeSqlLike(args.term).toLowerCase();
                 const termLower = term.toLowerCase();
-                const dimension = args.dimension || 'auto';
+                // FIXED: Default to 'auto' and force 'auto' if specific dimension returns no results
+                let dimension = args.dimension || 'auto';
 
-                // Build queries for each dimension
-                const queries = [];
+                function runSearch(searchDimension) {
+                    const queries = [];
 
-                if (dimension === 'auto' || dimension === 'class') {
-                    queries.push(`
-                        SELECT id, name, 'class' AS dimension_type
-                        FROM classification
-                        WHERE isinactive = 'F'
-                            AND LOWER(name) LIKE '%${termLike}%' ESCAPE '\\'
-                    `);
+                    if (searchDimension === 'auto' || searchDimension === 'class') {
+                        queries.push(`
+                            SELECT id, name, 'class' AS dimension_type,
+                                CASE WHEN LOWER(name) = '${termLower}' THEN 100
+                                     WHEN LOWER(name) LIKE '${termLike}%' ESCAPE '\\' THEN 90
+                                     ELSE 70 END AS match_score
+                            FROM classification
+                            WHERE isinactive = 'F'
+                                AND LOWER(name) LIKE '%${termLike}%' ESCAPE '\\'
+                        `);
+                    }
+
+                    if (searchDimension === 'auto' || searchDimension === 'location') {
+                        queries.push(`
+                            SELECT id, name, 'location' AS dimension_type,
+                                CASE WHEN LOWER(name) = '${termLower}' THEN 100
+                                     WHEN LOWER(name) LIKE '${termLike}%' ESCAPE '\\' THEN 90
+                                     ELSE 70 END AS match_score
+                            FROM location
+                            WHERE isinactive = 'F'
+                                AND LOWER(name) LIKE '%${termLike}%' ESCAPE '\\'
+                        `);
+                    }
+
+                    if (searchDimension === 'auto' || searchDimension === 'department') {
+                        queries.push(`
+                            SELECT id, name, 'department' AS dimension_type,
+                                CASE WHEN LOWER(name) = '${termLower}' THEN 100
+                                     WHEN LOWER(name) LIKE '${termLike}%' ESCAPE '\\' THEN 90
+                                     ELSE 70 END AS match_score
+                            FROM department
+                            WHERE isinactive = 'F'
+                                AND LOWER(name) LIKE '%${termLike}%' ESCAPE '\\'
+                        `);
+                    }
+
+                    if (searchDimension === 'auto' || searchDimension === 'subsidiary') {
+                        queries.push(`
+                            SELECT id, name, 'subsidiary' AS dimension_type,
+                                CASE WHEN LOWER(name) = '${termLower}' THEN 100
+                                     WHEN LOWER(name) LIKE '${termLike}%' ESCAPE '\\' THEN 90
+                                     ELSE 70 END AS match_score
+                            FROM subsidiary
+                            WHERE isinactive = 'F'
+                                AND LOWER(name) LIKE '%${termLike}%' ESCAPE '\\'
+                        `);
+                    }
+
+                    const unionQuery = `SELECT * FROM (${queries.join(' UNION ALL ')} ORDER BY match_score DESC, name) WHERE ROWNUM <= 10`;
+                    return QueryExecutor.executeQuery(unionQuery);
                 }
 
-                if (dimension === 'auto' || dimension === 'location') {
-                    queries.push(`
-                        SELECT id, name, 'location' AS dimension_type
-                        FROM location
-                        WHERE isinactive = 'F'
-                            AND LOWER(name) LIKE '%${termLike}%' ESCAPE '\\'
-                    `);
+                // First search with requested dimension
+                let result = runSearch(dimension);
+                let formatted = formatResult(result, 'resolve_classification');
+
+                // AUTO-RETRY: If specific dimension returned 0 results, try 'auto' to search all
+                if (formatted.rowCount === 0 && dimension !== 'auto') {
+                    log.debug('resolve_classification auto-retry', {
+                        originalDimension: dimension,
+                        term: args.term,
+                        retryingWithAuto: true
+                    });
+                    result = runSearch('auto');
+                    formatted = formatResult(result, 'resolve_classification');
+                    formatted.autoExpanded = true;
+                    formatted.originalDimension = dimension;
                 }
-
-                if (dimension === 'auto' || dimension === 'department') {
-                    queries.push(`
-                        SELECT id, name, 'department' AS dimension_type
-                        FROM department
-                        WHERE isinactive = 'F'
-                            AND LOWER(name) LIKE '%${termLike}%' ESCAPE '\\'
-                    `);
-                }
-
-                if (dimension === 'auto' || dimension === 'subsidiary') {
-                    queries.push(`
-                        SELECT id, name, 'subsidiary' AS dimension_type
-                        FROM subsidiary
-                        WHERE isinactive = 'F'
-                            AND LOWER(name) LIKE '%${termLike}%' ESCAPE '\\'
-                    `);
-                }
-
-                const unionQuery = queries.join(' UNION ALL ') + `
-                    ORDER BY
-                        CASE WHEN LOWER(name) = '${termLower}' THEN 0 ELSE 1 END,
-                        name
-                    FETCH FIRST 10 ROWS ONLY
-                `;
-
-                const result = QueryExecutor.executeQuery(unionQuery);
-                const formatted = formatResult(result, 'resolve_classification');
 
                 if (formatted.success && formatted.rowCount > 0) {
                     formatted.found = true;
                     formatted.classifications = formatted.rows;
                     formatted.bestMatch = formatted.rows[0];
+                    // Add helpful context about what was found
+                    if (formatted.rows.length > 1) {
+                        const types = [...new Set(formatted.rows.map(r => r.dimension_type))];
+                        formatted.foundInDimensions = types;
+                    }
                 } else {
                     formatted.found = false;
                     formatted.message = `No classification found matching "${args.term}"`;
+                    // FUZZY SUGGESTIONS: Try to get similar names from all dimensions
+                    formatted.suggestions = getSimilarClassifications(args.term);
                 }
 
                 return formatted;
@@ -1905,9 +2002,10 @@ ALWAYS use this for: "income statement", "P&L", "profit and loss", "show me P&L"
                     `AND tl.class = ${args.class_id}` : '';
 
                 // Get fiscal year start dynamically
+                // FIXED: Use ROWNUM instead of FETCH FIRST in subquery (SuiteQL doesn't support FETCH FIRST)
                 let dateFilter = '';
                 if (period === 'ytd') {
-                    dateFilter = `AND ap.startdate >= (SELECT startdate FROM accountingperiod WHERE isyear = 'T' AND startdate <= SYSDATE ORDER BY startdate DESC FETCH FIRST 1 ROWS ONLY)`;
+                    dateFilter = `AND ap.startdate >= (SELECT startdate FROM (SELECT startdate FROM accountingperiod WHERE isyear = 'T' AND startdate <= SYSDATE ORDER BY startdate DESC) WHERE ROWNUM <= 1)`;
                 } else if (period === 'this_month') {
                     dateFilter = `AND ap.startdate >= TRUNC(SYSDATE, 'MM')`;
                 } else if (period === 'last_month') {
@@ -2178,9 +2276,10 @@ Supports filtering by minimum revenue, subsidiary, class, and can include AR agi
                 else if (args.sort_by === 'outstanding_ar') orderBy = 'outstanding_ar DESC';
                 else if (args.sort_by === 'customer_name') orderBy = 'customer_name ASC';
 
+                // FIXED: Use ROWNUM instead of FETCH FIRST in subquery (SuiteQL doesn't support FETCH FIRST)
                 let dateFilter = '';
                 if (period === 'ytd') {
-                    dateFilter = `AND ap.startdate >= (SELECT startdate FROM accountingperiod WHERE isyear = 'T' AND startdate <= SYSDATE ORDER BY startdate DESC FETCH FIRST 1 ROWS ONLY)`;
+                    dateFilter = `AND ap.startdate >= (SELECT startdate FROM (SELECT startdate FROM accountingperiod WHERE isyear = 'T' AND startdate <= SYSDATE ORDER BY startdate DESC) WHERE ROWNUM <= 1)`;
                 } else if (period === 'this_quarter') {
                     dateFilter = `AND ap.startdate >= TRUNC(SYSDATE, 'Q')`;
                 } else if (period === 'this_month') {
@@ -2352,9 +2451,10 @@ Supports filtering by minimum spend, subsidiary, class, department, and can incl
                 else if (args.sort_by === 'outstanding_ap') orderBy = 'outstanding_ap DESC';
                 else if (args.sort_by === 'vendor_name') orderBy = 'vendor_name ASC';
 
+                // FIXED: Use ROWNUM instead of FETCH FIRST in subquery (SuiteQL doesn't support FETCH FIRST)
                 let dateFilter = '';
                 if (period === 'ytd') {
-                    dateFilter = `AND ap.startdate >= (SELECT startdate FROM accountingperiod WHERE isyear = 'T' AND startdate <= SYSDATE ORDER BY startdate DESC FETCH FIRST 1 ROWS ONLY)`;
+                    dateFilter = `AND ap.startdate >= (SELECT startdate FROM (SELECT startdate FROM accountingperiod WHERE isyear = 'T' AND startdate <= SYSDATE ORDER BY startdate DESC) WHERE ROWNUM <= 1)`;
                 } else if (period === 'this_quarter') {
                     dateFilter = `AND ap.startdate >= TRUNC(SYSDATE, 'Q')`;
                 } else if (period === 'this_month') {
