@@ -412,29 +412,19 @@
 
                 this.draw();
 
-                // VISIBLE energy glow that builds as particles arrive
+                // OUTER GLOW ONLY - builds as particles arrive
                 if (chatInput && progress > 0.2) {
-                    // Energy builds from particle arrivals
                     const energyLevel = Math.min(1, accumulatedEnergy);
-                    // Also factor in overall progress for smoothness
                     const progressGlow = this.easeOutCubic((progress - 0.2) / 0.8);
-                    const combinedIntensity = Math.max(energyLevel, progressGlow * 0.7);
+                    const intensity = Math.max(energyLevel, progressGlow * 0.7);
 
-                    // Pulsing effect as particles hit
-                    const pulse = Math.sin(arrivedCount * 0.3) * 0.15 + 1;
-
-                    // VISIBLE glow - multiple layers
-                    const innerGlow = 8 + 12 * combinedIntensity * pulse;
-                    const outerGlow = 20 + 25 * combinedIntensity;
-                    const glowOpacity = 0.2 + 0.35 * combinedIntensity;
-
+                    // Soft, diffused OUTER glow - no inset
                     chatInput.style.boxShadow = `
-                        0 0 ${innerGlow}px rgba(99, 102, 241, ${glowOpacity}),
-                        0 0 ${outerGlow}px rgba(139, 92, 246, ${glowOpacity * 0.5}),
-                        0 0 ${outerGlow * 1.5}px rgba(6, 182, 212, ${glowOpacity * 0.25}),
-                        inset 0 0 ${4 + 6 * combinedIntensity}px rgba(99, 102, 241, ${0.1 + 0.15 * combinedIntensity})
+                        0 0 ${15 + 20 * intensity}px rgba(99, 102, 241, ${0.15 + 0.25 * intensity}),
+                        0 0 ${35 + 45 * intensity}px rgba(99, 102, 241, ${0.08 + 0.15 * intensity}),
+                        0 0 ${60 + 70 * intensity}px rgba(139, 92, 246, ${0.04 + 0.1 * intensity})
                     `;
-                    chatInput.style.borderColor = `rgba(99, 102, 241, ${0.3 + 0.4 * combinedIntensity})`;
+                    chatInput.style.borderColor = `rgba(99, 102, 241, ${0.4 + 0.35 * intensity})`;
                 }
 
                 if (progress < 1) {
@@ -454,57 +444,51 @@
             }
 
             const shineStart = Date.now();
-            const energy = initialEnergy || 1;
 
             const animateShine = () => {
                 const elapsed = Date.now() - shineStart;
                 const progress = Math.min(elapsed / this.config.shineDuration, 1);
 
-                // Phase 1 (0-20%): BLOOM - dramatic expansion
-                // Phase 2 (20-50%): PEAK - maximum intensity with pulse
-                // Phase 3 (50-100%): CRYSTALLIZE - settle into focus ring
+                // Phase 1 (0-15%): BLOOM - glow expands outward
+                // Phase 2 (15-40%): PEAK - maximum intensity
+                // Phase 3 (40-100%): SETTLE - fade to CSS focus state
 
-                let bloom, ringSize, glowIntensity, ringOpacity;
+                let glowIntensity, ringSize, ringOpacity;
 
-                if (progress < 0.2) {
-                    // BLOOM: Explosive expansion
-                    const t = progress / 0.2;
-                    bloom = this.easeOutCubic(t);
-                    glowIntensity = 0.6 + 0.4 * bloom;
-                    ringSize = 15 * bloom; // Ring expands outward
-                    ringOpacity = 0.4 * bloom;
-                } else if (progress < 0.5) {
-                    // PEAK: Maximum glow with subtle pulse
-                    const t = (progress - 0.2) / 0.3;
-                    const pulse = Math.sin(t * Math.PI * 4) * 0.1 + 1;
-                    bloom = 1;
+                if (progress < 0.15) {
+                    // BLOOM: Glow expands outward
+                    const t = this.easeOutCubic(progress / 0.15);
+                    glowIntensity = 0.7 + 0.3 * t;
+                    ringSize = 10 * t;
+                    ringOpacity = 0.2 * t;
+                } else if (progress < 0.4) {
+                    // PEAK: Full intensity with subtle pulse
+                    const t = (progress - 0.15) / 0.25;
+                    const pulse = Math.sin(t * Math.PI * 2) * 0.06 + 1;
                     glowIntensity = 1 * pulse;
-                    ringSize = 15 - 5 * this.easeInOutQuad(t); // Ring starts contracting
-                    ringOpacity = 0.4 - 0.1 * t;
+                    ringSize = 10 - 3 * this.easeInOutQuad(t);
+                    ringOpacity = 0.2;
                 } else {
-                    // CRYSTALLIZE: Contract and solidify into focus ring
-                    const t = (progress - 0.5) / 0.5;
-                    const ease = this.easeInOutCubic(t);
-                    bloom = 1 - ease * 0.7; // Glow contracts
-                    glowIntensity = 1 - ease * 0.85; // Intensity reduces
-                    ringSize = 10 - 7 * ease; // Ring shrinks to final 3px
-                    ringOpacity = 0.3 - 0.26 * ease; // Settles to 0.04
+                    // SETTLE: Contract to final focus state
+                    const t = this.easeInOutCubic((progress - 0.4) / 0.6);
+                    glowIntensity = 1 - t * 0.92;
+                    ringSize = 7 - 4 * t; // Settles to 3px
+                    ringOpacity = 0.2 - 0.16 * t; // Settles to 0.04
                 }
 
-                // Multi-layer glow for richness
-                const innerGlow = 10 + 20 * glowIntensity * bloom;
-                const midGlow = 25 + 30 * glowIntensity * bloom;
-                const outerGlow = 40 + 40 * glowIntensity * bloom;
+                // OUTER GLOW ONLY - soft diffused layers, no inset
+                const glow1 = 20 + 40 * glowIntensity;
+                const glow2 = 45 + 55 * glowIntensity;
+                const glow3 = 80 + 80 * glowIntensity;
 
                 chatInput.style.boxShadow = `
-                    0 0 ${innerGlow}px rgba(99, 102, 241, ${0.15 + 0.4 * glowIntensity}),
-                    0 0 ${midGlow}px rgba(139, 92, 246, ${0.1 + 0.25 * glowIntensity}),
-                    0 0 ${outerGlow}px rgba(6, 182, 212, ${0.05 + 0.15 * glowIntensity}),
-                    0 0 0 ${ringSize}px rgba(99, 102, 241, ${ringOpacity}),
-                    inset 0 0 ${8 * bloom}px rgba(255, 255, 255, ${0.1 * bloom})
+                    0 0 ${glow1}px rgba(99, 102, 241, ${0.12 + 0.28 * glowIntensity}),
+                    0 0 ${glow2}px rgba(99, 102, 241, ${0.06 + 0.16 * glowIntensity}),
+                    0 0 ${glow3}px rgba(139, 92, 246, ${0.03 + 0.09 * glowIntensity}),
+                    0 0 0 ${ringSize}px rgba(99, 102, 241, ${ringOpacity})
                 `;
 
-                chatInput.style.borderColor = `rgba(99, 102, 241, ${0.25 + 0.45 * glowIntensity})`;
+                chatInput.style.borderColor = `rgba(99, 102, 241, ${0.35 + 0.4 * glowIntensity})`;
 
                 if (progress < 1) {
                     this.animationId = requestAnimationFrame(animateShine);
