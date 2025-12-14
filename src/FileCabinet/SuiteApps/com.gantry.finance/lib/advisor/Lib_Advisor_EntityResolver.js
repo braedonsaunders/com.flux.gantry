@@ -24,8 +24,9 @@
 define([
     'N/log',
     './Lib_Advisor_QueryExecutor',
-    './Lib_Advisor_AIProviders'
-], function(log, QueryExecutor, AIProviders) {
+    './Lib_Advisor_AIProviders',
+    './Lib_Advisor_Utils'
+], function(log, QueryExecutor, AIProviders, Utils) {
     'use strict';
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -67,60 +68,9 @@ define([
         MINIMUM_ACCEPTABLE_CONFIDENCE: 0.50
     };
 
-    /**
-     * Escape SQL string to prevent injection
-     */
-    function escapeSql(str) {
-        if (!str) return '';
-        return String(str).replace(/'/g, "''");
-    }
-
-    /**
-     * Escape SQL LIKE pattern characters (% and _) in addition to SQL escaping
-     * Use this when the value will be used in a LIKE clause
-     */
-    function escapeSqlLike(str) {
-        if (!str) return '';
-        // First escape SQL quotes, then escape LIKE wildcards
-        return String(str).replace(/'/g, "''").replace(/%/g, '\\%').replace(/_/g, '\\_');
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════════
-    // UTILITY FUNCTIONS
-    // ═══════════════════════════════════════════════════════════════════════════
-
-    /**
-     * Calculate Levenshtein distance for fuzzy matching
-     */
-    function levenshteinDistance(a, b) {
-        if (a.length === 0) return b.length;
-        if (b.length === 0) return a.length;
-        
-        const matrix = [];
-        for (let i = 0; i <= b.length; i++) {
-            matrix[i] = [i];
-        }
-        for (let j = 0; j <= a.length; j++) {
-            matrix[0][j] = j;
-        }
-        
-        for (let i = 1; i <= b.length; i++) {
-            for (let j = 1; j <= a.length; j++) {
-                if (b.charAt(i - 1) === a.charAt(j - 1)) {
-                    matrix[i][j] = matrix[i - 1][j - 1];
-                } else {
-                    matrix[i][j] = Math.min(
-                        matrix[i - 1][j - 1] + 1,
-                        matrix[i][j - 1] + 1,
-                        matrix[i - 1][j] + 1
-                    );
-                }
-            }
-        }
-        
-        return matrix[b.length][a.length];
-    }
-
+    // Use centralized SQL escaping from Utils
+    const escapeSql = Utils.escapeSql;
+    const escapeSqlLike = Utils.escapeSqlLike;
 
     // ═══════════════════════════════════════════════════════════════════════════
     // PRIMARY RESOLUTION INTERFACE (v2 - LLM-driven)
@@ -453,126 +403,6 @@ define([
         return getEntitiesOfType(entityType, searchTerm);
     }
 
-    /**
-     * Legacy: Find matches in entity list
-     */
-    function findMatches(term, entities) {
-        const termLower = term.toLowerCase();
-        const exact = [];
-        const fuzzy = [];
-        
-        for (const entity of entities) {
-            const nameLower = (entity.name || '').toLowerCase();
-            const codeLower = (entity.code || '').toLowerCase();
-            
-            // Exact match
-            if (nameLower === termLower || codeLower === termLower) {
-                exact.push(entity);
-                continue;
-            }
-            
-            // Starts with
-            if (nameLower.startsWith(termLower) || codeLower.startsWith(termLower)) {
-                fuzzy.push({ entity, matchType: 'starts_with', score: 90 });
-                continue;
-            }
-            
-            // Contains
-            if (nameLower.includes(termLower)) {
-                fuzzy.push({ entity, matchType: 'contains', score: 70 });
-                continue;
-            }
-            
-            // Levenshtein
-            if (termLower.length >= 3) {
-                const distance = levenshteinDistance(termLower, nameLower.substring(0, termLower.length + 2));
-                if (distance <= 2) {
-                    fuzzy.push({ entity, matchType: 'similar', score: 50 - distance * 10 });
-                }
-            }
-        }
-        
-        fuzzy.sort((a, b) => b.score - a.score);
-        return { exact, fuzzy };
-    }
-
-    /**
-     * Legacy: Get similar entities
-     */
-    function getSimilarEntities(term, entities, limit) {
-        const termLower = term.toLowerCase();
-        const scored = entities.map(entity => {
-            const nameLower = (entity.name || '').toLowerCase();
-            let score = 1000;
-            
-            if (nameLower.includes(termLower)) {
-                score = 10;
-            } else if (nameLower.startsWith(termLower[0])) {
-                score = 100 + levenshteinDistance(termLower, nameLower.substring(0, termLower.length + 3));
-            } else {
-                score = 200 + levenshteinDistance(termLower, nameLower.substring(0, Math.min(termLower.length + 3, nameLower.length)));
-            }
-            
-            return { entity, score };
-        });
-        
-        scored.sort((a, b) => a.score - b.score);
-        return scored.slice(0, limit).map(s => s.entity);
-    }
-
-
-    // ═══════════════════════════════════════════════════════════════════════════
-    // UTILITY: PARSE ENTITY MARKERS FROM ENRICHED MESSAGE
-    // ═══════════════════════════════════════════════════════════════════════════
-
-    /**
-     * Parse entity markers from an enriched message
-     * Markers are in format: [[TYPE:ID:NAME]]
-     * @param {string} enrichedMessage - Message with entity markers
-     * @returns {object} { entities: [...], cleanMessage: string }
-     */
-    function parseEntityMarkers(enrichedMessage) {
-        const entities = [];
-        const markerPattern = /\[\[(\w+):(\d+):([^\]]+)\]\]/g;
-        
-        let match;
-        while ((match = markerPattern.exec(enrichedMessage)) !== null) {
-            entities.push({
-                type: match[1].toLowerCase(),
-                id: parseInt(match[2], 10),
-                name: match[3],
-                marker: match[0]
-            });
-        }
-        
-        // Create clean message with entity names instead of markers
-        let cleanMessage = enrichedMessage;
-        for (const entity of entities) {
-            cleanMessage = cleanMessage.replace(entity.marker, entity.name);
-        }
-        
-        return { entities, cleanMessage };
-    }
-
-    /**
-     * Convert parsed entity markers to resolvedEntities format
-     * @param {array} entities - Array from parseEntityMarkers
-     * @returns {object} Object keyed by entity name
-     */
-    function markersToResolvedEntities(entities) {
-        const resolved = {};
-        for (const entity of entities) {
-            const key = entity.name.toLowerCase().replace(/[^a-z0-9]/g, '_');
-            resolved[key] = {
-                id: entity.id,
-                name: entity.name,
-                type: entity.type
-            };
-        }
-        return resolved;
-    }
-
-
     // ═══════════════════════════════════════════════════════════════════════════
     // PUBLIC API
     // ═══════════════════════════════════════════════════════════════════════════
@@ -583,20 +413,11 @@ define([
         resolveEntityWithFallback: resolveEntityWithFallback,
         executeEntityResolution: executeEntityResolution,
 
-        // ═══ Marker utilities ═══
-        parseEntityMarkers: parseEntityMarkers,
-        markersToResolvedEntities: markersToResolvedEntities,
-
         // ═══ Entity queries ═══
         getEntitiesOfType: getEntitiesOfType,
         searchEntitiesDirectly: searchEntitiesDirectly,
 
-        // ═══ Matching utilities ═══
-        findMatches: findMatches,
-        getSimilarEntities: getSimilarEntities,
-        levenshteinDistance: levenshteinDistance,
-
-        // ═══ Utilities ═══
+        // ═══ Configuration ═══
         ENTITY_CONFIG: ENTITY_CONFIG
     };
 });

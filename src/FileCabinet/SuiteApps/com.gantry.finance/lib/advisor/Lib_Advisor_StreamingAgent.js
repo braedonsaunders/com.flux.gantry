@@ -40,22 +40,120 @@ define([
         INTENT: 'intent',
         SELECT: 'select',
         INVOKE: 'invoke',
-        REFLECT: 'reflect',   // ReAct pattern - evaluate results and decide next action
-        SYNTHESIZE: 'synthesize', // NEW: LLM writes custom SQL when tools fail
-        RESPOND: 'respond',   // Merged analyze+format with data access
-        COMPLETE: 'complete',
-        // Legacy phases kept for backward compatibility
-        ANALYZE: 'analyze',
-        LOAD_DATA: 'load_data',
-        FORMAT: 'format'
+        REFLECT: 'reflect',      // ReAct pattern - evaluate results and decide next action
+        SYNTHESIZE: 'synthesize', // LLM writes custom SQL when tools fail
+        RESPOND: 'respond',      // Generate final response with data access
+        COMPLETE: 'complete'
     };
 
-    // Use fast/cheap tier for all lightweight calls
-    const FAST_TIER = 1;
+    // ═══════════════════════════════════════════════════════════════════════════
+    // ADAPTIVE INTELLIGENCE ROUTING (AIR)
+    // Task-aware model selection for optimal cost/quality balance
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    const TIERS = {
+        FAST: 1,      // Fast/cheap: Haiku, GPT-4o-mini, Gemini Flash - for classification, params
+        BALANCED: 2,  // Balanced: Sonnet, GPT-4o, Gemini Flash - for reasoning
+        PREMIUM: 3    // Premium: Opus, GPT-4, Gemini Pro - for complex analysis, SQL synthesis
+    };
+
+    /**
+     * Get the appropriate tier for a phase based on task requirements
+     * @param {string} phase - The SCA phase
+     * @param {Object} state - Current state for adaptive decisions
+     * @returns {number} The tier (1, 2, or 3)
+     */
+    function getTierForPhase(phase, state) {
+        switch (phase) {
+            // Fast tier - simple classification and structured output
+            case 'intent':
+            case 'select':
+            case 'invoke':
+            case 'recovery':
+                return TIERS.FAST;
+
+            // Balanced tier - requires reasoning about results
+            case 'reflect':
+                return TIERS.BALANCED;
+
+            // Premium tier - complex SQL generation needs best model
+            case 'synthesize':
+                return TIERS.PREMIUM;
+
+            // Adaptive - based on response complexity
+            case 'respond':
+                return getAdaptiveRespondTier(state);
+
+            default:
+                return TIERS.FAST;
+        }
+    }
+
+    /**
+     * Calculate response complexity to determine RESPOND tier
+     * Higher complexity = better model for quality answer
+     * @param {Object} state - Current state
+     * @returns {number} Complexity score (0-10)
+     */
+    function calculateResponseComplexity(state) {
+        let score = 0;
+
+        // Data volume factor
+        const totalRows = (state.dataReferences || []).reduce((sum, ref) =>
+            sum + (ref?.summary?.rowCount || 0), 0);
+        if (totalRows > 100) score += 2;
+        else if (totalRows > 20) score += 1;
+
+        // Data source diversity (multiple tools = more complex synthesis)
+        const successfulTools = (state.toolInvocations || []).filter(t => t.success).length;
+        if (successfulTools > 2) score += 2;
+        else if (successfulTools > 1) score += 1;
+
+        // Dashboard data (rich metrics require better synthesis)
+        if ((state.dataReferences || []).some(r => r.isDashboard)) score += 1;
+
+        // Question complexity from INTENT phase
+        if (state.intent) {
+            if (state.intent.intent === 'comparison') score += 2;
+            if (state.intent.intent === 'reporting') score += 1;
+            if ((state.intent.semantic_topics || []).length > 2) score += 1;
+        }
+
+        // Synthesized SQL (already complex path)
+        if (state.synthesizedQuery) score += 2;
+
+        // Multiple entities resolved (cross-entity analysis)
+        if (Object.keys(state.resolvedEntities || {}).length > 1) score += 1;
+
+        return Math.min(score, 10); // Cap at 10
+    }
+
+    /**
+     * Get tier for RESPOND phase based on complexity
+     * @param {Object} state - Current state
+     * @returns {number} The tier (1, 2, or 3)
+     */
+    function getAdaptiveRespondTier(state) {
+        const complexity = calculateResponseComplexity(state);
+
+        // Premium for complex multi-source analysis
+        if (complexity >= 5) {
+            log.debug('AIR: Premium tier for RESPOND', { complexity });
+            return TIERS.PREMIUM;
+        }
+
+        // Balanced for moderate complexity
+        if (complexity >= 2) {
+            log.debug('AIR: Balanced tier for RESPOND', { complexity });
+            return TIERS.BALANCED;
+        }
+
+        // Fast for simple summaries
+        log.debug('AIR: Fast tier for RESPOND', { complexity });
+        return TIERS.FAST;
+    }
+
     const MAX_TOOL_INVOCATIONS = 5;
-    const MAX_DATA_LOADS = 3;
-    const MAX_ANALYZE_ITERATIONS = 3;  // Prevent analyze loops
-    const MAX_FORMAT_ITERATIONS = 2;   // Prevent format loops
     const MAX_REFLECT_ITERATIONS = 3;  // Prevent infinite reflection loops
     const MAX_SYNTHESIZE_ITERATIONS = 3; // Max SQL generation/correction attempts
 
@@ -104,8 +202,9 @@ Analyze the SEMANTIC MEANING of the question. Extract:
 2. Any named entities mentioned (customer names, vendor names, account names, etc.)
 3. The time scope if mentioned
 4. Semantic topics - determine what financial domains this question relates to based on meaning (e.g., receivables, payables, revenue, expenses, cash management, profitability)
+5. A brief user-friendly narration (max 10 words) describing what you're analyzing, specific to their question
 
-Response format: {"intent": "category", "entities": ["named items"], "time_scope": "ytd|mtd|last_30|custom|none", "needs_resolution": true|false, "references_previous": true|false, "semantic_topics": ["topic1", "topic2"]}`;
+Response format: {"intent": "category", "entities": ["named items"], "time_scope": "ytd|mtd|last_30|custom|none", "needs_resolution": true|false, "references_previous": true|false, "semantic_topics": ["topic1", "topic2"], "userNarration": "Looking into your customer revenue..."}`;
 
     const SELECT_PROMPT = `Select tools to answer this {intent} question. Respond with JSON only.
 {date_context}
@@ -131,7 +230,9 @@ DRILL-DOWN QUERIES:
 - Use load_cached_data with the ref_id from the previous dashboard response and the collection_name
 - Collection names are listed in previous responses (e.g., weeklyProjection, arBuckets, apBuckets, criticalWeeks, topCustomers)
 
-Response format: {"tools": ["tool1", "tool2"], "reasoning": "brief explanation"}`;
+Also include a brief userNarration (max 10 words) describing what data you'll fetch, specific to their question.
+
+Response format: {"tools": ["tool1", "tool2"], "reasoning": "brief explanation", "userNarration": "I'll analyze your customer transactions..."}`;
 
     const INVOKE_PROMPT = `Call this tool. Respond with JSON only.
 {date_context}
@@ -173,44 +274,6 @@ CRITICAL SEMANTIC GUIDANCE:
    - When in doubt, use "auto" - it searches everything!
 
 Response format: {"tool": "{tool_name}", "args": {...}}`;
-
-    const ANALYZE_PROMPT = `Analyze this data to answer the user's question. Respond with JSON only.
-
-QUESTION: "{question}"
-
-{data_references}
-
-Instructions:
-- Use the data summaries and previews provided
-- If you need more rows, respond with: {"action": "load_data", "refId": "ref_xxx", "start": 0, "end": 19}
-- If you have enough data, provide your analysis
-- Be specific with numbers and percentages
-
-Response format (if ready to answer):
-{"analysis": "Your detailed analysis here", "key_findings": ["finding1", "finding2"]}
-
-Response format (if need more data):
-{"action": "load_data", "refId": "ref_xxx", "start": 0, "end": 19}`;
-
-    const FORMAT_PROMPT = `Format this analysis as rich content blocks. Respond with JSON only.
-
-ANALYSIS:
-{analysis}
-
-KEY FINDINGS:
-{findings}
-
-DATA AVAILABLE:
-{data_summary}
-
-Create blocks array with these types:
-- text: {"type": "text", "content": "narrative text"}
-- metrics: {"type": "metrics", "items": [{"label": "X", "value": "$Y", "trend": "up|down|neutral"}]}
-- table: {"type": "table", "title": "X", "headers": [...], "rows": [[...], ...]}
-- list: {"type": "list", "title": "Key Insights", "items": ["item1", "item2"]}
-
-Response format:
-{"title": "Response Title", "summary": "One line summary", "blocks": [...]}`;
 
     // ═══════════════════════════════════════════════════════════════════════════
     // REFLECT PROMPT - ReAct Pattern (Reasoning + Acting)
@@ -271,37 +334,8 @@ Response format (JSON only):
     "clarification_question": "question_if_clarify",
     "explanation": "explanation_if_give_up"
   }},
-  "reasoning": "Why this action is the best choice"
-}}`;
-
-    // ═══════════════════════════════════════════════════════════════════════════
-    // LLM-DRIVEN TOOL RECOVERY PROMPT
-    // When tools fail, let LLM suggest alternatives based on context
-    // ═══════════════════════════════════════════════════════════════════════════
-
-    const RECOVERY_PROMPT = `A tool failed while answering a financial question. Suggest an alternative approach.
-
-QUESTION: "{question}"
-FAILED TOOL: {failed_tool}
-ERROR: {error}
-
-AVAILABLE TOOLS:
-{tool_list}
-
-ALREADY TRIED:
-{already_tried}
-
-Based on the error and question context, suggest:
-1. An alternative tool that could provide similar information
-2. Modified parameters that might work better
-3. Whether to give up and explain the limitation to the user
-
-Response format (JSON only):
-{{
-  "suggestion": "TRY_ALTERNATIVE|MODIFY_PARAMS|GIVE_UP",
-  "alternative_tool": "tool_name or null",
-  "reasoning": "Why this alternative might work",
-  "user_message": "Message to show user if giving up"
+  "reasoning": "Why this action is the best choice",
+  "userNarration": "Brief insight about what you found (max 10 words, specific to data)"
 }}`;
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -498,34 +532,139 @@ CRITICAL INSTRUCTIONS - READ CAREFULLY:
    - {{{{data.stats.total_outstanding_ar:currency}}}} → sum of outstanding_ar column
    - {{{{data.stats.total_revenue:currency}}}} → sum of total_revenue column
 
-3. DO NOT create table blocks - tables are rendered separately.
-   Only create: text, metrics, list blocks.
+3. OUTPUT FORMAT - Return a JSON object with a "blocks" array.
+   You decide the sequence and mix of blocks to tell the best story.
 
-4. For metrics, ALWAYS use tokens for the value field:
-   {{"label": "Total Revenue", "value": "{{{{data.stats.total:currency}}}}"}}
+4. AVAILABLE BLOCK TYPES:
+   - text: {{"type": "text", "content": "Markdown text with {{{{tokens}}}}"}}
+   - metrics: {{"type": "metrics", "items": [{{"label": "Max 4 Words", "value": "{{{{token}}}}", "trend": "up|down|neutral"}}]}}
+   - table: {{"type": "table", "dataRef": "ref_xxx", "title": "Optional Title"}}
+   - chart: {{"type": "chart", "chartType": "bar|line|pie", "dataRef": "ref_xxx", "x": "column_name", "y": "column_name", "title": "Optional"}}
+   - list: {{"type": "list", "title": "Optional Title", "items": ["item1", "item2"]}}
 
-5. In narrative, cite specific data points using tokens:
-   "{{{{data.rows[0].customer_name}}}} leads with {{{{data.rows[0].total_revenue:currency}}}}."
+5. BLOCK GUIDELINES:
+   - Start with context (text block explaining what you're showing)
+   - Place metrics early for quick insights (max 4 metrics)
+   - Interleave text explanations between data visualizations
+   - Use tables for detailed data (≥5 rows), charts for patterns/comparisons (<15 items)
+   - Charts: pie for composition, bar for comparison, line for trends over time
+   - End with findings/recommendations (list block)
+   - Aim for 3-7 blocks total for a natural narrative flow
 
-6. TRUNCATION AWARENESS: If a data section shows "truncated: true", inform the user:
-   - Mention that more data may be available
-   - Suggest they can ask for more results or use more specific filters
-   - Example: "Showing the top 500 results. Ask if you'd like to see more or apply filters."
+6. For metrics:
+   - Labels must be MAX 4 WORDS (e.g., "Total Revenue", "Outstanding Balance")
+   - ALWAYS use tokens for the value field
 
+7. For charts:
+   - Use the dataRef from the DATA section header (e.g., "ref_cust_abc123")
+   - x and y must be actual column names from the data
+   - Only create charts when the data has appropriate structure
+
+8. For tables:
+   - Reference the dataRef to include the full data
+   - Tables will show all rows with pagination
+
+9. TRUNCATION AWARENESS: If a data section shows "truncated: true", mention that more data is available.
+
+═══════════════════════════════════════════════════════════════════════════════
+⚠️ CRITICAL: OUTPUT STRUCTURE
+
+You MUST return EXACTLY this structure: {{"blocks": [...]}}
+
+The ONLY valid top-level key is "blocks" - an array of typed block objects.
+Any other top-level keys will cause a validation error.
+
+✅ CORRECT STRUCTURE:
+{{"blocks": [{{"type": "text", "content": "..."}}, ...]}}
 ═══════════════════════════════════════════════════════════════════════════════
 
 Response format (JSON only):
 {{
-  "narrative": "Analysis text referencing {{{{tokens}}}} for specific values",
-  "metrics": [
-    {{"label": "Total Revenue", "value": "{{{{data.stats.total:currency}}}}", "trend": "neutral"}},
-    {{"label": "Average", "value": "{{{{data.stats.average:currency}}}}", "trend": "neutral"}}
-  ],
-  "findings": [
-    "Insight about {{{{data.rows[0].customer_name}}}} with {{{{data.rows[0].total_revenue:currency}}}}",
-    "Another key finding with data reference"
+  "blocks": [
+    {{"type": "text", "content": "Here's an analysis of your data for {{{{data.rows[0].customer_name}}}}..."}},
+    {{"type": "metrics", "items": [
+      {{"label": "Total Revenue", "value": "{{{{data.stats.total:currency}}}}", "trend": "up"}},
+      {{"label": "Record Count", "value": "{{{{data.stats.count}}}}", "trend": "neutral"}}
+    ]}},
+    {{"type": "text", "content": "The distribution shows interesting patterns:"}},
+    {{"type": "chart", "chartType": "bar", "dataRef": "ref_xxx", "x": "customer_name", "y": "total_revenue", "title": "Revenue by Customer"}},
+    {{"type": "table", "dataRef": "ref_xxx", "title": "Detailed Breakdown"}},
+    {{"type": "list", "title": "Key Findings", "items": [
+      "{{{{data.rows[0].customer_name}}}} leads with {{{{data.rows[0].total_revenue:currency}}}}",
+      "Top 3 account for majority of total"
+    ]}}
   ]
 }}`;
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // RESPOND_BLOCKS_SCHEMA - JSON Schema for structured output enforcement
+    // Used by providers that support schema-constrained JSON generation
+    // ═══════════════════════════════════════════════════════════════════════════
+    const RESPOND_BLOCKS_SCHEMA = {
+        name: 'advisor_response',
+        schema: {
+            type: 'object',
+            properties: {
+                blocks: {
+                    type: 'array',
+                    items: {
+                        type: 'object',
+                        properties: {
+                            type: {
+                                type: 'string',
+                                enum: ['text', 'metrics', 'table', 'chart', 'list']
+                            },
+                            content: { type: 'string' },
+                            items: {
+                                type: 'array',
+                                items: {
+                                    oneOf: [
+                                        { type: 'string' },
+                                        {
+                                            type: 'object',
+                                            properties: {
+                                                label: { type: 'string' },
+                                                value: { type: 'string' },
+                                                trend: { type: 'string', enum: ['up', 'down', 'neutral'] }
+                                            },
+                                            required: ['label', 'value']
+                                        }
+                                    ]
+                                }
+                            },
+                            title: { type: 'string' },
+                            dataRef: { type: 'string' },
+                            chartType: { type: 'string', enum: ['bar', 'line', 'pie'] },
+                            x: { type: 'string' },
+                            y: { type: 'string' }
+                        },
+                        required: ['type']
+                    }
+                }
+            },
+            required: ['blocks']
+        }
+    };
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // SCHEMA_CORRECTION_PROMPT - Used when LLM returns wrong format
+    // ═══════════════════════════════════════════════════════════════════════════
+    const SCHEMA_CORRECTION_PROMPT = `Your previous response used an invalid format.
+
+You MUST return EXACTLY: {"blocks": [...]}
+
+The ONLY valid top-level key is "blocks" containing an array of typed block objects.
+
+Correct structure:
+{
+  "blocks": [
+    {"type": "text", "content": "your analysis text here"},
+    {"type": "metrics", "items": [{"label": "Label", "value": "value", "trend": "neutral"}]},
+    {"type": "list", "title": "Key Takeaways", "items": ["item 1", "item 2"]}
+  ]
+}
+
+Now provide the response using ONLY the blocks array format:`;
 
     // ═══════════════════════════════════════════════════════════════════════════
     // TOOL MANIFEST - Now delegated to Tools.js (single source of truth)
@@ -943,6 +1082,15 @@ Response format (JSON only):
                 enabled: true                  // Whether to attempt synthesis before giving up
             },
 
+            // ═══════════════════════════════════════════════════════════════════════
+            // Progressive Narration - User-friendly status messages during processing
+            // ═══════════════════════════════════════════════════════════════════════
+            narration: {
+                text: null,                    // Current narration text to display
+                phase: null,                   // Phase that generated this narration
+                timestamp: null                // When narration was set
+            },
+
             // Follow-up context - preserve data from previous exchanges
             previousDataRefs: sessionContext?.lastDataRefs || null
         };
@@ -1144,7 +1292,7 @@ Response format (JSON only):
 
         try {
             const response = AIProviders.callAI(prompt, {
-                tier: FAST_TIER,
+                tier: getTierForPhase('intent', state),
                 temperature: 0.1,
                 maxTokens: 200,
                 jsonMode: true,
@@ -1158,6 +1306,13 @@ Response format (JSON only):
             if (parsed && parsed.intent) {
                 state.intent = parsed;
                 state.phase = PHASES.SELECT;
+
+                // Store progressive narration for frontend display
+                state.narration = {
+                    text: parsed.userNarration || 'Analyzing your question...',
+                    phase: 'intent',
+                    timestamp: Date.now()
+                };
 
                 // Update step with results
                 upsertThinkingStep(state, 'intent', {
@@ -1333,7 +1488,7 @@ Response format (JSON only):
 
         try {
             const response = AIProviders.callAI(prompt, {
-                tier: FAST_TIER,
+                tier: getTierForPhase('select', state),
                 temperature: 0.1,
                 maxTokens: 200,
                 jsonMode: true,
@@ -1381,6 +1536,13 @@ Response format (JSON only):
                 }
 
                 state.phase = PHASES.INVOKE;
+
+                // Store progressive narration for frontend display
+                state.narration = {
+                    text: parsed.userNarration || 'Gathering your financial data...',
+                    phase: 'select',
+                    timestamp: Date.now()
+                };
 
                 upsertThinkingStep(state, 'select', {
                     title: 'Selecting analysis tools',
@@ -1609,9 +1771,8 @@ Response format (JSON only):
         // Check if we have more tools to invoke
         const invokedCount = state.toolInvocations.length;
         if (invokedCount >= state.selectedTools.length) {
-            // All tools invoked - ADD TABLE BLOCKS IMMEDIATELY before moving to reflect
-            // This enables progressive rendering: tables appear BEFORE LLM generates narrative
-            addProgressiveTableBlocks(state);
+            // All tools invoked - tables will appear in final response, not progressively
+            // Progressive narration provides context during processing instead
 
             // ═══════════════════════════════════════════════════════════════════════
             // ReAct Pattern: Move to REFLECT phase to evaluate results
@@ -1685,7 +1846,7 @@ Response format (JSON only):
 
         try {
             const response = AIProviders.callAI(prompt, {
-                tier: FAST_TIER,
+                tier: getTierForPhase('invoke', state),
                 temperature: 0.1,
                 maxTokens: 300,
                 jsonMode: true,
@@ -1858,6 +2019,22 @@ Response format (JSON only):
                 fromCache: fromCache,
                 duration: totalDuration
             });
+
+            // Update progressive narration with template based on results
+            const toolDisplayName = Tools.getToolDisplayName(toolName, args);
+            if (result.success && invocation.rowCount > 0) {
+                state.narration = {
+                    text: 'Found ' + invocation.rowCount.toLocaleString() + ' results from ' + toolDisplayName.toLowerCase() + '...',
+                    phase: 'invoke',
+                    timestamp: Date.now()
+                };
+            } else if (result.success) {
+                state.narration = {
+                    text: 'Processed ' + toolDisplayName.toLowerCase() + '...',
+                    phase: 'invoke',
+                    timestamp: Date.now()
+                };
+            }
 
             return { success: true, nextPhase: PHASES.INVOKE }; // Continue with next tool
 
@@ -2175,6 +2352,13 @@ Response format (JSON only):
             // Handle the decided action
             const nextPhase = handleReflectAction(state, parsed);
 
+            // Store progressive narration for frontend display
+            state.narration = {
+                text: parsed.userNarration || 'Analyzing patterns in your data...',
+                phase: 'reflect',
+                timestamp: Date.now()
+            };
+
             // Update thinking step
             upsertThinkingStep(state, 'reflect', {
                 title: 'Evaluating results',
@@ -2383,9 +2567,9 @@ Response format (JSON only):
         });
 
         try {
-            // Call LLM to generate SQL
+            // Call LLM to generate SQL (PREMIUM tier for complex SQL synthesis)
             const response = AIProviders.callAI(prompt, {
-                tier: FAST_TIER,
+                tier: getTierForPhase('synthesize', state),
                 temperature: 0.2,
                 maxTokens: 1500,
                 jsonMode: true,
@@ -2513,10 +2697,7 @@ Response format (JSON only):
                 duration: queryDuration
             });
 
-            // Add progressive table block for immediate rendering
-            if (queryResult.rows && queryResult.rows.length > 0) {
-                addProgressiveTableBlocks(state);
-            }
+            // Tables will appear in final response - progressive narration provides context
 
             // Proceed to RESPOND with the data
             state.phase = PHASES.RESPOND;
@@ -2695,7 +2876,7 @@ Response format (JSON only):
 
         try {
             const response = AIProviders.callAI(prompt, {
-                tier: FAST_TIER,
+                tier: getTierForPhase('recovery', state),
                 temperature: 0.2,
                 maxTokens: 300,
                 jsonMode: true,
@@ -3021,7 +3202,7 @@ Response format (JSON only):
             // This provides LLM with formatted metrics, insights, and collection info
             // ═══════════════════════════════════════════════════════════════════════
             if (data.isDashboard && data.textSummary) {
-                let section = `═══ DASHBOARD INTELLIGENCE: ${data.dashboardName || toolName} ═══\n\n`;
+                let section = `═══ DASHBOARD INTELLIGENCE: ${data.dashboardName || toolName} [dataRef: "${ref.refId}"] ═══\n\n`;
                 section += data.textSummary;
 
                 // Add token reference guide for dashboard metrics
@@ -3055,7 +3236,7 @@ Response format (JSON only):
             // STANDARD DATA PROCESSING (non-dashboard tools)
             // ═══════════════════════════════════════════════════════════════════════
             const totalRows = data.range?.total || data.rows.length;
-            let section = `═══ DATA: ${toolName} (${totalRows} total rows) ═══\n`;
+            let section = `═══ DATA: ${toolName} (${totalRows} total rows) [dataRef: "${ref.refId}"] ═══\n`;
             section += `Columns: ${data.columns.join(', ')}\n\n`;
 
             // Compute aggregate stats from schema
@@ -3100,6 +3281,7 @@ Response format (JSON only):
             section += `\nTOKEN REFERENCE GUIDE:\n`;
             section += `  Rows: {{data.rows[N].column_name}} or {{data.rows[N].column_name:currency}}\n`;
             section += `  Stats: {{data.stats.total}}, {{data.stats.count}}, {{data.stats.average}}\n`;
+            section += `  For table/chart blocks: use dataRef "${ref.refId}"\n`;
 
             // List columns with numeric stats
             if (summary.schema) {
@@ -3167,33 +3349,6 @@ Response format (JSON only):
             count: primaryStats.count,
             column: primaryCol
         };
-    }
-
-    /**
-     * Resolve all {{tokens}} in the LLM response with real data values
-     */
-    function resolveAllTokens(parsed, state) {
-        const result = {
-            narrative: resolveTokensInText(parsed.narrative || '', state),
-            metrics: [],
-            findings: []
-        };
-
-        // Resolve metrics
-        if (parsed.metrics && Array.isArray(parsed.metrics)) {
-            result.metrics = parsed.metrics.map(m => ({
-                label: m.label || '',
-                value: resolveTokensInText(String(m.value || ''), state),
-                trend: m.trend || 'neutral'
-            }));
-        }
-
-        // Resolve findings
-        if (parsed.findings && Array.isArray(parsed.findings)) {
-            result.findings = parsed.findings.map(f => resolveTokensInText(String(f), state));
-        }
-
-        return result;
     }
 
     /**
@@ -3362,6 +3517,278 @@ Response format (JSON only):
             return value.toLocaleString('en-US');
         }
         return String(value);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // BLOCK SEQUENCE ARCHITECTURE - LLM-controlled block ordering
+    // Allows LLM to interleave text, metrics, tables, charts in any order
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Resolve a blocks array from LLM response
+     * Processes each block type and resolves tokens, builds tables/charts from dataRefs
+     * @param {Array} blocks - Array of block objects from LLM
+     * @param {Object} state - Current state with dataReferences
+     * @returns {Array} Resolved blocks ready for rendering
+     */
+    function resolveBlockSequence(blocks, state) {
+        if (!blocks || !Array.isArray(blocks)) {
+            log.debug('resolveBlockSequence: invalid blocks input', { blocks: typeof blocks });
+            return [];
+        }
+
+        const resolvedBlocks = [];
+        const maxCharts = 2; // Limit charts per response for performance
+        let chartCount = 0;
+
+        for (const block of blocks) {
+            try {
+                const validatedBlock = validateBlock(block);
+                if (!validatedBlock) {
+                    log.debug('resolveBlockSequence: invalid block skipped', { block: JSON.stringify(block).substring(0, 100) });
+                    continue;
+                }
+
+                switch (validatedBlock.type) {
+                    case 'text':
+                        resolvedBlocks.push({
+                            type: 'text',
+                            content: resolveTokensInText(validatedBlock.content || '', state)
+                        });
+                        break;
+
+                    case 'metrics':
+                        if (validatedBlock.items && Array.isArray(validatedBlock.items)) {
+                            const resolvedItems = validatedBlock.items.slice(0, 4).map(m => ({
+                                label: String(m.label || '').substring(0, 50),
+                                value: resolveTokensInText(String(m.value || ''), state),
+                                trend: ['up', 'down', 'neutral'].includes(m.trend) ? m.trend : 'neutral'
+                            }));
+                            if (resolvedItems.length > 0) {
+                                resolvedBlocks.push({
+                                    type: 'metrics',
+                                    items: resolvedItems
+                                });
+                            }
+                        }
+                        break;
+
+                    case 'list':
+                        if (validatedBlock.items && Array.isArray(validatedBlock.items)) {
+                            const resolvedItems = validatedBlock.items.map(item =>
+                                resolveTokensInText(String(item), state)
+                            );
+                            resolvedBlocks.push({
+                                type: 'list',
+                                title: validatedBlock.title || undefined,
+                                items: resolvedItems
+                            });
+                        }
+                        break;
+
+                    case 'table':
+                        const tableBlock = buildTableBlockFromRef(validatedBlock, state);
+                        if (tableBlock) {
+                            resolvedBlocks.push(tableBlock);
+                        }
+                        break;
+
+                    case 'chart':
+                        if (chartCount < maxCharts) {
+                            const chartBlock = buildChartBlock(validatedBlock, state);
+                            if (chartBlock) {
+                                resolvedBlocks.push(chartBlock);
+                                chartCount++;
+                            }
+                        } else {
+                            log.debug('resolveBlockSequence: max charts reached, skipping', { chartCount });
+                        }
+                        break;
+
+                    default:
+                        log.debug('resolveBlockSequence: unknown block type', { type: validatedBlock.type });
+                }
+            } catch (e) {
+                log.error('resolveBlockSequence: error processing block', {
+                    blockType: block?.type,
+                    error: e.message
+                });
+            }
+        }
+
+        return resolvedBlocks;
+    }
+
+    /**
+     * Validate a block object has required fields
+     * @param {Object} block - Block to validate
+     * @returns {Object|null} Validated block or null if invalid
+     */
+    function validateBlock(block) {
+        if (!block || typeof block !== 'object') return null;
+        if (!block.type || typeof block.type !== 'string') return null;
+
+        const validTypes = ['text', 'metrics', 'list', 'table', 'chart'];
+        if (!validTypes.includes(block.type)) return null;
+
+        // Type-specific validation
+        switch (block.type) {
+            case 'text':
+                if (!block.content && block.content !== '') return null;
+                break;
+            case 'metrics':
+                if (!block.items || !Array.isArray(block.items)) return null;
+                break;
+            case 'list':
+                if (!block.items || !Array.isArray(block.items)) return null;
+                break;
+            case 'table':
+                if (!block.dataRef) return null;
+                break;
+            case 'chart':
+                if (!block.dataRef || !block.chartType) return null;
+                if (!block.x || !block.y) return null;
+                break;
+        }
+
+        return block;
+    }
+
+    /**
+     * Find a dataRef by its refId
+     * @param {string} refId - The reference ID to find
+     * @param {Object} state - Current state with dataReferences
+     * @returns {Object|null} The dataRef object or null
+     */
+    function findDataRefByRefId(refId, state) {
+        if (!refId || !state.dataReferences) return null;
+        return state.dataReferences.find(ref => ref.refId === refId) || null;
+    }
+
+    /**
+     * Build a table block from a dataRef
+     * @param {Object} block - Block with dataRef and optional title
+     * @param {Object} state - Current state with dataReferences
+     * @returns {Object|null} Table block or null if dataRef invalid
+     */
+    function buildTableBlockFromRef(block, state) {
+        const dataRef = findDataRefByRefId(block.dataRef, state);
+        if (!dataRef) {
+            log.debug('buildTableBlockFromRef: dataRef not found', { refId: block.dataRef });
+            return null;
+        }
+
+        try {
+            // Load data from cache
+            const data = Cache.loadRows(dataRef.requestId || state.requestId, dataRef.refId, 0, 49);
+            if (!data || !data.rows || data.rows.length === 0) {
+                log.debug('buildTableBlockFromRef: no data for ref', { refId: block.dataRef });
+                return null;
+            }
+
+            const summary = dataRef.summary || {};
+            const toolDisplayName = block.title || getToolDisplayName(summary.tool) || 'Results';
+
+            // Build table block with REAL data (same structure as progressive tables)
+            const displayColumns = data.columns.slice(0, 8);
+            return {
+                type: 'table',
+                title: toolDisplayName,
+                dataRef: dataRef.refId,
+                totalRows: data.totalRows || data.rows.length,
+                headers: displayColumns,
+                rows: data.rows.slice(0, 25).map(row => {
+                    return displayColumns.map(col => formatCellValue(row[col], col));
+                }),
+                summary: {
+                    rowCount: data.totalRows || data.rows.length,
+                    columns: data.columns.length,
+                    aggregates: summary.aggregates
+                },
+                // Mark as LLM-placed to distinguish from progressive tables
+                llmPlaced: true
+            };
+        } catch (e) {
+            log.error('buildTableBlockFromRef: error building table', {
+                refId: block.dataRef,
+                error: e.message
+            });
+            return null;
+        }
+    }
+
+    /**
+     * Build a chart block from a dataRef
+     * @param {Object} block - Block with dataRef, chartType, x, y columns
+     * @param {Object} state - Current state with dataReferences
+     * @returns {Object|null} Chart block or null if invalid
+     */
+    function buildChartBlock(block, state) {
+        const dataRef = findDataRefByRefId(block.dataRef, state);
+        if (!dataRef) {
+            log.debug('buildChartBlock: dataRef not found', { refId: block.dataRef });
+            return null;
+        }
+
+        try {
+            // Load data from cache (limit rows for chart performance)
+            const data = Cache.loadRows(dataRef.requestId || state.requestId, dataRef.refId, 0, 49);
+            if (!data || !data.rows || data.rows.length === 0) {
+                log.debug('buildChartBlock: no data for ref', { refId: block.dataRef });
+                return null;
+            }
+
+            // Validate x and y columns exist
+            const xCol = block.x;
+            const yCol = block.y;
+            if (!data.columns.includes(xCol) || !data.columns.includes(yCol)) {
+                log.debug('buildChartBlock: invalid columns', {
+                    x: xCol,
+                    y: yCol,
+                    availableColumns: data.columns
+                });
+                return null;
+            }
+
+            // Validate chart type
+            const validChartTypes = ['bar', 'line', 'pie'];
+            const chartType = validChartTypes.includes(block.chartType) ? block.chartType : 'bar';
+
+            // Limit data points for chart readability
+            const maxDataPoints = chartType === 'pie' ? 10 : 20;
+            const chartRows = data.rows.slice(0, maxDataPoints);
+
+            // Build chart data structure (Plotly-compatible)
+            const chartData = {
+                labels: chartRows.map(row => formatCellValue(row[xCol], xCol)),
+                values: chartRows.map(row => {
+                    const val = row[yCol];
+                    return typeof val === 'number' ? val : parseFloat(val) || 0;
+                })
+            };
+
+            // Determine title
+            const title = block.title || `${yCol} by ${xCol}`;
+
+            return {
+                type: 'chart',
+                chartType: chartType,
+                title: title,
+                data: chartData,
+                config: {
+                    xKey: xCol,
+                    yKey: yCol
+                },
+                dataRef: dataRef.refId
+            };
+        } catch (e) {
+            log.error('buildChartBlock: error building chart', {
+                refId: block.dataRef,
+                chartType: block.chartType,
+                error: e.message
+            });
+            return null;
+        }
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -3554,358 +3981,6 @@ Response:`;
 
         // Fallback if LLM fails
         return "Hello! I'm your financial assistant. I can help you explore your NetSuite data - ask me about revenue, expenses, customers, vendors, aging reports, or any financial metrics!";
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════════
-    // LEGACY PHASE FUNCTIONS (kept for backward compatibility)
-    // ═══════════════════════════════════════════════════════════════════════════
-
-    /**
-     * Phase 4: ANALYZE - Analyze data with lightweight context
-     * LEGACY: Now bypassed in favor of RESPOND phase
-     */
-    function executeAnalyzePhase(state) {
-        const phaseStart = Date.now();
-        state.analyzeIterations++;
-
-        // Circuit breaker: prevent infinite analyze loops
-        if (state.analyzeIterations >= MAX_ANALYZE_ITERATIONS) {
-            log.audit('SCA Analyze circuit breaker triggered', {
-                iterations: state.analyzeIterations,
-                requestId: state.requestId
-            });
-
-            state.analysis = synthesizeFromDataRefs(state);
-            state.phase = PHASES.FORMAT;
-
-            upsertThinkingStep(state, 'analyze', {
-                title: 'Analyzing results',
-                phase: 'analyze',
-                status: 'complete',
-                context: {
-                    circuitBreaker: true,
-                    iterations: state.analyzeIterations
-                }
-            });
-
-            return { success: true, nextPhase: PHASES.FORMAT };
-        }
-
-        // Check if we have any data to analyze
-        if (state.dataReferences.length === 0 && state.toolInvocations.every(t => !t.success)) {
-            // No data - provide a fallback response
-            state.analysis = {
-                analysis: "I wasn't able to find the data needed to answer your question. Please try rephrasing or providing more specific details.",
-                key_findings: []
-            };
-            state.phase = PHASES.FORMAT;
-
-            upsertThinkingStep(state, 'analyze', {
-                title: 'Analyzing results',
-                phase: 'analyze',
-                status: 'complete',
-                context: {
-                    noData: true
-                }
-            });
-
-            return { success: true, nextPhase: PHASES.FORMAT };
-        }
-
-        // Build data references for prompt
-        const dataRefStrings = state.dataReferences.map(ref =>
-            Cache.formatReferenceForPrompt(ref)
-        ).join('\n\n');
-
-        const prompt = ANALYZE_PROMPT
-            .replace('{question}', state.message)
-            .replace('{data_references}', dataRefStrings || 'No data available');
-
-        // Update thinking step (same step, just update status)
-        upsertThinkingStep(state, 'analyze', {
-            title: 'Analyzing results',
-            phase: 'analyze',
-            status: 'active',
-            context: {
-                dataRefs: state.dataReferences.length,
-                iteration: state.analyzeIterations
-            }
-        });
-
-        try {
-            const response = AIProviders.callAI(prompt, {
-                tier: FAST_TIER,
-                temperature: 0.2,
-                maxTokens: 1000,
-                jsonMode: true,
-                purpose: 'SCA:analyze'
-            });
-
-            const parsed = parseJsonResponse(response?.text);
-            const duration = Date.now() - phaseStart;
-            state.phaseTimings.analyze = (state.phaseTimings.analyze || 0) + duration;
-
-            // Check for load_data request
-            if (parsed?.action === 'load_data' && parsed.refId) {
-                if (state.iteration < MAX_DATA_LOADS) {
-                    state.phase = PHASES.LOAD_DATA;
-                    state.pendingDataLoad = parsed;
-
-                    upsertThinkingStep(state, 'analyze', {
-                        title: 'Analyzing results',
-                        phase: 'analyze',
-                        status: 'active',
-                        context: {
-                            loadingMoreData: true,
-                            refId: parsed.refId
-                        }
-                    });
-
-                    return { success: true, nextPhase: PHASES.LOAD_DATA };
-                }
-            }
-
-            // FLEXIBLE: Accept analysis with OR without action field
-            // LLM might return: {"analysis": "..."} or {"action": "respond", "analysis": "..."}
-            if (parsed?.analysis) {
-                state.analysis = {
-                    analysis: parsed.analysis,
-                    key_findings: parsed.key_findings || []
-                };
-                state.phase = PHASES.FORMAT;
-
-                upsertThinkingStep(state, 'analyze', {
-                    title: 'Analyzing results',
-                    phase: 'analyze',
-                    status: 'complete',
-                    duration: duration,
-                    context: {
-                        hasAnalysis: true,
-                        findingsCount: state.analysis.key_findings.length,
-                        iteration: state.analyzeIterations
-                    },
-                    debug: buildDebugInfo(prompt, response, state, {
-                        analysisLength: parsed.analysis?.length,
-                        findingsCount: parsed.key_findings?.length
-                    })
-                });
-
-                log.debug('SCA Analyze phase complete', { duration: duration });
-                return { success: true, nextPhase: PHASES.FORMAT };
-            }
-
-            // If we got here, response was invalid
-            throw new Error('Invalid analysis response - missing analysis field. Got: ' +
-                (response?.text?.substring(0, 100) || 'empty'));
-
-        } catch (e) {
-            const duration = Date.now() - phaseStart;
-            log.error('SCA Analyze phase failed', {
-                error: e.message,
-                duration: duration,
-                iteration: state.analyzeIterations
-            });
-            state.errors.push({ phase: 'analyze', error: e.message, timestamp: Date.now() });
-
-            // Synthesize a basic response from data summaries
-            state.analysis = synthesizeFromDataRefs(state);
-            state.phase = PHASES.FORMAT;
-
-            upsertThinkingStep(state, 'analyze', {
-                title: 'Analyzing results',
-                phase: 'analyze',
-                status: 'complete',
-                duration: duration,
-                context: {
-                    fallback: true,
-                    error: e.message.substring(0, 100),
-                    iteration: state.analyzeIterations
-                }
-            });
-
-            return { success: true, nextPhase: PHASES.FORMAT };
-        }
-    }
-
-    /**
-     * Phase 4b: LOAD_DATA - Load additional data on demand
-     */
-    function executeLoadDataPhase(state) {
-        const cmd = state.pendingDataLoad;
-        if (!cmd || !cmd.refId) {
-            state.phase = PHASES.ANALYZE;
-            return { success: true, nextPhase: PHASES.ANALYZE };
-        }
-
-        try {
-            const result = Cache.executeCommand(state.requestId, {
-                action: cmd.action || 'LOAD_ROWS',
-                refId: cmd.refId,
-                start: cmd.start || 0,
-                end: cmd.end || 19
-            });
-
-            if (result && result.rows) {
-                // Add loaded data to the reference
-                const existingRef = state.dataReferences.find(r => r.refId === cmd.refId);
-                if (existingRef) {
-                    existingRef.loadedRows = result.rows;
-                    existingRef.summary.loadedData = true;
-                }
-            }
-
-            state.pendingDataLoad = null;
-            state.phase = PHASES.ANALYZE;
-            state.iteration++;
-
-            log.debug('SCA Load data phase complete', { rowsLoaded: result?.rows?.length || 0 });
-            return { success: true, nextPhase: PHASES.ANALYZE };
-
-        } catch (e) {
-            log.error('SCA Load data phase failed', { error: e.message });
-            state.pendingDataLoad = null;
-            state.phase = PHASES.ANALYZE;
-            return { success: true, nextPhase: PHASES.ANALYZE };
-        }
-    }
-
-    /**
-     * Phase 5: FORMAT - Create rich response blocks
-     */
-    function executeFormatPhase(state) {
-        const phaseStart = Date.now();
-        state.formatIterations++;
-
-        // Circuit breaker: prevent infinite format loops
-        if (state.formatIterations >= MAX_FORMAT_ITERATIONS) {
-            log.audit('SCA Format circuit breaker triggered', {
-                iterations: state.formatIterations,
-                requestId: state.requestId
-            });
-
-            state.formattedResponse = {
-                title: 'Analysis Results',
-                summary: state.analysis?.analysis?.substring(0, 100) || 'Analysis complete',
-                blocks: [
-                    { type: 'text', content: state.analysis?.analysis || 'Unable to format response' }
-                ]
-            };
-            state.phase = PHASES.COMPLETE;
-
-            upsertThinkingStep(state, 'format', {
-                title: 'Formatting response',
-                phase: 'format',
-                status: 'complete',
-                context: {
-                    circuitBreaker: true,
-                    iterations: state.formatIterations
-                }
-            });
-
-            return { success: true, nextPhase: PHASES.COMPLETE };
-        }
-
-        const dataSummary = state.dataReferences.map(ref => {
-            const s = ref.summary;
-            return `${s.tool}: ${s.rowCount} rows, columns: ${(s.columns || []).join(', ')}`;
-        }).join('\n');
-
-        const prompt = FORMAT_PROMPT
-            .replace('{analysis}', state.analysis?.analysis || 'No analysis available')
-            .replace('{findings}', (state.analysis?.key_findings || []).join('\n') || 'No specific findings')
-            .replace('{data_summary}', dataSummary || 'No data');
-
-        upsertThinkingStep(state, 'format', {
-            title: 'Formatting response',
-            phase: 'format',
-            status: 'active',
-            context: {
-                iteration: state.formatIterations
-            }
-        });
-
-        try {
-            const response = AIProviders.callAI(prompt, {
-                tier: FAST_TIER,
-                temperature: 0.1,
-                maxTokens: 1500,
-                jsonMode: true,
-                purpose: 'SCA:format'
-            });
-
-            const parsed = parseJsonResponse(response?.text);
-            const duration = Date.now() - phaseStart;
-            state.phaseTimings.format = (state.phaseTimings.format || 0) + duration;
-
-            // FLEXIBLE: Accept response with blocks array
-            if (parsed && (parsed.blocks || parsed.title || parsed.summary)) {
-                state.formattedResponse = {
-                    title: parsed.title || 'Analysis Results',
-                    summary: parsed.summary || state.analysis?.analysis?.substring(0, 100) || '',
-                    blocks: parsed.blocks || [{ type: 'text', content: state.analysis?.analysis || '' }]
-                };
-                state.phase = PHASES.COMPLETE;
-
-                // Enrich table blocks with actual data
-                enrichTableBlocks(state);
-
-                upsertThinkingStep(state, 'format', {
-                    title: 'Formatting response',
-                    phase: 'format',
-                    status: 'complete',
-                    duration: duration,
-                    context: {
-                        blockCount: state.formattedResponse.blocks.length,
-                        blockTypes: state.formattedResponse.blocks.map(b => b.type)
-                    },
-                    debug: buildDebugInfo(prompt, response, state, {
-                        responseTitle: parsed.title,
-                        blockCount: parsed.blocks?.length
-                    })
-                });
-
-                log.debug('SCA Format phase complete', {
-                    blockCount: state.formattedResponse.blocks.length,
-                    duration: duration
-                });
-                return { success: true, nextPhase: PHASES.COMPLETE };
-            }
-
-            throw new Error('Invalid format response - missing blocks/title/summary');
-
-        } catch (e) {
-            const duration = Date.now() - phaseStart;
-            log.error('SCA Format phase failed', {
-                error: e.message,
-                duration: duration,
-                iteration: state.formatIterations
-            });
-            state.errors.push({ phase: 'format', error: e.message, timestamp: Date.now() });
-
-            // Create basic formatted response
-            state.formattedResponse = {
-                title: 'Analysis Results',
-                summary: state.analysis?.analysis?.substring(0, 100) || 'Analysis complete',
-                blocks: [
-                    { type: 'text', content: state.analysis?.analysis || 'Unable to format response' }
-                ]
-            };
-            state.phase = PHASES.COMPLETE;
-
-            upsertThinkingStep(state, 'format', {
-                title: 'Formatting response',
-                phase: 'format',
-                status: 'complete',
-                duration: duration,
-                context: {
-                    fallback: true,
-                    error: e.message.substring(0, 100),
-                    iteration: state.formatIterations
-                }
-            });
-
-            return { success: true, nextPhase: PHASES.COMPLETE };
-        }
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -4297,9 +4372,6 @@ Response:`;
                 if (result.nextPhase === PHASES.RESPOND) {
                     return { hasMore: true, phase: PHASES.RESPOND };
                 }
-                if (result.nextPhase === PHASES.ANALYZE) {
-                    return { hasMore: true, phase: PHASES.ANALYZE };
-                }
                 return { hasMore: true, phase: PHASES.INVOKE };
 
             // ═══════════════════════════════════════════════════════════════════════
@@ -4344,24 +4416,6 @@ Response:`;
                 }
                 return { hasMore: true, phase: result.nextPhase };
 
-            case PHASES.ANALYZE:
-                result = executeAnalyzePhase(state);
-                return { hasMore: true, phase: result.nextPhase };
-
-            case PHASES.LOAD_DATA:
-                result = executeLoadDataPhase(state);
-                return { hasMore: true, phase: result.nextPhase };
-
-            case PHASES.FORMAT:
-                result = executeFormatPhase(state);
-                if (result.nextPhase === PHASES.COMPLETE) {
-                    return {
-                        hasMore: false,
-                        response: buildFinalResponse(state)
-                    };
-                }
-                return { hasMore: true, phase: result.nextPhase };
-
             case PHASES.COMPLETE:
                 return {
                     hasMore: false,
@@ -4393,33 +4447,40 @@ Response:`;
         let richContent = formatted.blocks || [];
 
         // ═══════════════════════════════════════════════════════════════════════
-        // FIX: Merge progressive table blocks from ProgressStore into richContent
-        // Tables are added during INVOKE phase via addProgressiveTableBlocks()
-        // but were never being included in the final response
+        // BLOCK COEXISTENCE: Merge progressive tables with LLM-placed blocks
+        // - Progressive tables are added during INVOKE phase (fast, immediate UX)
+        // - LLM can also place tables/charts via block sequence format
+        // - If LLM placed any tables, don't add progressive tables (avoid duplicates)
         // ═══════════════════════════════════════════════════════════════════════
         const progressState = Cache.get(state.requestId);
-        if (progressState && progressState.blocks && progressState.blocks.length > 0) {
-            // Get table blocks from progressive rendering
-            const tableBlocks = progressState.blocks.filter(b => b.type === 'table');
-            if (tableBlocks.length > 0) {
-                // Insert tables after text blocks but before metrics/findings
-                // Find the position after text blocks
+        const llmPlacedTables = richContent.some(b => b.type === 'table' && b.llmPlaced);
+
+        if (!llmPlacedTables && progressState?.blocks?.length > 0) {
+            // LLM didn't place any tables - merge progressive tables
+            const progressiveTableBlocks = progressState.blocks.filter(b => b.type === 'table');
+
+            if (progressiveTableBlocks.length > 0) {
+                // Insert after first text block
                 const textBlockIndex = richContent.findIndex(b => b.type === 'text');
                 const insertPosition = textBlockIndex >= 0 ? textBlockIndex + 1 : 0;
 
-                // Insert table blocks at the appropriate position
                 richContent = [
                     ...richContent.slice(0, insertPosition),
-                    ...tableBlocks,
+                    ...progressiveTableBlocks,
                     ...richContent.slice(insertPosition)
                 ];
 
                 log.debug('Merged progressive table blocks into richContent', {
                     requestId: state.requestId,
-                    tableCount: tableBlocks.length,
+                    tableCount: progressiveTableBlocks.length,
                     totalBlocks: richContent.length
                 });
             }
+        } else if (llmPlacedTables) {
+            log.debug('Skipping progressive tables: LLM placed tables explicitly', {
+                requestId: state.requestId,
+                llmTableCount: richContent.filter(b => b.type === 'table').length
+            });
         }
 
         // FIXED: Surface errors visibly in the response

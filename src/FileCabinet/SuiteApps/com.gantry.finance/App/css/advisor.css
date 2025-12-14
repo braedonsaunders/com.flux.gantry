@@ -2671,15 +2671,37 @@ body.dark-mode .message-text .md-heading {
     width: 70%;
     max-width: 800px;
     margin: 0 auto;
-    background: var(--bg-white);
-    border: 1px solid var(--border-color);
-    border-radius: 14px;
-    padding: 8px 8px 8px 18px;
-    box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+    background: linear-gradient(
+        135deg,
+        rgba(255, 255, 255, 0.95) 0%,
+        rgba(250, 250, 255, 0.92) 100%
+    );
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1.5px solid rgba(99, 102, 241, 0.12);
+    border-radius: 16px;
+    padding: 10px 10px 10px 18px;
+    box-shadow:
+        0 2px 8px rgba(0, 0, 0, 0.04),
+        0 8px 32px rgba(0, 0, 0, 0.03);
     display: flex;
     align-items: flex-end;
     gap: 12px;
-    transition: all 0.25s ease;
+    transition: border-color 0.3s ease, box-shadow 0.3s ease;
+}
+
+/* Focus glow - suppressed during particle animation */
+.input-glass-panel:focus-within:not(.animation-active) {
+    border-color: rgba(99, 102, 241, 0.35);
+    box-shadow:
+        0 0 20px rgba(99, 102, 241, 0.12),
+        0 0 40px rgba(99, 102, 241, 0.06),
+        0 0 0 3px rgba(99, 102, 241, 0.06);
+}
+
+/* During animation - focus glow is handled by JS particles */
+.input-glass-panel.animation-active {
+    transition: none;
 }
 
 /* Action buttons container - inline row */
@@ -2807,11 +2829,6 @@ body.dark-mode .follow-up-chip:hover {
     background: var(--primary);
     border-color: var(--primary);
     color: white;
-}
-
-.input-glass-panel:focus-within {
-    border-color: var(--primary);
-    box-shadow: 0 4px 24px rgba(37, 99, 235, 0.15), 0 0 0 3px rgba(37, 99, 235, 0.1);
 }
 
 .input-glass-panel textarea {
@@ -5221,8 +5238,613 @@ body.dark-mode .progressive-text {
     color: #e2e8f0;
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   CONTENT-SPECIFIC REVEAL ANIMATIONS
+   Premium animations tailored to each content type
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   TEXT BLOCKS - Word-by-word blur-to-sharp materialization
+   ───────────────────────────────────────────────────────────────────────────── */
+
+.animate-text-container {
+    position: relative;
+}
+
+.animate-word {
+    display: inline;
+    opacity: 0;
+    filter: blur(4px);
+    transform: translateY(2px);
+    animation: wordReveal 0.12s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes wordReveal {
+    0% {
+        opacity: 0;
+        filter: blur(4px);
+        transform: translateY(2px);
+    }
+    100% {
+        opacity: 1;
+        filter: blur(0);
+        transform: translateY(0);
+    }
+}
+
+/* Completed state - remove animation overhead */
+.animate-text-complete .animate-word {
+    animation: none;
+    opacity: 1;
+    filter: none;
+    transform: none;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   TABLE BLOCKS - Data materialization with scan-line effect
+   ───────────────────────────────────────────────────────────────────────────── */
+
+.animate-table {
+    position: relative;
+    overflow: hidden;
+}
+
+/* Container reveal */
+.animate-table-container {
+    opacity: 0;
+    transform: scale(0.98);
+    animation: tableContainerReveal 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes tableContainerReveal {
+    0% {
+        opacity: 0;
+        transform: scale(0.98);
+    }
+    100% {
+        opacity: 1;
+        transform: scale(1);
+    }
+}
+
+/* Header row slides in from left */
+.animate-table thead tr {
+    opacity: 0;
+    transform: translateX(-12px);
+    animation: tableHeaderReveal 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    animation-delay: 0.1s;
+}
+
+@keyframes tableHeaderReveal {
+    0% {
+        opacity: 0;
+        transform: translateX(-12px);
+    }
+    100% {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+/* Body rows cascade down */
+.animate-table tbody tr {
+    opacity: 0;
+    transform: translateY(8px);
+    animation: tableRowReveal 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes tableRowReveal {
+    0% {
+        opacity: 0;
+        transform: translateY(8px);
+    }
+    100% {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* Scan-line effect overlay */
+.animate-table-scanline {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: linear-gradient(90deg,
+        transparent 0%,
+        rgba(59, 130, 246, 0.4) 20%,
+        rgba(59, 130, 246, 0.8) 50%,
+        rgba(59, 130, 246, 0.4) 80%,
+        transparent 100%
+    );
+    animation: tableScanline 0.6s ease-out forwards;
+    pointer-events: none;
+    z-index: 10;
+}
+
+@keyframes tableScanline {
+    0% {
+        top: 0;
+        opacity: 1;
+    }
+    100% {
+        top: 100%;
+        opacity: 0;
+    }
+}
+
+body.dark-mode .animate-table-scanline {
+    background: linear-gradient(90deg,
+        transparent 0%,
+        rgba(96, 165, 250, 0.4) 20%,
+        rgba(96, 165, 250, 0.8) 50%,
+        rgba(96, 165, 250, 0.4) 80%,
+        transparent 100%
+    );
+}
+
+/* Table complete state */
+.animate-table-complete thead tr,
+.animate-table-complete tbody tr {
+    animation: none;
+    opacity: 1;
+    transform: none;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   METRICS BLOCKS - Counter roll-up with trend animation
+   ───────────────────────────────────────────────────────────────────────────── */
+
+.animate-metrics-container {
+    opacity: 0;
+    animation: metricsContainerReveal 0.15s ease-out forwards;
+}
+
+@keyframes metricsContainerReveal {
+    0% { opacity: 0; }
+    100% { opacity: 1; }
+}
+
+.animate-metric {
+    opacity: 0;
+    transform: scale(0.9) translateY(8px);
+    animation: metricReveal 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+
+@keyframes metricReveal {
+    0% {
+        opacity: 0;
+        transform: scale(0.9) translateY(8px);
+    }
+    100% {
+        opacity: 1;
+        transform: scale(1) translateY(0);
+    }
+}
+
+/* Metric label fades in first */
+.animate-metric .metric-label,
+.animate-metric .progressive-metric-label {
+    opacity: 0;
+    animation: metricLabelReveal 0.2s ease-out forwards;
+}
+
+@keyframes metricLabelReveal {
+    0% { opacity: 0; }
+    100% { opacity: 1; }
+}
+
+/* Metric value has counter effect via JS - this is the container animation */
+.animate-metric .metric-value,
+.animate-metric .progressive-metric-value {
+    opacity: 0;
+    animation: metricValueReveal 0.25s ease-out forwards;
+    animation-delay: 0.1s;
+}
+
+@keyframes metricValueReveal {
+    0% {
+        opacity: 0;
+        transform: translateY(4px);
+    }
+    100% {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* Trend indicator slides in from its direction */
+.animate-metric .trend-indicator,
+.animate-metric .metric-trend {
+    opacity: 0;
+    animation: trendReveal 0.2s ease-out forwards;
+    animation-delay: 0.3s;
+}
+
+.animate-metric .trend-up {
+    transform: translateY(6px);
+}
+
+.animate-metric .trend-down {
+    transform: translateY(-6px);
+}
+
+@keyframes trendReveal {
+    0% {
+        opacity: 0;
+    }
+    100% {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* Metric complete state */
+.animate-metrics-complete .animate-metric,
+.animate-metrics-complete .metric-label,
+.animate-metrics-complete .metric-value,
+.animate-metrics-complete .trend-indicator {
+    animation: none;
+    opacity: 1;
+    transform: none;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   LIST BLOCKS - Cascade reveal with bullet pop
+   ───────────────────────────────────────────────────────────────────────────── */
+
+.animate-list {
+    position: relative;
+}
+
+.animate-list-item {
+    opacity: 0;
+    transform: translateX(-8px);
+    animation: listItemReveal 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes listItemReveal {
+    0% {
+        opacity: 0;
+        transform: translateX(-8px);
+    }
+    100% {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+/* Bullet/number marker pops in */
+.animate-list-item::marker {
+    animation: bulletPop 0.15s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+
+/* List title if present */
+.animate-list-title {
+    opacity: 0;
+    animation: listTitleReveal 0.2s ease-out forwards;
+}
+
+@keyframes listTitleReveal {
+    0% {
+        opacity: 0;
+        transform: translateY(-4px);
+    }
+    100% {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* List complete state */
+.animate-list-complete .animate-list-item,
+.animate-list-complete .animate-list-title {
+    animation: none;
+    opacity: 1;
+    transform: none;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   CODE BLOCKS - Terminal print with glow
+   ───────────────────────────────────────────────────────────────────────────── */
+
+.animate-code {
+    opacity: 0;
+    transform: translateY(4px);
+    animation: codeBlockReveal 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes codeBlockReveal {
+    0% {
+        opacity: 0;
+        transform: translateY(4px);
+        box-shadow: 0 0 0 rgba(59, 130, 246, 0);
+    }
+    50% {
+        opacity: 1;
+        transform: translateY(0);
+        box-shadow: 0 0 20px rgba(59, 130, 246, 0.15);
+    }
+    100% {
+        opacity: 1;
+        transform: translateY(0);
+        box-shadow: none;
+    }
+}
+
+body.dark-mode .animate-code {
+    animation-name: codeBlockRevealDark;
+}
+
+@keyframes codeBlockRevealDark {
+    0% {
+        opacity: 0;
+        transform: translateY(4px);
+        box-shadow: 0 0 0 rgba(96, 165, 250, 0);
+    }
+    50% {
+        opacity: 1;
+        transform: translateY(0);
+        box-shadow: 0 0 20px rgba(96, 165, 250, 0.2);
+    }
+    100% {
+        opacity: 1;
+        transform: translateY(0);
+        box-shadow: none;
+    }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   CHART BLOCKS - Draw-in animation
+   ───────────────────────────────────────────────────────────────────────────── */
+
+.animate-chart {
+    opacity: 0;
+    transform: scale(0.95);
+    animation: chartReveal 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes chartReveal {
+    0% {
+        opacity: 0;
+        transform: scale(0.95);
+    }
+    100% {
+        opacity: 1;
+        transform: scale(1);
+    }
+}
+
+/* SVG path drawing animation for line charts */
+.animate-chart-path {
+    stroke-dasharray: 1000;
+    stroke-dashoffset: 1000;
+    animation: chartPathDraw 0.8s ease-out forwards;
+    animation-delay: 0.2s;
+}
+
+@keyframes chartPathDraw {
+    to {
+        stroke-dashoffset: 0;
+    }
+}
+
+/* Bar chart bars grow from bottom */
+.animate-chart-bar {
+    transform-origin: bottom center;
+    transform: scaleY(0);
+    animation: chartBarGrow 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+
+@keyframes chartBarGrow {
+    0% {
+        transform: scaleY(0);
+    }
+    100% {
+        transform: scaleY(1);
+    }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   ALERT BLOCKS - Attention-appropriate animations
+   ───────────────────────────────────────────────────────────────────────────── */
+
+.animate-alert {
+    opacity: 0;
+    transform: translateY(-8px);
+    animation: alertReveal 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes alertReveal {
+    0% {
+        opacity: 0;
+        transform: translateY(-8px);
+    }
+    100% {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* Success alert - green border pulse */
+.animate-alert-success {
+    animation: alertReveal 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards,
+               successPulse 0.4s ease-out 0.2s;
+}
+
+@keyframes successPulse {
+    0% {
+        box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.4);
+    }
+    100% {
+        box-shadow: 0 0 0 8px rgba(34, 197, 94, 0);
+    }
+}
+
+/* Warning alert - subtle shake */
+.animate-alert-warning {
+    animation: alertReveal 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards,
+               warningShake 0.3s ease-out 0.2s;
+}
+
+@keyframes warningShake {
+    0%, 100% { transform: translateX(0); }
+    25% { transform: translateX(-2px); }
+    75% { transform: translateX(2px); }
+}
+
+/* Error alert - red flash */
+.animate-alert-error {
+    animation: alertReveal 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards,
+               errorFlash 0.3s ease-out 0.2s;
+}
+
+@keyframes errorFlash {
+    0% {
+        box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4);
+    }
+    50% {
+        box-shadow: 0 0 12px 2px rgba(239, 68, 68, 0.3);
+    }
+    100% {
+        box-shadow: none;
+    }
+}
+
+/* Info alert - blue left border grow */
+.animate-alert-info {
+    border-left-width: 0;
+    animation: alertReveal 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards,
+               infoBorderGrow 0.3s ease-out 0.2s forwards;
+}
+
+@keyframes infoBorderGrow {
+    0% {
+        border-left-width: 0;
+    }
+    100% {
+        border-left-width: 4px;
+    }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   PROGRESSIVE BLOCKS - During polling
+   ───────────────────────────────────────────────────────────────────────────── */
+
+.progressive-block.animate-reveal {
+    opacity: 0;
+    transform: translateY(8px);
+    animation: progressiveReveal 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes progressiveReveal {
+    0% {
+        opacity: 0;
+        transform: translateY(8px);
+    }
+    100% {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   UTILITY CLASSES
+   ───────────────────────────────────────────────────────────────────────────── */
+
+/* Skip all animations */
+.animate-skip,
+.animate-skip * {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+    filter: none !important;
+}
+
+/* Hide content until animation starts - prevents flash of unstyled content */
+.animate-pending {
+    opacity: 0;
+}
+
+/* Animation complete - clean up */
+.animate-complete {
+    animation: none;
+    opacity: 1;
+    transform: none;
+    filter: none;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   PROGRESSIVE NARRATION - Subtle status text below step renderer
+   ───────────────────────────────────────────────────────────────────────────── */
+
+.message-narration {
+    margin: 2px 0 6px 0;
+    padding: 0;
+}
+
+.narration-content {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--text-muted, #9ca3af);
+    font-weight: 400;
+}
+
+.narration-content i {
+    font-size: 10px;
+    opacity: 0.6;
+}
+
+.narration-text {
+    opacity: 0.85;
+}
+
+/* Dissolve out animation - elegant fade with blur */
+.narration-dissolve-out {
+    animation: narrationDissolve 0.3s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
+@keyframes narrationDissolve {
+    0% {
+        opacity: 1;
+        filter: blur(0);
+        transform: translateY(0) scale(1);
+    }
+    100% {
+        opacity: 0;
+        filter: blur(6px);
+        transform: translateY(-4px) scale(0.98);
+    }
+}
+
+/* Materialize in animation - sharp focus reveal */
+.narration-materialize-in {
+    animation: narrationMaterialize 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes narrationMaterialize {
+    0% {
+        opacity: 0;
+        filter: blur(8px);
+        transform: translateY(6px) scale(0.96);
+    }
+    50% {
+        opacity: 0.7;
+        filter: blur(2px);
+    }
+    100% {
+        opacity: 1;
+        filter: blur(0);
+        transform: translateY(0) scale(1);
+    }
+}
+
 /* === REDUCED MOTION SUPPORT === */
 @media (prefers-reduced-motion: reduce) {
+    /* Neural flow animations */
     .thought-node,
     .node-core,
     .node-connector,
@@ -5230,9 +5852,38 @@ body.dark-mode .progressive-text {
     .orbital-dots span,
     .thinking-trail span,
     .node-tooltip,
-    .expansion-panel {
+    .expansion-panel,
+    /* Content reveal animations */
+    .animate-word,
+    .animate-table,
+    .animate-table thead tr,
+    .animate-table tbody tr,
+    .animate-table-scanline,
+    .animate-metric,
+    .animate-list-item,
+    .animate-list-title,
+    .animate-code,
+    .animate-chart,
+    .animate-chart-path,
+    .animate-chart-bar,
+    .animate-alert,
+    .animate-alert-success,
+    .animate-alert-warning,
+    .animate-alert-error,
+    .animate-alert-info,
+    .progressive-block.animate-reveal,
+    /* Narration animations */
+    .narration-content,
+    .narration-dissolve-out,
+    .narration-materialize-in {
         animation: none !important;
         transition: none !important;
+    }
+
+    .narration-content {
+        opacity: 1;
+        filter: none;
+        transform: none;
     }
 
     .thought-node.pending {
@@ -5247,6 +5898,27 @@ body.dark-mode .progressive-text {
 
     .synapse-line {
         stroke-dashoffset: 0;
+    }
+
+    /* All animated content shows instantly with reduced motion */
+    .animate-word,
+    .animate-table thead tr,
+    .animate-table tbody tr,
+    .animate-metric,
+    .animate-list-item,
+    .animate-list-title,
+    .animate-code,
+    .animate-chart,
+    .animate-alert,
+    .progressive-block.animate-reveal {
+        opacity: 1;
+        filter: none;
+        transform: none;
+    }
+
+    /* Hide scan-line effect entirely */
+    .animate-table-scanline {
+        display: none;
     }
 }
 
@@ -5304,45 +5976,9 @@ body.dark-mode .progressive-text {
     transition: opacity 0.5s ease;
 }
 
-/* Input shine effect for particle convergence */
+/* Input shine effect - minimal, handled by JS */
 .advisor-input-area.input-shine-active {
     position: relative;
-    transition: transform 0.1s ease;
-}
-
-.advisor-input-area.input-shine-active::before {
-    content: '';
-    position: absolute;
-    top: -2px;
-    left: -2px;
-    right: -2px;
-    bottom: -2px;
-    background: linear-gradient(
-        90deg,
-        transparent 0%,
-        rgba(255, 255, 255, 0.4) 45%,
-        rgba(255, 255, 255, 0.8) 50%,
-        rgba(255, 255, 255, 0.4) 55%,
-        transparent 100%
-    );
-    border-radius: inherit;
-    animation: inputShineSwipe 0.6s ease-out forwards;
-    pointer-events: none;
-    z-index: 10;
-}
-
-@keyframes inputShineSwipe {
-    0% {
-        transform: translateX(-100%);
-        opacity: 0;
-    }
-    20% {
-        opacity: 1;
-    }
-    100% {
-        transform: translateX(100%);
-        opacity: 0;
-    }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -5377,11 +6013,20 @@ body.dark-mode .progressive-text {
     max-width: 700px;
     margin: 0 auto;
     padding: 0 10px;
-    /* Start hidden, JS will show after animation */
+    /* Smooth transition for show/hide when opening query panel */
+    transition: opacity 0.25s ease, transform 0.25s ease;
 }
 
 .score-categories.visible {
     opacity: 1;
+}
+
+/* When query panel is open, fade out score categories */
+.score-categories.panel-open {
+    opacity: 0;
+    pointer-events: none;
+    position: absolute;
+    visibility: hidden;
 }
 
 .score-categories.animate-in {
@@ -5786,12 +6431,18 @@ body.dark-mode .progressive-text {
     padding: 0 10px;
     opacity: 0;
     transform: translateY(8px);
-    transition: opacity 0.3s ease, transform 0.3s ease;
+    transition: opacity 0.25s ease, transform 0.25s ease;
+    pointer-events: none;
+    position: absolute;
+    visibility: hidden;
 }
 
 .query-panel.visible {
     opacity: 1;
     transform: translateY(0);
+    pointer-events: auto;
+    position: relative;
+    visibility: visible;
 }
 
 .query-panel-back {

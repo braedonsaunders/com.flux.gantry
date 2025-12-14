@@ -38,23 +38,23 @@
         ctx: null,
         particles: [],
         animationId: null,
+        birthTimeoutId: null,  // Track setTimeout for cleanup
         phase: 'idle',
         isActive: false,
         globalTime: 0,
         orbitAngle: 0,
 
         config: {
-            particleCount: 70,
-            connectionDistance: 90,
-            particleSize: { min: 1.5, max: 2.5 },
-            // All timings sped up 20% (multiplied by 0.8)
-            birthDuration: 800,           // was 1000
-            pauseDuration: 200,           // was 300
-            glowDuration: 400,            // was 500
-            explodeDuration: 1050,        // was 1200, +10% slower then 20% faster
-            orbitDuration: 600,           // Shorter float time
-            convergeDuration: 700,        // Fast suction into input
-            shineDuration: 480,           // was 600
+            particleCount: 800,
+            connectionDistance: 70,
+            particleSize: { min: 1.2, max: 3.5 },
+            // Timing for smooth, premium animation
+            birthDuration: 800,
+            glowDuration: 400,
+            explodeDuration: 1400,
+            orbitDuration: 1200,
+            convergeDuration: 900,
+            shineDuration: 1200,
             colors: [
                 { r: 99, g: 102, b: 241 },   // Indigo
                 { r: 139, g: 92, b: 246 },   // Purple
@@ -64,17 +64,33 @@
         },
 
         init: function() {
+            // Clean up any existing state first to prevent memory leaks
+            this.cleanup();
+
             this.canvas = document.getElementById('geometric-canvas');
             if (!this.canvas) return;
 
+            // Suppress CSS focus glow during animation - particles will create it
+            const chatInput = document.getElementById('advisor-input-full');
+            if (chatInput) {
+                chatInput.classList.add('animation-active');
+            }
+
             this.ctx = this.canvas.getContext('2d');
+            this.canvas.style.opacity = '1';
             this.resize();
-            this.boundResize = this.resize.bind(this);
+
+            // Only create one resize listener
+            if (!this.boundResize) {
+                this.boundResize = this.resize.bind(this);
+            }
             window.addEventListener('resize', this.boundResize);
 
             this.isActive = true;
+            this.phase = 'idle';
             this.globalTime = 0;
-            this.cameraOffsetX = 0; // For camera rotation effect
+            this.cameraX = 0;
+            this.cameraY = 0;
             this.createParticles();
             this.startBirth();
         },
@@ -108,11 +124,26 @@
             this.particles = [];
             const center = this.getBrainCenter();
 
+            // Initialize global camera state for 3D panning effect
+            this.cameraX = 0;
+            this.cameraY = 0;
+            this.cameraTargetX = 0;
+            this.cameraTargetY = 0;
+
             for (let i = 0; i < this.config.particleCount; i++) {
                 const angle = (i / this.config.particleCount) * Math.PI * 2 + Math.random() * 0.3;
                 const colorIndex = i % this.config.colors.length;
                 const orbitRadius = 150 + Math.random() * 250;
                 const orbitSpeed = 0.3 + Math.random() * 0.4;
+
+                // Depth layer for 3D parallax (0.3 = far, 1.0 = near)
+                const depth = 0.3 + Math.random() * 0.7;
+                // Size scales with depth - near particles are larger
+                const baseSize = (this.config.particleSize.min + Math.random() * (this.config.particleSize.max - this.config.particleSize.min)) * depth;
+
+                // VISIBLE particles (0.25 to 0.6 range)
+                const baseOpacity = 0.25 + Math.random() * 0.35;
+                const depthOpacity = baseOpacity * (0.6 + depth * 0.4);
 
                 this.particles.push({
                     x: center.x,
@@ -121,14 +152,16 @@
                     orbitRadius: orbitRadius,
                     orbitSpeed: orbitSpeed,
                     orbitOffset: Math.random() * Math.PI * 2,
-                    size: this.config.particleSize.min + Math.random() * (this.config.particleSize.max - this.config.particleSize.min),
-                    baseSize: 0,
+                    size: baseSize,
+                    baseSize: baseSize,
                     opacity: 0,
-                    targetOpacity: 0.3 + Math.random() * 0.15, // More subtle
+                    targetOpacity: depthOpacity,
                     colorIndex: colorIndex,
                     colorOffset: Math.random() * Math.PI * 2,
                     expandX: 0,
-                    expandY: 0
+                    expandY: 0,
+                    depth: depth,
+                    orbitAngle: Math.random() * Math.PI * 2
                 });
             }
         },
@@ -169,156 +202,219 @@
                 heroOrb.classList.add('orb-charging');
             }
 
-            // Just wait for glow duration, then explode
-            setTimeout(() => {
+            // Just wait for glow duration, then explode (track timeout for cleanup)
+            this.birthTimeoutId = setTimeout(() => {
+                this.birthTimeoutId = null;
                 if (heroOrb) heroOrb.classList.remove('orb-charging');
                 if (this.isActive) this.startExplode();
             }, this.config.glowDuration);
         },
 
         /**
-         * Explode: particles blow up FROM the orb center to fill the screen
+         * Explode + Orbit: Single unified animation - no phase handoff, no jumps
+         * Particles explode outward while orbit motion gradually blends in
          */
         startExplode: function() {
             this.phase = 'explode';
             const startTime = Date.now();
             const center = this.getBrainCenter();
-            const padding = 60;
+            const padding = 80;
 
-            // Reset particles to center and assign explosion targets
-            this.particles.forEach(p => {
+            // Orbit center
+            const orbitCenterX = this.canvas.width / 2;
+            const orbitCenterY = this.canvas.height * 0.42;
+
+            // Camera state
+            this.cameraX = 0;
+            this.cameraY = 0;
+            let cameraPanAngle = 0;
+
+            // Total duration = explosion + orbit time
+            const totalDuration = this.config.explodeDuration + this.config.orbitDuration;
+
+            // Initialize all particles
+            this.particles.forEach((p, i) => {
                 p.originX = center.x;
                 p.originY = center.y;
                 p.x = center.x;
                 p.y = center.y;
+
+                // Explosion target
                 p.expandX = padding + Math.random() * (this.canvas.width - padding * 2);
                 p.expandY = padding + Math.random() * (this.canvas.height - padding * 2);
-                p.baseSize = p.size; // Store for orbit 3D effect
+
+                // Orbit params - phase starts at 0 so no initial offset
+                p.orbitSpeed3D = 0.15 + Math.random() * 0.1;
+                p.microDriftFreq = 0.3 + Math.random() * 0.25;
+                p.microDriftPhase = Math.random() * Math.PI * 2;
+                p.microDriftAmp = 15 + Math.random() * 20;
+
+                // Slight stagger for explosion wave
+                p.stagger = (i / this.particles.length) * 0.06;
             });
 
-            const animateExplode = () => {
+            let cardsShown = false;
+
+            const animate = () => {
                 if (!this.isActive || this.phase !== 'explode') return;
 
                 const elapsed = Date.now() - startTime;
-                const progress = Math.min(elapsed / this.config.explodeDuration, 1);
-                this.globalTime += 16;
-
-                // Explosive expansion with dramatic easing
-                const eased = this.easeOutExpo(progress);
-
-                this.particles.forEach((p, i) => {
-                    const stagger = (i / this.particles.length) * 0.2;
-                    const particleProgress = Math.max(0, (progress - stagger) / (1 - stagger));
-                    const particleEased = this.easeOutExpo(particleProgress);
-
-                    p.x = p.originX + (p.expandX - p.originX) * particleEased;
-                    p.y = p.originY + (p.expandY - p.originY) * particleEased;
-                    p.opacity = p.targetOpacity * Math.min(1, particleProgress * 1.5);
-                });
-
-                this.draw();
-
-                if (progress < 1) {
-                    this.animationId = requestAnimationFrame(animateExplode);
-                } else {
-                    this.startOrbit();
-                }
-            };
-
-            this.animationId = requestAnimationFrame(animateExplode);
-        },
-
-        /**
-         * Orbit: organic floating motion - particles drift naturally
-         */
-        startOrbit: function() {
-            this.phase = 'orbit';
-            const startTime = Date.now();
-            const center = this.getBrainCenter();
-            const chatInput = document.getElementById('advisor-input-full');
-
-            // Show cards immediately when orbit starts (particles have exploded)
-            var scoreCategories = document.getElementById('score-categories');
-            if (scoreCategories) {
-                scoreCategories.classList.add('cards-visible');
-            }
-
-            // Store starting positions and set up organic drift parameters
-            this.particles.forEach((p, i) => {
-                p.orbitStartX = p.x;
-                p.orbitStartY = p.y;
-                // Multiple frequencies for organic movement
-                p.driftFreqX = 0.3 + Math.random() * 0.4;
-                p.driftFreqY = 0.25 + Math.random() * 0.35;
-                p.driftFreqZ = 0.2 + Math.random() * 0.3;
-                p.driftPhaseX = Math.random() * Math.PI * 2;
-                p.driftPhaseY = Math.random() * Math.PI * 2;
-                p.driftPhaseZ = Math.random() * Math.PI * 2;
-                p.driftAmplitude = 15 + Math.random() * 25; // How far they drift
-            });
-
-            const animateOrbit = () => {
-                if (!this.isActive || this.phase !== 'orbit') return;
-
-                const elapsed = Date.now() - startTime;
-                const progress = Math.min(elapsed / this.config.orbitDuration, 1);
+                const totalProgress = Math.min(elapsed / totalDuration, 1);
+                const explosionProgress = Math.min(elapsed / this.config.explodeDuration, 1);
                 this.globalTime += 16;
                 const time = elapsed * 0.001;
 
-                // Gentle blend in
-                const blendIn = Math.min(1, progress * 3);
+                // Show cards mid-explosion
+                if (!cardsShown && explosionProgress > 0.35) {
+                    cardsShown = true;
+                    var scoreCategories = document.getElementById('score-categories');
+                    if (scoreCategories) scoreCategories.classList.add('cards-visible');
+                }
+
+                // Camera pan - builds up during explosion, full during orbit
+                cameraPanAngle += 0.08 * 0.016;
+                const cameraPanRadius = 30 * Math.min(1, explosionProgress * 2);
+                this.cameraX += (Math.sin(cameraPanAngle) * cameraPanRadius - this.cameraX) * 0.02;
+                this.cameraY += (Math.cos(cameraPanAngle * 0.7) * cameraPanRadius * 0.5 - this.cameraY) * 0.02;
+
+                // Orbit blend: starts at 40% of explosion, full by end of explosion
+                const orbitBlendStart = 0.4;
+                const orbitBlend = explosionProgress < orbitBlendStart ? 0 :
+                    this.easeInOutQuad((explosionProgress - orbitBlendStart) / (1 - orbitBlendStart));
 
                 this.particles.forEach((p, i) => {
-                    // Organic floating motion using multiple sine waves
-                    const driftX = Math.sin(time * p.driftFreqX + p.driftPhaseX) * p.driftAmplitude * 0.7
-                                 + Math.sin(time * p.driftFreqX * 1.7 + p.driftPhaseY) * p.driftAmplitude * 0.3;
-                    const driftY = Math.sin(time * p.driftFreqY + p.driftPhaseY) * p.driftAmplitude * 0.5
-                                 + Math.cos(time * p.driftFreqY * 1.3 + p.driftPhaseX) * p.driftAmplitude * 0.3;
-                    const driftZ = Math.sin(time * p.driftFreqZ + p.driftPhaseZ);
+                    // EXPLOSION: burst from center to target
+                    const particleExplosion = Math.max(0, Math.min(1, (explosionProgress - p.stagger) / (1 - p.stagger)));
+                    const explosionEased = this.easeOutCubic(particleExplosion); // Smoother than expo
 
-                    // Apply organic drift from start position
-                    p.x = p.orbitStartX + driftX * blendIn;
-                    p.y = p.orbitStartY + driftY * blendIn;
+                    const explosionX = p.originX + (p.expandX - p.originX) * explosionEased;
+                    const explosionY = p.originY + (p.expandY - p.originY) * explosionEased;
 
-                    // Subtle size "breathing"
-                    p.size = p.baseSize * (0.9 + driftZ * 0.15);
+                    // ORBIT: motion relative to explosion destination
+                    // Use TIME-based angle (not random phase) so motion starts from 0
+                    const orbitAngle = time * p.orbitSpeed3D;
+                    const orbitDistX = p.expandX - orbitCenterX;
+                    const orbitDistY = p.expandY - orbitCenterY;
+
+                    // 3D rotation - starts at 0 and grows with time
+                    const rotAmount = orbitAngle * p.depth;
+                    const cos = Math.cos(rotAmount * 0.5);
+                    const sin = Math.sin(rotAmount * 0.35);
+                    const rotatedX = orbitDistX * cos - orbitDistY * sin * 0.4;
+                    const rotatedY = orbitDistY * cos + orbitDistX * sin * 0.3;
+
+                    // Micro-drift
+                    const microX = Math.sin(time * p.microDriftFreq + p.microDriftPhase) * p.microDriftAmp;
+                    const microY = Math.cos(time * p.microDriftFreq * 0.8 + p.microDriftPhase) * p.microDriftAmp * 0.7;
+
+                    // Parallax
+                    const parallaxX = this.cameraX * p.depth * 2;
+                    const parallaxY = this.cameraY * p.depth * 2;
+
+                    // Orbit target position
+                    const orbitX = orbitCenterX + rotatedX + microX + parallaxX;
+                    const orbitY = orbitCenterY + rotatedY + microY + parallaxY;
+
+                    // BLEND explosion position with orbit position
+                    p.x = explosionX + (orbitX - explosionX) * orbitBlend;
+                    p.y = explosionY + (orbitY - explosionY) * orbitBlend;
+
+                    // Visibility
+                    const fadeIn = Math.min(1, particleExplosion * 8);
+                    const zPhase = Math.sin(orbitAngle);
+                    p.opacity = p.targetOpacity * fadeIn * (0.8 + zPhase * 0.2 * orbitBlend);
+                    p.size = p.baseSize * (0.9 + zPhase * 0.15 * orbitBlend);
                 });
 
                 this.draw();
 
-                // Start input glow early
-                if (chatInput && progress > 0.5) {
-                    const glowProgress = (progress - 0.5) * 2;
-                    chatInput.style.boxShadow = `0 0 ${10 + 15 * glowProgress}px rgba(99, 102, 241, ${0.15 * glowProgress})`;
-                }
-
-                if (progress < 1) {
-                    this.animationId = requestAnimationFrame(animateOrbit);
+                if (totalProgress < 1) {
+                    this.animationId = requestAnimationFrame(animate);
                 } else {
                     this.startConverge();
                 }
             };
 
-            this.animationId = requestAnimationFrame(animateOrbit);
+            this.animationId = requestAnimationFrame(animate);
         },
 
         /**
-         * Converge: slower, more dramatic flow to the text box
+         * Get a point on the input border perimeter (rounded rectangle)
+         */
+        getPointOnBorder: function(rect, t, r) {
+            const w = rect.width - 2 * r;
+            const h = rect.height - 2 * r;
+            const corner = Math.PI * r / 2;
+            const perimeter = 2 * w + 2 * h + 4 * corner;
+            let d = ((t % 1) + 1) % 1 * perimeter;
+
+            // Top edge
+            if (d < w) return { x: rect.left + r + d, y: rect.top };
+            d -= w;
+            // Top-right corner
+            if (d < corner) {
+                const a = -Math.PI / 2 + (d / corner) * (Math.PI / 2);
+                return { x: rect.right - r + Math.cos(a) * r, y: rect.top + r + Math.sin(a) * r };
+            }
+            d -= corner;
+            // Right edge
+            if (d < h) return { x: rect.right, y: rect.top + r + d };
+            d -= h;
+            // Bottom-right corner
+            if (d < corner) {
+                const a = (d / corner) * (Math.PI / 2);
+                return { x: rect.right - r + Math.cos(a) * r, y: rect.bottom - r + Math.sin(a) * r };
+            }
+            d -= corner;
+            // Bottom edge
+            if (d < w) return { x: rect.right - r - d, y: rect.bottom };
+            d -= w;
+            // Bottom-left corner
+            if (d < corner) {
+                const a = Math.PI / 2 + (d / corner) * (Math.PI / 2);
+                return { x: rect.left + r + Math.cos(a) * r, y: rect.bottom - r + Math.sin(a) * r };
+            }
+            d -= corner;
+            // Left edge
+            if (d < h) return { x: rect.left, y: rect.bottom - r - d };
+            d -= h;
+            // Top-left corner
+            const a = Math.PI + (d / corner) * (Math.PI / 2);
+            return { x: rect.left + r + Math.cos(a) * r, y: rect.top + r + Math.sin(a) * r };
+        },
+
+        /**
+         * Converge: Particles stream toward the input border perimeter
          */
         startConverge: function() {
             this.phase = 'converge';
             const startTime = Date.now();
 
             const chatInput = document.getElementById('advisor-input-full');
-            const inputWrapper = chatInput ? chatInput.closest('.advisor-input-area') : null;
             const chatRect = chatInput ? chatInput.getBoundingClientRect() : null;
-            const targetX = chatRect ? chatRect.left + chatRect.width / 2 : this.canvas.width / 2;
-            const targetY = chatRect ? chatRect.top + chatRect.height / 2 : this.canvas.height * 0.9;
+            const borderRadius = 16;
 
-            this.particles.forEach(p => {
+            if (!chatRect) {
+                this.startAmbient();
+                return;
+            }
+
+            // Each particle targets a random point on the border perimeter
+            this.particles.forEach((p, i) => {
                 p.originX = p.x;
                 p.originY = p.y;
                 p.originSize = p.size;
+                p.originOpacity = p.opacity;
+
+                // Assign border position (spread around perimeter)
+                p.borderT = (i / this.particles.length + Math.random() * 0.05) % 1;
+                const target = this.getPointOnBorder(chatRect, p.borderT, borderRadius);
+                p.targetX = target.x;
+                p.targetY = target.y;
+
+                // Distance-based arrival timing
+                const dist = Math.hypot(p.x - p.targetX, p.y - p.targetY);
+                p.arrivalDelay = Math.min(0.35, dist / 1200);
             });
 
             const animateConverge = () => {
@@ -326,104 +422,90 @@
 
                 const elapsed = Date.now() - startTime;
                 const progress = Math.min(elapsed / this.config.convergeDuration, 1);
-                this.globalTime += 16;
 
-                this.particles.forEach((p, i) => {
-                    // More dramatic stagger
-                    const stagger = (i / this.particles.length) * 0.4;
-                    const particleProgress = Math.max(0, Math.min(1, (progress - stagger) / (1 - stagger)));
-
-                    if (particleProgress > 0) {
-                        // Slower, more dramatic easing
-                        const t = this.easeInOutCubic(particleProgress);
-
-                        // Sweeping curve toward target
-                        const controlOffsetX = (p.originX < targetX ? -1 : 1) * 100;
-                        const midY = Math.min(p.originY, targetY) - 80;
-                        const bez = this.quadraticBezier(
-                            p.originX, p.originY,
-                            (p.originX + targetX) / 2 + controlOffsetX, midY,
-                            targetX, targetY,
-                            t
-                        );
-                        p.x = bez.x;
-                        p.y = bez.y;
-
-                        // Shrink and fade slightly as they converge
-                        p.size = p.originSize * (1 - particleProgress * 0.5);
-                        p.opacity = p.targetOpacity * (1 - particleProgress * 0.3);
+                this.particles.forEach(p => {
+                    const pProgress = Math.max(0, Math.min(1, (progress - p.arrivalDelay) / (1 - p.arrivalDelay)));
+                    if (pProgress > 0) {
+                        const t = this.easeInOutCubic(pProgress);
+                        p.x = p.originX + (p.targetX - p.originX) * t;
+                        p.y = p.originY + (p.targetY - p.originY) * t;
+                        p.size = p.originSize * (1 - t * 0.4);
+                        p.opacity = p.originOpacity * (0.5 + 0.5 * (1 - t * 0.3));
                     }
                 });
 
                 this.draw();
 
-                // Progressive glow on chat input
-                if (chatInput && progress > 0.3) {
-                    const glowProgress = (progress - 0.3) / 0.7;
-                    const glowIntensity = this.easeOutQuart(glowProgress);
-                    const glowSize = 15 + 30 * glowIntensity;
-                    const glowOpacity = 0.3 + 0.4 * glowIntensity;
-                    chatInput.style.boxShadow = `
-                        0 0 ${glowSize}px rgba(99, 102, 241, ${glowOpacity}),
-                        0 0 ${glowSize * 2}px rgba(139, 92, 246, ${glowOpacity * 0.5})
-                    `;
-                }
-
                 if (progress < 1) {
                     this.animationId = requestAnimationFrame(animateConverge);
                 } else {
-                    this.triggerInputShine(chatInput, inputWrapper);
+                    this.startBorderFlow(chatInput, chatRect, borderRadius);
                 }
             };
 
             this.animationId = requestAnimationFrame(animateConverge);
         },
 
-        triggerInputShine: function(chatInput, inputWrapper) {
-            if (!chatInput) {
-                this.startAmbient();
-                return;
-            }
+        /**
+         * Border Flow: Particles become energy flowing around the input border
+         */
+        startBorderFlow: function(chatInput, chatRect, borderRadius) {
+            this.phase = 'borderFlow';
+            const startTime = Date.now();
 
-            if (inputWrapper) {
-                inputWrapper.classList.add('input-shine-active');
-            }
+            // Initialize particles for border flow - DRAMATIC glow
+            this.particles.forEach((p, i) => {
+                p.flowSpeed = 0.001 + Math.random() * 0.002; // Faster flow
+                p.flowDir = (i % 2 === 0) ? 1 : -1;
+                p.glowSize = p.baseSize * 6; // MUCH bigger glow
+                p.fadeDelay = 0.3 + Math.random() * 0.4;
+            });
 
-            const shineStart = Date.now();
+            const animateFlow = () => {
+                if (!this.isActive || this.phase !== 'borderFlow') return;
 
-            const animateShine = () => {
-                const elapsed = Date.now() - shineStart;
+                const elapsed = Date.now() - startTime;
                 const progress = Math.min(elapsed / this.config.shineDuration, 1);
 
-                const pulse = Math.sin(progress * Math.PI);
-                const glowSize = 25 + 40 * pulse;
-                const glowOpacity = 0.5 + 0.4 * pulse;
+                this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
 
-                chatInput.style.boxShadow = `
-                    0 0 ${glowSize}px rgba(99, 102, 241, ${glowOpacity}),
-                    0 0 ${glowSize * 1.5}px rgba(139, 92, 246, ${glowOpacity * 0.6}),
-                    0 0 ${glowSize * 2}px rgba(6, 182, 212, ${glowOpacity * 0.3}),
-                    inset 0 0 ${glowSize * 0.3}px rgba(255, 255, 255, ${pulse * 0.2})
-                `;
+                // Draw particles flowing along border with BIG visible glow
+                this.particles.forEach(p => {
+                    p.borderT = (p.borderT + p.flowSpeed * p.flowDir + 1) % 1;
+                    const pos = this.getPointOnBorder(chatRect, p.borderT, borderRadius);
+                    p.x = pos.x;
+                    p.y = pos.y;
 
-                if (inputWrapper) {
-                    const scale = 1 + pulse * 0.01;
-                    inputWrapper.style.transform = `scale(${scale})`;
-                }
+                    const fadeProgress = progress > p.fadeDelay
+                        ? (progress - p.fadeDelay) / (1 - p.fadeDelay)
+                        : 0;
+                    const alpha = Math.min(0.9, p.originOpacity * 2) * (1 - this.easeOutCubic(fadeProgress));
+
+                    if (alpha > 0.03) {
+                        // BIGGER, more visible glow
+                        const glowRadius = p.glowSize * 8;
+                        const gradient = this.ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, glowRadius);
+                        gradient.addColorStop(0, `rgba(${p.color.r}, ${p.color.g}, ${p.color.b}, ${alpha})`);
+                        gradient.addColorStop(0.2, `rgba(${p.color.r}, ${p.color.g}, ${p.color.b}, ${alpha * 0.6})`);
+                        gradient.addColorStop(0.5, `rgba(${p.color.r}, ${p.color.g}, ${p.color.b}, ${alpha * 0.2})`);
+                        gradient.addColorStop(1, 'rgba(99, 102, 241, 0)');
+
+                        this.ctx.beginPath();
+                        this.ctx.arc(p.x, p.y, glowRadius, 0, Math.PI * 2);
+                        this.ctx.fillStyle = gradient;
+                        this.ctx.fill();
+                    }
+                });
 
                 if (progress < 1) {
-                    this.animationId = requestAnimationFrame(animateShine);
+                    this.animationId = requestAnimationFrame(animateFlow);
                 } else {
-                    chatInput.style.boxShadow = '';
-                    if (inputWrapper) {
-                        inputWrapper.style.transform = '';
-                        inputWrapper.classList.remove('input-shine-active');
-                    }
+                    if (chatInput) chatInput.classList.remove('animation-active');
                     this.startAmbient();
                 }
             };
 
-            this.animationId = requestAnimationFrame(animateShine);
+            this.animationId = requestAnimationFrame(animateFlow);
         },
 
         quadraticBezier: function(x0, y0, x1, y1, x2, y2, t) {
@@ -513,33 +595,26 @@
             if (!this.ctx) return;
             this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
 
-            const len = this.particles.length;
+            // Sort particles by depth for proper 3D layering (far particles drawn first)
+            const sortedParticles = [...this.particles].sort((a, b) => (a.depth || 0.5) - (b.depth || 0.5));
 
-            // Draw connections during non-ambient phases
-            if (len <= 60 && this.phase !== 'ambient') {
-                this.ctx.lineWidth = 0.5;
-                for (let i = 0; i < len; i++) {
-                    const p1 = this.particles[i];
-                    for (let j = i + 1; j < len; j++) {
-                        const p2 = this.particles[j];
-                        const dx = p1.x - p2.x;
-                        const dy = p1.y - p2.y;
-                        const distSq = dx * dx + dy * dy;
-                        const maxDistSq = this.config.connectionDistance * this.config.connectionDistance;
+            // Draw particles with subtle glow for depth
+            sortedParticles.forEach(p => {
+                const depth = p.depth || 0.5;
 
-                        if (distSq < maxDistSq) {
-                            const opacity = (1 - distSq / maxDistSq) * Math.min(p1.opacity, p2.opacity) * 0.4;
-                            this.ctx.strokeStyle = this.getParticleColor(p1, opacity);
-                            this.ctx.beginPath();
-                            this.ctx.moveTo(p1.x, p1.y);
-                            this.ctx.lineTo(p2.x, p2.y);
-                            this.ctx.stroke();
-                        }
-                    }
+                // Add subtle glow for near particles (premium effect)
+                if (depth > 0.7 && p.opacity > 0.15) {
+                    const glowSize = p.size * 2.5;
+                    const gradient = this.ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, glowSize);
+                    gradient.addColorStop(0, this.getParticleColor(p, p.opacity * 0.3));
+                    gradient.addColorStop(1, this.getParticleColor(p, 0));
+                    this.ctx.beginPath();
+                    this.ctx.arc(p.x, p.y, glowSize, 0, Math.PI * 2);
+                    this.ctx.fillStyle = gradient;
+                    this.ctx.fill();
                 }
-            }
 
-            this.particles.forEach(p => {
+                // Draw particle core
                 this.ctx.beginPath();
                 this.ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
                 this.ctx.fillStyle = this.getParticleColor(p, p.opacity);
@@ -550,22 +625,43 @@
         cleanup: function() {
             this.isActive = false;
             this.phase = 'idle';
+
+            // Cancel any pending animation frame
             if (this.animationId) {
                 cancelAnimationFrame(this.animationId);
                 this.animationId = null;
             }
-            if (this.ctx) {
+
+            // Cancel any pending timeout (from startBirth)
+            if (this.birthTimeoutId) {
+                clearTimeout(this.birthTimeoutId);
+                this.birthTimeoutId = null;
+            }
+
+            // Clear the canvas
+            if (this.ctx && this.canvas) {
                 this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
             }
-            if (this.canvas) {
-                this.canvas.style.opacity = '0';
-            }
+
+            // Remove resize listener
             if (this.boundResize) {
                 window.removeEventListener('resize', this.boundResize);
             }
+
+            // Clear particles array to free memory
+            this.particles = [];
+
             // Clean up orb class if still present
             const heroOrb = document.querySelector('.hero-orb');
             if (heroOrb) heroOrb.classList.remove('orb-charging');
+
+            // Remove animation-active class to restore CSS focus glow
+            const chatInput = document.getElementById('advisor-input-full');
+            if (chatInput) {
+                chatInput.classList.remove('animation-active');
+                chatInput.style.boxShadow = '';
+                chatInput.style.borderColor = '';
+            }
         },
 
         // Easing functions
@@ -591,6 +687,489 @@
             return t * t;
         }
     };
+
+    /**
+     * ContentAnimator - Premium content-specific reveal animations
+     * Different animation styles for text, tables, metrics, lists, etc.
+     */
+    const ContentAnimator = {
+        // Configuration
+        config: {
+            text: {
+                wordDelay: 35,           // ms between words
+                maxTime: 2500,           // max total animation time
+                skipThreshold: 400       // skip if more words than this
+            },
+            table: {
+                containerDelay: 0,       // container reveal
+                headerDelay: 100,        // header row delay
+                rowDelay: 40,            // stagger between rows
+                scanlineEnabled: true    // show scan-line effect
+            },
+            metrics: {
+                containerDelay: 0,
+                itemDelay: 80,           // stagger between metrics
+                counterDuration: 400,    // counter roll-up duration
+                counterEnabled: true     // enable number counter effect
+            },
+            list: {
+                titleDelay: 0,
+                itemDelay: 60            // stagger between list items
+            },
+            code: {
+                revealDelay: 0
+            },
+            chart: {
+                revealDelay: 0,
+                drawDuration: 800
+            },
+            alert: {
+                revealDelay: 0
+            }
+        },
+
+        // Check if user prefers reduced motion
+        prefersReducedMotion: function() {
+            return window.matchMedia &&
+                   window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        },
+
+        /**
+         * Animate a rich content block based on its type
+         * @param {HTMLElement} element - The content element
+         * @param {string} type - Content type (text, table, metrics, list, etc.)
+         * @param {Object} options - Additional options
+         * @returns {Promise} Resolves when animation completes
+         */
+        animate: function(element, type, options) {
+            const self = this;
+            options = options || {};
+
+            // Remove pending class - content is now being animated
+            element.classList.remove('animate-pending');
+
+            if (self.prefersReducedMotion()) {
+                element.classList.add('animate-skip');
+                return Promise.resolve();
+            }
+
+            switch (type) {
+                case 'text':
+                    return self.animateText(element, options);
+                case 'table':
+                    return self.animateTable(element, options);
+                case 'metrics':
+                    return self.animateMetrics(element, options);
+                case 'metric':
+                    return self.animateMetric(element, options);
+                case 'list':
+                    return self.animateList(element, options);
+                case 'code':
+                    return self.animateCode(element, options);
+                case 'chart':
+                    return self.animateChart(element, options);
+                case 'warning':
+                case 'success':
+                case 'info':
+                case 'error':
+                    return self.animateAlert(element, type, options);
+                default:
+                    // Generic fade-in for unknown types
+                    element.classList.add('animate-reveal');
+                    return Promise.resolve();
+            }
+        },
+
+        /**
+         * TEXT ANIMATION - Word-by-word blur-to-sharp reveal
+         */
+        animateText: function(element, options) {
+            const self = this;
+            const config = self.config.text;
+
+            return new Promise(function(resolve) {
+                // Get the HTML content
+                const html = element.innerHTML;
+
+                // Wrap words in spans
+                const wrapped = self._wrapTextWords(html);
+
+                // Skip if too many words
+                if (wrapped.wordCount > config.skipThreshold) {
+                    element.classList.add('animate-skip');
+                    resolve();
+                    return;
+                }
+
+                // Apply wrapped content
+                element.innerHTML = wrapped.html;
+                element.classList.add('animate-text-container');
+
+                // Calculate speed multiplier to cap total time
+                let totalTime = wrapped.wordCount * config.wordDelay;
+                let speedMultiplier = 1;
+                if (totalTime > config.maxTime) {
+                    speedMultiplier = config.maxTime / totalTime;
+                }
+
+                // Apply staggered delays
+                const words = element.querySelectorAll('.animate-word');
+                words.forEach(function(word, index) {
+                    word.style.animationDelay = (index * config.wordDelay * speedMultiplier) + 'ms';
+                });
+
+                // Mark complete after animation
+                const completionTime = Math.min(totalTime * speedMultiplier, config.maxTime) + 200;
+                setTimeout(function() {
+                    element.classList.add('animate-text-complete');
+                    resolve();
+                }, completionTime);
+            });
+        },
+
+        /**
+         * Wrap text nodes in spans for word animation (text blocks only)
+         */
+        _wrapTextWords: function(html) {
+            let wordCount = 0;
+            const temp = document.createElement('div');
+            temp.innerHTML = html;
+
+            function processNode(node) {
+                if (node.nodeType === Node.TEXT_NODE) {
+                    const text = node.textContent;
+                    if (text.trim()) {
+                        const words = text.split(/(\s+)/);
+                        const fragment = document.createDocumentFragment();
+
+                        words.forEach(function(word) {
+                            if (word.trim()) {
+                                const span = document.createElement('span');
+                                span.className = 'animate-word';
+                                span.textContent = word;
+                                fragment.appendChild(span);
+                                wordCount++;
+                            } else if (word) {
+                                fragment.appendChild(document.createTextNode(word));
+                            }
+                        });
+
+                        node.parentNode.replaceChild(fragment, node);
+                    }
+                } else if (node.nodeType === Node.ELEMENT_NODE) {
+                    // Don't process inside code/pre tags
+                    if (node.tagName === 'CODE' || node.tagName === 'PRE') {
+                        return;
+                    }
+                    // Process children
+                    Array.from(node.childNodes).forEach(processNode);
+                }
+            }
+
+            Array.from(temp.childNodes).forEach(processNode);
+
+            return { html: temp.innerHTML, wordCount: wordCount };
+        },
+
+        /**
+         * TABLE ANIMATION - Header slide-in, row cascade with scan-line
+         */
+        animateTable: function(element, options) {
+            const self = this;
+            const config = self.config.table;
+
+            return new Promise(function(resolve) {
+                // Find the table element
+                const table = element.tagName === 'TABLE' ? element : element.querySelector('table');
+                if (!table) {
+                    resolve();
+                    return;
+                }
+
+                // Add animation wrapper class
+                const wrapper = table.closest('.table-wrapper, .progressive-table-container, .data-table') || table.parentElement;
+                if (wrapper) {
+                    wrapper.classList.add('animate-table');
+                }
+                table.classList.add('animate-table');
+
+                // Animate header
+                const headerRow = table.querySelector('thead tr');
+                if (headerRow) {
+                    headerRow.style.animationDelay = config.headerDelay + 'ms';
+                }
+
+                // Animate body rows with cascade
+                const rows = table.querySelectorAll('tbody tr');
+                rows.forEach(function(row, index) {
+                    row.style.animationDelay = (config.headerDelay + 150 + index * config.rowDelay) + 'ms';
+                });
+
+                // Add scan-line effect
+                if (config.scanlineEnabled && wrapper) {
+                    const scanline = document.createElement('div');
+                    scanline.className = 'animate-table-scanline';
+                    wrapper.appendChild(scanline);
+
+                    // Remove scanline after animation
+                    setTimeout(function() {
+                        scanline.remove();
+                    }, 700);
+                }
+
+                // Calculate completion time
+                const completionTime = config.headerDelay + 150 + (rows.length * config.rowDelay) + 200;
+                setTimeout(function() {
+                    if (wrapper) wrapper.classList.add('animate-table-complete');
+                    table.classList.add('animate-table-complete');
+                    resolve();
+                }, completionTime);
+            });
+        },
+
+        /**
+         * METRICS ANIMATION - Counter roll-up with trend indicators
+         */
+        animateMetrics: function(element, options) {
+            const self = this;
+            const config = self.config.metrics;
+
+            return new Promise(function(resolve) {
+                element.classList.add('animate-metrics-container');
+
+                // Find all metric items
+                const metrics = element.querySelectorAll('.metric-item, .metric-card, .kpi-item, [class*="metric"]');
+                if (metrics.length === 0) {
+                    resolve();
+                    return;
+                }
+
+                metrics.forEach(function(metric, index) {
+                    metric.classList.add('animate-metric');
+                    metric.style.animationDelay = (config.containerDelay + index * config.itemDelay) + 'ms';
+
+                    // Counter animation for numeric values
+                    if (config.counterEnabled) {
+                        self._animateMetricCounter(metric, config.containerDelay + index * config.itemDelay + 100);
+                    }
+                });
+
+                // Completion
+                const completionTime = config.containerDelay + (metrics.length * config.itemDelay) + config.counterDuration + 100;
+                setTimeout(function() {
+                    element.classList.add('animate-metrics-complete');
+                    resolve();
+                }, completionTime);
+            });
+        },
+
+        /**
+         * Single metric animation
+         */
+        animateMetric: function(element, options) {
+            const self = this;
+            const config = self.config.metrics;
+
+            return new Promise(function(resolve) {
+                element.classList.add('animate-metric');
+
+                if (config.counterEnabled) {
+                    self._animateMetricCounter(element, 100);
+                }
+
+                setTimeout(function() {
+                    element.classList.add('animate-complete');
+                    resolve();
+                }, config.counterDuration + 200);
+            });
+        },
+
+        /**
+         * Animate counter roll-up effect for metric values
+         */
+        _animateMetricCounter: function(metricElement, startDelay) {
+            const self = this;
+            const config = self.config.metrics;
+
+            // Find the value element
+            const valueEl = metricElement.querySelector('.metric-value, .kpi-value, [class*="value"]');
+            if (!valueEl) return;
+
+            const finalText = valueEl.textContent;
+            const numericMatch = finalText.match(/[\d,]+\.?\d*/);
+
+            if (!numericMatch) return; // No number to animate
+
+            const finalValue = parseFloat(numericMatch[0].replace(/,/g, ''));
+            if (isNaN(finalValue)) return;
+
+            const prefix = finalText.substring(0, finalText.indexOf(numericMatch[0]));
+            const suffix = finalText.substring(finalText.indexOf(numericMatch[0]) + numericMatch[0].length);
+            const hasDecimals = numericMatch[0].includes('.');
+            const decimalPlaces = hasDecimals ? (numericMatch[0].split('.')[1] || '').length : 0;
+
+            // Start counter after delay
+            setTimeout(function() {
+                const startTime = performance.now();
+                const duration = config.counterDuration;
+
+                function updateCounter(currentTime) {
+                    const elapsed = currentTime - startTime;
+                    const progress = Math.min(elapsed / duration, 1);
+
+                    // Ease-out cubic
+                    const eased = 1 - Math.pow(1 - progress, 3);
+                    const currentValue = finalValue * eased;
+
+                    // Format the number
+                    let formattedValue;
+                    if (hasDecimals) {
+                        formattedValue = currentValue.toFixed(decimalPlaces);
+                    } else {
+                        formattedValue = Math.round(currentValue).toLocaleString();
+                    }
+
+                    valueEl.textContent = prefix + formattedValue + suffix;
+
+                    if (progress < 1) {
+                        requestAnimationFrame(updateCounter);
+                    } else {
+                        // Ensure final value is exact
+                        valueEl.textContent = finalText;
+                    }
+                }
+
+                requestAnimationFrame(updateCounter);
+            }, startDelay);
+        },
+
+        /**
+         * LIST ANIMATION - Cascade with bullet pop
+         */
+        animateList: function(element, options) {
+            const self = this;
+            const config = self.config.list;
+
+            return new Promise(function(resolve) {
+                element.classList.add('animate-list');
+
+                // Animate title if present
+                const title = element.querySelector('.list-title, h4, h5, strong:first-child');
+                if (title) {
+                    title.classList.add('animate-list-title');
+                }
+
+                // Find list items
+                const items = element.querySelectorAll('li');
+                items.forEach(function(item, index) {
+                    item.classList.add('animate-list-item');
+                    item.style.animationDelay = (config.titleDelay + (title ? 100 : 0) + index * config.itemDelay) + 'ms';
+                });
+
+                // Completion
+                const completionTime = config.titleDelay + (title ? 100 : 0) + (items.length * config.itemDelay) + 200;
+                setTimeout(function() {
+                    element.classList.add('animate-list-complete');
+                    resolve();
+                }, completionTime);
+            });
+        },
+
+        /**
+         * CODE ANIMATION - Terminal reveal with glow
+         */
+        animateCode: function(element, options) {
+            const self = this;
+
+            return new Promise(function(resolve) {
+                element.classList.add('animate-code');
+
+                setTimeout(function() {
+                    element.classList.add('animate-complete');
+                    resolve();
+                }, 400);
+            });
+        },
+
+        /**
+         * CHART ANIMATION - Draw-in effect
+         */
+        animateChart: function(element, options) {
+            const self = this;
+
+            return new Promise(function(resolve) {
+                element.classList.add('animate-chart');
+
+                // Animate SVG paths if present (for line charts)
+                const paths = element.querySelectorAll('path[class*="line"], path[class*="trace"]');
+                paths.forEach(function(path, index) {
+                    path.classList.add('animate-chart-path');
+                    path.style.animationDelay = (200 + index * 100) + 'ms';
+                });
+
+                // Animate bars if present
+                const bars = element.querySelectorAll('rect[class*="bar"], .bar');
+                bars.forEach(function(bar, index) {
+                    bar.classList.add('animate-chart-bar');
+                    bar.style.animationDelay = (200 + index * 50) + 'ms';
+                });
+
+                setTimeout(function() {
+                    element.classList.add('animate-complete');
+                    resolve();
+                }, 1000);
+            });
+        },
+
+        /**
+         * ALERT ANIMATION - Type-specific attention effects
+         */
+        animateAlert: function(element, alertType, options) {
+            return new Promise(function(resolve) {
+                element.classList.add('animate-alert');
+                element.classList.add('animate-alert-' + alertType);
+
+                setTimeout(function() {
+                    element.classList.add('animate-complete');
+                    resolve();
+                }, 500);
+            });
+        },
+
+        /**
+         * Animate progressive blocks during polling
+         */
+        animateProgressiveBlock: function(block) {
+            const self = this;
+
+            if (self.prefersReducedMotion()) return;
+
+            block.classList.add('animate-reveal');
+
+            // Detect and animate content type
+            const table = block.querySelector('table');
+            if (table) {
+                self.animateTable(block);
+                return;
+            }
+
+            const metrics = block.querySelector('.progressive-metrics, .metrics-group');
+            if (metrics) {
+                self.animateMetrics(metrics);
+                return;
+            }
+        },
+
+        /**
+         * Skip animation and show content immediately
+         */
+        skip: function(element) {
+            element.classList.add('animate-skip');
+        }
+    };
+
+    // Alias for backward compatibility
+    const TypewriterAnimation = ContentAnimator;
 
     /**
      * Advisor Controller
@@ -1691,189 +2270,157 @@
         },
         
         /**
-         * Query categories data - organized by template categories
-         * Maps to actual templates in Lib_Advisor_Templates.js
+         * Query categories data - 8 categories aligned with health score dashboard tiles
+         * Each category maps to a dashboard: cashflow, health, spendvelocity, burden, time, customervalue, vendorperformance, integrity
          */
         queryCategories: {
-            financials: {
-                name: 'Financial Statements',
-                icon: 'fa-file-invoice-dollar',
-                color: 'linear-gradient(135deg, #7c3aed 0%, #5b21b6 100%)',
-                queries: [
-                    { text: 'Income Statement', question: 'Show the full income statement' },
-                    { text: 'Balance Sheet', question: 'Show balance sheet' },
-                    { text: 'Trial Balance', question: 'Show trial balance YTD' },
-                    { text: 'Department P&L', question: 'Show P&L for ', prefill: true, placeholder: 'Enter department name' },
-                    { text: 'Comparative P&L', question: 'Show comparative P&L this year vs last year' }
-                ]
-            },
+            // ═══════════════════════════════════════════════════════════════════
+            // CASH FLOW - Dashboard: cashflow
+            // ═══════════════════════════════════════════════════════════════════
             cash: {
-                name: 'Cash & Liquidity',
-                icon: 'fa-coins',
+                name: 'Cash Flow',
+                icon: 'fa-money-bill-wave',
                 color: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
                 queries: [
-                    { text: 'Cash position', question: "What's our current cash position?" },
-                    { text: 'Bank balances', question: 'Show all bank account balances' },
-                    { text: 'Cash forecast', question: 'What will our cash position be in 30 days?' },
-                    { text: 'Cash runway', question: 'How many months of runway do we have?' }
+                    { text: 'Cash Position', question: "What's our current cash position?" },
+                    { text: 'Cash Runway', question: 'How many weeks of runway do we have?' },
+                    { text: 'Burn Rate', question: "What's our weekly burn rate?" },
+                    { text: 'Cash Forecast', question: 'What will our cash be in 30 days?' },
+                    { text: 'Critical Weeks', question: 'When might we face cash constraints?' },
+                    { text: 'Bank Balances', question: 'Show all bank account balances' },
+                    { text: 'Working Capital', question: "What's our working capital position?" },
+                    { text: 'AR/AP Impact', question: 'How do AR and AP affect our cash flow?' }
                 ]
             },
-            ar: {
-                name: 'Accounts Receivable',
-                icon: 'fa-hand-holding-usd',
-                color: 'linear-gradient(135deg, #06b6d4 0%, #0891b2 100%)',
-                queries: [
-                    { text: 'AR Aging Summary', question: 'Show AR aging summary' },
-                    { text: 'AR Aging Detail', question: 'Show detailed AR aging by customer' },
-                    { text: 'Past Due AR', question: 'Which invoices are past due?' },
-                    { text: 'Top AR Balances', question: 'Who are our top AR customers?' },
-                    { text: 'Days Sales Outstanding', question: "What's our DSO?" },
-                    { text: 'Customer Payments', question: 'Show recent customer payments' },
-                    { text: 'Days to Pay', question: 'Show average days to pay by customer' }
-                ]
-            },
-            ap: {
-                name: 'Accounts Payable',
-                icon: 'fa-file-invoice',
-                color: 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)',
-                queries: [
-                    { text: 'AP Aging', question: 'Show AP aging summary' },
-                    { text: 'Bills Due', question: 'What bills are due this week?' },
-                    { text: 'Past Due Bills', question: 'Which bills are past due?' },
-                    { text: 'Top Vendors', question: 'Who are our top vendors by spend?' },
-                    { text: 'Days Payable', question: "What's our DPO?" },
-                    { text: 'Vendor Spend YoY', question: 'Show vendor spend comparison year over year' }
-                ]
-            },
+            // ═══════════════════════════════════════════════════════════════════
+            // REVENUE - Dashboard: health (P&L)
+            // Absorbs: financials (income statement, balance sheet, trial balance)
+            // ═══════════════════════════════════════════════════════════════════
             revenue: {
-                name: 'Revenue & Sales',
+                name: 'Revenue',
                 icon: 'fa-chart-line',
                 color: 'linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)',
                 queries: [
-                    { text: 'Top Customers', question: 'Who are our top 10 customers this year?' },
-                    { text: 'Revenue by Dept', question: 'Show revenue by department YTD' },
-                    { text: 'Monthly Trend', question: 'Show monthly revenue trend' },
-                    { text: 'YTD by Customer', question: 'Show YTD revenue by customer' },
-                    { text: 'Weekly Revenue', question: 'What was revenue last week?' },
-                    { text: 'Customer for Dept', question: 'Top customers for ', prefill: true, placeholder: 'Enter department' }
-                ]
-            },
-            profitability: {
-                name: 'Profitability',
-                icon: 'fa-balance-scale',
-                color: 'linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%)',
-                queries: [
-                    { text: 'Net Profit YTD', question: 'What is our net profit year to date?' },
+                    { text: 'Health Score', question: "What's our financial health score?" },
+                    { text: 'Income Statement', question: 'Show the full income statement' },
+                    { text: 'Balance Sheet', question: 'Show balance sheet' },
+                    { text: 'P&L Summary', question: 'Show P&L summary year to date' },
                     { text: 'Gross Margin', question: "What's our gross margin?" },
-                    { text: 'Margin by Dept', question: 'Show gross margin by department' },
-                    { text: 'Department Margins', question: 'Which departments have the best margins?' }
+                    { text: 'YoY Comparison', question: 'How does this year compare to last year?' },
+                    { text: 'Department P&L', question: 'Show P&L for ', prefill: true, placeholder: 'Enter department name' },
+                    { text: 'Monthly Trend', question: 'Show monthly revenue trend' }
                 ]
             },
+            // ═══════════════════════════════════════════════════════════════════
+            // EXPENSES - Dashboard: spendvelocity
+            // ═══════════════════════════════════════════════════════════════════
             expenses: {
                 name: 'Expenses',
                 icon: 'fa-receipt',
                 color: 'linear-gradient(135deg, #f97316 0%, #ea580c 100%)',
                 queries: [
+                    { text: 'Spend Health', question: "What's our spend health score?" },
                     { text: 'Expense Breakdown', question: 'Break down expenses by category YTD' },
-                    { text: 'Expenses by Dept', question: 'Show expenses by department' },
-                    { text: 'Monthly Expenses', question: 'Show monthly expense trend' },
-                    { text: 'Top Expense Accounts', question: 'What are our largest expense accounts?' }
+                    { text: 'Spend Velocity', question: 'Which vendors have accelerating spend?' },
+                    { text: 'Subscription Creep', question: 'Are there boiling frog spending patterns?' },
+                    { text: 'Shadow IT', question: 'Are there shadow IT tools spreading?' },
+                    { text: 'Anomalies', question: 'Which expense accounts show anomalies?' },
+                    { text: 'By Department', question: 'Show expenses by department' },
+                    { text: 'Monthly Trend', question: 'Show monthly expense trend' }
                 ]
             },
-            orders: {
-                name: 'Orders & Pipeline',
-                icon: 'fa-shopping-cart',
-                color: 'linear-gradient(135deg, #ec4899 0%, #db2777 100%)',
+            // ═══════════════════════════════════════════════════════════════════
+            // MARGINS - Dashboard: burden
+            // Absorbs: gl (GL activity, journal entries)
+            // ═══════════════════════════════════════════════════════════════════
+            profitability: {
+                name: 'Margins',
+                icon: 'fa-balance-scale',
+                color: 'linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%)',
                 queries: [
-                    { text: 'Open Sales Orders', question: 'Show open sales orders' },
-                    { text: 'SO Backlog', question: 'What is our sales order backlog?' },
-                    { text: 'Recent Orders', question: 'Show orders placed this week' },
-                    { text: 'Open POs', question: 'Show open purchase orders' }
+                    { text: 'Burden Rate', question: "What's our current burden rate?" },
+                    { text: 'vs Target', question: 'How does burden compare to our target?' },
+                    { text: 'Overhead Breakdown', question: 'Show overhead costs by category' },
+                    { text: 'Department Burden', question: 'Which departments have highest burden?' },
+                    { text: 'Gross Margin', question: 'Show gross margin by department' },
+                    { text: 'Net Margin', question: "What's our net profit margin?" },
+                    { text: 'GL Activity', question: 'Show GL activity for ', prefill: true, placeholder: 'Enter account name' },
+                    { text: 'Journal Entries', question: 'Show recent journal entries' }
                 ]
             },
-            gl: {
-                name: 'General Ledger',
-                icon: 'fa-book',
-                color: 'linear-gradient(135deg, #6366f1 0%, #4f46e5 100%)',
-                queries: [
-                    { text: 'Account Activity', question: 'Show GL activity for ', prefill: true, placeholder: 'Enter account name' },
-                    { text: 'Journal Entries', question: 'Show recent journal entries' },
-                    { text: 'Transaction Detail', question: 'Show GL detail for transaction #', prefill: true, placeholder: 'Enter transaction ID' }
-                ]
-            },
+            // ═══════════════════════════════════════════════════════════════════
+            // LABOR - Dashboard: time
+            // ═══════════════════════════════════════════════════════════════════
             labor: {
-                name: 'Labor & Time',
+                name: 'Labor',
                 icon: 'fa-user-clock',
                 color: 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)',
                 queries: [
-                    { text: 'Hours by Employee', question: 'Show hours by employee this month' },
-                    { text: 'Billable Hours', question: 'Show billable hours by employee' },
-                    { text: 'Utilization Rate', question: 'Show utilization rate by employee' }
+                    { text: 'Utilization', question: "What's our team utilization rate?" },
+                    { text: 'By Employee', question: 'Show utilization by employee' },
+                    { text: 'Unbilled Time', question: 'How much unbilled time do we have?' },
+                    { text: 'Effective Rate', question: "What's our effective billing rate?" },
+                    { text: 'By Customer', question: 'Which customers consume the most time?' },
+                    { text: 'Billable Hours', question: 'Show billable hours this month' },
+                    { text: 'Monthly Trend', question: 'Show utilization trend by month' },
+                    { text: 'Non-Billable', question: 'Where is non-billable time going?' }
                 ]
             },
-            inventory: {
-                name: 'Inventory',
-                icon: 'fa-boxes',
-                color: 'linear-gradient(135deg, #84cc16 0%, #65a30d 100%)',
-                queries: [
-                    { text: 'Stock Levels', question: 'Show current inventory levels' },
-                    { text: 'Low Stock', question: 'What items are below reorder point?' },
-                    { text: 'Inventory Value', question: 'What is total inventory value?' },
-                    { text: 'Stock Movement', question: 'Show inventory movement this month' }
-                ]
-            },
-            transactions: {
-                name: 'Find Transaction',
-                icon: 'fa-search',
-                color: 'linear-gradient(135deg, #64748b 0%, #475569 100%)',
-                queries: [
-                    { text: 'Find Invoice', question: 'Find invoice #', prefill: true, placeholder: 'Enter invoice number' },
-                    { text: 'Find Bill', question: 'Find vendor bill #', prefill: true, placeholder: 'Enter bill number' },
-                    { text: 'Find SO', question: 'Find sales order #', prefill: true, placeholder: 'Enter SO number' },
-                    { text: 'Find PO', question: 'Find purchase order #', prefill: true, placeholder: 'Enter PO number' },
-                    { text: "Today's Invoices", question: 'Show invoices created today' },
-                    { text: 'Customer Invoices', question: 'Show invoices for ', prefill: true, placeholder: 'Enter customer name' },
-                    { text: 'Latest Invoice', question: 'Show the latest invoice' },
-                    { text: 'Latest Bill', question: 'Show the latest vendor bill' }
-                ]
-            },
+            // ═══════════════════════════════════════════════════════════════════
+            // CUSTOMERS - Dashboard: customervalue
+            // Absorbs: ar (AR aging, DSO, customer payments)
+            // ═══════════════════════════════════════════════════════════════════
             customers: {
                 name: 'Customers',
                 icon: 'fa-users',
                 color: 'linear-gradient(135deg, #06b6d4 0%, #0891b2 100%)',
                 queries: [
-                    { text: 'Top Customers', question: 'Who are our top 10 customers by revenue?' },
-                    { text: 'Customer List', question: 'Show all active customers' },
-                    { text: 'Customer Revenue', question: 'Show revenue by customer YTD' },
-                    { text: 'Customer Trends', question: 'Show customer revenue trends over time' },
-                    { text: 'New Customers', question: 'Show new customers this quarter' },
-                    { text: 'Customer Details', question: 'Show details for customer ', prefill: true, placeholder: 'Enter customer name' }
+                    { text: 'Customer Score', question: "What's our customer intelligence score?" },
+                    { text: 'Churn Risk', question: 'Which customers are at risk of churning?' },
+                    { text: 'Lifetime Value', question: "What's our customer lifetime value?" },
+                    { text: 'Top Customers', question: 'Who are our top 10 customers?' },
+                    { text: 'AR Aging', question: 'Show AR aging summary' },
+                    { text: 'Past Due AR', question: 'Which invoices are past due?' },
+                    { text: 'DSO', question: "What's our days sales outstanding?" },
+                    { text: 'Customer Payments', question: 'Show recent customer payments' }
                 ]
             },
+            // ═══════════════════════════════════════════════════════════════════
+            // VENDORS - Dashboard: vendorperformance
+            // Absorbs: ap (AP aging, DPO, bills due)
+            // ═══════════════════════════════════════════════════════════════════
             vendors: {
                 name: 'Vendors',
                 icon: 'fa-handshake',
                 color: 'linear-gradient(135deg, #ec4899 0%, #db2777 100%)',
                 queries: [
+                    { text: 'Vendor Score', question: "What's our vendor performance score?" },
+                    { text: 'Renewal Radar', question: 'Which vendors are due for renewal?' },
+                    { text: 'Maverick Spend', question: 'Do we have spend without purchase orders?' },
                     { text: 'Top Vendors', question: 'Who are our top vendors by spend?' },
-                    { text: 'Vendor List', question: 'Show all active vendors' },
-                    { text: 'Vendor Spend YTD', question: 'Show spend by vendor year to date' },
-                    { text: 'Vendor Bills', question: 'Show recent vendor bills' },
-                    { text: 'Vendor Performance', question: 'Show vendor payment history and terms' },
-                    { text: 'Vendor Details', question: 'Show details for vendor ', prefill: true, placeholder: 'Enter vendor name' }
+                    { text: 'AP Aging', question: 'Show AP aging summary' },
+                    { text: 'Bills Due', question: 'What bills are due this week?' },
+                    { text: 'DPO', question: "What's our days payable outstanding?" },
+                    { text: 'Past Due Bills', question: 'Which bills are past due?' }
                 ]
             },
+            // ═══════════════════════════════════════════════════════════════════
+            // DATA QUALITY - Dashboard: integrity (Sentinel)
+            // Absorbs: transactions (find invoice/bill/SO/PO)
+            // ═══════════════════════════════════════════════════════════════════
             dataquality: {
-                name: 'Sentinel',
+                name: 'Data Quality',
                 icon: 'fa-shield-alt',
                 color: 'linear-gradient(135deg, #6366f1 0%, #4f46e5 100%)',
                 queries: [
-                    { text: 'Flagged Transactions', question: 'Show all flagged transactions this month' },
-                    { text: 'Duplicate Check', question: 'Are there any potential duplicate bills?' },
-                    { text: 'Benford Analysis', question: 'Which transactions deviate from Benford\'s Law?' },
-                    { text: 'Weekend Entries', question: 'Show transactions entered on weekends' },
-                    { text: 'Anomaly Detection', question: 'Show suspicious or anomalous transactions' },
-                    { text: 'Risk Summary', question: 'What is our current transaction risk score?' }
+                    { text: 'Risk Score', question: 'What is our transaction risk score?' },
+                    { text: 'Flagged Items', question: 'Show flagged transactions this month' },
+                    { text: 'Duplicates', question: 'Are there potential duplicate bills?' },
+                    { text: "Benford's Law", question: "Which transactions fail Benford's Law?" },
+                    { text: 'Find Invoice', question: 'Find invoice #', prefill: true, placeholder: 'Enter invoice number' },
+                    { text: 'Find Bill', question: 'Find vendor bill #', prefill: true, placeholder: 'Enter bill number' },
+                    { text: 'Find SO/PO', question: 'Find sales order #', prefill: true, placeholder: 'Enter SO or PO number' },
+                    { text: 'Latest Activity', question: 'Show transactions created today' }
                 ]
             }
         },
@@ -1940,13 +2487,9 @@
                 });
             });
             
-            // Show panel, hide score-categories with animation
-            if (scoreCategoriesEl) scoreCategoriesEl.style.display = 'none';
-            panelEl.style.display = 'block';
-            // Trigger animation after display change
-            requestAnimationFrame(() => {
-                panelEl.classList.add('visible');
-            });
+            // Show panel, hide score-categories
+            if (scoreCategoriesEl) scoreCategoriesEl.classList.add('panel-open');
+            panelEl.classList.add('visible');
         },
 
         /**
@@ -1958,15 +2501,9 @@
 
             if (panelEl) {
                 panelEl.classList.remove('visible');
-                // Wait for animation to complete before hiding
-                setTimeout(() => {
-                    panelEl.style.display = 'none';
-                    if (scoreCategoriesEl) {
-                        scoreCategoriesEl.style.display = 'flex';
-                    }
-                }, 300);
-            } else if (scoreCategoriesEl) {
-                scoreCategoriesEl.style.display = 'flex';
+            }
+            if (scoreCategoriesEl) {
+                scoreCategoriesEl.classList.remove('panel-open');
             }
         },
         
@@ -2137,11 +2674,19 @@
                         this.updateProgressiveMessageBlocks(progressiveMsgId, status.blocks);
                     }
 
+                    // Update progressive narration (LLM-generated status text)
+                    if (status.narration) {
+                        this.updateProgressiveNarration(progressiveMsgId, status.narration);
+                    }
+
                     // Check if complete
                     if (status.status === 'complete') {
                         // Clear active request before finalizing
                         activeRequest = null;
                         this.saveSession();
+
+                        // Clear narration before showing final response
+                        this.clearProgressiveNarration(progressiveMsgId);
 
                         // Finalize the message with answer and rich content
                         this.finalizeProgressiveMessage(progressiveMsgId, {
@@ -2273,11 +2818,19 @@
                         this.updateProgressiveMessageBlocks(progressiveMsgId, status.blocks);
                     }
 
+                    // Update progressive narration (LLM-generated status text)
+                    if (status.narration) {
+                        this.updateProgressiveNarration(progressiveMsgId, status.narration);
+                    }
+
                     // Check if complete
                     if (status.status === 'complete') {
                         // Clear active request
                         activeRequest = null;
                         this.saveSession();
+
+                        // Clear narration before showing final response
+                        this.clearProgressiveNarration(progressiveMsgId);
 
                         // Finalize the message
                         this.finalizeProgressiveMessage(progressiveMsgId, {
@@ -2347,6 +2900,9 @@
                                 <div class="thinking-node-ring delay"></div>
                             </div>
                         </div>
+                    </div>
+                    <div class="message-narration" id="${msgId}-narration" style="display: none;">
+                        <div class="narration-content"></div>
                     </div>
                     <div class="message-content" id="${msgId}-content" style="display: none;"></div>
                     <div class="message-rich" id="${msgId}-rich" style="display: none;"></div>
@@ -2610,25 +3166,42 @@
             const contentEl = document.getElementById(msgId + '-content');
             const richEl = document.getElementById(msgId + '-rich');
             const hasRichContent = response.richContent && response.richContent.length > 0;
+            const self = this;
 
             if (hasRichContent && richEl) {
-                // Render ALL rich content items (text, tables, metrics, etc.)
-                let richHtml = '';
-                response.richContent.forEach(item => {
-                    richHtml += this.renderRichContent(item);
+                richEl.style.display = 'block';
+
+                // Render each content item separately so we can animate by type
+                let cumulativeDelay = 0;
+                response.richContent.forEach(function(item, index) {
+                    const itemHtml = self.renderRichContent(item);
+                    if (!itemHtml) return;
+
+                    // Create wrapper for this content block - hidden until animation starts
+                    const wrapper = document.createElement('div');
+                    wrapper.className = 'rich-content-block rich-content-' + item.type + ' animate-pending';
+                    wrapper.innerHTML = itemHtml;
+                    richEl.appendChild(wrapper);
+
+                    // Animate based on content type with staggered delay
+                    setTimeout(function() {
+                        ContentAnimator.animate(wrapper, item.type);
+                    }, cumulativeDelay);
+
+                    // Stagger subsequent items
+                    cumulativeDelay += 150;
                 });
-                if (richHtml) {
-                    richEl.innerHTML = richHtml;
-                    richEl.style.display = 'block';
-                }
+
                 // Hide text fallback since we have rich content
                 if (contentEl) {
                     contentEl.style.display = 'none';
                 }
             } else if (contentEl && response.text) {
-                // Fallback: no rich content, show plain text
-                contentEl.innerHTML = this.formatText(response.text);
+                // Fallback: no rich content, show plain text with typewriter animation
+                contentEl.innerHTML = self.formatText(response.text);
                 contentEl.style.display = 'block';
+                contentEl.classList.add('animate-pending');
+                ContentAnimator.animate(contentEl, 'text');
             }
 
             // Add to messages array for history
@@ -2744,11 +3317,13 @@
 
                 // Insert after steps but before any existing content
                 const stepsContainer = document.getElementById(msgId + '-steps');
-                const bubble = msgEl.querySelector('.advisor-message-bubble');
-                if (bubble && stepsContainer) {
+                const bubble = msgEl.querySelector('.message-bubble');
+                if (stepsContainer) {
                     stepsContainer.after(blocksContainer);
                 } else if (bubble) {
                     bubble.appendChild(blocksContainer);
+                } else {
+                    msgEl.appendChild(blocksContainer);
                 }
             }
 
@@ -2758,31 +3333,124 @@
             }
 
             // Render new blocks
-            blocks.forEach(block => {
+            const self = this;
+            blocks.forEach(function(block) {
                 if (blocksContainer._renderedBlockIds.has(block.id)) {
                     return; // Already rendered
                 }
 
                 const blockEl = document.createElement('div');
-                blockEl.className = 'progressive-block progressive-block-' + block.type;
+                blockEl.className = 'progressive-block progressive-block-' + block.type + ' animate-pending';
                 blockEl.id = msgId + '-block-' + block.id;
 
                 if (block.type === 'table' && block.rows) {
                     // Render table with real data
-                    blockEl.innerHTML = this.renderProgressiveTable(block);
+                    blockEl.innerHTML = self.renderProgressiveTable(block);
                 } else if (block.type === 'metrics' && block.items) {
-                    blockEl.innerHTML = this.renderProgressiveMetrics(block);
+                    blockEl.innerHTML = self.renderProgressiveMetrics(block);
                 } else if (block.type === 'text' && block.content) {
-                    blockEl.innerHTML = '<div class="progressive-text">' + this.escapeHtml(block.content) + '</div>';
+                    blockEl.innerHTML = '<div class="progressive-text">' + self.escapeHtml(block.content) + '</div>';
                 }
 
                 blocksContainer.appendChild(blockEl);
                 blocksContainer._renderedBlockIds.add(block.id);
 
+                // Apply content-specific animation to the new block
+                ContentAnimator.animate(blockEl, block.type);
+
                 console.log('[Advisor] Rendered progressive block:', block.type, block.id);
             });
 
+            self.scrollToBottom();
+        },
+
+        /**
+         * Update progressive message with narration text
+         * Handles premium dissolve/materialize transitions between narration states
+         */
+        updateProgressiveNarration: function(msgId, narration) {
+            if (!narration || !narration.text) return;
+
+            const narrationContainer = document.getElementById(msgId + '-narration');
+            if (!narrationContainer) return;
+
+            // Get the content element
+            const contentEl = narrationContainer.querySelector('.narration-content');
+            if (!contentEl) return;
+
+            // Check if this is the same narration we already displayed
+            const currentText = narrationContainer.getAttribute('data-narration-text');
+            if (currentText === narration.text) return;
+
+            // Get phase icon
+            const phaseIcons = {
+                'intent': '<i class="fas fa-crosshairs"></i>',
+                'select': '<i class="fas fa-th-list"></i>',
+                'invoke': '<i class="fas fa-bolt"></i>',
+                'reflect': '<i class="fas fa-brain"></i>',
+                'synthesize': '<i class="fas fa-magic"></i>',
+                'respond': '<i class="fas fa-comment-dots"></i>'
+            };
+            const icon = phaseIcons[narration.phase] || '<i class="fas fa-comment-dots"></i>';
+
+            // If there's existing content, dissolve it out first
+            if (currentText) {
+                // Add dissolve-out class
+                contentEl.classList.add('narration-dissolve-out');
+
+                // After dissolve completes, update and materialize in
+                setTimeout(() => {
+                    contentEl.innerHTML = icon + ' <span class="narration-text">' + this.escapeHtml(narration.text) + '</span>';
+                    narrationContainer.setAttribute('data-narration-text', narration.text);
+                    narrationContainer.setAttribute('data-narration-phase', narration.phase || '');
+                    contentEl.classList.remove('narration-dissolve-out');
+                    contentEl.classList.add('narration-materialize-in');
+
+                    // Remove animation class after completion
+                    setTimeout(() => {
+                        contentEl.classList.remove('narration-materialize-in');
+                    }, 400);
+                }, 300);
+            } else {
+                // First narration - just materialize in
+                contentEl.innerHTML = icon + ' <span class="narration-text">' + this.escapeHtml(narration.text) + '</span>';
+                narrationContainer.setAttribute('data-narration-text', narration.text);
+                narrationContainer.setAttribute('data-narration-phase', narration.phase || '');
+                narrationContainer.style.display = 'block';
+                contentEl.classList.add('narration-materialize-in');
+
+                // Remove animation class after completion
+                setTimeout(() => {
+                    contentEl.classList.remove('narration-materialize-in');
+                }, 400);
+            }
+
             this.scrollToBottom();
+        },
+
+        /**
+         * Clear narration when final response arrives
+         * Uses elegant dissolve animation
+         */
+        clearProgressiveNarration: function(msgId) {
+            const narrationContainer = document.getElementById(msgId + '-narration');
+            if (!narrationContainer) return;
+
+            const contentEl = narrationContainer.querySelector('.narration-content');
+            if (!contentEl) return;
+
+            // Only animate if there was content
+            if (narrationContainer.getAttribute('data-narration-text')) {
+                contentEl.classList.add('narration-dissolve-out');
+
+                setTimeout(() => {
+                    narrationContainer.style.display = 'none';
+                    contentEl.innerHTML = '';
+                    narrationContainer.removeAttribute('data-narration-text');
+                    narrationContainer.removeAttribute('data-narration-phase');
+                    contentEl.classList.remove('narration-dissolve-out');
+                }, 300);
+            }
         },
 
         /**
@@ -4717,16 +5385,33 @@
         },
 
         /**
-         * Get icon for step type
+         * Get icon for step type - uses contextual phase icons when available
          */
         getStepIcon: function(step) {
-            const icons = {
+            // Phase-specific icons for SCA pipeline steps
+            const phaseIcons = {
+                'intent': '<i class="fas fa-crosshairs"></i>',
+                'select': '<i class="fas fa-th-list"></i>',
+                'invoke': '<i class="fas fa-bolt"></i>',
+                'reflect': '<i class="fas fa-brain"></i>',
+                'synthesize': '<i class="fas fa-magic"></i>',
+                'respond': '<i class="fas fa-comment-dots"></i>'
+            };
+
+            // Check for phase in step context first
+            const phase = step.context && step.context.phase;
+            if (phase && phaseIcons[phase.toLowerCase()]) {
+                return phaseIcons[phase.toLowerCase()];
+            }
+
+            // Type-specific icons (fallback)
+            const typeIcons = {
                 'thinking': '<i class="fas fa-brain"></i>',
                 'deep_thinking': '<i class="fas fa-brain"></i>',
                 'reflection': '<i class="fas fa-lightbulb"></i>',
                 'strategy_pivot': '<i class="fas fa-random"></i>',
                 'plan_adaptation': '<i class="fas fa-project-diagram"></i>',
-                'classification': '<i class="fas fa-sitemap"></i>',
+                'classification': '<i class="fas fa-crosshairs"></i>',
                 'template': '<i class="fas fa-file-code"></i>',
                 'ai': '<i class="fas fa-robot"></i>',
                 'query': '<i class="fas fa-database"></i>',
@@ -4738,14 +5423,14 @@
                 'planning': '<i class="fas fa-route"></i>',
                 'agent_step': '<i class="fas fa-cogs"></i>',
                 'tool': '<i class="fas fa-wrench"></i>',
-                'tool_call': '<i class="fas fa-tools"></i>',
+                'tool_call': '<i class="fas fa-bolt"></i>',
                 'resolving': '<i class="fas fa-search-plus"></i>',
                 'entity_resolution': '<i class="fas fa-search-plus"></i>',
                 'text_response_warning': '<i class="fas fa-comment-slash"></i>',
                 'synthesizing': '<i class="fas fa-magic"></i>',
                 'pre_resolution': '<i class="fas fa-tag"></i>'
             };
-            return icons[step.type] || '<i class="fas fa-cog"></i>';
+            return typeIcons[step.type] || '<i class="fas fa-cog"></i>';
         },
         
         /**
@@ -5702,15 +6387,8 @@
             const commandCenter = document.getElementById('advisor-welcome-full');
             if (commandCenter) commandCenter.style.display = '';
 
-            // Reset and restart the geometric animation
-            GeometricAnimation.cleanup();
-            // Reset canvas opacity
-            const canvas = document.getElementById('geometric-canvas');
-            if (canvas) canvas.style.opacity = '1';
-            // Small delay then restart animation
-            setTimeout(() => {
-                GeometricAnimation.init();
-            }, 100);
+            // Reset and restart the geometric animation (init handles cleanup internally)
+            GeometricAnimation.init();
 
             // Reset score-category cards visibility for animation replay
             const scoreCategories = document.getElementById('score-categories');
