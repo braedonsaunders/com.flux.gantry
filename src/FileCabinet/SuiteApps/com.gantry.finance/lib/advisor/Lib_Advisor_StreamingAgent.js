@@ -8,13 +8,28 @@
  * WORLD-CLASS ARCHITECTURE:
  * LLM as Data Analyst - Full data access with zero hallucination
  *
+ * TRUE AGENTIC ARCHITECTURE (v2.0):
+ * The system now implements a true ReAct (Reasoning + Acting) loop:
+ *
  * PHASES:
  * 1. INTENT     - Classify the question type (~200 tokens, <1s)
- * 2. SELECT     - Pick relevant tools by name only (~300 tokens, <1s)
- * 3. INVOKE     - Execute tools, store data in N/cache (~200 tokens + tool time)
- * 4. REFLECT    - ReAct pattern: evaluate results, decide next action
- * 5. SYNTHESIZE - NEW: LLM writes custom SuiteQL when tools fail (self-correcting)
- * 6. RESPOND    - LLM sees ACTUAL DATA ROWS, outputs narrative with {{token}} refs
+ * 2. REASON_ACT - TRUE ReAct LOOP: Iteratively gather data until ready
+ *                 ┌─────────────────────────────────────────────┐
+ *                 │  THINK: "What do I need next?"              │
+ *                 │  ACT: Invoke ONE tool                       │
+ *                 │  OBSERVE: What did I get?                   │
+ *                 │  REFLECT: Do I have enough? ──NO──→ LOOP   │
+ *                 │      │                                      │
+ *                 │     YES → Exit to RESPOND                   │
+ *                 └─────────────────────────────────────────────┘
+ * 3. SYNTHESIZE - LLM writes custom SuiteQL when tools fail (self-correcting)
+ * 4. RESPOND    - LLM sees ACTUAL DATA ROWS, outputs narrative with {{token}} refs
+ *
+ * KEY DIFFERENCES FROM OLD ARCHITECTURE:
+ * - OLD: SELECT all tools → INVOKE all → REFLECT once → RESPOND
+ * - NEW: REASON_ACT loops, invoking ONE tool at a time, evaluating after each
+ * - LLM decides when it has enough data (not a fixed pipeline)
+ * - For comparisons (YoY, etc.), naturally gets both periods' data
  *
  * KEY INNOVATION: Token Reference System
  * - LLM outputs: "Your top customer is {{data.rows[0].customer_name}} with {{data.rows[0].total_revenue:currency}}"
@@ -38,13 +53,17 @@ define([
     const PHASES = {
         INIT: 'init',
         INTENT: 'intent',
-        SELECT: 'select',
-        INVOKE: 'invoke',
-        REFLECT: 'reflect',      // ReAct pattern - evaluate results and decide next action
-        SYNTHESIZE: 'synthesize', // LLM writes custom SQL when tools fail
-        RESPOND: 'respond',      // Generate final response with data access
+        REASON_ACT: 'reason_act',  // NEW: True ReAct loop - replaces SELECT/INVOKE/REFLECT
+        SELECT: 'select',          // DEPRECATED: kept for backwards compatibility
+        INVOKE: 'invoke',          // DEPRECATED: kept for backwards compatibility
+        REFLECT: 'reflect',        // DEPRECATED: kept for backwards compatibility
+        SYNTHESIZE: 'synthesize',  // LLM writes custom SQL when tools fail
+        RESPOND: 'respond',        // Generate final response with data access
         COMPLETE: 'complete'
     };
+
+    // Maximum iterations for the ReAct loop to prevent infinite loops
+    const MAX_REASON_ACT_ITERATIONS = 8;
 
     // ═══════════════════════════════════════════════════════════════════════════
     // ADAPTIVE INTELLIGENCE ROUTING (AIR)
@@ -74,6 +93,7 @@ define([
 
             // Balanced tier - requires reasoning about results
             case 'reflect':
+            case 'reason_act':  // ReAct loop requires good reasoning
                 return TIERS.BALANCED;
 
             // Premium tier - complex SQL generation needs best model
@@ -274,8 +294,79 @@ TRANSACTION TYPES - Infer from context (who is paying whom):
 Response format: {"tool": "{tool_name}", "args": {...}}`;
 
     // ═══════════════════════════════════════════════════════════════════════════
+    // REASON_ACT PROMPT - True ReAct Pattern (Reasoning + Acting in a Loop)
+    // This is the core of the agentic system - iteratively gather data until ready
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    const REASON_ACT_PROMPT = `You are an agentic financial analyst working step-by-step to answer the user's question.
+{date_context}
+
+{history_context}
+CURRENT QUESTION: "{question}"
+
+═══════════════════════════════════════════════════════════════════════════════
+DATA COLLECTED SO FAR:
+{accumulated_data}
+═══════════════════════════════════════════════════════════════════════════════
+
+AVAILABLE TOOLS:
+{tool_list}
+
+{period_options}
+
+═══════════════════════════════════════════════════════════════════════════════
+YOUR TASK: Think step-by-step about what you need to answer this question.
+
+1. ANALYZE what data you already have (see "DATA COLLECTED SO FAR")
+2. DETERMINE if you can fully answer the question with current data
+3. If YES: respond with action="ANSWER"
+4. If NO: identify EXACTLY what data you need next and call ONE tool
+
+CRITICAL RULES:
+- Call ONE tool at a time, then evaluate results
+- For comparisons (YoY, MoM, etc): get BOTH periods' data before answering
+  Example: "YoY comparison" needs income_statement for BOTH "ytd" AND "prior_year_ytd"
+- Don't guess or assume - if you need data, GET IT
+- After getting data, think: "Does this ACTUALLY answer the question?"
+═══════════════════════════════════════════════════════════════════════════════
+
+RESPOND WITH JSON:
+
+If you need MORE DATA:
+{{
+  "thinking": "I have X, but I still need Y because...",
+  "action": "GET_DATA",
+  "tool": "tool_name",
+  "args": {{}},
+  "userNarration": "Brief status (max 8 words)"
+}}
+
+If you have ENOUGH DATA to answer:
+{{
+  "thinking": "I have all the data needed: [list what you have]. I can now answer because...",
+  "action": "ANSWER",
+  "userNarration": "Ready to present findings"
+}}
+
+If you need to write CUSTOM SQL (tools don't cover this):
+{{
+  "thinking": "Pre-built tools cannot answer this because...",
+  "action": "SYNTHESIZE",
+  "userNarration": "Writing custom query"
+}}
+
+If the question is AMBIGUOUS and needs clarification:
+{{
+  "thinking": "The question is unclear because...",
+  "action": "CLARIFY",
+  "clarification_question": "What specifically would you like to know?",
+  "userNarration": "Need more details"
+}}`;
+
+    // ═══════════════════════════════════════════════════════════════════════════
     // REFLECT PROMPT - ReAct Pattern (Reasoning + Acting)
     // Evaluates tool results and decides next action
+    // DEPRECATED: Kept for backwards compatibility, REASON_ACT replaces this
     // ═══════════════════════════════════════════════════════════════════════════
 
     const REFLECT_PROMPT = `You are an agentic financial analyst. Your job is to evaluate whether you have the RIGHT data to answer the user's SPECIFIC question.
@@ -1288,6 +1379,17 @@ Now provide the response using ONLY the blocks array format:`;
         }
     }
 
+    /**
+     * Update an existing tool call step
+     */
+    function updateToolCallStep(state, toolName, data) {
+        addToolCallStep(state, {
+            ...data,
+            tool: toolName,
+            update: true
+        });
+    }
+
     // ═══════════════════════════════════════════════════════════════════════════
     // PHASE EXECUTORS
     // ═══════════════════════════════════════════════════════════════════════════
@@ -1326,7 +1428,34 @@ Now provide the response using ONLY the blocks array format:`;
 
             if (parsed && parsed.intent) {
                 state.intent = parsed;
-                state.phase = PHASES.SELECT;
+
+                // Route conversational queries directly to RESPOND
+                if (parsed.intent === 'general') {
+                    state.phase = PHASES.RESPOND;
+                    log.debug('SCA Intent - general/conversational, skipping to RESPOND');
+
+                    upsertThinkingStep(state, 'intent', {
+                        title: 'Understanding your question',
+                        phase: 'intent',
+                        status: 'complete',
+                        duration: duration,
+                        context: {
+                            question: state.message.substring(0, 100),
+                            intent: parsed.intent,
+                            conversational: true
+                        },
+                        debug: buildDebugInfo(prompt, response, state, { parsedIntent: parsed })
+                    });
+
+                    return { success: true, nextPhase: PHASES.RESPOND };
+                }
+
+                // NEW: Route to REASON_ACT for agentic data gathering
+                state.phase = PHASES.REASON_ACT;
+
+                // Initialize accumulated data tracking for ReAct loop
+                state.accumulatedData = [];
+                state.reasonActIterations = 0;
 
                 // Store progressive narration for frontend display
                 state.narration = {
@@ -1352,7 +1481,7 @@ Now provide the response using ONLY the blocks array format:`;
                 });
 
                 log.debug('SCA Intent phase complete', { intent: parsed.intent, duration: duration });
-                return { success: true, nextPhase: PHASES.SELECT };
+                return { success: true, nextPhase: PHASES.REASON_ACT };
             } else {
                 throw new Error('Failed to parse intent: ' + (response?.text?.substring(0, 100) || 'empty response'));
             }
@@ -1361,9 +1490,11 @@ Now provide the response using ONLY the blocks array format:`;
             log.error('SCA Intent phase failed', { error: e.message, duration: duration });
             state.errors.push({ phase: 'intent', error: e.message, timestamp: Date.now() });
 
-            // Default to general reporting intent
+            // Default to general reporting intent - route to REASON_ACT
             state.intent = { intent: 'reporting', entities: [], time_scope: 'none' };
-            state.phase = PHASES.SELECT;
+            state.phase = PHASES.REASON_ACT;
+            state.accumulatedData = [];
+            state.reasonActIterations = 0;
 
             upsertThinkingStep(state, 'intent', {
                 title: 'Understanding your question',
@@ -1377,13 +1508,455 @@ Now provide the response using ONLY the blocks array format:`;
                 }
             });
 
-            return { success: true, nextPhase: PHASES.SELECT };
+            return { success: true, nextPhase: PHASES.REASON_ACT };
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // REASON_ACT PHASE - True ReAct Pattern (Replaces SELECT/INVOKE/REFLECT)
+    // This is the core agentic loop: THINK → ACT → OBSERVE → REFLECT → LOOP
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Build accumulated data summary for the LLM
+     * Shows all data collected so far across iterations
+     */
+    function buildAccumulatedDataSummary(state) {
+        if (!state.accumulatedData || state.accumulatedData.length === 0) {
+            return 'No data collected yet. This is your first iteration.';
+        }
+
+        const lines = [];
+        state.accumulatedData.forEach((item, idx) => {
+            lines.push(`\n[${idx + 1}] Tool: ${item.tool}`);
+            lines.push(`    Args: ${JSON.stringify(item.args)}`);
+            lines.push(`    Status: ${item.success ? 'SUCCESS' : 'FAILED'}`);
+
+            if (item.success) {
+                lines.push(`    Rows: ${item.rowCount || 0}`);
+                if (item.columns && item.columns.length > 0) {
+                    lines.push(`    Columns: ${item.columns.join(', ')}`);
+                }
+                if (item.summary) {
+                    lines.push(`    Summary: ${item.summary}`);
+                }
+                if (item.preview && item.preview.length > 0) {
+                    lines.push(`    Sample data:`);
+                    item.preview.slice(0, 3).forEach(row => {
+                        const rowStr = Object.entries(row)
+                            .map(([k, v]) => `${k}: ${typeof v === 'number' ? formatNumber(v) : v}`)
+                            .join(', ');
+                        lines.push(`      - ${rowStr}`);
+                    });
+                }
+            } else {
+                lines.push(`    Error: ${item.error || 'Unknown error'}`);
+            }
+        });
+
+        return lines.join('\n');
+    }
+
+    /**
+     * Format number with appropriate precision and commas
+     */
+    function formatNumber(num) {
+        if (typeof num !== 'number') return num;
+        if (Math.abs(num) >= 1000000) {
+            return '$' + (num / 1000000).toFixed(2) + 'M';
+        } else if (Math.abs(num) >= 1000) {
+            return '$' + (num / 1000).toFixed(1) + 'K';
+        } else {
+            return num.toFixed(2);
         }
     }
 
     /**
-     * Phase 2: SELECT - Pick tools by name
-     * Enhanced with follow-up data reuse capability
+     * Execute a single tool and return the result
+     */
+    function executeToolForReasonAct(state, toolName, args) {
+        const tool = Tools.getTool(toolName);
+
+        if (!tool) {
+            log.error('REASON_ACT Unknown tool', { tool: toolName });
+            return {
+                tool: toolName,
+                args: args,
+                success: false,
+                error: 'Unknown tool: ' + toolName,
+                rowCount: 0
+            };
+        }
+
+        // Auto-inject resolved entities
+        args = autoInjectResolvedEntities(args, state, toolName);
+
+        // Execute tool
+        const toolStart = Date.now();
+        let result = Cache.getCachedToolResult(toolName, args);
+        let fromCache = false;
+
+        if (result) {
+            fromCache = true;
+        } else {
+            result = Tools.executeTool(toolName, args);
+            Cache.cacheToolResult(toolName, args, result);
+        }
+        const toolDuration = Date.now() - toolStart;
+
+        // Build accumulated data entry
+        const dataEntry = {
+            tool: toolName,
+            args: args,
+            success: result.success !== false,
+            rowCount: result.rows?.length || 0,
+            columns: result.columns || [],
+            error: result.error,
+            duration: toolDuration,
+            fromCache: fromCache
+        };
+
+        // Store data reference if we got rows
+        if (result.success && result.rows && result.rows.length > 0) {
+            const dataRef = Cache.storeData(state.requestId, toolName, result);
+            state.dataReferences.push(dataRef);
+            dataEntry.dataRef = dataRef?.refId;
+
+            // Add preview for LLM context
+            dataEntry.preview = result.rows.slice(0, 5);
+
+            // Build summary
+            if (result.columns && result.columns.length > 0) {
+                const numericCols = result.columns.filter(col => {
+                    const firstVal = result.rows[0]?.[col];
+                    return typeof firstVal === 'number';
+                });
+                if (numericCols.length > 0) {
+                    const col = numericCols[0];
+                    const sum = result.rows.reduce((s, r) => s + (r[col] || 0), 0);
+                    dataEntry.summary = `Total ${col}: ${formatNumber(sum)}`;
+                }
+            }
+        } else if (isDashboardResult(result)) {
+            // Dashboard intelligence
+            const dataRef = storeDashboardDataReference(state.requestId, toolName, result);
+            if (dataRef) {
+                state.dataReferences.push(dataRef);
+                dataEntry.dataRef = dataRef.refId;
+                dataEntry.success = true;
+                dataEntry.summary = result.textSummary || 'Dashboard data loaded';
+
+                // Extract key metrics for preview
+                if (result.intelligence?.metrics) {
+                    dataEntry.metrics = result.intelligence.metrics;
+                }
+            }
+        }
+
+        // Track entity resolution
+        if (toolName.startsWith('resolve_') && result.found && result.entity) {
+            const searchTerm = args.term || args.name || 'unknown';
+            state.resolvedEntities[searchTerm] = result.entity;
+            dataEntry.resolvedEntity = result.entity;
+        }
+
+        // Record tool invocation for compatibility
+        state.toolInvocations.push({
+            tool: toolName,
+            args: args,
+            success: dataEntry.success,
+            rowCount: dataEntry.rowCount,
+            duration: toolDuration,
+            fromCache: fromCache
+        });
+
+        return dataEntry;
+    }
+
+    /**
+     * Phase 2: REASON_ACT - True ReAct Loop
+     * Iteratively reasons about what data is needed and gathers it
+     */
+    function executeReasonActPhase(state) {
+        const phaseStart = Date.now();
+
+        // Increment iteration counter
+        state.reasonActIterations = (state.reasonActIterations || 0) + 1;
+
+        // Check for max iterations to prevent infinite loops
+        if (state.reasonActIterations > MAX_REASON_ACT_ITERATIONS) {
+            log.audit('REASON_ACT max iterations reached', {
+                iterations: state.reasonActIterations,
+                dataCollected: state.accumulatedData?.length || 0
+            });
+
+            upsertThinkingStep(state, 'reason_act', {
+                title: 'Analyzing data',
+                phase: 'reason_act',
+                status: 'complete',
+                duration: Date.now() - phaseStart,
+                context: {
+                    iteration: state.reasonActIterations,
+                    maxIterationsReached: true,
+                    dataCount: state.accumulatedData?.length || 0
+                }
+            });
+
+            state.phase = PHASES.RESPOND;
+            return { success: true, nextPhase: PHASES.RESPOND };
+        }
+
+        // Build the prompt with accumulated data
+        const prompt = REASON_ACT_PROMPT
+            .replace('{date_context}', getDateContext())
+            .replace('{history_context}', buildHistoryContext(state))
+            .replace('{question}', state.message)
+            .replace('{accumulated_data}', buildAccumulatedDataSummary(state))
+            .replace('{tool_list}', getToolListForPrompt())
+            .replace('{period_options}', Tools.getAvailablePeriods());
+
+        // Add thinking step
+        upsertThinkingStep(state, 'reason_act', {
+            title: state.reasonActIterations === 1 ? 'Planning analysis' : 'Evaluating progress',
+            phase: 'reason_act',
+            status: 'active',
+            context: {
+                iteration: state.reasonActIterations,
+                dataCollected: state.accumulatedData?.length || 0
+            }
+        });
+
+        try {
+            const response = AIProviders.callAI(prompt, {
+                tier: getTierForPhase('reason_act', state),
+                temperature: 0.2,
+                jsonMode: true,
+                maxTokens: 800,
+                purpose: 'SCA:reason_act'
+            });
+
+            const parsed = parseJsonResponse(response?.text);
+            const duration = Date.now() - phaseStart;
+
+            if (!parsed || !parsed.action) {
+                throw new Error('Invalid REASON_ACT response - missing action');
+            }
+
+            log.debug('REASON_ACT decision', {
+                iteration: state.reasonActIterations,
+                action: parsed.action,
+                thinking: parsed.thinking?.substring(0, 100),
+                tool: parsed.tool
+            });
+
+            // Store narration
+            state.narration = {
+                text: parsed.userNarration || 'Analyzing...',
+                phase: 'reason_act',
+                timestamp: Date.now()
+            };
+
+            // Handle the action
+            switch (parsed.action) {
+                case 'GET_DATA': {
+                    // Validate we have tool and args
+                    if (!parsed.tool) {
+                        throw new Error('GET_DATA action requires tool name');
+                    }
+
+                    const toolName = parsed.tool;
+                    const args = parsed.args || {};
+
+                    // Add tool call step for UI
+                    addToolCallStep(state, {
+                        title: Tools.getToolDisplayName(toolName, args),
+                        tool: toolName,
+                        status: 'active'
+                    });
+
+                    // Execute the tool
+                    const toolResult = executeToolForReasonAct(state, toolName, args);
+
+                    // Add to accumulated data
+                    state.accumulatedData.push(toolResult);
+
+                    // Update tool call step
+                    updateToolCallStep(state, toolName, {
+                        status: 'complete',
+                        params: args,
+                        result: {
+                            success: toolResult.success,
+                            rowCount: toolResult.rowCount,
+                            columns: toolResult.columns,
+                            preview: toolResult.preview?.slice(0, 3)
+                        },
+                        duration: toolResult.duration,
+                        summary: toolResult.success
+                            ? `Found ${toolResult.rowCount} results`
+                            : toolResult.error
+                    });
+
+                    // Update thinking step
+                    upsertThinkingStep(state, 'reason_act', {
+                        title: 'Gathering data',
+                        phase: 'reason_act',
+                        status: 'complete',
+                        duration: duration + toolResult.duration,
+                        context: {
+                            iteration: state.reasonActIterations,
+                            action: 'GET_DATA',
+                            tool: toolName,
+                            success: toolResult.success,
+                            rowCount: toolResult.rowCount
+                        },
+                        debug: buildDebugInfo(prompt, response, state, {
+                            reasonActDecision: parsed,
+                            toolResult: toolResult
+                        })
+                    });
+
+                    // Loop back to REASON_ACT to evaluate if we have enough data
+                    state.phase = PHASES.REASON_ACT;
+                    return { success: true, nextPhase: PHASES.REASON_ACT };
+                }
+
+                case 'ANSWER': {
+                    // LLM decided we have enough data - proceed to RESPOND
+                    log.debug('REASON_ACT ready to answer', {
+                        iterations: state.reasonActIterations,
+                        dataCount: state.accumulatedData?.length || 0,
+                        thinking: parsed.thinking
+                    });
+
+                    upsertThinkingStep(state, 'reason_act', {
+                        title: 'Analysis complete',
+                        phase: 'reason_act',
+                        status: 'complete',
+                        duration: duration,
+                        context: {
+                            iteration: state.reasonActIterations,
+                            action: 'ANSWER',
+                            dataCollected: state.accumulatedData?.length || 0,
+                            reasoning: parsed.thinking?.substring(0, 100)
+                        },
+                        debug: buildDebugInfo(prompt, response, state, { reasonActDecision: parsed })
+                    });
+
+                    state.phase = PHASES.RESPOND;
+                    return { success: true, nextPhase: PHASES.RESPOND };
+                }
+
+                case 'SYNTHESIZE': {
+                    // LLM wants to write custom SQL
+                    log.debug('REASON_ACT routing to SYNTHESIZE', {
+                        thinking: parsed.thinking
+                    });
+
+                    upsertThinkingStep(state, 'reason_act', {
+                        title: 'Need custom query',
+                        phase: 'reason_act',
+                        status: 'complete',
+                        duration: duration,
+                        context: {
+                            iteration: state.reasonActIterations,
+                            action: 'SYNTHESIZE',
+                            reasoning: parsed.thinking?.substring(0, 100)
+                        },
+                        debug: buildDebugInfo(prompt, response, state, { reasonActDecision: parsed })
+                    });
+
+                    state.phase = PHASES.SYNTHESIZE;
+                    return { success: true, nextPhase: PHASES.SYNTHESIZE };
+                }
+
+                case 'CLARIFY': {
+                    // Need user clarification - store question and go to respond
+                    log.debug('REASON_ACT needs clarification', {
+                        question: parsed.clarification_question
+                    });
+
+                    state.clarificationNeeded = parsed.clarification_question;
+
+                    upsertThinkingStep(state, 'reason_act', {
+                        title: 'Need clarification',
+                        phase: 'reason_act',
+                        status: 'complete',
+                        duration: duration,
+                        context: {
+                            iteration: state.reasonActIterations,
+                            action: 'CLARIFY',
+                            question: parsed.clarification_question
+                        },
+                        debug: buildDebugInfo(prompt, response, state, { reasonActDecision: parsed })
+                    });
+
+                    state.phase = PHASES.RESPOND;
+                    return { success: true, nextPhase: PHASES.RESPOND };
+                }
+
+                default: {
+                    // Unknown action - log and proceed to respond
+                    log.audit('REASON_ACT unknown action', { action: parsed.action });
+
+                    upsertThinkingStep(state, 'reason_act', {
+                        title: 'Analysis complete',
+                        phase: 'reason_act',
+                        status: 'complete',
+                        duration: duration,
+                        context: {
+                            iteration: state.reasonActIterations,
+                            action: parsed.action,
+                            unknown: true
+                        }
+                    });
+
+                    state.phase = PHASES.RESPOND;
+                    return { success: true, nextPhase: PHASES.RESPOND };
+                }
+            }
+
+        } catch (e) {
+            const duration = Date.now() - phaseStart;
+            log.error('REASON_ACT phase failed', {
+                error: e.message,
+                iteration: state.reasonActIterations
+            });
+
+            state.errors.push({
+                phase: 'reason_act',
+                error: e.message,
+                timestamp: Date.now()
+            });
+
+            upsertThinkingStep(state, 'reason_act', {
+                title: 'Analysis complete',
+                phase: 'reason_act',
+                status: 'complete',
+                duration: duration,
+                context: {
+                    iteration: state.reasonActIterations,
+                    fallback: true,
+                    error: e.message.substring(0, 100)
+                }
+            });
+
+            // If we have some data, proceed to respond; otherwise try synthesize
+            if (state.accumulatedData && state.accumulatedData.length > 0) {
+                state.phase = PHASES.RESPOND;
+                return { success: true, nextPhase: PHASES.RESPOND };
+            } else if (state.synthesize?.enabled) {
+                state.phase = PHASES.SYNTHESIZE;
+                return { success: true, nextPhase: PHASES.SYNTHESIZE };
+            } else {
+                state.phase = PHASES.RESPOND;
+                return { success: true, nextPhase: PHASES.RESPOND };
+            }
+        }
+    }
+
+    /**
+     * Phase 2 (DEPRECATED): SELECT - Pick tools by name
+     * Kept for backwards compatibility - REASON_ACT is the new flow
      */
     function executeSelectPhase(state) {
         const phaseStart = Date.now();
@@ -3093,6 +3666,36 @@ Now provide the response using ONLY the blocks array format:`;
         }
 
         // ═══════════════════════════════════════════════════════════════════════
+        // CLARIFICATION HANDLING - When REASON_ACT needs user input
+        // ═══════════════════════════════════════════════════════════════════════
+        if (state.clarificationNeeded) {
+            const duration = Date.now() - phaseStart;
+
+            state.formattedResponse = {
+                title: 'Clarification Needed',
+                summary: state.clarificationNeeded,
+                blocks: [{
+                    type: 'text',
+                    content: state.clarificationNeeded
+                }]
+            };
+            state.phase = PHASES.COMPLETE;
+
+            upsertThinkingStep(state, 'respond', {
+                title: 'Need more information',
+                phase: 'respond',
+                status: 'complete',
+                duration: duration,
+                context: {
+                    phase: 'respond',
+                    clarification: true
+                }
+            });
+
+            return { success: true, nextPhase: PHASES.COMPLETE };
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
         // COMBINED REFLECT+RESPOND MODE
         // If REFLECT phase already generated response blocks, use them directly
         // This saves an entire LLM round trip
@@ -4560,6 +5163,25 @@ Response:`;
                 result = executeIntentPhase(state);
                 return { hasMore: true, phase: result.nextPhase };
 
+            // ═══════════════════════════════════════════════════════════════════════
+            // REASON_ACT: True ReAct Loop - Replaces SELECT/INVOKE/REFLECT
+            // This is the core agentic phase that iteratively gathers data
+            // ═══════════════════════════════════════════════════════════════════════
+            case PHASES.REASON_ACT:
+                result = executeReasonActPhase(state);
+                // REASON_ACT can loop back to itself (more data needed) or proceed
+                if (result.nextPhase === PHASES.REASON_ACT) {
+                    return { hasMore: true, phase: PHASES.REASON_ACT };
+                }
+                if (result.nextPhase === PHASES.SYNTHESIZE) {
+                    return { hasMore: true, phase: PHASES.SYNTHESIZE };
+                }
+                if (result.nextPhase === PHASES.RESPOND) {
+                    return { hasMore: true, phase: PHASES.RESPOND };
+                }
+                return { hasMore: true, phase: result.nextPhase };
+
+            // DEPRECATED: Kept for backwards compatibility
             case PHASES.SELECT:
                 result = executeSelectPhase(state);
                 return { hasMore: true, phase: result.nextPhase };
