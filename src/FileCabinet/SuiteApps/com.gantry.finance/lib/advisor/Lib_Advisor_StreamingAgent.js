@@ -3034,49 +3034,57 @@ Now provide the response using ONLY the blocks array format:`;
             }
         });
 
-        // Track raw response for diagnostics (outside try block for catch access)
+        // ═══════════════════════════════════════════════════════════════════════
+        // LLM RETRY LOOP - Retry up to 3 times if response is invalid
+        // ═══════════════════════════════════════════════════════════════════════
+        const MAX_LLM_RETRIES = 3;
+        let lastError = null;
+        let parsed = null;
+        let resolved = null;
         let lastRawResponse = null;
 
-        try {
-            // ═══════════════════════════════════════════════════════════════════════
-            // ATTEMPT 1: Call with JSON schema enforcement (if provider supports it)
-            // maxTokens dynamically calculated from model's maxOutput (100% for respond)
-            // ═══════════════════════════════════════════════════════════════════════
-            const response = AIProviders.callAI(prompt, {
-                tier: getTierForPhase('respond', state),
-                temperature: 0.3,
-                jsonMode: true,
-                jsonSchema: RESPOND_BLOCKS_SCHEMA,
-                purpose: 'SCA:respond'
-            });
-
-            let parsed = parseJsonResponse(response?.text);
-            let retried = false;
-            lastRawResponse = response?.text; // Capture for diagnostics
-
-            // ═══════════════════════════════════════════════════════════════════════
-            // ATTEMPT 2: If wrong format, retry with explicit correction prompt
-            // LLMs sometimes ignore schema and return familiar patterns from training
-            // ═══════════════════════════════════════════════════════════════════════
-            if (parsed && !parsed.blocks) {
-                log.debug('SCA Respond: wrong format detected, retrying with correction', {
-                    receivedKeys: Object.keys(parsed),
-                    hasNarrative: !!parsed.narrative,
-                    hasFindings: !!parsed.findings,
-                    rawPreview: (response?.text || '').substring(0, 300)
-                });
-
-                // Build correction prompt with original context + correction instructions
-                const correctionPrompt = prompt + '\n\n' + SCHEMA_CORRECTION_PROMPT;
-
-                const retryResponse = AIProviders.callAI(correctionPrompt, {
+        for (let attempt = 1; attempt <= MAX_LLM_RETRIES; attempt++) {
+            try {
+                // ═══════════════════════════════════════════════════════════════════════
+                // ATTEMPT 1: Call with JSON schema enforcement (if provider supports it)
+                // maxTokens dynamically calculated from model's maxOutput (100% for respond)
+                // ═══════════════════════════════════════════════════════════════════════
+                const response = AIProviders.callAI(prompt, {
                     tier: getTierForPhase('respond', state),
-                    temperature: 0.2, // Lower temperature for more deterministic output
+                    temperature: 0.3 + (attempt - 1) * 0.1, // Slightly increase temperature on retries
                     jsonMode: true,
+                    jsonSchema: RESPOND_BLOCKS_SCHEMA,
                     purpose: 'SCA:respond'
                 });
 
                 parsed = parseJsonResponse(response?.text);
+                lastRawResponse = response?.text; // Capture for diagnostics
+
+                // ═══════════════════════════════════════════════════════════════════════
+                // ATTEMPT 2: If wrong format, retry with explicit correction prompt
+                // LLMs sometimes ignore schema and return familiar patterns from training
+                // ═══════════════════════════════════════════════════════════════════════
+                if (parsed && !parsed.blocks) {
+                    log.debug('SCA Respond: wrong format detected, retrying with correction', {
+                        receivedKeys: Object.keys(parsed),
+                        hasNarrative: !!parsed.narrative,
+                        hasFindings: !!parsed.findings,
+                        rawPreview: (response?.text || '').substring(0, 300)
+                    });
+
+                    // Build correction prompt with original context + correction instructions
+                    const correctionPrompt = prompt + '\n\n' + SCHEMA_CORRECTION_PROMPT;
+
+                    const retryResponse = AIProviders.callAI(correctionPrompt, {
+                        tier: getTierForPhase('respond', state),
+                        temperature: 0.2, // Lower temperature for more deterministic output
+                        jsonMode: true,
+                        purpose: 'SCA:respond'
+                    });
+
+                    parsed = parseJsonResponse(retryResponse?.text);
+                    lastRawResponse = retryResponse?.text;
+                }
 
                 if (!parsed) {
                     throw new Error('Invalid respond output - failed to parse JSON');
