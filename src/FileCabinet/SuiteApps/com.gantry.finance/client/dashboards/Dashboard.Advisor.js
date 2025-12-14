@@ -45,16 +45,16 @@
         orbitAngle: 0,
 
         config: {
-            particleCount: 280,
+            particleCount: 800,
             connectionDistance: 70,
-            particleSize: { min: 0.8, max: 2.8 },
+            particleSize: { min: 1.2, max: 3.5 },
             // Timing for smooth, premium animation
             birthDuration: 800,
             glowDuration: 400,
-            explodeDuration: 1400,        // Explosion outward
-            orbitDuration: 1200,          // Reduced orbit time
-            convergeDuration: 1000,       // Stream into input
-            shineDuration: 800,           // Longer, more subtle shine
+            explodeDuration: 1400,
+            orbitDuration: 1200,
+            convergeDuration: 900,
+            shineDuration: 1200,
             colors: [
                 { r: 99, g: 102, b: 241 },   // Indigo
                 { r: 139, g: 92, b: 246 },   // Purple
@@ -141,9 +141,9 @@
                 // Size scales with depth - near particles are larger
                 const baseSize = (this.config.particleSize.min + Math.random() * (this.config.particleSize.max - this.config.particleSize.min)) * depth;
 
-                // Darker particles with more variation (0.08 to 0.25 range)
-                const baseOpacity = 0.08 + Math.random() * 0.17;
-                const depthOpacity = baseOpacity * (0.5 + depth * 0.5); // Far = darker, near = slightly brighter
+                // VISIBLE particles (0.25 to 0.6 range)
+                const baseOpacity = 0.25 + Math.random() * 0.35;
+                const depthOpacity = baseOpacity * (0.6 + depth * 0.4);
 
                 this.particles.push({
                     x: center.x,
@@ -339,157 +339,173 @@
         },
 
         /**
-         * Converge: Particles stream tightly into the input center
+         * Get a point on the input border perimeter (rounded rectangle)
+         */
+        getPointOnBorder: function(rect, t, r) {
+            const w = rect.width - 2 * r;
+            const h = rect.height - 2 * r;
+            const corner = Math.PI * r / 2;
+            const perimeter = 2 * w + 2 * h + 4 * corner;
+            let d = ((t % 1) + 1) % 1 * perimeter;
+
+            // Top edge
+            if (d < w) return { x: rect.left + r + d, y: rect.top };
+            d -= w;
+            // Top-right corner
+            if (d < corner) {
+                const a = -Math.PI / 2 + (d / corner) * (Math.PI / 2);
+                return { x: rect.right - r + Math.cos(a) * r, y: rect.top + r + Math.sin(a) * r };
+            }
+            d -= corner;
+            // Right edge
+            if (d < h) return { x: rect.right, y: rect.top + r + d };
+            d -= h;
+            // Bottom-right corner
+            if (d < corner) {
+                const a = (d / corner) * (Math.PI / 2);
+                return { x: rect.right - r + Math.cos(a) * r, y: rect.bottom - r + Math.sin(a) * r };
+            }
+            d -= corner;
+            // Bottom edge
+            if (d < w) return { x: rect.right - r - d, y: rect.bottom };
+            d -= w;
+            // Bottom-left corner
+            if (d < corner) {
+                const a = Math.PI / 2 + (d / corner) * (Math.PI / 2);
+                return { x: rect.left + r + Math.cos(a) * r, y: rect.bottom - r + Math.sin(a) * r };
+            }
+            d -= corner;
+            // Left edge
+            if (d < h) return { x: rect.left, y: rect.bottom - r - d };
+            d -= h;
+            // Top-left corner
+            const a = Math.PI + (d / corner) * (Math.PI / 2);
+            return { x: rect.left + r + Math.cos(a) * r, y: rect.top + r + Math.sin(a) * r };
+        },
+
+        /**
+         * Converge: Particles stream toward the input border perimeter
          */
         startConverge: function() {
             this.phase = 'converge';
             const startTime = Date.now();
 
             const chatInput = document.getElementById('advisor-input-full');
-            const inputWrapper = chatInput ? chatInput.closest('.advisor-input-area') : null;
             const chatRect = chatInput ? chatInput.getBoundingClientRect() : null;
-            // Target is exact center of input
-            const targetX = chatRect ? chatRect.left + chatRect.width / 2 : this.canvas.width / 2;
-            const targetY = chatRect ? chatRect.top + chatRect.height / 2 : this.canvas.height * 0.9;
+            const borderRadius = 16;
 
-            // Sort particles by distance - farthest start first for stream effect
-            const distances = this.particles.map((p, i) => ({
-                i,
-                dist: Math.hypot(p.x - targetX, p.y - targetY)
-            }));
-            distances.sort((a, b) => b.dist - a.dist);
+            if (!chatRect) {
+                this.startAmbient();
+                return;
+            }
 
+            // Each particle targets a random point on the border perimeter
             this.particles.forEach((p, i) => {
                 p.originX = p.x;
                 p.originY = p.y;
                 p.originSize = p.size;
                 p.originOpacity = p.opacity;
-                // TIGHT stagger - all particles move almost together for concentrated stream
-                const sortedIndex = distances.findIndex(d => d.i === i);
-                p.streamOrder = sortedIndex / this.particles.length;
-            });
 
-            // Track when first particles arrive for glow timing
-            let firstArrival = false;
+                // Assign border position (spread around perimeter)
+                p.borderT = (i / this.particles.length + Math.random() * 0.05) % 1;
+                const target = this.getPointOnBorder(chatRect, p.borderT, borderRadius);
+                p.targetX = target.x;
+                p.targetY = target.y;
+
+                // Distance-based arrival timing
+                const dist = Math.hypot(p.x - p.targetX, p.y - p.targetY);
+                p.arrivalDelay = Math.min(0.35, dist / 1200);
+            });
 
             const animateConverge = () => {
                 if (!this.isActive || this.phase !== 'converge') return;
 
                 const elapsed = Date.now() - startTime;
                 const progress = Math.min(elapsed / this.config.convergeDuration, 1);
-                this.globalTime += 16;
 
-                let nearestParticleProgress = 0;
-
-                this.particles.forEach((p, i) => {
-                    // MUCH TIGHTER stagger - only 15% spread (was 50%)
-                    const stagger = p.streamOrder * 0.15;
-                    const particleProgress = Math.max(0, Math.min(1, (progress - stagger) / (1 - stagger)));
-
-                    if (particleProgress > 0) {
-                        // Stronger acceleration - really sucked in
-                        const t = Math.pow(particleProgress, 2.5); // Stronger than easeInQuad
-
-                        // Direct line to exact center
-                        p.x = p.originX + (targetX - p.originX) * t;
-                        p.y = p.originY + (targetY - p.originY) * t;
-
-                        // Shrink rapidly as they approach
-                        p.size = p.originSize * Math.max(0.1, 1 - t * 0.9);
-
-                        // Fade out near the end
-                        p.opacity = p.originOpacity * Math.max(0, 1 - Math.pow(t, 1.5) * 0.85);
-
-                        // Track closest particle for glow timing
-                        if (t > nearestParticleProgress) {
-                            nearestParticleProgress = t;
-                        }
+                this.particles.forEach(p => {
+                    const pProgress = Math.max(0, Math.min(1, (progress - p.arrivalDelay) / (1 - p.arrivalDelay)));
+                    if (pProgress > 0) {
+                        const t = this.easeInOutCubic(pProgress);
+                        p.x = p.originX + (p.targetX - p.originX) * t;
+                        p.y = p.originY + (p.targetY - p.originY) * t;
+                        p.size = p.originSize * (1 - t * 0.4);
+                        p.opacity = p.originOpacity * (0.5 + 0.5 * (1 - t * 0.3));
                     }
                 });
 
                 this.draw();
 
-                // Subtle glow builds as particles arrive - very understated
-                if (chatInput && nearestParticleProgress > 0.5) {
-                    const glowProgress = (nearestParticleProgress - 0.5) / 0.5;
-                    const glowIntensity = this.easeOutQuart(glowProgress);
-                    // Very subtle - just a hint of color on the border
-                    chatInput.style.boxShadow = `
-                        0 0 ${2 + 4 * glowIntensity}px rgba(99, 102, 241, ${0.08 + 0.12 * glowIntensity}),
-                        inset 0 0 ${1 + 2 * glowIntensity}px rgba(99, 102, 241, ${0.03 * glowIntensity})
-                    `;
-                }
-
                 if (progress < 1) {
                     this.animationId = requestAnimationFrame(animateConverge);
                 } else {
-                    this.triggerInputShine(chatInput, inputWrapper);
+                    this.startBorderFlow(chatInput, chatRect, borderRadius);
                 }
             };
 
             this.animationId = requestAnimationFrame(animateConverge);
         },
 
-        triggerInputShine: function(chatInput, inputWrapper) {
-            if (!chatInput) {
-                this.startAmbient();
-                return;
-            }
+        /**
+         * Border Flow: Particles become energy flowing around the input border
+         */
+        startBorderFlow: function(chatInput, chatRect, borderRadius) {
+            this.phase = 'borderFlow';
+            const startTime = Date.now();
 
-            // Particle-to-Focus Morph: animate glow, then hand off to CSS focus state
-            const shineStart = Date.now();
+            // Initialize particles for border flow - DRAMATIC glow
+            this.particles.forEach((p, i) => {
+                p.flowSpeed = 0.001 + Math.random() * 0.002; // Faster flow
+                p.flowDir = (i % 2 === 0) ? 1 : -1;
+                p.glowSize = p.baseSize * 6; // MUCH bigger glow
+                p.fadeDelay = 0.3 + Math.random() * 0.4;
+            });
 
-            // CSS focus state values we're morphing TO
-            const targetBorderColor = 'rgba(99, 102, 241, 0.25)';
+            const animateFlow = () => {
+                if (!this.isActive || this.phase !== 'borderFlow') return;
 
-            const animateShine = () => {
-                const elapsed = Date.now() - shineStart;
+                const elapsed = Date.now() - startTime;
                 const progress = Math.min(elapsed / this.config.shineDuration, 1);
 
-                // Envelope: rise to peak, then morph toward CSS focus values
-                const envelope = progress < 0.3
-                    ? this.easeOutCubic(progress / 0.3) * 0.8 // Rise to 80%
-                    : progress < 0.5
-                        ? 0.8 + this.easeInOutQuad((progress - 0.3) / 0.2) * 0.2 // Peak at 100%
-                        : 1 - this.easeOutCubic((progress - 0.5) / 0.5) * 0.6; // Settle to 40% (CSS-like)
+                this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
 
-                // Subtle breathing during rise, calm during settle
-                const breath = progress < 0.5
-                    ? Math.sin(progress * Math.PI * 3) * 0.1 + 1
-                    : 1;
+                // Draw particles flowing along border with BIG visible glow
+                this.particles.forEach(p => {
+                    p.borderT = (p.borderT + p.flowSpeed * p.flowDir + 1) % 1;
+                    const pos = this.getPointOnBorder(chatRect, p.borderT, borderRadius);
+                    p.x = pos.x;
+                    p.y = pos.y;
 
-                // Glow morphs from particle energy to CSS focus ring
-                const glowSize = 3 + 5 * envelope * breath;
-                const glowOpacity = 0.04 + 0.12 * envelope;
+                    const fadeProgress = progress > p.fadeDelay
+                        ? (progress - p.fadeDelay) / (1 - p.fadeDelay)
+                        : 0;
+                    const alpha = Math.min(0.9, p.originOpacity * 2) * (1 - this.easeOutCubic(fadeProgress));
 
-                // Calculate ring size - grows from 0 to 3px (CSS focus ring size)
-                const ringProgress = progress > 0.4 ? (progress - 0.4) / 0.6 : 0;
-                const ringSize = 3 * this.easeOutCubic(ringProgress);
-                const ringOpacity = 0.04 * ringProgress;
+                    if (alpha > 0.03) {
+                        // BIGGER, more visible glow
+                        const glowRadius = p.glowSize * 8;
+                        const gradient = this.ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, glowRadius);
+                        gradient.addColorStop(0, `rgba(${p.color.r}, ${p.color.g}, ${p.color.b}, ${alpha})`);
+                        gradient.addColorStop(0.2, `rgba(${p.color.r}, ${p.color.g}, ${p.color.b}, ${alpha * 0.6})`);
+                        gradient.addColorStop(0.5, `rgba(${p.color.r}, ${p.color.g}, ${p.color.b}, ${alpha * 0.2})`);
+                        gradient.addColorStop(1, 'rgba(99, 102, 241, 0)');
 
-                chatInput.style.boxShadow = `
-                    0 1px 2px rgba(0, 0, 0, 0.03),
-                    0 0 ${glowSize}px rgba(99, 102, 241, ${glowOpacity}),
-                    0 0 0 ${ringSize}px rgba(99, 102, 241, ${ringOpacity}),
-                    inset 0 1px 0 rgba(255, 255, 255, ${0.5 + 0.2 * envelope})
-                `;
-
-                // Border morphs to CSS focus color
-                const borderOpacity = 0.15 + 0.1 * envelope;
-                chatInput.style.borderColor = `rgba(99, 102, 241, ${borderOpacity})`;
+                        this.ctx.beginPath();
+                        this.ctx.arc(p.x, p.y, glowRadius, 0, Math.PI * 2);
+                        this.ctx.fillStyle = gradient;
+                        this.ctx.fill();
+                    }
+                });
 
                 if (progress < 1) {
-                    this.animationId = requestAnimationFrame(animateShine);
+                    this.animationId = requestAnimationFrame(animateFlow);
                 } else {
-                    // Seamless handoff: remove inline styles and class, CSS takes over
-                    chatInput.style.boxShadow = '';
-                    chatInput.style.borderColor = '';
-                    chatInput.classList.remove('animation-active');
+                    if (chatInput) chatInput.classList.remove('animation-active');
                     this.startAmbient();
                 }
             };
 
-            this.animationId = requestAnimationFrame(animateShine);
+            this.animationId = requestAnimationFrame(animateFlow);
         },
 
         quadraticBezier: function(x0, y0, x1, y1, x2, y2, t) {
@@ -728,6 +744,9 @@
         animate: function(element, type, options) {
             const self = this;
             options = options || {};
+
+            // Remove pending class - content is now being animated
+            element.classList.remove('animate-pending');
 
             if (self.prefersReducedMotion()) {
                 element.classList.add('animate-skip');
@@ -3158,9 +3177,9 @@
                     const itemHtml = self.renderRichContent(item);
                     if (!itemHtml) return;
 
-                    // Create wrapper for this content block
+                    // Create wrapper for this content block - hidden until animation starts
                     const wrapper = document.createElement('div');
-                    wrapper.className = 'rich-content-block rich-content-' + item.type;
+                    wrapper.className = 'rich-content-block rich-content-' + item.type + ' animate-pending';
                     wrapper.innerHTML = itemHtml;
                     richEl.appendChild(wrapper);
 
@@ -3181,6 +3200,7 @@
                 // Fallback: no rich content, show plain text with typewriter animation
                 contentEl.innerHTML = self.formatText(response.text);
                 contentEl.style.display = 'block';
+                contentEl.classList.add('animate-pending');
                 ContentAnimator.animate(contentEl, 'text');
             }
 
@@ -3320,7 +3340,7 @@
                 }
 
                 const blockEl = document.createElement('div');
-                blockEl.className = 'progressive-block progressive-block-' + block.type;
+                blockEl.className = 'progressive-block progressive-block-' + block.type + ' animate-pending';
                 blockEl.id = msgId + '-block-' + block.id;
 
                 if (block.type === 'table' && block.rows) {

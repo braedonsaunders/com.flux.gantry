@@ -2672,33 +2672,31 @@ body.dark-mode .message-text .md-heading {
     max-width: 800px;
     margin: 0 auto;
     background: linear-gradient(
-        180deg,
-        rgba(255, 255, 255, 0.92) 0%,
-        rgba(255, 255, 255, 0.96) 100%
+        135deg,
+        rgba(255, 255, 255, 0.95) 0%,
+        rgba(250, 250, 255, 0.92) 100%
     );
-    backdrop-filter: blur(16px);
-    -webkit-backdrop-filter: blur(16px);
-    border: 1px solid rgba(226, 232, 240, 0.5);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1.5px solid rgba(99, 102, 241, 0.12);
     border-radius: 16px;
     padding: 10px 10px 10px 18px;
     box-shadow:
-        0 1px 2px rgba(0, 0, 0, 0.03),
-        0 4px 16px rgba(0, 0, 0, 0.02),
-        inset 0 1px 0 rgba(255, 255, 255, 0.7);
+        0 2px 8px rgba(0, 0, 0, 0.04),
+        0 8px 32px rgba(0, 0, 0, 0.03);
     display: flex;
     align-items: flex-end;
     gap: 12px;
-    transition: border-color 0.4s ease, box-shadow 0.4s ease;
+    transition: border-color 0.3s ease, box-shadow 0.3s ease;
 }
 
 /* Focus glow - suppressed during particle animation */
 .input-glass-panel:focus-within:not(.animation-active) {
-    border-color: rgba(99, 102, 241, 0.25);
+    border-color: rgba(99, 102, 241, 0.35);
     box-shadow:
-        0 1px 2px rgba(0, 0, 0, 0.03),
-        0 4px 16px rgba(99, 102, 241, 0.06),
-        0 0 0 3px rgba(99, 102, 241, 0.04),
-        inset 0 1px 0 rgba(255, 255, 255, 0.7);
+        0 0 20px rgba(99, 102, 241, 0.12),
+        0 0 40px rgba(99, 102, 241, 0.06),
+        0 0 0 3px rgba(99, 102, 241, 0.06);
 }
 
 /* During animation - focus glow is handled by JS particles */
@@ -5764,6 +5762,11 @@ body.dark-mode .animate-code {
     filter: none !important;
 }
 
+/* Hide content until animation starts - prevents flash of unstyled content */
+.animate-pending {
+    opacity: 0;
+}
+
 /* Animation complete - clean up */
 .animate-complete {
     animation: none;
@@ -5773,52 +5776,30 @@ body.dark-mode .animate-code {
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
-   PROGRESSIVE NARRATION - Phase status text with dissolve/materialize transitions
+   PROGRESSIVE NARRATION - Subtle status text below step renderer
    ───────────────────────────────────────────────────────────────────────────── */
 
 .message-narration {
-    margin: 12px 0;
-    padding: 10px 14px;
-    background: linear-gradient(135deg,
-        rgba(37, 99, 235, 0.06) 0%,
-        rgba(139, 92, 246, 0.04) 100%);
-    border-left: 2px solid var(--primary);
-    border-radius: 0 8px 8px 0;
-    position: relative;
-    overflow: hidden;
-}
-
-.message-narration::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    height: 1px;
-    background: linear-gradient(90deg,
-        var(--primary) 0%,
-        transparent 100%);
-    opacity: 0.4;
+    margin: 2px 0 6px 0;
+    padding: 0;
 }
 
 .narration-content {
     display: flex;
     align-items: center;
-    gap: 10px;
-    font-size: 13px;
-    color: var(--text-secondary);
-    font-weight: 500;
-    letter-spacing: 0.01em;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--text-muted, #9ca3af);
+    font-weight: 400;
 }
 
 .narration-content i {
-    color: var(--primary);
-    font-size: 14px;
-    opacity: 0.9;
+    font-size: 10px;
+    opacity: 0.6;
 }
 
 .narration-text {
-    flex: 1;
+    opacity: 0.85;
 }
 
 /* Dissolve out animation - elegant fade with blur */
@@ -5861,51 +5842,6 @@ body.dark-mode .animate-code {
     }
 }
 
-/* Subtle shimmer effect on narration container */
-.message-narration::after {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: -100%;
-    width: 100%;
-    height: 100%;
-    background: linear-gradient(90deg,
-        transparent 0%,
-        rgba(255, 255, 255, 0.03) 50%,
-        transparent 100%);
-    animation: narrationShimmer 3s ease-in-out infinite;
-}
-
-@keyframes narrationShimmer {
-    0%, 100% { left: -100%; }
-    50% { left: 100%; }
-}
-
-/* Phase-specific border colors */
-.message-narration[data-narration-phase="intent"] {
-    border-left-color: #3b82f6; /* blue */
-}
-
-.message-narration[data-narration-phase="select"] {
-    border-left-color: #8b5cf6; /* purple */
-}
-
-.message-narration[data-narration-phase="invoke"] {
-    border-left-color: #f59e0b; /* amber */
-}
-
-.message-narration[data-narration-phase="reflect"] {
-    border-left-color: #10b981; /* emerald */
-}
-
-.message-narration[data-narration-phase="synthesize"] {
-    border-left-color: #ec4899; /* pink */
-}
-
-.message-narration[data-narration-phase="respond"] {
-    border-left-color: #06b6d4; /* cyan */
-}
-
 /* === REDUCED MOTION SUPPORT === */
 @media (prefers-reduced-motion: reduce) {
     /* Neural flow animations */
@@ -5939,8 +5875,7 @@ body.dark-mode .animate-code {
     /* Narration animations */
     .narration-content,
     .narration-dissolve-out,
-    .narration-materialize-in,
-    .message-narration::after {
+    .narration-materialize-in {
         animation: none !important;
         transition: none !important;
     }
