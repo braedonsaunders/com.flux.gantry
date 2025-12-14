@@ -5745,6 +5745,11 @@ body.dark-mode .animate-code {
     filter: none !important;
 }
 
+/* Hide content until animation starts - prevents flash of unstyled content */
+.animate-pending {
+    opacity: 0;
+}
+
 /* Animation complete - clean up */
 .animate-complete {
     animation: none;

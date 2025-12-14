@@ -687,6 +687,9 @@
             const self = this;
             options = options || {};
 
+            // Remove pending class - content is now being animated
+            element.classList.remove('animate-pending');
+
             if (self.prefersReducedMotion()) {
                 element.classList.add('animate-skip');
                 return Promise.resolve();
@@ -3116,9 +3119,9 @@
                     const itemHtml = self.renderRichContent(item);
                     if (!itemHtml) return;
 
-                    // Create wrapper for this content block
+                    // Create wrapper for this content block - hidden until animation starts
                     const wrapper = document.createElement('div');
-                    wrapper.className = 'rich-content-block rich-content-' + item.type;
+                    wrapper.className = 'rich-content-block rich-content-' + item.type + ' animate-pending';
                     wrapper.innerHTML = itemHtml;
                     richEl.appendChild(wrapper);
 
@@ -3139,6 +3142,7 @@
                 // Fallback: no rich content, show plain text with typewriter animation
                 contentEl.innerHTML = self.formatText(response.text);
                 contentEl.style.display = 'block';
+                contentEl.classList.add('animate-pending');
                 ContentAnimator.animate(contentEl, 'text');
             }
 
@@ -3278,7 +3282,7 @@
                 }
 
                 const blockEl = document.createElement('div');
-                blockEl.className = 'progressive-block progressive-block-' + block.type;
+                blockEl.className = 'progressive-block progressive-block-' + block.type + ' animate-pending';
                 blockEl.id = msgId + '-block-' + block.id;
 
                 if (block.type === 'table' && block.rows) {
