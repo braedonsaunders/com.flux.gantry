@@ -1294,7 +1294,6 @@ Now provide the response using ONLY the blocks array format:`;
             const response = AIProviders.callAI(prompt, {
                 tier: getTierForPhase('intent', state),
                 temperature: 0.1,
-                maxTokens: 200,
                 jsonMode: true,
                 purpose: 'SCA:intent'
             });
@@ -1490,7 +1489,6 @@ Now provide the response using ONLY the blocks array format:`;
             const response = AIProviders.callAI(prompt, {
                 tier: getTierForPhase('select', state),
                 temperature: 0.1,
-                maxTokens: 200,
                 jsonMode: true,
                 purpose: 'SCA:select'
             });
@@ -1848,7 +1846,6 @@ Now provide the response using ONLY the blocks array format:`;
             const response = AIProviders.callAI(prompt, {
                 tier: getTierForPhase('invoke', state),
                 temperature: 0.1,
-                maxTokens: 300,
                 jsonMode: true,
                 purpose: `SCA:invoke:${toolName}`
             });
@@ -2287,7 +2284,6 @@ Now provide the response using ONLY the blocks array format:`;
             const response = AIProviders.callAI(prompt, {
                 tier: getTierForPhase('reflect', state),
                 temperature: 0.2,
-                maxTokens: 500,
                 jsonMode: true,
                 purpose: 'SCA:reflect'
             });
@@ -2536,7 +2532,6 @@ Now provide the response using ONLY the blocks array format:`;
             const response = AIProviders.callAI(prompt, {
                 tier: getTierForPhase('synthesize', state),
                 temperature: 0.2,
-                maxTokens: 1500,
                 jsonMode: true,
                 purpose: 'SCA:synthesize'
             });
@@ -2843,7 +2838,6 @@ Now provide the response using ONLY the blocks array format:`;
             const response = AIProviders.callAI(prompt, {
                 tier: getTierForPhase('recovery', state),
                 temperature: 0.2,
-                maxTokens: 300,
                 jsonMode: true,
                 purpose: 'SCA:recovery'
             });
@@ -3010,11 +3004,11 @@ Now provide the response using ONLY the blocks array format:`;
         try {
             // ═══════════════════════════════════════════════════════════════════════
             // ATTEMPT 1: Call with JSON schema enforcement (if provider supports it)
+            // maxTokens dynamically calculated from model's maxOutput (100% for respond)
             // ═══════════════════════════════════════════════════════════════════════
             const response = AIProviders.callAI(prompt, {
                 tier: getTierForPhase('respond', state),
                 temperature: 0.3,
-                maxTokens: 2000,
                 jsonMode: true,
                 jsonSchema: RESPOND_BLOCKS_SCHEMA,
                 purpose: 'SCA:respond'
@@ -3042,7 +3036,6 @@ Now provide the response using ONLY the blocks array format:`;
                 const retryResponse = AIProviders.callAI(correctionPrompt, {
                     tier: getTierForPhase('respond', state),
                     temperature: 0.2, // Lower temperature for more deterministic output
-                    maxTokens: 2000,
                     jsonMode: true,
                     jsonSchema: RESPOND_BLOCKS_SCHEMA,
                     purpose: 'SCA:respond:retry'
@@ -3943,7 +3936,7 @@ Response:`;
             const response = AIProviders.callAI(prompt, {
                 tier: FAST_TIER,
                 temperature: 0.7,
-                maxTokens: 150
+                purpose: 'SCA:intent' // Conversational responses are short like intent
             });
 
             if (response && response.trim()) {
