@@ -569,21 +569,13 @@ CRITICAL INSTRUCTIONS - READ CAREFULLY:
 ═══════════════════════════════════════════════════════════════════════════════
 ⚠️ CRITICAL: OUTPUT STRUCTURE
 
-You MUST return: {{"blocks": [...]}}
+You MUST return EXACTLY this structure: {{"blocks": [...]}}
 
-❌ WRONG - DO NOT USE THIS FORMAT:
-{{"narrative": "...", "metrics": [...], "findings": [...]}}
+The ONLY valid top-level key is "blocks" - an array of typed block objects.
+Any other top-level keys will cause a validation error.
 
-❌ WRONG - DO NOT USE THESE TOP-LEVEL KEYS:
-- "narrative"
-- "findings"
-- "summary"
-- "analysis"
-
-✅ CORRECT - USE ONLY THIS STRUCTURE:
+✅ CORRECT STRUCTURE:
 {{"blocks": [{{"type": "text", "content": "..."}}, ...]}}
-
-The ONLY valid top-level key is "blocks" containing an array of typed blocks.
 ═══════════════════════════════════════════════════════════════════════════════
 
 Response format (JSON only):
@@ -657,22 +649,22 @@ Response format (JSON only):
     // ═══════════════════════════════════════════════════════════════════════════
     // SCHEMA_CORRECTION_PROMPT - Used when LLM returns wrong format
     // ═══════════════════════════════════════════════════════════════════════════
-    const SCHEMA_CORRECTION_PROMPT = `Your previous response used the WRONG format.
+    const SCHEMA_CORRECTION_PROMPT = `Your previous response used an invalid format.
 
-You returned something like: {"narrative": "...", "metrics": [...], "findings": [...]}
+You MUST return EXACTLY: {"blocks": [...]}
 
-This is INCORRECT. You MUST return: {"blocks": [...]}
+The ONLY valid top-level key is "blocks" containing an array of typed block objects.
 
-Convert your response to the correct format. The ONLY valid structure is:
+Correct structure:
 {
   "blocks": [
-    {"type": "text", "content": "your narrative text here"},
+    {"type": "text", "content": "your analysis text here"},
     {"type": "metrics", "items": [{"label": "Label", "value": "value", "trend": "neutral"}]},
-    {"type": "list", "title": "Key Findings", "items": ["finding 1", "finding 2"]}
+    {"type": "list", "title": "Key Takeaways", "items": ["item 1", "item 2"]}
   ]
 }
 
-Now provide the CORRECT format with your analysis:`;
+Now provide the response using ONLY the blocks array format:`;
 
     // ═══════════════════════════════════════════════════════════════════════════
     // TOOL MANIFEST - Now delegated to Tools.js (single source of truth)
