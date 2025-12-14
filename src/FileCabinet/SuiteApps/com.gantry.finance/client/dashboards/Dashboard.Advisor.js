@@ -30,57 +30,55 @@
     let currentPollingId = null;  // Unique ID for current polling loop to detect stale loops
 
     /**
-     * Geometric Animation Controller
-     * Phases: birth → pause → orbGlow → explode → orbit → converge → shine → ambient
+     * Premium Financial Animation Controller
+     * Version: PREMIUM-2024-12-14-A
+     *
+     * Elegant, subtle particle animation suitable for financial software.
+     * Phases: emerge → float → ambient (2.5s total)
      */
     const GeometricAnimation = {
         canvas: null,
         ctx: null,
         particles: [],
         animationId: null,
-        birthTimeoutId: null,  // Track setTimeout for cleanup
         phase: 'idle',
         isActive: false,
         globalTime: 0,
-        orbitAngle: 0,
+        VERSION: 'PREMIUM-2024-12-14-A',
 
         config: {
-            particleCount: 800,
-            connectionDistance: 70,
-            particleSize: { min: 1.2, max: 3.5 },
-            // Timing for smooth, premium animation
-            birthDuration: 800,
-            glowDuration: 400,
-            explodeDuration: 1400,
-            orbitDuration: 1200,
-            convergeDuration: 900,
-            shineDuration: 1200,
+            // Reduced particle count for elegance and performance
+            particleCount: 100,
+            particleSize: { min: 1.5, max: 4 },
+            // Faster, more professional timing
+            emergeDuration: 1200,
+            floatDuration: 800,
+            // Sophisticated financial color palette
             colors: [
-                { r: 99, g: 102, b: 241 },   // Indigo
-                { r: 139, g: 92, b: 246 },   // Purple
-                { r: 6, g: 182, b: 212 },    // Cyan
-                { r: 59, g: 130, b: 246 }    // Blue
+                { r: 71, g: 85, b: 105 },    // Slate-600 (primary)
+                { r: 100, g: 116, b: 139 },  // Slate-500
+                { r: 79, g: 70, b: 229 },    // Indigo-600 (accent)
+                { r: 148, g: 163, b: 184 }   // Slate-400
             ]
         },
 
         init: function() {
-            // Clean up any existing state first to prevent memory leaks
+            // VERSION CHECK - verify deployment in console
+            console.log('%c[GeometricAnimation] ' + this.VERSION + ' initialized',
+                'color: #6366f1; font-weight: bold; font-size: 14px;');
+
             this.cleanup();
 
             this.canvas = document.getElementById('geometric-canvas');
-            if (!this.canvas) return;
-
-            // Suppress CSS focus glow during animation - particles will create it
-            const chatInput = document.getElementById('advisor-input-full');
-            if (chatInput) {
-                chatInput.classList.add('animation-active');
+            if (!this.canvas) {
+                console.warn('[GeometricAnimation] Canvas not found');
+                return;
             }
 
             this.ctx = this.canvas.getContext('2d');
             this.canvas.style.opacity = '1';
             this.resize();
 
-            // Only create one resize listener
             if (!this.boundResize) {
                 this.boundResize = this.resize.bind(this);
             }
@@ -89,10 +87,8 @@
             this.isActive = true;
             this.phase = 'idle';
             this.globalTime = 0;
-            this.cameraX = 0;
-            this.cameraY = 0;
             this.createParticles();
-            this.startBirth();
+            this.startEmerge();
         },
 
         resize: function() {
@@ -101,237 +97,109 @@
             this.canvas.height = window.innerHeight;
         },
 
-        getBrainCenter: function() {
-            const heroOrb = document.querySelector('.hero-orb');
-            if (heroOrb) {
-                const rect = heroOrb.getBoundingClientRect();
-                // Use exact center of the orb-core (the brain icon background)
-                const orbCore = heroOrb.querySelector('.orb-core');
-                if (orbCore) {
-                    const coreRect = orbCore.getBoundingClientRect();
-                    return {
-                        x: coreRect.left + coreRect.width / 2,
-                        y: coreRect.top + coreRect.height / 2,
-                        element: heroOrb
-                    };
-                }
-                return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2, element: heroOrb };
-            }
-            return { x: this.canvas.width / 2, y: this.canvas.height * 0.25, element: null };
-        },
-
         createParticles: function() {
             this.particles = [];
-            const center = this.getBrainCenter();
-
-            // Initialize global camera state for 3D panning effect
-            this.cameraX = 0;
-            this.cameraY = 0;
-            this.cameraTargetX = 0;
-            this.cameraTargetY = 0;
+            const w = this.canvas.width;
+            const h = this.canvas.height;
 
             for (let i = 0; i < this.config.particleCount; i++) {
-                const angle = (i / this.config.particleCount) * Math.PI * 2 + Math.random() * 0.3;
                 const colorIndex = i % this.config.colors.length;
-                const orbitRadius = 150 + Math.random() * 250;
-                const orbitSpeed = 0.3 + Math.random() * 0.4;
 
-                // Depth layer for 3D parallax (0.3 = far, 1.0 = near)
-                const depth = 0.3 + Math.random() * 0.7;
-                // Size scales with depth - near particles are larger
-                const baseSize = (this.config.particleSize.min + Math.random() * (this.config.particleSize.max - this.config.particleSize.min)) * depth;
+                // Depth for parallax and size variation
+                const depth = 0.4 + Math.random() * 0.6;
+                const baseSize = (this.config.particleSize.min +
+                    Math.random() * (this.config.particleSize.max - this.config.particleSize.min)) * depth;
 
-                // VISIBLE particles (0.25 to 0.6 range)
-                const baseOpacity = 0.25 + Math.random() * 0.35;
-                const depthOpacity = baseOpacity * (0.6 + depth * 0.4);
+                // Subtle opacity - financial software should be understated
+                const targetOpacity = 0.15 + Math.random() * 0.25;
+
+                // Start position: edges of screen (calm emergence, not explosion)
+                const edge = Math.floor(Math.random() * 4);
+                let startX, startY;
+                switch (edge) {
+                    case 0: startX = Math.random() * w; startY = -50; break;           // Top
+                    case 1: startX = w + 50; startY = Math.random() * h; break;        // Right
+                    case 2: startX = Math.random() * w; startY = h + 50; break;        // Bottom
+                    case 3: startX = -50; startY = Math.random() * h; break;           // Left
+                }
+
+                // Final resting position: distributed across screen
+                const finalX = 80 + Math.random() * (w - 160);
+                const finalY = 80 + Math.random() * (h - 160);
 
                 this.particles.push({
-                    x: center.x,
-                    y: center.y,
-                    angle: angle,
-                    orbitRadius: orbitRadius,
-                    orbitSpeed: orbitSpeed,
-                    orbitOffset: Math.random() * Math.PI * 2,
+                    x: startX,
+                    y: startY,
+                    startX: startX,
+                    startY: startY,
+                    finalX: finalX,
+                    finalY: finalY,
                     size: baseSize,
                     baseSize: baseSize,
                     opacity: 0,
-                    targetOpacity: depthOpacity,
+                    targetOpacity: targetOpacity,
                     colorIndex: colorIndex,
-                    colorOffset: Math.random() * Math.PI * 2,
-                    expandX: 0,
-                    expandY: 0,
                     depth: depth,
-                    orbitAngle: Math.random() * Math.PI * 2
+                    // Stagger emergence for wave effect
+                    delay: Math.random() * 0.4,
+                    // Ambient motion params
+                    vx: 0,
+                    vy: 0,
+                    driftAngle: Math.random() * Math.PI * 2,
+                    driftSpeed: 0.0003 + Math.random() * 0.0005
                 });
             }
         },
 
         getParticleColor: function(particle, opacity) {
-            const colors = this.config.colors;
-            const t = (this.globalTime * 0.001 + particle.colorOffset) % (Math.PI * 2);
-            const colorT = (Math.sin(t) + 1) / 2;
-
-            const c1 = colors[particle.colorIndex];
-            const c2 = colors[(particle.colorIndex + 1) % colors.length];
-
-            const r = Math.round(c1.r + (c2.r - c1.r) * colorT);
-            const g = Math.round(c1.g + (c2.g - c1.g) * colorT);
-            const b = Math.round(c1.b + (c2.b - c1.b) * colorT);
-
-            return `rgba(${r}, ${g}, ${b}, ${opacity})`;
+            const color = this.config.colors[particle.colorIndex];
+            return `rgba(${color.r}, ${color.g}, ${color.b}, ${opacity})`;
         },
 
         /**
-         * Birth: INVISIBLE - just wait, orb glows
-         * Particles don't show until explode
+         * Emerge: Particles drift in calmly from screen edges
          */
-        startBirth: function() {
-            this.phase = 'birth';
-            const center = this.getBrainCenter();
-            const heroOrb = center.element;
-
-            // All particles start invisible at center
-            this.particles.forEach(p => {
-                p.x = center.x;
-                p.y = center.y;
-                p.opacity = 0; // INVISIBLE
-            });
-
-            // Start orb glow immediately
-            if (heroOrb) {
-                heroOrb.classList.add('orb-charging');
-            }
-
-            // Just wait for glow duration, then explode (track timeout for cleanup)
-            this.birthTimeoutId = setTimeout(() => {
-                this.birthTimeoutId = null;
-                if (heroOrb) heroOrb.classList.remove('orb-charging');
-                if (this.isActive) this.startExplode();
-            }, this.config.glowDuration);
-        },
-
-        /**
-         * Explode + Orbit: Single unified animation - no phase handoff, no jumps
-         * Particles explode outward while orbit motion gradually blends in
-         */
-        startExplode: function() {
-            this.phase = 'explode';
+        startEmerge: function() {
+            this.phase = 'emerge';
             const startTime = Date.now();
-            const center = this.getBrainCenter();
-            const padding = 80;
-
-            // Orbit center
-            const orbitCenterX = this.canvas.width / 2;
-            const orbitCenterY = this.canvas.height * 0.42;
-
-            // Camera state
-            this.cameraX = 0;
-            this.cameraY = 0;
-            let cameraPanAngle = 0;
-
-            // Total duration = explosion + orbit time
-            const totalDuration = this.config.explodeDuration + this.config.orbitDuration;
-
-            // Initialize all particles
-            this.particles.forEach((p, i) => {
-                p.originX = center.x;
-                p.originY = center.y;
-                p.x = center.x;
-                p.y = center.y;
-
-                // Explosion target
-                p.expandX = padding + Math.random() * (this.canvas.width - padding * 2);
-                p.expandY = padding + Math.random() * (this.canvas.height - padding * 2);
-
-                // Orbit params - phase starts at 0 so no initial offset
-                p.orbitSpeed3D = 0.15 + Math.random() * 0.1;
-                p.microDriftFreq = 0.3 + Math.random() * 0.25;
-                p.microDriftPhase = Math.random() * Math.PI * 2;
-                p.microDriftAmp = 15 + Math.random() * 20;
-
-                // Slight stagger for explosion wave
-                p.stagger = (i / this.particles.length) * 0.06;
-            });
-
             let cardsShown = false;
 
             const animate = () => {
-                if (!this.isActive || this.phase !== 'explode') return;
+                if (!this.isActive || this.phase !== 'emerge') return;
 
                 const elapsed = Date.now() - startTime;
-                const totalProgress = Math.min(elapsed / totalDuration, 1);
-                const explosionProgress = Math.min(elapsed / this.config.explodeDuration, 1);
+                const progress = Math.min(elapsed / this.config.emergeDuration, 1);
                 this.globalTime += 16;
-                const time = elapsed * 0.001;
 
-                // Show cards mid-explosion
-                if (!cardsShown && explosionProgress > 0.35) {
+                // Show cards at 40% through emergence
+                if (!cardsShown && progress > 0.4) {
                     cardsShown = true;
-                    var scoreCategories = document.getElementById('score-categories');
+                    const scoreCategories = document.getElementById('score-categories');
                     if (scoreCategories) scoreCategories.classList.add('cards-visible');
                 }
 
-                // Camera pan - builds up during explosion, full during orbit
-                cameraPanAngle += 0.08 * 0.016;
-                const cameraPanRadius = 30 * Math.min(1, explosionProgress * 2);
-                this.cameraX += (Math.sin(cameraPanAngle) * cameraPanRadius - this.cameraX) * 0.02;
-                this.cameraY += (Math.cos(cameraPanAngle * 0.7) * cameraPanRadius * 0.5 - this.cameraY) * 0.02;
+                this.particles.forEach(p => {
+                    // Staggered entrance
+                    const pProgress = Math.max(0, Math.min(1, (progress - p.delay) / (1 - p.delay)));
+                    const eased = this.easeOutQuart(pProgress);
 
-                // Orbit blend: starts at 40% of explosion, full by end of explosion
-                const orbitBlendStart = 0.4;
-                const orbitBlend = explosionProgress < orbitBlendStart ? 0 :
-                    this.easeInOutQuad((explosionProgress - orbitBlendStart) / (1 - orbitBlendStart));
+                    // Smooth drift from edge to final position
+                    p.x = p.startX + (p.finalX - p.startX) * eased;
+                    p.y = p.startY + (p.finalY - p.startY) * eased;
 
-                this.particles.forEach((p, i) => {
-                    // EXPLOSION: burst from center to target
-                    const particleExplosion = Math.max(0, Math.min(1, (explosionProgress - p.stagger) / (1 - p.stagger)));
-                    const explosionEased = this.easeOutCubic(particleExplosion); // Smoother than expo
+                    // Fade in
+                    p.opacity = p.targetOpacity * this.easeOutCubic(pProgress);
 
-                    const explosionX = p.originX + (p.expandX - p.originX) * explosionEased;
-                    const explosionY = p.originY + (p.expandY - p.originY) * explosionEased;
-
-                    // ORBIT: motion relative to explosion destination
-                    // Use TIME-based angle (not random phase) so motion starts from 0
-                    const orbitAngle = time * p.orbitSpeed3D;
-                    const orbitDistX = p.expandX - orbitCenterX;
-                    const orbitDistY = p.expandY - orbitCenterY;
-
-                    // 3D rotation - starts at 0 and grows with time
-                    const rotAmount = orbitAngle * p.depth;
-                    const cos = Math.cos(rotAmount * 0.5);
-                    const sin = Math.sin(rotAmount * 0.35);
-                    const rotatedX = orbitDistX * cos - orbitDistY * sin * 0.4;
-                    const rotatedY = orbitDistY * cos + orbitDistX * sin * 0.3;
-
-                    // Micro-drift
-                    const microX = Math.sin(time * p.microDriftFreq + p.microDriftPhase) * p.microDriftAmp;
-                    const microY = Math.cos(time * p.microDriftFreq * 0.8 + p.microDriftPhase) * p.microDriftAmp * 0.7;
-
-                    // Parallax
-                    const parallaxX = this.cameraX * p.depth * 2;
-                    const parallaxY = this.cameraY * p.depth * 2;
-
-                    // Orbit target position
-                    const orbitX = orbitCenterX + rotatedX + microX + parallaxX;
-                    const orbitY = orbitCenterY + rotatedY + microY + parallaxY;
-
-                    // BLEND explosion position with orbit position
-                    p.x = explosionX + (orbitX - explosionX) * orbitBlend;
-                    p.y = explosionY + (orbitY - explosionY) * orbitBlend;
-
-                    // Visibility
-                    const fadeIn = Math.min(1, particleExplosion * 8);
-                    const zPhase = Math.sin(orbitAngle);
-                    p.opacity = p.targetOpacity * fadeIn * (0.8 + zPhase * 0.2 * orbitBlend);
-                    p.size = p.baseSize * (0.9 + zPhase * 0.15 * orbitBlend);
+                    // Subtle size pulse during emergence
+                    p.size = p.baseSize * (0.8 + 0.2 * eased);
                 });
 
                 this.draw();
 
-                if (totalProgress < 1) {
+                if (progress < 1) {
                     this.animationId = requestAnimationFrame(animate);
                 } else {
-                    this.startConverge();
+                    this.startFloat();
                 }
             };
 
@@ -339,226 +207,92 @@
         },
 
         /**
-         * Get a point on the input border perimeter (rounded rectangle)
+         * Float: Brief settling motion before ambient
          */
-        getPointOnBorder: function(rect, t, r) {
-            const w = rect.width - 2 * r;
-            const h = rect.height - 2 * r;
-            const corner = Math.PI * r / 2;
-            const perimeter = 2 * w + 2 * h + 4 * corner;
-            let d = ((t % 1) + 1) % 1 * perimeter;
-
-            // Top edge
-            if (d < w) return { x: rect.left + r + d, y: rect.top };
-            d -= w;
-            // Top-right corner
-            if (d < corner) {
-                const a = -Math.PI / 2 + (d / corner) * (Math.PI / 2);
-                return { x: rect.right - r + Math.cos(a) * r, y: rect.top + r + Math.sin(a) * r };
-            }
-            d -= corner;
-            // Right edge
-            if (d < h) return { x: rect.right, y: rect.top + r + d };
-            d -= h;
-            // Bottom-right corner
-            if (d < corner) {
-                const a = (d / corner) * (Math.PI / 2);
-                return { x: rect.right - r + Math.cos(a) * r, y: rect.bottom - r + Math.sin(a) * r };
-            }
-            d -= corner;
-            // Bottom edge
-            if (d < w) return { x: rect.right - r - d, y: rect.bottom };
-            d -= w;
-            // Bottom-left corner
-            if (d < corner) {
-                const a = Math.PI / 2 + (d / corner) * (Math.PI / 2);
-                return { x: rect.left + r + Math.cos(a) * r, y: rect.bottom - r + Math.sin(a) * r };
-            }
-            d -= corner;
-            // Left edge
-            if (d < h) return { x: rect.left, y: rect.bottom - r - d };
-            d -= h;
-            // Top-left corner
-            const a = Math.PI + (d / corner) * (Math.PI / 2);
-            return { x: rect.left + r + Math.cos(a) * r, y: rect.top + r + Math.sin(a) * r };
-        },
-
-        /**
-         * Converge: Particles stream toward the input border perimeter
-         */
-        startConverge: function() {
-            this.phase = 'converge';
+        startFloat: function() {
+            this.phase = 'float';
             const startTime = Date.now();
 
-            const chatInput = document.getElementById('advisor-input-full');
-            const chatRect = chatInput ? chatInput.getBoundingClientRect() : null;
-            const borderRadius = 16;
-
-            if (!chatRect) {
-                this.startAmbient();
-                return;
-            }
-
-            // Each particle targets a random point on the border perimeter
-            this.particles.forEach((p, i) => {
-                p.originX = p.x;
-                p.originY = p.y;
-                p.originSize = p.size;
-                p.originOpacity = p.opacity;
-
-                // Assign border position (spread around perimeter)
-                p.borderT = (i / this.particles.length + Math.random() * 0.05) % 1;
-                const target = this.getPointOnBorder(chatRect, p.borderT, borderRadius);
-                p.targetX = target.x;
-                p.targetY = target.y;
-
-                // Distance-based arrival timing
-                const dist = Math.hypot(p.x - p.targetX, p.y - p.targetY);
-                p.arrivalDelay = Math.min(0.35, dist / 1200);
-            });
-
-            const animateConverge = () => {
-                if (!this.isActive || this.phase !== 'converge') return;
+            const animate = () => {
+                if (!this.isActive || this.phase !== 'float') return;
 
                 const elapsed = Date.now() - startTime;
-                const progress = Math.min(elapsed / this.config.convergeDuration, 1);
+                const progress = Math.min(elapsed / this.config.floatDuration, 1);
+                this.globalTime += 16;
 
                 this.particles.forEach(p => {
-                    const pProgress = Math.max(0, Math.min(1, (progress - p.arrivalDelay) / (1 - p.arrivalDelay)));
-                    if (pProgress > 0) {
-                        const t = this.easeInOutCubic(pProgress);
-                        p.x = p.originX + (p.targetX - p.originX) * t;
-                        p.y = p.originY + (p.targetY - p.originY) * t;
-                        p.size = p.originSize * (1 - t * 0.4);
-                        p.opacity = p.originOpacity * (0.5 + 0.5 * (1 - t * 0.3));
-                    }
+                    // Gentle settling drift
+                    const drift = Math.sin(this.globalTime * p.driftSpeed + p.driftAngle) * 3;
+                    p.x = p.finalX + drift * p.depth;
+                    p.y = p.finalY + Math.cos(this.globalTime * p.driftSpeed * 0.7) * 2 * p.depth;
+
+                    // Subtle opacity settling
+                    p.opacity = p.targetOpacity * (0.9 + 0.1 * Math.sin(this.globalTime * 0.001));
                 });
 
                 this.draw();
 
                 if (progress < 1) {
-                    this.animationId = requestAnimationFrame(animateConverge);
+                    this.animationId = requestAnimationFrame(animate);
                 } else {
-                    this.startBorderFlow(chatInput, chatRect, borderRadius);
-                }
-            };
-
-            this.animationId = requestAnimationFrame(animateConverge);
-        },
-
-        /**
-         * Border Flow: Particles become energy flowing around the input border
-         */
-        startBorderFlow: function(chatInput, chatRect, borderRadius) {
-            this.phase = 'borderFlow';
-            const startTime = Date.now();
-
-            // Initialize particles for border flow - DRAMATIC glow
-            this.particles.forEach((p, i) => {
-                p.flowSpeed = 0.001 + Math.random() * 0.002; // Faster flow
-                p.flowDir = (i % 2 === 0) ? 1 : -1;
-                p.glowSize = p.baseSize * 6; // MUCH bigger glow
-                p.fadeDelay = 0.3 + Math.random() * 0.4;
-            });
-
-            const animateFlow = () => {
-                if (!this.isActive || this.phase !== 'borderFlow') return;
-
-                const elapsed = Date.now() - startTime;
-                const progress = Math.min(elapsed / this.config.shineDuration, 1);
-
-                this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
-
-                // Draw particles flowing along border with BIG visible glow
-                this.particles.forEach(p => {
-                    p.borderT = (p.borderT + p.flowSpeed * p.flowDir + 1) % 1;
-                    const pos = this.getPointOnBorder(chatRect, p.borderT, borderRadius);
-                    p.x = pos.x;
-                    p.y = pos.y;
-
-                    const fadeProgress = progress > p.fadeDelay
-                        ? (progress - p.fadeDelay) / (1 - p.fadeDelay)
-                        : 0;
-                    const alpha = Math.min(0.9, p.originOpacity * 2) * (1 - this.easeOutCubic(fadeProgress));
-
-                    if (alpha > 0.03) {
-                        // BIGGER, more visible glow
-                        const glowRadius = p.glowSize * 8;
-                        const gradient = this.ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, glowRadius);
-                        gradient.addColorStop(0, `rgba(${p.color.r}, ${p.color.g}, ${p.color.b}, ${alpha})`);
-                        gradient.addColorStop(0.2, `rgba(${p.color.r}, ${p.color.g}, ${p.color.b}, ${alpha * 0.6})`);
-                        gradient.addColorStop(0.5, `rgba(${p.color.r}, ${p.color.g}, ${p.color.b}, ${alpha * 0.2})`);
-                        gradient.addColorStop(1, 'rgba(99, 102, 241, 0)');
-
-                        this.ctx.beginPath();
-                        this.ctx.arc(p.x, p.y, glowRadius, 0, Math.PI * 2);
-                        this.ctx.fillStyle = gradient;
-                        this.ctx.fill();
-                    }
-                });
-
-                if (progress < 1) {
-                    this.animationId = requestAnimationFrame(animateFlow);
-                } else {
+                    // Remove animation-active class from input
+                    const chatInput = document.getElementById('advisor-input-full');
                     if (chatInput) chatInput.classList.remove('animation-active');
                     this.startAmbient();
                 }
             };
 
-            this.animationId = requestAnimationFrame(animateFlow);
+            this.animationId = requestAnimationFrame(animate);
         },
 
-        quadraticBezier: function(x0, y0, x1, y1, x2, y2, t) {
-            const mt = 1 - t;
-            return {
-                x: mt * mt * x0 + 2 * mt * t * x1 + t * t * x2,
-                y: mt * mt * y0 + 2 * mt * t * y1 + t * t * y2
-            };
-        },
-
+        /**
+         * Ambient: Very subtle continuous motion
+         */
         startAmbient: function() {
             this.phase = 'ambient';
 
-            // Show the score-category cards now that animation is complete
-            var scoreCategories = document.getElementById('score-categories');
-            if (scoreCategories) {
-                scoreCategories.classList.add('cards-visible');
-            }
+            // Ensure cards are visible
+            const scoreCategories = document.getElementById('score-categories');
+            if (scoreCategories) scoreCategories.classList.add('cards-visible');
 
+            // Initialize ambient velocities
             this.particles.forEach(p => {
-                p.x = 50 + Math.random() * (this.canvas.width - 100);
-                p.y = 50 + Math.random() * (this.canvas.height - 100);
-                p.vx = (Math.random() - 0.5) * 0.12;
-                p.vy = (Math.random() - 0.5) * 0.12;
-                p.opacity = 0; // Start invisible
-                p.targetOpacity = 0.1 + Math.random() * 0.08;
-                p.size = this.config.particleSize.min + Math.random() * (this.config.particleSize.max - this.config.particleSize.min);
+                p.vx = (Math.random() - 0.5) * 0.08;
+                p.vy = (Math.random() - 0.5) * 0.08;
+                // Lower target opacity for ambient - very subtle
+                p.targetOpacity = 0.08 + Math.random() * 0.12;
             });
 
-            const animateAmbient = () => {
+            const animate = () => {
                 if (!this.isActive || this.phase !== 'ambient') return;
                 this.globalTime += 16;
 
                 this.particles.forEach(p => {
+                    // Gentle drift
                     p.x += p.vx;
                     p.y += p.vy;
-                    // Much slower fade in (0.004 instead of 0.02)
-                    p.opacity += (p.targetOpacity - p.opacity) * 0.004;
 
-                    if (p.x < 20 || p.x > this.canvas.width - 20) p.vx *= -1;
-                    if (p.y < 20 || p.y > this.canvas.height - 20) p.vy *= -1;
+                    // Slowly fade to lower ambient opacity
+                    p.opacity += (p.targetOpacity - p.opacity) * 0.008;
 
-                    p.vx += (Math.random() - 0.5) * 0.003;
-                    p.vy += (Math.random() - 0.5) * 0.003;
-                    p.vx = Math.max(-0.15, Math.min(0.15, p.vx));
-                    p.vy = Math.max(-0.15, Math.min(0.15, p.vy));
+                    // Soft boundary bounce
+                    if (p.x < 30 || p.x > this.canvas.width - 30) p.vx *= -0.8;
+                    if (p.y < 30 || p.y > this.canvas.height - 30) p.vy *= -0.8;
+
+                    // Subtle random drift
+                    p.vx += (Math.random() - 0.5) * 0.002;
+                    p.vy += (Math.random() - 0.5) * 0.002;
+
+                    // Speed limits - keep it slow and professional
+                    p.vx = Math.max(-0.1, Math.min(0.1, p.vx));
+                    p.vy = Math.max(-0.1, Math.min(0.1, p.vy));
                 });
 
                 this.draw();
-                this.animationId = requestAnimationFrame(animateAmbient);
+                this.animationId = requestAnimationFrame(animate);
             };
 
-            this.animationId = requestAnimationFrame(animateAmbient);
+            this.animationId = requestAnimationFrame(animate);
         },
 
         startDeparture: function() {
@@ -566,14 +300,13 @@
 
             this.phase = 'departure';
             const startTime = Date.now();
-            const duration = 600;
+            const duration = 500;
 
-            const animateDeparture = () => {
+            const animate = () => {
                 if (!this.isActive) return;
 
                 const elapsed = Date.now() - startTime;
                 const progress = Math.min(elapsed / duration, 1);
-                this.globalTime += 16;
 
                 this.particles.forEach(p => {
                     p.opacity = p.targetOpacity * (1 - this.easeInQuad(progress));
@@ -582,31 +315,28 @@
                 this.draw();
 
                 if (progress < 1) {
-                    this.animationId = requestAnimationFrame(animateDeparture);
+                    this.animationId = requestAnimationFrame(animate);
                 } else {
                     this.cleanup();
                 }
             };
 
-            this.animationId = requestAnimationFrame(animateDeparture);
+            this.animationId = requestAnimationFrame(animate);
         },
 
         draw: function() {
             if (!this.ctx) return;
             this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
 
-            // Sort particles by depth for proper 3D layering (far particles drawn first)
-            const sortedParticles = [...this.particles].sort((a, b) => (a.depth || 0.5) - (b.depth || 0.5));
+            // Sort by depth for layering
+            const sorted = [...this.particles].sort((a, b) => a.depth - b.depth);
 
-            // Draw particles with subtle glow for depth
-            sortedParticles.forEach(p => {
-                const depth = p.depth || 0.5;
-
-                // Add subtle glow for near particles (premium effect)
-                if (depth > 0.7 && p.opacity > 0.15) {
-                    const glowSize = p.size * 2.5;
+            sorted.forEach(p => {
+                // Subtle glow for larger/closer particles
+                if (p.depth > 0.6 && p.opacity > 0.1) {
+                    const glowSize = p.size * 3;
                     const gradient = this.ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, glowSize);
-                    gradient.addColorStop(0, this.getParticleColor(p, p.opacity * 0.3));
+                    gradient.addColorStop(0, this.getParticleColor(p, p.opacity * 0.2));
                     gradient.addColorStop(1, this.getParticleColor(p, 0));
                     this.ctx.beginPath();
                     this.ctx.arc(p.x, p.y, glowSize, 0, Math.PI * 2);
@@ -614,7 +344,7 @@
                     this.ctx.fill();
                 }
 
-                // Draw particle core
+                // Particle core
                 this.ctx.beginPath();
                 this.ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
                 this.ctx.fillStyle = this.getParticleColor(p, p.opacity);
@@ -626,36 +356,24 @@
             this.isActive = false;
             this.phase = 'idle';
 
-            // Cancel any pending animation frame
             if (this.animationId) {
                 cancelAnimationFrame(this.animationId);
                 this.animationId = null;
             }
 
-            // Cancel any pending timeout (from startBirth)
-            if (this.birthTimeoutId) {
-                clearTimeout(this.birthTimeoutId);
-                this.birthTimeoutId = null;
-            }
-
-            // Clear the canvas
             if (this.ctx && this.canvas) {
                 this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
             }
 
-            // Remove resize listener
             if (this.boundResize) {
                 window.removeEventListener('resize', this.boundResize);
             }
 
-            // Clear particles array to free memory
             this.particles = [];
 
-            // Clean up orb class if still present
             const heroOrb = document.querySelector('.hero-orb');
             if (heroOrb) heroOrb.classList.remove('orb-charging');
 
-            // Remove animation-active class to restore CSS focus glow
             const chatInput = document.getElementById('advisor-input-full');
             if (chatInput) {
                 chatInput.classList.remove('animation-active');
@@ -665,26 +383,17 @@
         },
 
         // Easing functions
-        easeOutExpo: function(t) {
-            return t === 1 ? 1 : 1 - Math.pow(2, -10 * t);
+        easeOutQuart: function(t) {
+            return 1 - Math.pow(1 - t, 4);
         },
         easeOutCubic: function(t) {
             return 1 - Math.pow(1 - t, 3);
         },
-        easeOutQuart: function(t) {
-            return 1 - Math.pow(1 - t, 4);
-        },
-        easeOutSine: function(t) {
-            return Math.sin((t * Math.PI) / 2);
+        easeInQuad: function(t) {
+            return t * t;
         },
         easeInOutQuad: function(t) {
             return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
-        },
-        easeInOutCubic: function(t) {
-            return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
-        },
-        easeInQuad: function(t) {
-            return t * t;
         }
     };
 
