@@ -3004,6 +3004,9 @@ Now provide the response using ONLY the blocks array format:`;
             }
         });
 
+        // Track raw response for diagnostics (outside try block for catch access)
+        let lastRawResponse = null;
+
         try {
             // ═══════════════════════════════════════════════════════════════════════
             // ATTEMPT 1: Call with JSON schema enforcement (if provider supports it)
@@ -3019,6 +3022,7 @@ Now provide the response using ONLY the blocks array format:`;
 
             let parsed = parseJsonResponse(response?.text);
             let retried = false;
+            lastRawResponse = response?.text; // Capture for diagnostics
 
             // ═══════════════════════════════════════════════════════════════════════
             // ATTEMPT 2: If wrong format, retry with explicit correction prompt
@@ -3028,7 +3032,8 @@ Now provide the response using ONLY the blocks array format:`;
                 log.debug('SCA Respond: wrong format detected, retrying with correction', {
                     receivedKeys: Object.keys(parsed),
                     hasNarrative: !!parsed.narrative,
-                    hasFindings: !!parsed.findings
+                    hasFindings: !!parsed.findings,
+                    rawPreview: (response?.text || '').substring(0, 300)
                 });
 
                 // Build correction prompt with original context + correction instructions
@@ -3044,11 +3049,13 @@ Now provide the response using ONLY the blocks array format:`;
                 });
 
                 parsed = parseJsonResponse(retryResponse?.text);
+                lastRawResponse = retryResponse?.text; // Update for diagnostics
                 retried = true;
 
                 log.debug('SCA Respond: retry result', {
                     hasBlocks: !!(parsed && parsed.blocks),
-                    blockCount: parsed?.blocks?.length || 0
+                    blockCount: parsed?.blocks?.length || 0,
+                    rawPreview: (retryResponse?.text || '').substring(0, 300)
                 });
             }
 
@@ -3104,7 +3111,17 @@ Now provide the response using ONLY the blocks array format:`;
                 return { success: true, nextPhase: PHASES.COMPLETE };
             }
 
-            throw new Error('Invalid respond output - expected blocks array' + (retried ? ' (after retry)' : ''));
+            // Build diagnostic info about what we received
+            const receivedKeys = parsed ? Object.keys(parsed) : [];
+            const rawPreview = (lastRawResponse || '').substring(0, 200);
+
+            log.error('SCA Respond: invalid format after all attempts', {
+                retried: retried,
+                receivedKeys: receivedKeys,
+                rawPreview: rawPreview
+            });
+
+            throw new Error('Invalid respond output - expected blocks array, got keys: [' + receivedKeys.join(', ') + ']' + (retried ? ' (after retry)' : ''));
 
         } catch (e) {
             const duration = Date.now() - phaseStart;
@@ -3126,8 +3143,10 @@ Now provide the response using ONLY the blocks array format:`;
                 status: 'complete',
                 duration: duration,
                 context: {
+                    phase: 'respond',
                     fallback: true,
-                    error: e.message.substring(0, 100)
+                    error: e.message.substring(0, 150),
+                    rawPreview: (typeof lastRawResponse === 'string' ? lastRawResponse.substring(0, 200) : 'N/A')
                 }
             });
 
