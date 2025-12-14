@@ -280,7 +280,7 @@ Response format: {"tool": "{tool_name}", "args": {...}}`;
     // Evaluates tool results and decides next action
     // ═══════════════════════════════════════════════════════════════════════════
 
-    const REFLECT_PROMPT = `You are evaluating tool execution results. Analyze what happened and decide the next action.
+    const REFLECT_PROMPT = `You are an agentic financial analyst. Your job is to evaluate whether you have the RIGHT data to answer the user's SPECIFIC question.
 
 {history_context}
 CURRENT QUESTION: "{question}"
@@ -295,48 +295,72 @@ DATA COLLECTED:
 {data_summary}
 
 ═══════════════════════════════════════════════════════════════════════════════
-EVALUATE THE RESULTS:
+CRITICAL: QUESTION-DATA MATCHING
 
-1. Did we successfully answer the question? Consider:
-   - Entity resolution: Was the mentioned entity found?
-   - Data retrieval: Did we get relevant data rows?
-   - Coverage: Do we have enough data to provide a meaningful answer?
+Ask yourself these questions:
 
-2. If results are insufficient, diagnose WHY:
-   - ENTITY_NOT_FOUND: The entity (customer/vendor/account) doesn't exist
-   - ENTITY_FOUND_NO_DATA: Entity exists but has no transactions/data for this query
-   - QUERY_TOO_RESTRICTIVE: Filters (date range, type) excluded all results
-   - WRONG_TOOL: Selected tool doesn't match the actual question
-   - NO_DATA_EXISTS: This type of data simply doesn't exist in the system
+1. GRANULARITY CHECK:
+   - Does the user want SUMMARY totals or DETAILED breakdown?
+   - If they said "by employee", "by customer", "by project" - do you have that breakdown?
+   - If you only have summary metrics but they want per-item details, you need MORE DATA
 
-3. Based on diagnosis, decide next action:
-   - PROCEED: We have enough data, move to response generation
-   - BROADEN: Retry with broader parameters (remove filters, expand date range)
-   - DIFFERENT_TOOL: Try a different tool that might work better
-   - CLARIFY: We need user clarification (ambiguous entity, unclear intent)
-   - GIVE_UP: We've exhausted options, explain what we tried
+2. COLLECTION CHECK:
+   - Look at "AVAILABLE COLLECTIONS" in the data summary
+   - If a collection matches what the user needs (e.g., employeeUtilization for "by employee"), LOAD IT
+   - Collections contain the detailed data - summary metrics are not enough for breakdown queries
+
+3. COVERAGE CHECK:
+   - Does the data actually answer what was asked?
+   - Having "some data" is NOT the same as having "the right data"
 
 ═══════════════════════════════════════════════════════════════════════════════
+DECIDE YOUR ACTION:
 
-Response format (JSON only):
+- PROCEED: You have EXACTLY what's needed. Include the full response blocks (saves a round trip)
+- LOAD_COLLECTION: A dashboard collection exists with needed detail → load it
+- BROADEN: Retry with broader parameters (expand date range, remove filters)
+- DIFFERENT_TOOL: Need a completely different tool
+- SYNTHESIZE: Need custom SQL query (tools don't cover this)
+- CLARIFY: Genuinely ambiguous, need user input
+- GIVE_UP: Exhausted all options
+
+═══════════════════════════════════════════════════════════════════════════════
+RESPONSE FORMAT (JSON only):
+
 {{
   "evaluation": {{
     "has_useful_data": true|false,
-    "entity_found": true|false|null,
-    "data_rows_found": number,
-    "failure_mode": "SUCCESS|ENTITY_NOT_FOUND|ENTITY_FOUND_NO_DATA|QUERY_TOO_RESTRICTIVE|WRONG_TOOL|NO_DATA_EXISTS"
+    "answers_specific_question": true|false,
+    "needs_more_detail": true|false,
+    "available_collections": ["collection_names_if_any"],
+    "failure_mode": "SUCCESS|NEEDS_COLLECTION|ENTITY_NOT_FOUND|WRONG_GRANULARITY|NO_DATA_EXISTS"
   }},
-  "diagnosis": "Brief explanation of what happened",
-  "action": "PROCEED|BROADEN|DIFFERENT_TOOL|CLARIFY|GIVE_UP",
+  "diagnosis": "Does the data answer '{question}'? Be specific.",
+  "action": "PROCEED|LOAD_COLLECTION|BROADEN|DIFFERENT_TOOL|SYNTHESIZE|CLARIFY|GIVE_UP",
   "action_details": {{
-    "tool": "tool_name_if_retry",
+    "ref_id": "ref_id_for_load_collection",
+    "collection_name": "collection_name_to_load",
+    "tool": "tool_name_if_different_tool",
     "modified_params": {{}},
-    "clarification_question": "question_if_clarify",
-    "explanation": "explanation_if_give_up"
+    "clarification_question": "question_if_clarify"
   }},
-  "reasoning": "Why this action is the best choice",
-  "userNarration": "Brief insight about what you found (max 10 words, specific to data)"
-}}`;
+  "reasoning": "Why this action? What data do you need that you don't have?",
+  "userNarration": "Brief status (max 10 words)",
+
+  "response": {{
+    "blocks": [
+      {{"type": "text", "content": "Analysis with {{{{data.rows[N].column}}}} tokens..."}},
+      {{"type": "metrics", "items": [{{"label": "Label", "value": "{{{{token}}}}", "trend": "up|down|neutral"}}]}},
+      {{"type": "table", "dataRef": "ref_xxx", "title": "Title"}},
+      {{"type": "chart", "chartType": "bar|line|pie", "dataRef": "ref_xxx", "x": "col", "y": "col"}},
+      {{"type": "list", "title": "Findings", "items": ["item1", "item2"]}}
+    ]
+  }}
+}}
+
+⚠️ IMPORTANT: Only include "response" field if action is "PROCEED".
+The response.blocks should be the COMPLETE final answer using the data you have.
+Use {{{{data.rows[N].column}}}} tokens for actual values - they will be resolved.`;
 
     // ═══════════════════════════════════════════════════════════════════════════
     // SYNTHESIZE PROMPT - LLM Writes Custom SuiteQL
@@ -564,7 +588,7 @@ CRITICAL INSTRUCTIONS - READ CAREFULLY:
    - Reference the dataRef to include the full data
    - Tables will show all rows with pagination
 
-9. TRUNCATION AWARENESS: If a data section shows "truncated: true", mention that more data is available.
+9. DATA COMPLETENESS: Use the data available. The REFLECT phase has already loaded all necessary data.
 
 ═══════════════════════════════════════════════════════════════════════════════
 ⚠️ CRITICAL: OUTPUT STRUCTURE
@@ -945,12 +969,12 @@ Now provide the response using ONLY the blocks array format:`;
                     textSummary += `\n`;
                 } else {
                     // SUMMARIZE: Show preview for large collections
-                    textSummary += `═══ ${collectionName.toUpperCase()} (${collectionInfo.count} items - use load_cached_data for full data) ═══\n`;
+                    // Note: REFLECT phase will see collection details and decide if loading is needed
+                    textSummary += `═══ ${collectionName.toUpperCase()} (${collectionInfo.count} items available) ═══\n`;
                     if (collectionInfo.preview && collectionInfo.preview.length > 0) {
                         textSummary += `Preview: ${collectionInfo.preview.join(', ')}${collectionInfo.count > 3 ? '...' : ''}\n`;
                     }
-                    textSummary += `Columns: ${(collectionInfo.columns || []).join(', ')}\n`;
-                    textSummary += `RefId: ${collectionInfo.refId} (use with load_cached_data tool)\n\n`;
+                    textSummary += `Columns: ${(collectionInfo.columns || []).join(', ')}\n\n`;
                 }
             }
         }
@@ -1882,6 +1906,22 @@ Now provide the response using ONLY the blocks array format:`;
             }
 
             // ═══════════════════════════════════════════════════════════════════════
+            // AGENTIC COLLECTION LOADING: Apply pending tool args from REFLECT
+            // When REFLECT decides LOAD_COLLECTION, it stores args in state.pendingToolArgs
+            // This allows REFLECT to directly specify what collection to load
+            // ═══════════════════════════════════════════════════════════════════════
+            if (state.pendingToolArgs && Object.keys(state.pendingToolArgs).length > 0) {
+                log.debug('Applying pending tool args from REFLECT', {
+                    tool: toolName,
+                    originalArgs: args,
+                    pendingArgs: state.pendingToolArgs
+                });
+                args = { ...args, ...state.pendingToolArgs };
+                // Clear after applying
+                state.pendingToolArgs = null;
+            }
+
+            // ═══════════════════════════════════════════════════════════════════════
             // TOOL RESULT CACHING: Check cache before executing
             // Entity resolution tools cached for 5 minutes, data queries for 30 seconds
             // ═══════════════════════════════════════════════════════════════════════
@@ -2212,49 +2252,19 @@ Now provide the response using ONLY the blocks array format:`;
         }
 
         // ═══════════════════════════════════════════════════════════════════════
-        // QUICK CHECK: Only skip LLM reflection if ALL tools succeeded with data
-        // If ANY tool returned 0 rows, we need to evaluate whether to retry
+        // AGENTIC REFLECTION: Always evaluate whether data answers the question
+        // Never skip LLM evaluation - "having data" != "having the RIGHT data"
+        // The LLM must decide if it can answer the user's specific question
         // ═══════════════════════════════════════════════════════════════════════
         const hasUsefulData = state.dataReferences.length > 0;
         const totalRows = state.toolInvocations.reduce((sum, inv) =>
             sum + (inv.rowCount || 0), 0);
 
-        // Check if any tool returned 0 rows OR failed entirely (partial failure)
-        const toolsWithNoData = state.toolInvocations.filter(inv =>
-            inv.success && (inv.rowCount === 0 || inv.rowCount === undefined)
-        );
-        const toolsWithErrors = state.toolInvocations.filter(inv => !inv.success);
-        const hasPartialFailure = (toolsWithNoData.length > 0 || toolsWithErrors.length > 0) && hasUsefulData;
-
-        // Only fast-path to RESPOND if ALL tools returned data
-        // If there's a partial failure, let LLM evaluate if we should retry
-        if (hasUsefulData && totalRows > 0 && !hasPartialFailure) {
-            // All tools returned data - proceed to RESPOND
-            state.reflection.hasReflected = true;
-            state.reflection.failureMode = FAILURE_MODES.SUCCESS;
-            state.phase = PHASES.RESPOND;
-
-            log.debug('SCA REFLECT phase - all tools returned data, proceeding to RESPOND', {
-                dataRefs: state.dataReferences.length,
-                totalRows: totalRows
-            });
-
-            return { success: true, nextPhase: PHASES.RESPOND };
-        }
-
-        // Log partial failure for debugging
-        if (hasPartialFailure) {
-            log.debug('SCA REFLECT phase - partial failure detected, evaluating with LLM', {
-                toolsWithData: state.toolInvocations.filter(t => t.rowCount > 0).map(t => t.tool),
-                toolsWithNoData: toolsWithNoData.map(t => t.tool),
-                toolsWithErrors: toolsWithErrors.map(t => ({ tool: t.tool, error: t.error })),
-                totalRows: totalRows
-            });
-        }
-
-        // ═══════════════════════════════════════════════════════════════════════
-        // NO DATA CASE: Use LLM to evaluate and decide next action
-        // ═══════════════════════════════════════════════════════════════════════
+        log.debug('SCA REFLECT phase - evaluating with LLM (always-evaluate mode)', {
+            dataRefs: state.dataReferences.length,
+            totalRows: totalRows,
+            tools: state.toolInvocations.map(t => t.tool)
+        });
 
         // Build summaries for the LLM
         const toolSummary = buildToolSummaryForReflection(state);
@@ -2411,7 +2421,75 @@ Now provide the response using ONLY the blocks array format:`;
 
         switch (action) {
             case 'PROCEED':
-                // We have enough data (or gave up trying)
+                // ═══════════════════════════════════════════════════════════════════════
+                // COMBINED REFLECT+RESPOND: If LLM included response.blocks, use them
+                // This saves an entire LLM round trip
+                // ═══════════════════════════════════════════════════════════════════════
+                if (parsed.response && parsed.response.blocks && Array.isArray(parsed.response.blocks)) {
+                    log.debug('SCA REFLECT - PROCEED with inline response (combined mode)', {
+                        blockCount: parsed.response.blocks.length
+                    });
+                    // Store the response blocks for later processing
+                    state.reflectResponse = parsed.response;
+                    state.phase = PHASES.RESPOND;
+                    return PHASES.RESPOND;
+                }
+                // No inline response - proceed to normal RESPOND phase
+                state.phase = PHASES.RESPOND;
+                return PHASES.RESPOND;
+
+            case 'LOAD_COLLECTION':
+                // ═══════════════════════════════════════════════════════════════════════
+                // AGENTIC COLLECTION LOADING: Load detailed data from dashboard collection
+                // This is the key to making the system truly agentic
+                // ═══════════════════════════════════════════════════════════════════════
+                if (details.collection_name && details.ref_id) {
+                    log.debug('SCA REFLECT - LOAD_COLLECTION', {
+                        collection: details.collection_name,
+                        refId: details.ref_id
+                    });
+
+                    // Queue load_cached_data tool with collection params
+                    state.selectedTools.push('load_cached_data');
+                    state.pendingToolArgs = {
+                        ref_id: details.ref_id,
+                        collection_name: details.collection_name
+                    };
+                    state.reflection.journey.push({
+                        action: 'load_collection',
+                        collection: details.collection_name,
+                        refId: details.ref_id,
+                        reasoning: parsed.reasoning
+                    });
+
+                    state.phase = PHASES.INVOKE;
+                    return PHASES.INVOKE;
+                }
+                // Missing params - proceed to respond with what we have
+                log.debug('SCA REFLECT - LOAD_COLLECTION missing params', { details });
+                state.phase = PHASES.RESPOND;
+                return PHASES.RESPOND;
+
+            case 'SYNTHESIZE':
+                // ═══════════════════════════════════════════════════════════════════════
+                // DIRECT SYNTHESIZE: LLM wants to write custom SQL
+                // ═══════════════════════════════════════════════════════════════════════
+                if (state.synthesize.enabled && state.synthesize.iterations < MAX_SYNTHESIZE_ITERATIONS) {
+                    log.debug('SCA REFLECT - direct SYNTHESIZE action', {
+                        synthesizeIterations: state.synthesize.iterations,
+                        reason: parsed.reasoning
+                    });
+
+                    state.reflection.journey.push({
+                        action: 'synthesize',
+                        reason: 'LLM determined custom SQL needed',
+                        diagnosis: parsed.diagnosis
+                    });
+
+                    state.phase = PHASES.SYNTHESIZE;
+                    return PHASES.SYNTHESIZE;
+                }
+                // Synthesize exhausted or disabled
                 state.phase = PHASES.RESPOND;
                 return PHASES.RESPOND;
 
@@ -2693,11 +2771,15 @@ Now provide the response using ONLY the blocks array format:`;
                 duration: queryDuration
             });
 
-            // Tables will appear in final response - progressive narration provides context
-
-            // Proceed to RESPOND with the data
-            state.phase = PHASES.RESPOND;
-            return { success: true, nextPhase: PHASES.RESPOND };
+            // ═══════════════════════════════════════════════════════════════════════
+            // AGENTIC ITERATION: Route back to REFLECT instead of directly to RESPOND
+            // This allows REFLECT to evaluate:
+            // - Does this SQL result actually answer the question?
+            // - Should we run another query to get more/different data?
+            // - Is the data complete or do we need to join more tables?
+            // ═══════════════════════════════════════════════════════════════════════
+            state.phase = PHASES.REFLECT;
+            return { success: true, nextPhase: PHASES.REFLECT };
 
         } catch (e) {
             const duration = Date.now() - phaseStart;
@@ -2845,10 +2927,75 @@ Now provide the response using ONLY the blocks array format:`;
             return 'NO DATA was collected. All queries returned 0 rows.';
         }
 
-        return state.dataReferences.map(ref => {
+        const sections = [];
+
+        state.dataReferences.forEach((ref, idx) => {
             const summary = ref.summary || {};
-            return `- ${summary.tool || 'Unknown'}: ${summary.rowCount || 0} rows`;
-        }).join('\n');
+            const toolName = summary.tool || 'Unknown';
+
+            // Load actual data from cache for inspection
+            const data = Cache.loadRows(ref.requestId || state.requestId, ref.refId, 0, 10);
+
+            let section = `\n═══ DATA SOURCE ${idx + 1}: ${toolName} ═══\n`;
+            section += `RefId: ${ref.refId}\n`;
+            section += `Rows: ${summary.rowCount || 0}\n`;
+
+            if (data && data.columns && data.columns.length > 0) {
+                section += `Columns: ${data.columns.join(', ')}\n`;
+            }
+
+            // Show sample data (first 3 rows)
+            if (data && data.rows && data.rows.length > 0) {
+                section += `\nSample data (first ${Math.min(3, data.rows.length)} rows):\n`;
+                const sampleRows = data.rows.slice(0, 3);
+                const displayCols = (data.columns || Object.keys(sampleRows[0] || {})).slice(0, 5);
+                sampleRows.forEach((row, i) => {
+                    const values = displayCols.map(col => {
+                        const val = row[col];
+                        if (val === null || val === undefined) return 'null';
+                        if (typeof val === 'number') return val.toLocaleString();
+                        return String(val).substring(0, 30);
+                    });
+                    section += `  Row ${i}: ${displayCols.map((c, j) => `${c}=${values[j]}`).join(', ')}\n`;
+                });
+            }
+
+            // ═══════════════════════════════════════════════════════════════════════
+            // DASHBOARD COLLECTIONS: Critical for agentic data loading
+            // If this is a dashboard, show available collections that can be loaded
+            // ═══════════════════════════════════════════════════════════════════════
+            if (data && data.isDashboard && data.intelligence) {
+                const collections = data.intelligence.collections || {};
+                const collectionNames = Object.keys(collections);
+
+                if (collectionNames.length > 0) {
+                    section += `\n⚠️ AVAILABLE COLLECTIONS (can load with load_cached_data tool):\n`;
+                    collectionNames.forEach(colName => {
+                        const col = collections[colName];
+                        const count = col.count || col.items?.length || 0;
+                        const colColumns = col.columns || [];
+                        section += `  • ${colName}: ${count} items\n`;
+                        if (colColumns.length > 0) {
+                            section += `    Columns: ${colColumns.slice(0, 5).join(', ')}${colColumns.length > 5 ? '...' : ''}\n`;
+                        }
+                        if (col.refId) {
+                            section += `    Load with: load_cached_data(ref_id="${ref.refId}", collection_name="${colName}")\n`;
+                        }
+                    });
+                }
+
+                // Show dashboard metrics summary
+                const metrics = data.intelligence.metrics || {};
+                const metricNames = Object.keys(metrics);
+                if (metricNames.length > 0) {
+                    section += `\nDashboard Metrics (summary-level): ${metricNames.join(', ')}\n`;
+                }
+            }
+
+            sections.push(section);
+        });
+
+        return sections.join('\n');
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -2944,6 +3091,49 @@ Now provide the response using ONLY the blocks array format:`;
             });
 
             return { success: true, nextPhase: PHASES.COMPLETE };
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // COMBINED REFLECT+RESPOND MODE
+        // If REFLECT phase already generated response blocks, use them directly
+        // This saves an entire LLM round trip
+        // ═══════════════════════════════════════════════════════════════════════
+        if (state.reflectResponse && state.reflectResponse.blocks) {
+            log.debug('SCA RESPOND - using combined mode response from REFLECT', {
+                blockCount: state.reflectResponse.blocks.length
+            });
+
+            const resolved = resolveBlockSequence(state.reflectResponse.blocks, state);
+            const duration = Date.now() - phaseStart;
+
+            if (resolved && resolved.length > 0) {
+                const firstTextBlock = resolved.find(b => b.type === 'text');
+                const summary = firstTextBlock?.content?.substring(0, 150) || '';
+
+                state.formattedResponse = {
+                    title: 'Analysis Results',
+                    summary: summary,
+                    blocks: resolved
+                };
+                state.phase = PHASES.COMPLETE;
+
+                upsertThinkingStep(state, 'respond', {
+                    title: 'Generating response',
+                    phase: 'respond',
+                    status: 'complete',
+                    duration: duration,
+                    context: {
+                        combinedMode: true,
+                        blockCount: resolved.length,
+                        tokensResolved: true
+                    }
+                });
+
+                log.debug('SCA RESPOND phase complete (combined mode)', { duration, blockCount: resolved.length });
+                return { success: true, nextPhase: PHASES.COMPLETE };
+            }
+            // If resolution failed, fall through to normal RESPOND
+            log.debug('SCA RESPOND - combined mode resolution failed, falling back to normal flow');
         }
 
         // ═══════════════════════════════════════════════════════════════════════
