@@ -45,9 +45,9 @@
         orbitAngle: 0,
 
         config: {
-            particleCount: 400,
+            particleCount: 800,
             connectionDistance: 70,
-            particleSize: { min: 0.6, max: 2.4 },
+            particleSize: { min: 1.2, max: 3.5 },
             // Timing for smooth, premium animation
             birthDuration: 800,
             glowDuration: 400,
@@ -141,9 +141,9 @@
                 // Size scales with depth - near particles are larger
                 const baseSize = (this.config.particleSize.min + Math.random() * (this.config.particleSize.max - this.config.particleSize.min)) * depth;
 
-                // Darker particles with more variation (0.08 to 0.25 range)
-                const baseOpacity = 0.08 + Math.random() * 0.17;
-                const depthOpacity = baseOpacity * (0.5 + depth * 0.5); // Far = darker, near = slightly brighter
+                // VISIBLE particles (0.25 to 0.6 range)
+                const baseOpacity = 0.25 + Math.random() * 0.35;
+                const depthOpacity = baseOpacity * (0.6 + depth * 0.4);
 
                 this.particles.push({
                     x: center.x,
@@ -453,12 +453,12 @@
             this.phase = 'borderFlow';
             const startTime = Date.now();
 
-            // Initialize particles for border flow
+            // Initialize particles for border flow - DRAMATIC glow
             this.particles.forEach((p, i) => {
-                p.flowSpeed = 0.0006 + Math.random() * 0.001;
-                p.flowDir = (i % 2 === 0) ? 1 : -1; // Alternate directions
-                p.glowSize = p.baseSize * 2;
-                p.fadeDelay = 0.2 + Math.random() * 0.5;
+                p.flowSpeed = 0.001 + Math.random() * 0.002; // Faster flow
+                p.flowDir = (i % 2 === 0) ? 1 : -1;
+                p.glowSize = p.baseSize * 6; // MUCH bigger glow
+                p.fadeDelay = 0.3 + Math.random() * 0.4;
             });
 
             const animateFlow = () => {
@@ -469,31 +469,29 @@
 
                 this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
 
-                // Draw particles flowing along border
-                let activeCount = 0;
+                // Draw particles flowing along border with BIG visible glow
                 this.particles.forEach(p => {
-                    // Update position along border
                     p.borderT = (p.borderT + p.flowSpeed * p.flowDir + 1) % 1;
                     const pos = this.getPointOnBorder(chatRect, p.borderT, borderRadius);
                     p.x = pos.x;
                     p.y = pos.y;
 
-                    // Calculate fade
                     const fadeProgress = progress > p.fadeDelay
                         ? (progress - p.fadeDelay) / (1 - p.fadeDelay)
                         : 0;
-                    const alpha = p.originOpacity * 1.5 * (1 - this.easeOutCubic(fadeProgress));
+                    const alpha = Math.min(0.9, p.originOpacity * 2) * (1 - this.easeOutCubic(fadeProgress));
 
-                    if (alpha > 0.02) {
-                        activeCount++;
-                        // Draw glowing particle
-                        const gradient = this.ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, p.glowSize * 4);
+                    if (alpha > 0.03) {
+                        // BIGGER, more visible glow
+                        const glowRadius = p.glowSize * 8;
+                        const gradient = this.ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, glowRadius);
                         gradient.addColorStop(0, `rgba(${p.color.r}, ${p.color.g}, ${p.color.b}, ${alpha})`);
-                        gradient.addColorStop(0.3, `rgba(${p.color.r}, ${p.color.g}, ${p.color.b}, ${alpha * 0.5})`);
+                        gradient.addColorStop(0.2, `rgba(${p.color.r}, ${p.color.g}, ${p.color.b}, ${alpha * 0.6})`);
+                        gradient.addColorStop(0.5, `rgba(${p.color.r}, ${p.color.g}, ${p.color.b}, ${alpha * 0.2})`);
                         gradient.addColorStop(1, 'rgba(99, 102, 241, 0)');
 
                         this.ctx.beginPath();
-                        this.ctx.arc(p.x, p.y, p.glowSize * 4, 0, Math.PI * 2);
+                        this.ctx.arc(p.x, p.y, glowRadius, 0, Math.PI * 2);
                         this.ctx.fillStyle = gradient;
                         this.ctx.fill();
                     }
