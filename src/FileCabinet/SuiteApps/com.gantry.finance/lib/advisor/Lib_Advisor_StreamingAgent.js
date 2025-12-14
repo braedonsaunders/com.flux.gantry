@@ -3090,12 +3090,17 @@ Now provide the response using ONLY the blocks array format:`;
                     throw new Error('Invalid respond output - failed to parse JSON');
                 }
 
-                // Resolve all {{tokens}} in the response
-                resolved = resolveAllTokens(parsed, state);
+                // Validate we have blocks array (Block Sequence Architecture)
+                if (!parsed.blocks || !Array.isArray(parsed.blocks)) {
+                    throw new Error('Invalid respond output - expected blocks array');
+                }
+
+                // Resolve all {{tokens}} in the blocks
+                resolved = resolveBlockSequence(parsed.blocks, state);
 
                 // Validate we have usable content
-                if (!resolved.narrative && (!resolved.metrics || resolved.metrics.length === 0)) {
-                    throw new Error('Invalid respond output - no narrative or metrics');
+                if (!resolved || resolved.length === 0) {
+                    throw new Error('Invalid respond output - no blocks resolved');
                 }
 
                 // Success - break out of retry loop
@@ -3125,38 +3130,17 @@ Now provide the response using ONLY the blocks array format:`;
         state.phaseTimings.respond = duration;
 
         // Check if we got a valid response after retries
-        if (parsed && resolved) {
-            // Build formatted response from resolved content
+        if (parsed && resolved && resolved.length > 0) {
+            // Extract summary from first text block
+            const firstTextBlock = resolved.find(b => b.type === 'text');
+            const summary = firstTextBlock?.content?.substring(0, 150) || '';
+
+            // Build formatted response using resolved blocks directly
             state.formattedResponse = {
                 title: 'Analysis Results',
-                summary: resolved.narrative?.substring(0, 150) || '',
-                blocks: []
+                summary: summary,
+                blocks: resolved
             };
-
-            // Add narrative text block
-            if (resolved.narrative) {
-                state.formattedResponse.blocks.push({
-                    type: 'text',
-                    content: resolved.narrative
-                });
-            }
-
-            // Add metrics block
-            if (resolved.metrics && resolved.metrics.length > 0) {
-                state.formattedResponse.blocks.push({
-                    type: 'metrics',
-                    items: resolved.metrics
-                });
-            }
-
-            // Add findings as list
-            if (resolved.findings && resolved.findings.length > 0) {
-                state.formattedResponse.blocks.push({
-                    type: 'list',
-                    title: 'Key Findings',
-                    items: resolved.findings
-                });
-            }
 
             state.phase = PHASES.COMPLETE;
 
@@ -3166,17 +3150,18 @@ Now provide the response using ONLY the blocks array format:`;
                 status: 'complete',
                 duration: duration,
                 context: {
-                    blockCount: state.formattedResponse.blocks.length,
-                    tokensResolved: true
+                    blockCount: resolved.length,
+                    tokensResolved: true,
+                    hasCharts: resolved.some(b => b.type === 'chart'),
+                    hasTables: resolved.some(b => b.type === 'table')
                 },
                 debug: buildDebugInfo(prompt, null, state, {
-                    responseLength: resolved.narrative?.length,
-                    metricsCount: resolved.metrics?.length,
-                    findingsCount: resolved.findings?.length
+                    blockCount: resolved.length,
+                    blockTypes: resolved.map(b => b.type).join(',')
                 })
             });
 
-            log.debug('SCA Respond phase complete', { duration: duration });
+            log.debug('SCA Respond phase complete', { duration: duration, blockCount: resolved.length });
             return { success: true, nextPhase: PHASES.COMPLETE };
         }
 
