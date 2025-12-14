@@ -2106,23 +2106,59 @@ Response format (JSON only):
             }
         });
 
-        try {
-            const response = AIProviders.callAI(prompt, {
-                tier: FAST_TIER,
-                temperature: 0.2,
-                maxTokens: 500,
-                jsonMode: true,
-                purpose: 'SCA:reflect'
-            });
+        // ═══════════════════════════════════════════════════════════════════════
+        // LLM RETRY LOOP - Retry up to 3 times if response is invalid
+        // ═══════════════════════════════════════════════════════════════════════
+        const MAX_LLM_RETRIES = 3;
+        let lastError = null;
+        let parsed = null;
 
-            const parsed = parseJsonResponse(response?.text);
-            const duration = Date.now() - phaseStart;
-            state.phaseTimings.reflect = (state.phaseTimings.reflect || 0) + duration;
+        for (let attempt = 1; attempt <= MAX_LLM_RETRIES; attempt++) {
+            try {
+                const response = AIProviders.callAI(prompt, {
+                    tier: FAST_TIER,
+                    temperature: 0.2 + (attempt - 1) * 0.1, // Slightly increase temperature on retries
+                    maxTokens: 500,
+                    jsonMode: true,
+                    purpose: 'SCA:reflect'
+                });
 
-            if (!parsed || !parsed.action) {
-                throw new Error('Invalid reflect response - missing action');
+                parsed = parseJsonResponse(response?.text);
+
+                // Normalize action field - handle alternative key names LLM might use
+                if (parsed && !parsed.action) {
+                    parsed.action = parsed.recommendation || parsed.decision || parsed.next_action;
+                }
+
+                if (!parsed || !parsed.action) {
+                    throw new Error('Invalid reflect response - missing action');
+                }
+
+                // Success - break out of retry loop
+                log.debug('SCA REFLECT LLM succeeded', { attempt: attempt });
+                break;
+
+            } catch (e) {
+                lastError = e;
+                log.debug('SCA REFLECT LLM attempt failed', {
+                    attempt: attempt,
+                    maxAttempts: MAX_LLM_RETRIES,
+                    error: e.message
+                });
+
+                if (attempt < MAX_LLM_RETRIES) {
+                    // Will retry
+                    continue;
+                }
+                // Last attempt failed - will fall through to fallback
             }
+        }
 
+        const duration = Date.now() - phaseStart;
+        state.phaseTimings.reflect = (state.phaseTimings.reflect || 0) + duration;
+
+        // Check if we got a valid response after retries
+        if (parsed && parsed.action) {
             // Update reflection state
             state.reflection.hasReflected = true;
             state.reflection.failureMode = parsed.evaluation?.failure_mode || FAILURE_MODES.NO_DATA_EXISTS;
@@ -2150,7 +2186,7 @@ Response format (JSON only):
                     action: parsed.action,
                     reasoning: parsed.reasoning?.substring(0, 100)
                 },
-                debug: buildDebugInfo(prompt, response, state, { reflection: parsed })
+                debug: buildDebugInfo(prompt, null, state, { reflection: parsed })
             });
 
             log.debug('SCA REFLECT phase complete', {
@@ -2161,28 +2197,27 @@ Response format (JSON only):
             });
 
             return { success: true, nextPhase: nextPhase };
-
-        } catch (e) {
-            const duration = Date.now() - phaseStart;
-            log.error('SCA REFLECT phase failed', { error: e.message, duration: duration });
-            state.errors.push({ phase: 'reflect', error: e.message, timestamp: Date.now() });
-
-            // Default: proceed to RESPOND with what we have
-            state.phase = PHASES.RESPOND;
-
-            upsertThinkingStep(state, 'reflect', {
-                title: 'Evaluating results',
-                phase: 'reflect',
-                status: 'complete',
-                duration: duration,
-                context: {
-                    fallback: true,
-                    error: e.message.substring(0, 100)
-                }
-            });
-
-            return { success: true, nextPhase: PHASES.RESPOND };
         }
+
+        // All retries exhausted - fallback
+        log.error('SCA REFLECT phase failed after retries', { error: lastError?.message, duration: duration });
+        state.errors.push({ phase: 'reflect', error: lastError?.message || 'LLM retries exhausted', timestamp: Date.now() });
+
+        // Default: proceed to RESPOND with what we have
+        state.phase = PHASES.RESPOND;
+
+        upsertThinkingStep(state, 'reflect', {
+            title: 'Evaluating results',
+            phase: 'reflect',
+            status: 'complete',
+            duration: duration,
+            context: {
+                fallback: true,
+                error: (lastError?.message || 'LLM retries exhausted').substring(0, 100)
+            }
+        });
+
+        return { success: true, nextPhase: PHASES.RESPOND };
     }
 
     /**
@@ -2823,91 +2858,98 @@ Response format (JSON only):
             }
         });
 
-        try {
-            const response = AIProviders.callAI(prompt, {
-                tier: FAST_TIER,
-                temperature: 0.3,
-                maxTokens: 2000,
-                jsonMode: true,
-                purpose: 'SCA:respond'
-            });
+        // ═══════════════════════════════════════════════════════════════════════
+        // LLM RETRY LOOP - Retry up to 3 times if response is invalid
+        // ═══════════════════════════════════════════════════════════════════════
+        const MAX_LLM_RETRIES = 3;
+        let lastError = null;
+        let parsed = null;
+        let resolved = null;
 
-            const parsed = parseJsonResponse(response?.text);
-            const duration = Date.now() - phaseStart;
-            state.phaseTimings.respond = duration;
-
-            if (parsed) {
-                // Resolve all {{tokens}} in the response
-                const resolved = resolveAllTokens(parsed, state);
-
-                // Build formatted response from resolved content
-                state.formattedResponse = {
-                    title: 'Analysis Results',
-                    summary: resolved.narrative?.substring(0, 150) || '',
-                    blocks: []
-                };
-
-                // Add narrative text block
-                if (resolved.narrative) {
-                    state.formattedResponse.blocks.push({
-                        type: 'text',
-                        content: resolved.narrative
-                    });
-                }
-
-                // Add metrics block
-                if (resolved.metrics && resolved.metrics.length > 0) {
-                    state.formattedResponse.blocks.push({
-                        type: 'metrics',
-                        items: resolved.metrics
-                    });
-                }
-
-                // Add findings as list
-                if (resolved.findings && resolved.findings.length > 0) {
-                    state.formattedResponse.blocks.push({
-                        type: 'list',
-                        title: 'Key Findings',
-                        items: resolved.findings
-                    });
-                }
-
-                state.phase = PHASES.COMPLETE;
-
-                upsertThinkingStep(state, 'respond', {
-                    title: 'Generating response',
-                    phase: 'respond',
-                    status: 'complete',
-                    duration: duration,
-                    context: {
-                        blockCount: state.formattedResponse.blocks.length,
-                        tokensResolved: true
-                    },
-                    debug: buildDebugInfo(prompt, response, state, {
-                        responseLength: resolved.narrative?.length,
-                        metricsCount: resolved.metrics?.length,
-                        findingsCount: resolved.findings?.length
-                    })
+        for (let attempt = 1; attempt <= MAX_LLM_RETRIES; attempt++) {
+            try {
+                const response = AIProviders.callAI(prompt, {
+                    tier: FAST_TIER,
+                    temperature: 0.3 + (attempt - 1) * 0.1, // Slightly increase temperature on retries
+                    maxTokens: 2000,
+                    jsonMode: true,
+                    purpose: 'SCA:respond'
                 });
 
-                log.debug('SCA Respond phase complete', { duration: duration });
-                return { success: true, nextPhase: PHASES.COMPLETE };
+                parsed = parseJsonResponse(response?.text);
+
+                if (!parsed) {
+                    throw new Error('Invalid respond output - failed to parse JSON');
+                }
+
+                // Resolve all {{tokens}} in the response
+                resolved = resolveAllTokens(parsed, state);
+
+                // Validate we have usable content
+                if (!resolved.narrative && (!resolved.metrics || resolved.metrics.length === 0)) {
+                    throw new Error('Invalid respond output - no narrative or metrics');
+                }
+
+                // Success - break out of retry loop
+                log.debug('SCA RESPOND LLM succeeded', { attempt: attempt });
+                break;
+
+            } catch (e) {
+                lastError = e;
+                log.debug('SCA RESPOND LLM attempt failed', {
+                    attempt: attempt,
+                    maxAttempts: MAX_LLM_RETRIES,
+                    error: e.message
+                });
+
+                parsed = null;
+                resolved = null;
+
+                if (attempt < MAX_LLM_RETRIES) {
+                    // Will retry
+                    continue;
+                }
+                // Last attempt failed - will fall through to fallback
             }
+        }
 
-            throw new Error('Invalid respond output - missing required fields');
+        const duration = Date.now() - phaseStart;
+        state.phaseTimings.respond = duration;
 
-        } catch (e) {
-            const duration = Date.now() - phaseStart;
-            log.error('SCA Respond phase failed', { error: e.message, duration: duration });
-            state.errors.push({ phase: 'respond', error: e.message, timestamp: Date.now() });
-
-            // Fallback: use data summaries directly
-            const fallbackNarrative = buildFallbackNarrative(state);
+        // Check if we got a valid response after retries
+        if (parsed && resolved) {
+            // Build formatted response from resolved content
             state.formattedResponse = {
                 title: 'Analysis Results',
-                summary: fallbackNarrative.substring(0, 150),
-                blocks: [{ type: 'text', content: fallbackNarrative }]
+                summary: resolved.narrative?.substring(0, 150) || '',
+                blocks: []
             };
+
+            // Add narrative text block
+            if (resolved.narrative) {
+                state.formattedResponse.blocks.push({
+                    type: 'text',
+                    content: resolved.narrative
+                });
+            }
+
+            // Add metrics block
+            if (resolved.metrics && resolved.metrics.length > 0) {
+                state.formattedResponse.blocks.push({
+                    type: 'metrics',
+                    items: resolved.metrics
+                });
+            }
+
+            // Add findings as list
+            if (resolved.findings && resolved.findings.length > 0) {
+                state.formattedResponse.blocks.push({
+                    type: 'list',
+                    title: 'Key Findings',
+                    items: resolved.findings
+                });
+            }
+
             state.phase = PHASES.COMPLETE;
 
             upsertThinkingStep(state, 'respond', {
@@ -2916,13 +2958,45 @@ Response format (JSON only):
                 status: 'complete',
                 duration: duration,
                 context: {
-                    fallback: true,
-                    error: e.message.substring(0, 100)
-                }
+                    blockCount: state.formattedResponse.blocks.length,
+                    tokensResolved: true
+                },
+                debug: buildDebugInfo(prompt, null, state, {
+                    responseLength: resolved.narrative?.length,
+                    metricsCount: resolved.metrics?.length,
+                    findingsCount: resolved.findings?.length
+                })
             });
 
+            log.debug('SCA Respond phase complete', { duration: duration });
             return { success: true, nextPhase: PHASES.COMPLETE };
         }
+
+        // All retries exhausted - fallback
+        log.error('SCA Respond phase failed after retries', { error: lastError?.message, duration: duration });
+        state.errors.push({ phase: 'respond', error: lastError?.message || 'LLM retries exhausted', timestamp: Date.now() });
+
+        // Fallback: use data summaries directly
+        const fallbackNarrative = buildFallbackNarrative(state);
+        state.formattedResponse = {
+            title: 'Analysis Results',
+            summary: fallbackNarrative.substring(0, 150),
+            blocks: [{ type: 'text', content: fallbackNarrative }]
+        };
+        state.phase = PHASES.COMPLETE;
+
+        upsertThinkingStep(state, 'respond', {
+            title: 'Generating response',
+            phase: 'respond',
+            status: 'complete',
+            duration: duration,
+            context: {
+                fallback: true,
+                error: (lastError?.message || 'LLM retries exhausted').substring(0, 100)
+            }
+        });
+
+        return { success: true, nextPhase: PHASES.COMPLETE };
     }
 
     /**
