@@ -381,6 +381,7 @@ define([
             chatHistory: options.chatHistory || [],
             documents: options.documents || null,
             jsonMode: options.jsonMode || false,
+            jsonSchema: options.jsonSchema || null, // JSON schema for structured output enforcement
             tools: options.tools || null,
             // Track if we had to strip tools due to lack of capability
             toolsStripped: false
@@ -892,7 +893,17 @@ define([
         body[maxTokensParam] = options.maxTokens;
         
         // JSON mode for structured responses
-        if (options.jsonMode) {
+        // Prefer JSON schema enforcement when available for stricter output control
+        if (options.jsonSchema) {
+            body.response_format = {
+                type: 'json_schema',
+                json_schema: {
+                    name: options.jsonSchema.name || 'response',
+                    strict: true,
+                    schema: options.jsonSchema.schema
+                }
+            };
+        } else if (options.jsonMode) {
             body.response_format = { type: 'json_object' };
         }
         
@@ -1153,8 +1164,12 @@ define([
             };
         }
         
-        // JSON mode
-        if (options.jsonMode) {
+        // JSON mode with optional schema enforcement
+        // Gemini supports responseSchema for structured output control
+        if (options.jsonSchema) {
+            body.generationConfig.responseMimeType = 'application/json';
+            body.generationConfig.responseSchema = options.jsonSchema.schema;
+        } else if (options.jsonMode) {
             body.generationConfig.responseMimeType = 'application/json';
         }
         
@@ -1269,11 +1284,20 @@ define([
             max_tokens: options.maxTokens
         };
         
-        // JSON mode (if model supports it)
-        if (options.jsonMode) {
+        // JSON mode with optional schema enforcement (OpenAI-compatible)
+        if (options.jsonSchema) {
+            body.response_format = {
+                type: 'json_schema',
+                json_schema: {
+                    name: options.jsonSchema.name || 'response',
+                    strict: true,
+                    schema: options.jsonSchema.schema
+                }
+            };
+        } else if (options.jsonMode) {
             body.response_format = { type: 'json_object' };
         }
-        
+
         // Function calling (OpenAI-compatible format)
         if (options.tools && options.tools.length > 0) {
             body.tools = options.tools.map(tool => ({
@@ -1394,12 +1418,21 @@ define([
             temperature: options.temperature,
             max_tokens: options.maxTokens
         };
-        
-        // JSON mode
-        if (options.jsonMode) {
+
+        // JSON mode with optional schema enforcement (OpenAI-compatible)
+        if (options.jsonSchema) {
+            body.response_format = {
+                type: 'json_schema',
+                json_schema: {
+                    name: options.jsonSchema.name || 'response',
+                    strict: true,
+                    schema: options.jsonSchema.schema
+                }
+            };
+        } else if (options.jsonMode) {
             body.response_format = { type: 'json_object' };
         }
-        
+
         // Function calling (xAI supports OpenAI-compatible tool calling)
         if (options.tools && options.tools.length > 0) {
             body.tools = options.tools.map(tool => ({
