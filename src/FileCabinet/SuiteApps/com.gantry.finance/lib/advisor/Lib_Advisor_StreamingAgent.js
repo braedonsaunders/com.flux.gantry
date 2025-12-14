@@ -246,11 +246,9 @@ Current question: "{question}"
 
 CRITICAL SEMANTIC GUIDANCE:
 
-1. TIME PERIODS: Use current year ({current_year}). Valid formats:
-   - Period params: "ytd", "this_month", "this_quarter", "last_12_months"
-   - Date ranges: "{current_year}-01" to "{current_year}-12" (YYYY-MM format)
+{period_options}
 
-2. TRANSACTION TYPES - Infer from context (who is paying whom):
+TRANSACTION TYPES - Infer from context (who is paying whom):
    - "Invoice FROM vendor" / "bill FROM vendor" / "we owe" → transaction_type: "VendBill"
    - "Invoice TO customer" / "customer owes us" / "receivable" → transaction_type: "CustInvc"
    - "Payment TO vendor" / "we paid" → transaction_type: "VendPmt"
@@ -1855,6 +1853,7 @@ Now provide the response using ONLY the blocks array format:`;
             .replace('{question}', state.message)
             .replace('{resolved_entities}', resolvedContext ? `Resolved entities:\n${resolvedContext}` : '')
             .replace('{date_context}', getDateContext())
+            .replace('{period_options}', Tools.getAvailablePeriods())
             .replace(/\{current_year\}/g, currentYear.toString());
 
         // Add step as active
@@ -2300,7 +2299,7 @@ Now provide the response using ONLY the blocks array format:`;
         for (let attempt = 1; attempt <= MAX_LLM_RETRIES; attempt++) {
             try {
                 const response = AIProviders.callAI(prompt, {
-                    tier: FAST_TIER,
+                    tier: getTierForPhase('reflect', state),
                     temperature: 0.2 + (attempt - 1) * 0.1, // Slightly increase temperature on retries
                     maxTokens: 500,
                     jsonMode: true,
@@ -4169,13 +4168,13 @@ Response:`;
 
         try {
             const response = AIProviders.callAI(prompt, {
-                tier: FAST_TIER,
+                tier: getTierForPhase('intent', {}),
                 temperature: 0.7,
                 purpose: 'SCA:intent' // Conversational responses are short like intent
             });
 
-            if (response && response.trim()) {
-                return response.trim();
+            if (response && response.text && response.text.trim()) {
+                return response.text.trim();
             }
         } catch (e) {
             log.debug('Conversational response generation failed', { error: e.message });
