@@ -27,15 +27,31 @@ define(['N/log', 'N/runtime', 'N/record', 'N/query', '../Lib_Config'], function(
 
     // ═══════════════════════════════════════════════════════════════
     // STREAMING CONTEXT ARCHITECTURE (SCA) CONSTANTS
-    // Lightweight phases use smaller token limits for faster responses
+    // Token limits are now calculated dynamically from model's maxOutput
     // ═══════════════════════════════════════════════════════════════
 
-    const SCA_TOKEN_LIMITS = {
-        'SCA:intent': 200,      // Intent classification - very short
-        'SCA:select': 300,      // Tool selection - short list
-        'SCA:invoke': 400,      // Tool invocation - minimal schema
-        'SCA:analyze': 1500,    // Analysis - moderate
-        'SCA:format': 2000      // Response formatting - needs room for blocks
+    // Multipliers - percentage of model's max output tokens per phase
+    const SCA_TOKEN_MULTIPLIERS = {
+        'SCA:respond': 1.0,      // Full capacity - main response with blocks
+        'SCA:synthesize': 0.5,   // SQL queries - moderate
+        'SCA:reflect': 0.25,     // Reflection - reasoning output
+        'SCA:recovery': 0.15,    // Error recovery - short suggestions
+        'SCA:analyze': 0.25,     // Analysis - moderate
+        'SCA:invoke': 0.15,      // Tool invocation - just args
+        'SCA:select': 0.1,       // Tool selection - short list
+        'SCA:intent': 0.1        // Intent classification - very short
+    };
+
+    // Minimum tokens per phase (floor values to ensure functionality)
+    const SCA_TOKEN_MINIMUMS = {
+        'SCA:respond': 2000,
+        'SCA:synthesize': 1000,
+        'SCA:reflect': 300,
+        'SCA:recovery': 200,
+        'SCA:analyze': 500,
+        'SCA:invoke': 200,
+        'SCA:select': 200,
+        'SCA:intent': 150
     };
     
     // ═══════════════════════════════════════════════════════════════
@@ -948,7 +964,8 @@ define(['N/log', 'N/runtime', 'N/record', 'N/query', '../Lib_Config'], function(
         DEFAULT_MAX_TOKENS: DEFAULT_MAX_TOKENS,
         GOVERNANCE_THRESHOLD_LLM: GOVERNANCE_THRESHOLD_LLM,
         GOVERNANCE_THRESHOLD_QUERY: GOVERNANCE_THRESHOLD_QUERY,
-        SCA_TOKEN_LIMITS: SCA_TOKEN_LIMITS,
+        SCA_TOKEN_MULTIPLIERS: SCA_TOKEN_MULTIPLIERS,
+        SCA_TOKEN_MINIMUMS: SCA_TOKEN_MINIMUMS,
 
         // SQL escaping (single source of truth)
         escapeSql: escapeSql,

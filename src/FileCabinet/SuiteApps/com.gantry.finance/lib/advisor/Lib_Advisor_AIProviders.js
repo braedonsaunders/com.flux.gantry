@@ -33,29 +33,43 @@ define([
 
     /**
      * Get appropriate max tokens for a model
-     * Uses Model Registry to get model-specific limits, with sensible defaults
+     * Uses Model Registry to get model-specific limits, with dynamic multipliers
      * @param {string} modelId - The model identifier
      * @param {string} [purpose] - Optional purpose to apply context-specific limits
      * @returns {number} - Maximum tokens to request
      */
     function getMaxTokensForModel(modelId, purpose) {
+        // Get the model's actual max output from registry
+        let modelMaxOutput = DEFAULT_MAX_TOKENS;
+        if (modelId) {
+            try {
+                const modelInfo = ModelRegistry.getModel(modelId);
+                if (modelInfo && modelInfo.maxOutput) {
+                    modelMaxOutput = modelInfo.maxOutput;
+                }
+            } catch (e) {
+                log.debug('Could not get model info for max tokens', { model: modelId, error: e.message });
+            }
+        }
+
         // ═══════════════════════════════════════════════════════════════
-        // STREAMING CONTEXT ARCHITECTURE (SCA) - Lightweight token limits
-        // Each phase uses minimal tokens for fast responses
+        // STREAMING CONTEXT ARCHITECTURE (SCA) - Dynamic token limits
+        // Each phase uses a percentage of model's max output capacity
         // ═══════════════════════════════════════════════════════════════
         if (purpose && purpose.startsWith('SCA:')) {
-            const scaLimits = Utils.SCA_TOKEN_LIMITS || {};
-            // Check for exact match first (e.g., 'SCA:intent')
-            if (scaLimits[purpose]) {
-                return scaLimits[purpose];
-            }
-            // Check for phase prefix (e.g., 'SCA:invoke:get_customer_revenue' → 'SCA:invoke')
+            const multipliers = Utils.SCA_TOKEN_MULTIPLIERS || {};
+            const minimums = Utils.SCA_TOKEN_MINIMUMS || {};
+
+            // Get phase prefix (e.g., 'SCA:invoke:get_customer_revenue' → 'SCA:invoke')
             const phasePrefix = purpose.split(':').slice(0, 2).join(':');
-            if (scaLimits[phasePrefix]) {
-                return scaLimits[phasePrefix];
-            }
-            // Default SCA limit - still smaller than legacy
-            return 500;
+
+            // Get multiplier - check exact match first, then phase prefix
+            const multiplier = multipliers[purpose] || multipliers[phasePrefix] || 0.25;
+            const minimum = minimums[purpose] || minimums[phasePrefix] || 200;
+
+            // Calculate: model max * multiplier, but at least the minimum
+            const calculated = Math.floor(modelMaxOutput * multiplier);
+            return Math.max(calculated, minimum);
         }
 
         // Context-specific limits for cases where we know output should be small
@@ -67,19 +81,8 @@ define([
             return purposeLimits[purpose];
         }
 
-        // Get model-specific max output from registry
-        if (modelId) {
-            try {
-                const modelInfo = ModelRegistry.getModel(modelId);
-                if (modelInfo && modelInfo.maxOutput) {
-                    return modelInfo.maxOutput;
-                }
-            } catch (e) {
-                log.debug('Could not get model info for max tokens', { model: modelId, error: e.message });
-            }
-        }
-
-        return DEFAULT_MAX_TOKENS;
+        // Default: return full model capacity
+        return modelMaxOutput;
     }
 
     /**

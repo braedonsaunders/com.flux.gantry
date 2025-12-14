@@ -1294,7 +1294,6 @@ Now provide the response using ONLY the blocks array format:`;
             const response = AIProviders.callAI(prompt, {
                 tier: getTierForPhase('intent', state),
                 temperature: 0.1,
-                maxTokens: 200,
                 jsonMode: true,
                 purpose: 'SCA:intent'
             });
@@ -1490,7 +1489,6 @@ Now provide the response using ONLY the blocks array format:`;
             const response = AIProviders.callAI(prompt, {
                 tier: getTierForPhase('select', state),
                 temperature: 0.1,
-                maxTokens: 200,
                 jsonMode: true,
                 purpose: 'SCA:select'
             });
@@ -1848,7 +1846,6 @@ Now provide the response using ONLY the blocks array format:`;
             const response = AIProviders.callAI(prompt, {
                 tier: getTierForPhase('invoke', state),
                 temperature: 0.1,
-                maxTokens: 300,
                 jsonMode: true,
                 purpose: `SCA:invoke:${toolName}`
             });
@@ -2571,7 +2568,6 @@ Now provide the response using ONLY the blocks array format:`;
             const response = AIProviders.callAI(prompt, {
                 tier: getTierForPhase('synthesize', state),
                 temperature: 0.2,
-                maxTokens: 1500,
                 jsonMode: true,
                 purpose: 'SCA:synthesize'
             });
@@ -2878,7 +2874,6 @@ Now provide the response using ONLY the blocks array format:`;
             const response = AIProviders.callAI(prompt, {
                 tier: getTierForPhase('recovery', state),
                 temperature: 0.2,
-                maxTokens: 300,
                 jsonMode: true,
                 purpose: 'SCA:recovery'
             });
@@ -3039,20 +3034,44 @@ Now provide the response using ONLY the blocks array format:`;
             }
         });
 
-        // ═══════════════════════════════════════════════════════════════════════
-        // LLM RETRY LOOP - Retry up to 3 times if response is invalid
-        // ═══════════════════════════════════════════════════════════════════════
-        const MAX_LLM_RETRIES = 3;
-        let lastError = null;
-        let parsed = null;
-        let resolved = null;
+        // Track raw response for diagnostics (outside try block for catch access)
+        let lastRawResponse = null;
 
-        for (let attempt = 1; attempt <= MAX_LLM_RETRIES; attempt++) {
-            try {
-                const response = AIProviders.callAI(prompt, {
-                    tier: FAST_TIER,
-                    temperature: 0.3 + (attempt - 1) * 0.1, // Slightly increase temperature on retries
-                    maxTokens: 2000,
+        try {
+            // ═══════════════════════════════════════════════════════════════════════
+            // ATTEMPT 1: Call with JSON schema enforcement (if provider supports it)
+            // maxTokens dynamically calculated from model's maxOutput (100% for respond)
+            // ═══════════════════════════════════════════════════════════════════════
+            const response = AIProviders.callAI(prompt, {
+                tier: getTierForPhase('respond', state),
+                temperature: 0.3,
+                jsonMode: true,
+                jsonSchema: RESPOND_BLOCKS_SCHEMA,
+                purpose: 'SCA:respond'
+            });
+
+            let parsed = parseJsonResponse(response?.text);
+            let retried = false;
+            lastRawResponse = response?.text; // Capture for diagnostics
+
+            // ═══════════════════════════════════════════════════════════════════════
+            // ATTEMPT 2: If wrong format, retry with explicit correction prompt
+            // LLMs sometimes ignore schema and return familiar patterns from training
+            // ═══════════════════════════════════════════════════════════════════════
+            if (parsed && !parsed.blocks) {
+                log.debug('SCA Respond: wrong format detected, retrying with correction', {
+                    receivedKeys: Object.keys(parsed),
+                    hasNarrative: !!parsed.narrative,
+                    hasFindings: !!parsed.findings,
+                    rawPreview: (response?.text || '').substring(0, 300)
+                });
+
+                // Build correction prompt with original context + correction instructions
+                const correctionPrompt = prompt + '\n\n' + SCHEMA_CORRECTION_PROMPT;
+
+                const retryResponse = AIProviders.callAI(correctionPrompt, {
+                    tier: getTierForPhase('respond', state),
+                    temperature: 0.2, // Lower temperature for more deterministic output
                     jsonMode: true,
                     purpose: 'SCA:respond'
                 });
@@ -3969,7 +3988,7 @@ Response:`;
             const response = AIProviders.callAI(prompt, {
                 tier: FAST_TIER,
                 temperature: 0.7,
-                maxTokens: 150
+                purpose: 'SCA:intent' // Conversational responses are short like intent
             });
 
             if (response && response.trim()) {
