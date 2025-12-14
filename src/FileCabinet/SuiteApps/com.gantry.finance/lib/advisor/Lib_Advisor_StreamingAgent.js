@@ -567,6 +567,24 @@ CRITICAL INSTRUCTIONS - READ CAREFULLY:
 9. TRUNCATION AWARENESS: If a data section shows "truncated: true", mention that more data is available.
 
 ═══════════════════════════════════════════════════════════════════════════════
+⚠️ CRITICAL: OUTPUT STRUCTURE
+
+You MUST return: {{"blocks": [...]}}
+
+❌ WRONG - DO NOT USE THIS FORMAT:
+{{"narrative": "...", "metrics": [...], "findings": [...]}}
+
+❌ WRONG - DO NOT USE THESE TOP-LEVEL KEYS:
+- "narrative"
+- "findings"
+- "summary"
+- "analysis"
+
+✅ CORRECT - USE ONLY THIS STRUCTURE:
+{{"blocks": [{{"type": "text", "content": "..."}}, ...]}}
+
+The ONLY valid top-level key is "blocks" containing an array of typed blocks.
+═══════════════════════════════════════════════════════════════════════════════
 
 Response format (JSON only):
 {{
@@ -585,6 +603,76 @@ Response format (JSON only):
     ]}}
   ]
 }}`;
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // RESPOND_BLOCKS_SCHEMA - JSON Schema for structured output enforcement
+    // Used by providers that support schema-constrained JSON generation
+    // ═══════════════════════════════════════════════════════════════════════════
+    const RESPOND_BLOCKS_SCHEMA = {
+        name: 'advisor_response',
+        schema: {
+            type: 'object',
+            properties: {
+                blocks: {
+                    type: 'array',
+                    items: {
+                        type: 'object',
+                        properties: {
+                            type: {
+                                type: 'string',
+                                enum: ['text', 'metrics', 'table', 'chart', 'list']
+                            },
+                            content: { type: 'string' },
+                            items: {
+                                type: 'array',
+                                items: {
+                                    oneOf: [
+                                        { type: 'string' },
+                                        {
+                                            type: 'object',
+                                            properties: {
+                                                label: { type: 'string' },
+                                                value: { type: 'string' },
+                                                trend: { type: 'string', enum: ['up', 'down', 'neutral'] }
+                                            },
+                                            required: ['label', 'value']
+                                        }
+                                    ]
+                                }
+                            },
+                            title: { type: 'string' },
+                            dataRef: { type: 'string' },
+                            chartType: { type: 'string', enum: ['bar', 'line', 'pie'] },
+                            x: { type: 'string' },
+                            y: { type: 'string' }
+                        },
+                        required: ['type']
+                    }
+                }
+            },
+            required: ['blocks']
+        }
+    };
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // SCHEMA_CORRECTION_PROMPT - Used when LLM returns wrong format
+    // ═══════════════════════════════════════════════════════════════════════════
+    const SCHEMA_CORRECTION_PROMPT = `Your previous response used the WRONG format.
+
+You returned something like: {"narrative": "...", "metrics": [...], "findings": [...]}
+
+This is INCORRECT. You MUST return: {"blocks": [...]}
+
+Convert your response to the correct format. The ONLY valid structure is:
+{
+  "blocks": [
+    {"type": "text", "content": "your narrative text here"},
+    {"type": "metrics", "items": [{"label": "Label", "value": "value", "trend": "neutral"}]},
+    {"type": "list", "title": "Key Findings", "items": ["finding 1", "finding 2"]}
+  ]
+}
+
+Now provide the CORRECT format with your analysis:`;
 
     // ═══════════════════════════════════════════════════════════════════════════
     // TOOL MANIFEST - Now delegated to Tools.js (single source of truth)
@@ -2925,16 +3013,53 @@ Response format (JSON only):
         });
 
         try {
-            // Adaptive tier based on response complexity
+            // ═══════════════════════════════════════════════════════════════════════
+            // ATTEMPT 1: Call with JSON schema enforcement (if provider supports it)
+            // ═══════════════════════════════════════════════════════════════════════
             const response = AIProviders.callAI(prompt, {
                 tier: getTierForPhase('respond', state),
                 temperature: 0.3,
                 maxTokens: 2000,
                 jsonMode: true,
+                jsonSchema: RESPOND_BLOCKS_SCHEMA,
                 purpose: 'SCA:respond'
             });
 
-            const parsed = parseJsonResponse(response?.text);
+            let parsed = parseJsonResponse(response?.text);
+            let retried = false;
+
+            // ═══════════════════════════════════════════════════════════════════════
+            // ATTEMPT 2: If wrong format, retry with explicit correction prompt
+            // LLMs sometimes ignore schema and return familiar patterns from training
+            // ═══════════════════════════════════════════════════════════════════════
+            if (parsed && !parsed.blocks) {
+                log.debug('SCA Respond: wrong format detected, retrying with correction', {
+                    receivedKeys: Object.keys(parsed),
+                    hasNarrative: !!parsed.narrative,
+                    hasFindings: !!parsed.findings
+                });
+
+                // Build correction prompt with original context + correction instructions
+                const correctionPrompt = prompt + '\n\n' + SCHEMA_CORRECTION_PROMPT;
+
+                const retryResponse = AIProviders.callAI(correctionPrompt, {
+                    tier: getTierForPhase('respond', state),
+                    temperature: 0.2, // Lower temperature for more deterministic output
+                    maxTokens: 2000,
+                    jsonMode: true,
+                    jsonSchema: RESPOND_BLOCKS_SCHEMA,
+                    purpose: 'SCA:respond:retry'
+                });
+
+                parsed = parseJsonResponse(retryResponse?.text);
+                retried = true;
+
+                log.debug('SCA Respond: retry result', {
+                    hasBlocks: !!(parsed && parsed.blocks),
+                    blockCount: parsed?.blocks?.length || 0
+                });
+            }
+
             const duration = Date.now() - phaseStart;
             state.phaseTimings.respond = duration;
 
@@ -2951,7 +3076,8 @@ Response format (JSON only):
 
                 log.debug('SCA Respond: block sequence format', {
                     blockCount: resolvedBlocks.length,
-                    blockTypes: resolvedBlocks.map(b => b.type)
+                    blockTypes: resolvedBlocks.map(b => b.type),
+                    retried: retried
                 });
 
                 // Build formatted response
@@ -2972,19 +3098,21 @@ Response format (JSON only):
                         blockCount: resolvedBlocks.length,
                         tokensResolved: true,
                         hasCharts: resolvedBlocks.some(b => b.type === 'chart'),
-                        hasTables: resolvedBlocks.some(b => b.type === 'table')
+                        hasTables: resolvedBlocks.some(b => b.type === 'table'),
+                        retried: retried
                     },
                     debug: buildDebugInfo(prompt, response, state, {
                         blockCount: resolvedBlocks.length,
-                        blockTypes: resolvedBlocks.map(b => b.type).join(',')
+                        blockTypes: resolvedBlocks.map(b => b.type).join(','),
+                        retried: retried
                     })
                 });
 
-                log.debug('SCA Respond phase complete', { duration: duration });
+                log.debug('SCA Respond phase complete', { duration: duration, retried: retried });
                 return { success: true, nextPhase: PHASES.COMPLETE };
             }
 
-            throw new Error('Invalid respond output - expected blocks array');
+            throw new Error('Invalid respond output - expected blocks array' + (retried ? ' (after retry)' : ''));
 
         } catch (e) {
             const duration = Date.now() - phaseStart;
