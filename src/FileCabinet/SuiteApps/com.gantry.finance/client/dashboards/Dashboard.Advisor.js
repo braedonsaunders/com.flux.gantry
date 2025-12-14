@@ -339,7 +339,7 @@
         },
 
         /**
-         * Converge: Particles stream tightly into the input center
+         * Converge: Particles stream into input, building visible energy
          */
         startConverge: function() {
             this.phase = 'converge';
@@ -367,10 +367,12 @@
                 // TIGHT stagger - all particles move almost together for concentrated stream
                 const sortedIndex = distances.findIndex(d => d.i === i);
                 p.streamOrder = sortedIndex / this.particles.length;
+                p.hasArrived = false;
             });
 
-            // Track when first particles arrive for glow timing
-            let firstArrival = false;
+            // Track energy accumulation from arriving particles
+            let accumulatedEnergy = 0;
+            let arrivedCount = 0;
 
             const animateConverge = () => {
                 if (!this.isActive || this.phase !== 'converge') return;
@@ -379,16 +381,14 @@
                 const progress = Math.min(elapsed / this.config.convergeDuration, 1);
                 this.globalTime += 16;
 
-                let nearestParticleProgress = 0;
-
                 this.particles.forEach((p, i) => {
-                    // MUCH TIGHTER stagger - only 15% spread (was 50%)
+                    // MUCH TIGHTER stagger - only 15% spread
                     const stagger = p.streamOrder * 0.15;
                     const particleProgress = Math.max(0, Math.min(1, (progress - stagger) / (1 - stagger)));
 
                     if (particleProgress > 0) {
                         // Stronger acceleration - really sucked in
-                        const t = Math.pow(particleProgress, 2.5); // Stronger than easeInQuad
+                        const t = Math.pow(particleProgress, 2.5);
 
                         // Direct line to exact center
                         p.x = p.originX + (targetX - p.originX) * t;
@@ -400,88 +400,116 @@
                         // Fade out near the end
                         p.opacity = p.originOpacity * Math.max(0, 1 - Math.pow(t, 1.5) * 0.85);
 
-                        // Track closest particle for glow timing
-                        if (t > nearestParticleProgress) {
-                            nearestParticleProgress = t;
+                        // Track arrivals (when particle is 90% there)
+                        if (t > 0.9 && !p.hasArrived) {
+                            p.hasArrived = true;
+                            arrivedCount++;
+                            // Each particle adds energy based on its properties
+                            accumulatedEnergy += 0.004 + (p.baseSize / this.config.particleSize.max) * 0.002;
                         }
                     }
                 });
 
                 this.draw();
 
-                // Subtle glow builds as particles arrive - very understated
-                if (chatInput && nearestParticleProgress > 0.5) {
-                    const glowProgress = (nearestParticleProgress - 0.5) / 0.5;
-                    const glowIntensity = this.easeOutQuart(glowProgress);
-                    // Very subtle - just a hint of color on the border
+                // VISIBLE energy glow that builds as particles arrive
+                if (chatInput && progress > 0.2) {
+                    // Energy builds from particle arrivals
+                    const energyLevel = Math.min(1, accumulatedEnergy);
+                    // Also factor in overall progress for smoothness
+                    const progressGlow = this.easeOutCubic((progress - 0.2) / 0.8);
+                    const combinedIntensity = Math.max(energyLevel, progressGlow * 0.7);
+
+                    // Pulsing effect as particles hit
+                    const pulse = Math.sin(arrivedCount * 0.3) * 0.15 + 1;
+
+                    // VISIBLE glow - multiple layers
+                    const innerGlow = 8 + 12 * combinedIntensity * pulse;
+                    const outerGlow = 20 + 25 * combinedIntensity;
+                    const glowOpacity = 0.2 + 0.35 * combinedIntensity;
+
                     chatInput.style.boxShadow = `
-                        0 0 ${2 + 4 * glowIntensity}px rgba(99, 102, 241, ${0.08 + 0.12 * glowIntensity}),
-                        inset 0 0 ${1 + 2 * glowIntensity}px rgba(99, 102, 241, ${0.03 * glowIntensity})
+                        0 0 ${innerGlow}px rgba(99, 102, 241, ${glowOpacity}),
+                        0 0 ${outerGlow}px rgba(139, 92, 246, ${glowOpacity * 0.5}),
+                        0 0 ${outerGlow * 1.5}px rgba(6, 182, 212, ${glowOpacity * 0.25}),
+                        inset 0 0 ${4 + 6 * combinedIntensity}px rgba(99, 102, 241, ${0.1 + 0.15 * combinedIntensity})
                     `;
+                    chatInput.style.borderColor = `rgba(99, 102, 241, ${0.3 + 0.4 * combinedIntensity})`;
                 }
 
                 if (progress < 1) {
                     this.animationId = requestAnimationFrame(animateConverge);
                 } else {
-                    this.triggerInputShine(chatInput, inputWrapper);
+                    this.triggerInputShine(chatInput, inputWrapper, accumulatedEnergy);
                 }
             };
 
             this.animationId = requestAnimationFrame(animateConverge);
         },
 
-        triggerInputShine: function(chatInput, inputWrapper) {
+        triggerInputShine: function(chatInput, inputWrapper, initialEnergy) {
             if (!chatInput) {
                 this.startAmbient();
                 return;
             }
 
-            // Particle-to-Focus Morph: animate glow, then hand off to CSS focus state
             const shineStart = Date.now();
-
-            // CSS focus state values we're morphing TO
-            const targetBorderColor = 'rgba(99, 102, 241, 0.25)';
+            const energy = initialEnergy || 1;
 
             const animateShine = () => {
                 const elapsed = Date.now() - shineStart;
                 const progress = Math.min(elapsed / this.config.shineDuration, 1);
 
-                // Envelope: rise to peak, then morph toward CSS focus values
-                const envelope = progress < 0.3
-                    ? this.easeOutCubic(progress / 0.3) * 0.8 // Rise to 80%
-                    : progress < 0.5
-                        ? 0.8 + this.easeInOutQuad((progress - 0.3) / 0.2) * 0.2 // Peak at 100%
-                        : 1 - this.easeOutCubic((progress - 0.5) / 0.5) * 0.6; // Settle to 40% (CSS-like)
+                // Phase 1 (0-20%): BLOOM - dramatic expansion
+                // Phase 2 (20-50%): PEAK - maximum intensity with pulse
+                // Phase 3 (50-100%): CRYSTALLIZE - settle into focus ring
 
-                // Subtle breathing during rise, calm during settle
-                const breath = progress < 0.5
-                    ? Math.sin(progress * Math.PI * 3) * 0.1 + 1
-                    : 1;
+                let bloom, ringSize, glowIntensity, ringOpacity;
 
-                // Glow morphs from particle energy to CSS focus ring
-                const glowSize = 3 + 5 * envelope * breath;
-                const glowOpacity = 0.04 + 0.12 * envelope;
+                if (progress < 0.2) {
+                    // BLOOM: Explosive expansion
+                    const t = progress / 0.2;
+                    bloom = this.easeOutCubic(t);
+                    glowIntensity = 0.6 + 0.4 * bloom;
+                    ringSize = 15 * bloom; // Ring expands outward
+                    ringOpacity = 0.4 * bloom;
+                } else if (progress < 0.5) {
+                    // PEAK: Maximum glow with subtle pulse
+                    const t = (progress - 0.2) / 0.3;
+                    const pulse = Math.sin(t * Math.PI * 4) * 0.1 + 1;
+                    bloom = 1;
+                    glowIntensity = 1 * pulse;
+                    ringSize = 15 - 5 * this.easeInOutQuad(t); // Ring starts contracting
+                    ringOpacity = 0.4 - 0.1 * t;
+                } else {
+                    // CRYSTALLIZE: Contract and solidify into focus ring
+                    const t = (progress - 0.5) / 0.5;
+                    const ease = this.easeInOutCubic(t);
+                    bloom = 1 - ease * 0.7; // Glow contracts
+                    glowIntensity = 1 - ease * 0.85; // Intensity reduces
+                    ringSize = 10 - 7 * ease; // Ring shrinks to final 3px
+                    ringOpacity = 0.3 - 0.26 * ease; // Settles to 0.04
+                }
 
-                // Calculate ring size - grows from 0 to 3px (CSS focus ring size)
-                const ringProgress = progress > 0.4 ? (progress - 0.4) / 0.6 : 0;
-                const ringSize = 3 * this.easeOutCubic(ringProgress);
-                const ringOpacity = 0.04 * ringProgress;
+                // Multi-layer glow for richness
+                const innerGlow = 10 + 20 * glowIntensity * bloom;
+                const midGlow = 25 + 30 * glowIntensity * bloom;
+                const outerGlow = 40 + 40 * glowIntensity * bloom;
 
                 chatInput.style.boxShadow = `
-                    0 1px 2px rgba(0, 0, 0, 0.03),
-                    0 0 ${glowSize}px rgba(99, 102, 241, ${glowOpacity}),
+                    0 0 ${innerGlow}px rgba(99, 102, 241, ${0.15 + 0.4 * glowIntensity}),
+                    0 0 ${midGlow}px rgba(139, 92, 246, ${0.1 + 0.25 * glowIntensity}),
+                    0 0 ${outerGlow}px rgba(6, 182, 212, ${0.05 + 0.15 * glowIntensity}),
                     0 0 0 ${ringSize}px rgba(99, 102, 241, ${ringOpacity}),
-                    inset 0 1px 0 rgba(255, 255, 255, ${0.5 + 0.2 * envelope})
+                    inset 0 0 ${8 * bloom}px rgba(255, 255, 255, ${0.1 * bloom})
                 `;
 
-                // Border morphs to CSS focus color
-                const borderOpacity = 0.15 + 0.1 * envelope;
-                chatInput.style.borderColor = `rgba(99, 102, 241, ${borderOpacity})`;
+                chatInput.style.borderColor = `rgba(99, 102, 241, ${0.25 + 0.45 * glowIntensity})`;
 
                 if (progress < 1) {
                     this.animationId = requestAnimationFrame(animateShine);
                 } else {
-                    // Seamless handoff: remove inline styles and class, CSS takes over
+                    // Seamless handoff to CSS
                     chatInput.style.boxShadow = '';
                     chatInput.style.borderColor = '';
                     chatInput.classList.remove('animation-active');
