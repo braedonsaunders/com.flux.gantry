@@ -218,24 +218,239 @@ define([
         };
     }
 
+    // ═══════════════════════════════════════════════════════════════════════════
+    // PERIOD DEFINITIONS - Single Source of Truth
+    // Add a period here ONCE - automatically available to LLM and SQL generation
+    // ═══════════════════════════════════════════════════════════════════════════
+    const PERIOD_DEFINITIONS = {
+        // === Daily ===
+        'today': {
+            desc: 'Current day only',
+            category: 'daily',
+            sql: (df) => `${df} = CURRENT_DATE`
+        },
+        'yesterday': {
+            desc: 'Previous day only',
+            category: 'daily',
+            sql: (df) => `${df} = CURRENT_DATE - 1`
+        },
+
+        // === Weekly ===
+        'this_week': {
+            desc: 'Current week (Monday to now)',
+            category: 'weekly',
+            sql: (df) => `${df} >= TRUNC(CURRENT_DATE, 'IW')`
+        },
+        'last_week': {
+            desc: 'Previous full week',
+            category: 'weekly',
+            sql: (df) => `${df} >= TRUNC(CURRENT_DATE, 'IW') - 7 AND ${df} < TRUNC(CURRENT_DATE, 'IW')`
+        },
+
+        // === Monthly ===
+        'this_month': {
+            desc: 'Current calendar month',
+            category: 'monthly',
+            sql: (df) => `${df} >= TRUNC(CURRENT_DATE, 'MM')`
+        },
+        'last_month': {
+            desc: 'Previous calendar month',
+            category: 'monthly',
+            sql: (df) => `${df} >= ADD_MONTHS(TRUNC(CURRENT_DATE, 'MM'), -1) AND ${df} < TRUNC(CURRENT_DATE, 'MM')`
+        },
+
+        // === Calendar Quarters ===
+        'this_quarter': {
+            desc: 'Current calendar quarter',
+            category: 'quarterly',
+            sql: (df) => `${df} >= TRUNC(CURRENT_DATE, 'Q')`
+        },
+        'last_quarter': {
+            desc: 'Previous calendar quarter',
+            category: 'quarterly',
+            sql: (df) => `${df} >= ADD_MONTHS(TRUNC(CURRENT_DATE, 'Q'), -3) AND ${df} < TRUNC(CURRENT_DATE, 'Q')`
+        },
+
+        // === Fiscal Year-to-Date ===
+        'ytd': {
+            desc: 'Fiscal year-to-date (FY start to now)',
+            category: 'fiscal_ytd',
+            sql: (df, ctx) => `${df} >= TO_DATE('${ctx.fyStartDate}', 'YYYY-MM-DD')`
+        },
+        'fytd': {
+            desc: 'Alias for ytd',
+            category: 'fiscal_ytd',
+            sql: (df, ctx) => `${df} >= TO_DATE('${ctx.fyStartDate}', 'YYYY-MM-DD')`
+        },
+        'ytd_closed': {
+            desc: 'Fiscal YTD to last closed period (complete data only)',
+            category: 'fiscal_ytd',
+            sql: (df, ctx) => `${df} >= TO_DATE('${ctx.fyStartDate}', 'YYYY-MM-DD') AND ${df} <= TO_DATE('${ctx.closedPeriodEnd}', 'YYYY-MM-DD')`
+        },
+        'fytd_closed': {
+            desc: 'Alias for ytd_closed',
+            category: 'fiscal_ytd',
+            sql: (df, ctx) => `${df} >= TO_DATE('${ctx.fyStartDate}', 'YYYY-MM-DD') AND ${df} <= TO_DATE('${ctx.closedPeriodEnd}', 'YYYY-MM-DD')`
+        },
+
+        // === Full Fiscal Years ===
+        'this_fiscal_year': {
+            desc: 'Current full fiscal year',
+            category: 'fiscal_year',
+            sql: (df, ctx) => `${df} >= TO_DATE('${ctx.fyStartDate}', 'YYYY-MM-DD') AND ${df} <= TO_DATE('${ctx.fyEndDate}', 'YYYY-MM-DD')`
+        },
+        'last_fiscal_year': {
+            desc: 'Previous full fiscal year',
+            category: 'fiscal_year',
+            sql: (df, ctx) => `${df} >= TO_DATE('${ctx.lastFyStart}', 'YYYY-MM-DD') AND ${df} <= TO_DATE('${ctx.lastFyEnd}', 'YYYY-MM-DD')`
+        },
+        '2_fiscal_years_ago': {
+            desc: 'Two fiscal years ago (full year)',
+            category: 'fiscal_year',
+            sql: (df, ctx) => `${df} >= TO_DATE('${ctx.twoFyStart}', 'YYYY-MM-DD') AND ${df} <= TO_DATE('${ctx.twoFyEnd}', 'YYYY-MM-DD')`
+        },
+        '3_fiscal_years_ago': {
+            desc: 'Three fiscal years ago (full year)',
+            category: 'fiscal_year',
+            sql: (df, ctx) => `${df} >= TO_DATE('${ctx.threeFyStart}', 'YYYY-MM-DD') AND ${df} <= TO_DATE('${ctx.threeFyEnd}', 'YYYY-MM-DD')`
+        },
+
+        // === YoY Comparison (CRITICAL for comparisons) ===
+        'prior_year_ytd': {
+            desc: 'Same point in LAST fiscal year - USE FOR YoY YTD COMPARISON',
+            category: 'comparison',
+            sql: (df, ctx) => `${df} >= TO_DATE('${ctx.lastFyStart}', 'YYYY-MM-DD') AND ${df} <= TO_DATE('${ctx.priorYtdEnd}', 'YYYY-MM-DD')`
+        },
+
+        // === Current Fiscal Year Quarters ===
+        'fiscal_q1': {
+            desc: 'Q1 of current fiscal year',
+            category: 'fiscal_quarter',
+            sql: (df, ctx) => `${df} >= TO_DATE('${ctx.fyQ1.start}', 'YYYY-MM-DD') AND ${df} <= TO_DATE('${ctx.fyQ1.end}', 'YYYY-MM-DD')`
+        },
+        'fiscal_q2': {
+            desc: 'Q2 of current fiscal year',
+            category: 'fiscal_quarter',
+            sql: (df, ctx) => `${df} >= TO_DATE('${ctx.fyQ2.start}', 'YYYY-MM-DD') AND ${df} <= TO_DATE('${ctx.fyQ2.end}', 'YYYY-MM-DD')`
+        },
+        'fiscal_q3': {
+            desc: 'Q3 of current fiscal year',
+            category: 'fiscal_quarter',
+            sql: (df, ctx) => `${df} >= TO_DATE('${ctx.fyQ3.start}', 'YYYY-MM-DD') AND ${df} <= TO_DATE('${ctx.fyQ3.end}', 'YYYY-MM-DD')`
+        },
+        'fiscal_q4': {
+            desc: 'Q4 of current fiscal year',
+            category: 'fiscal_quarter',
+            sql: (df, ctx) => `${df} >= TO_DATE('${ctx.fyQ4.start}', 'YYYY-MM-DD') AND ${df} <= TO_DATE('${ctx.fyQ4.end}', 'YYYY-MM-DD')`
+        },
+
+        // === Last Fiscal Year Quarters ===
+        'last_fiscal_q1': {
+            desc: 'Q1 of last fiscal year',
+            category: 'fiscal_quarter',
+            sql: (df, ctx) => `${df} >= TO_DATE('${ctx.lastFyQ1.start}', 'YYYY-MM-DD') AND ${df} <= TO_DATE('${ctx.lastFyQ1.end}', 'YYYY-MM-DD')`
+        },
+        'last_fiscal_q2': {
+            desc: 'Q2 of last fiscal year',
+            category: 'fiscal_quarter',
+            sql: (df, ctx) => `${df} >= TO_DATE('${ctx.lastFyQ2.start}', 'YYYY-MM-DD') AND ${df} <= TO_DATE('${ctx.lastFyQ2.end}', 'YYYY-MM-DD')`
+        },
+        'last_fiscal_q3': {
+            desc: 'Q3 of last fiscal year',
+            category: 'fiscal_quarter',
+            sql: (df, ctx) => `${df} >= TO_DATE('${ctx.lastFyQ3.start}', 'YYYY-MM-DD') AND ${df} <= TO_DATE('${ctx.lastFyQ3.end}', 'YYYY-MM-DD')`
+        },
+        'last_fiscal_q4': {
+            desc: 'Q4 of last fiscal year',
+            category: 'fiscal_quarter',
+            sql: (df, ctx) => `${df} >= TO_DATE('${ctx.lastFyQ4.start}', 'YYYY-MM-DD') AND ${df} <= TO_DATE('${ctx.lastFyQ4.end}', 'YYYY-MM-DD')`
+        },
+
+        // === Rolling Periods (calendar-based) ===
+        'last_30_days': {
+            desc: 'Last 30 calendar days',
+            category: 'rolling',
+            sql: (df) => `${df} >= CURRENT_DATE - 30`
+        },
+        'last_60_days': {
+            desc: 'Last 60 calendar days',
+            category: 'rolling',
+            sql: (df) => `${df} >= CURRENT_DATE - 60`
+        },
+        'last_90_days': {
+            desc: 'Last 90 calendar days',
+            category: 'rolling',
+            sql: (df) => `${df} >= CURRENT_DATE - 90`
+        },
+        'last_180_days': {
+            desc: 'Last 180 calendar days (6 months)',
+            category: 'rolling',
+            sql: (df) => `${df} >= CURRENT_DATE - 180`
+        },
+        'last_365_days': {
+            desc: 'Last 365 calendar days (1 year)',
+            category: 'rolling',
+            sql: (df) => `${df} >= CURRENT_DATE - 365`
+        },
+        'last_2_years': {
+            desc: 'Last 730 calendar days (2 years)',
+            category: 'rolling',
+            sql: (df) => `${df} >= CURRENT_DATE - 730`
+        },
+        'last_3_years': {
+            desc: 'Last 1095 calendar days (3 years)',
+            category: 'rolling',
+            sql: (df) => `${df} >= CURRENT_DATE - 1095`
+        },
+
+        // === Multi-Year Fiscal ===
+        'last_2_fiscal_years': {
+            desc: 'Last 2 fiscal years combined',
+            category: 'multi_year',
+            sql: (df, ctx) => `${df} >= TO_DATE('${ctx.lastFyStart}', 'YYYY-MM-DD')`
+        },
+        'last_3_fiscal_years': {
+            desc: 'Last 3 fiscal years combined',
+            category: 'multi_year',
+            sql: (df, ctx) => `${df} >= TO_DATE('${ctx.twoFyStart}', 'YYYY-MM-DD')`
+        },
+
+        // === All Time ===
+        'all': {
+            desc: 'All available data (no date filter)',
+            category: 'all',
+            sql: () => '1=1'
+        }
+    };
+
     /**
-     * Build date filter based on period string
-     * Uses fiscal calendar from ConfigLib for accurate fiscal year handling
+     * Build fiscal context with all computed dates
+     * Called once per buildPeriodFilter invocation
      */
-    function buildPeriodFilter(period, dateField) {
-        dateField = dateField || 'transaction.trandate';
-
-        // Get fiscal calendar for smart period detection
+    function buildFiscalContext() {
         const fiscalCalendar = ConfigLib.getFiscalCalendar();
-        const fyStartDate = fiscalCalendar.fiscalYearStartDate;  // YYYY-MM-DD
-        const fyEndDate = fiscalCalendar.fiscalYearEndDate;      // YYYY-MM-DD
-        const fyStartMonth = fiscalCalendar.fiscalYearStartMonth || 0;  // 0-11
-        const fyStartDay = fiscalCalendar.fiscalYearStartDay || 1;
-
-        // Calculate prior fiscal year dates
         const now = new Date();
-        const fyStart = new Date(fyStartDate);
-        const fyEnd = new Date(fyEndDate);
+        const fyStart = new Date(fiscalCalendar.fiscalYearStartDate);
+        const fyEnd = new Date(fiscalCalendar.fiscalYearEndDate);
+
+        // Helper to format date for SQL
+        const toSqlDate = (d) => {
+            const year = d.getFullYear();
+            const month = String(d.getMonth() + 1).padStart(2, '0');
+            const day = String(d.getDate()).padStart(2, '0');
+            return `${year}-${month}-${day}`;
+        };
+
+        // Calculate fiscal quarters
+        const getFiscalQuarterDates = (fyStartDate, quarterNum) => {
+            const fy = new Date(fyStartDate);
+            const qStart = new Date(fy);
+            qStart.setMonth(fy.getMonth() + (quarterNum - 1) * 3);
+            const qEnd = new Date(qStart);
+            qEnd.setMonth(qStart.getMonth() + 3);
+            qEnd.setDate(qEnd.getDate() - 1);
+            return { start: toSqlDate(qStart), end: toSqlDate(qEnd) };
+        };
 
         // Last fiscal year
         const lastFyStart = new Date(fyStart);
@@ -255,109 +470,79 @@ define([
         const threeFyEnd = new Date(fyEnd);
         threeFyEnd.setFullYear(threeFyEnd.getFullYear() - 3);
 
-        // Helper to format date for SQL
-        const toSqlDate = (d) => {
-            const year = d.getFullYear();
-            const month = String(d.getMonth() + 1).padStart(2, '0');
-            const day = String(d.getDate()).padStart(2, '0');
-            return `${year}-${month}-${day}`;
-        };
-
-        // Calculate fiscal quarters based on fiscal year start
-        const getFiscalQuarterDates = (fyStartDate, quarterNum) => {
-            const fy = new Date(fyStartDate);
-            const qStart = new Date(fy);
-            qStart.setMonth(fy.getMonth() + (quarterNum - 1) * 3);
-            const qEnd = new Date(qStart);
-            qEnd.setMonth(qStart.getMonth() + 3);
-            qEnd.setDate(qEnd.getDate() - 1);
-            return { start: toSqlDate(qStart), end: toSqlDate(qEnd) };
-        };
-
-        // Current fiscal year quarters
-        const fyQ1 = getFiscalQuarterDates(fyStart, 1);
-        const fyQ2 = getFiscalQuarterDates(fyStart, 2);
-        const fyQ3 = getFiscalQuarterDates(fyStart, 3);
-        const fyQ4 = getFiscalQuarterDates(fyStart, 4);
-
-        // Last fiscal year quarters
-        const lastFyQ1 = getFiscalQuarterDates(lastFyStart, 1);
-        const lastFyQ2 = getFiscalQuarterDates(lastFyStart, 2);
-        const lastFyQ3 = getFiscalQuarterDates(lastFyStart, 3);
-        const lastFyQ4 = getFiscalQuarterDates(lastFyStart, 4);
-
         // YTD comparison point in prior year (same elapsed time)
         const daysIntoFy = Math.floor((now - fyStart) / (1000 * 60 * 60 * 24));
         const priorYtdEnd = new Date(lastFyStart);
         priorYtdEnd.setDate(priorYtdEnd.getDate() + daysIntoFy);
 
-        // Latest closed period end date (for complete accounting data)
-        const closedPeriodEnd = fiscalCalendar.latestClosedPeriod ?
-            fiscalCalendar.latestClosedPeriod.endDate : toSqlDate(now);
-
-        const periodFilters = {
-            // === Daily ===
-            'today': `${dateField} = CURRENT_DATE`,
-            'yesterday': `${dateField} = CURRENT_DATE - 1`,
-
-            // === Weekly ===
-            'this_week': `${dateField} >= TRUNC(CURRENT_DATE, 'IW')`,
-            'last_week': `${dateField} >= TRUNC(CURRENT_DATE, 'IW') - 7 AND ${dateField} < TRUNC(CURRENT_DATE, 'IW')`,
-
-            // === Monthly ===
-            'this_month': `${dateField} >= TRUNC(CURRENT_DATE, 'MM')`,
-            'last_month': `${dateField} >= ADD_MONTHS(TRUNC(CURRENT_DATE, 'MM'), -1) AND ${dateField} < TRUNC(CURRENT_DATE, 'MM')`,
-
-            // === Calendar Quarters ===
-            'this_quarter': `${dateField} >= TRUNC(CURRENT_DATE, 'Q')`,
-            'last_quarter': `${dateField} >= ADD_MONTHS(TRUNC(CURRENT_DATE, 'Q'), -3) AND ${dateField} < TRUNC(CURRENT_DATE, 'Q')`,
-
-            // === Fiscal Year-to-Date (uses actual fiscal year start) ===
-            'ytd': `${dateField} >= TO_DATE('${fyStartDate}', 'YYYY-MM-DD')`,
-            'fytd': `${dateField} >= TO_DATE('${fyStartDate}', 'YYYY-MM-DD')`,  // Alias
-
-            // === Fiscal YTD to last closed period (complete accounting data) ===
-            'ytd_closed': `${dateField} >= TO_DATE('${fyStartDate}', 'YYYY-MM-DD') AND ${dateField} <= TO_DATE('${closedPeriodEnd}', 'YYYY-MM-DD')`,
-            'fytd_closed': `${dateField} >= TO_DATE('${fyStartDate}', 'YYYY-MM-DD') AND ${dateField} <= TO_DATE('${closedPeriodEnd}', 'YYYY-MM-DD')`,  // Alias
-
-            // === Full Fiscal Years ===
-            'this_fiscal_year': `${dateField} >= TO_DATE('${fyStartDate}', 'YYYY-MM-DD') AND ${dateField} <= TO_DATE('${fyEndDate}', 'YYYY-MM-DD')`,
-            'last_fiscal_year': `${dateField} >= TO_DATE('${toSqlDate(lastFyStart)}', 'YYYY-MM-DD') AND ${dateField} <= TO_DATE('${toSqlDate(lastFyEnd)}', 'YYYY-MM-DD')`,
-            '2_fiscal_years_ago': `${dateField} >= TO_DATE('${toSqlDate(twoFyStart)}', 'YYYY-MM-DD') AND ${dateField} <= TO_DATE('${toSqlDate(twoFyEnd)}', 'YYYY-MM-DD')`,
-            '3_fiscal_years_ago': `${dateField} >= TO_DATE('${toSqlDate(threeFyStart)}', 'YYYY-MM-DD') AND ${dateField} <= TO_DATE('${toSqlDate(threeFyEnd)}', 'YYYY-MM-DD')`,
-
-            // === Prior Year YTD Comparison (same point in last fiscal year) ===
-            'prior_year_ytd': `${dateField} >= TO_DATE('${toSqlDate(lastFyStart)}', 'YYYY-MM-DD') AND ${dateField} <= TO_DATE('${toSqlDate(priorYtdEnd)}', 'YYYY-MM-DD')`,
-
-            // === Current Fiscal Year Quarters ===
-            'fiscal_q1': `${dateField} >= TO_DATE('${fyQ1.start}', 'YYYY-MM-DD') AND ${dateField} <= TO_DATE('${fyQ1.end}', 'YYYY-MM-DD')`,
-            'fiscal_q2': `${dateField} >= TO_DATE('${fyQ2.start}', 'YYYY-MM-DD') AND ${dateField} <= TO_DATE('${fyQ2.end}', 'YYYY-MM-DD')`,
-            'fiscal_q3': `${dateField} >= TO_DATE('${fyQ3.start}', 'YYYY-MM-DD') AND ${dateField} <= TO_DATE('${fyQ3.end}', 'YYYY-MM-DD')`,
-            'fiscal_q4': `${dateField} >= TO_DATE('${fyQ4.start}', 'YYYY-MM-DD') AND ${dateField} <= TO_DATE('${fyQ4.end}', 'YYYY-MM-DD')`,
-
-            // === Last Fiscal Year Quarters ===
-            'last_fiscal_q1': `${dateField} >= TO_DATE('${lastFyQ1.start}', 'YYYY-MM-DD') AND ${dateField} <= TO_DATE('${lastFyQ1.end}', 'YYYY-MM-DD')`,
-            'last_fiscal_q2': `${dateField} >= TO_DATE('${lastFyQ2.start}', 'YYYY-MM-DD') AND ${dateField} <= TO_DATE('${lastFyQ2.end}', 'YYYY-MM-DD')`,
-            'last_fiscal_q3': `${dateField} >= TO_DATE('${lastFyQ3.start}', 'YYYY-MM-DD') AND ${dateField} <= TO_DATE('${lastFyQ3.end}', 'YYYY-MM-DD')`,
-            'last_fiscal_q4': `${dateField} >= TO_DATE('${lastFyQ4.start}', 'YYYY-MM-DD') AND ${dateField} <= TO_DATE('${lastFyQ4.end}', 'YYYY-MM-DD')`,
-
-            // === Rolling Periods (calendar-based) ===
-            'last_30_days': `${dateField} >= CURRENT_DATE - 30`,
-            'last_60_days': `${dateField} >= CURRENT_DATE - 60`,
-            'last_90_days': `${dateField} >= CURRENT_DATE - 90`,
-            'last_180_days': `${dateField} >= CURRENT_DATE - 180`,
-            'last_365_days': `${dateField} >= CURRENT_DATE - 365`,
-            'last_2_years': `${dateField} >= CURRENT_DATE - 730`,
-            'last_3_years': `${dateField} >= CURRENT_DATE - 1095`,
-
-            // === Multi-Year Fiscal ===
-            'last_2_fiscal_years': `${dateField} >= TO_DATE('${toSqlDate(lastFyStart)}', 'YYYY-MM-DD')`,
-            'last_3_fiscal_years': `${dateField} >= TO_DATE('${toSqlDate(twoFyStart)}', 'YYYY-MM-DD')`,
-
-            // === All Time ===
-            'all': '1=1'
+        return {
+            fyStartDate: fiscalCalendar.fiscalYearStartDate,
+            fyEndDate: fiscalCalendar.fiscalYearEndDate,
+            lastFyStart: toSqlDate(lastFyStart),
+            lastFyEnd: toSqlDate(lastFyEnd),
+            twoFyStart: toSqlDate(twoFyStart),
+            twoFyEnd: toSqlDate(twoFyEnd),
+            threeFyStart: toSqlDate(threeFyStart),
+            threeFyEnd: toSqlDate(threeFyEnd),
+            priorYtdEnd: toSqlDate(priorYtdEnd),
+            closedPeriodEnd: fiscalCalendar.latestClosedPeriod ?
+                fiscalCalendar.latestClosedPeriod.endDate : toSqlDate(now),
+            // Current FY quarters
+            fyQ1: getFiscalQuarterDates(fyStart, 1),
+            fyQ2: getFiscalQuarterDates(fyStart, 2),
+            fyQ3: getFiscalQuarterDates(fyStart, 3),
+            fyQ4: getFiscalQuarterDates(fyStart, 4),
+            // Last FY quarters
+            lastFyQ1: getFiscalQuarterDates(lastFyStart, 1),
+            lastFyQ2: getFiscalQuarterDates(lastFyStart, 2),
+            lastFyQ3: getFiscalQuarterDates(lastFyStart, 3),
+            lastFyQ4: getFiscalQuarterDates(lastFyStart, 4)
         };
-        return periodFilters[period] || periodFilters['all'];
+    }
+
+    /**
+     * Get available period options for LLM prompts
+     * Dynamically generated from PERIOD_DEFINITIONS - add a period once, it appears here
+     * @returns {string} Formatted period options for injection into prompts
+     */
+    function getAvailablePeriods() {
+        const lines = ['VALID PERIOD VALUES (use exact strings for "period" parameter):'];
+        let lastCategory = '';
+
+        Object.entries(PERIOD_DEFINITIONS).forEach(([key, def]) => {
+            if (def.category !== lastCategory) {
+                lastCategory = def.category;
+            }
+            lines.push(`  "${key}": ${def.desc}`);
+        });
+
+        lines.push('');
+        lines.push('COMPARISON TIP: For YoY comparison, call same tool twice:');
+        lines.push('  - First with period="ytd" (current year-to-date)');
+        lines.push('  - Then with period="prior_year_ytd" (same point last year)');
+
+        return lines.join('\n');
+    }
+
+    /**
+     * Build date filter based on period string
+     * Uses PERIOD_DEFINITIONS as single source of truth
+     */
+    function buildPeriodFilter(period, dateField) {
+        dateField = dateField || 'transaction.trandate';
+
+        const def = PERIOD_DEFINITIONS[period];
+        if (!def) {
+            if (period && period !== 'all') {
+                log.audit('buildPeriodFilter', 'Unknown period "' + period + '", defaulting to all. Valid periods: ' + Object.keys(PERIOD_DEFINITIONS).join(', '));
+            }
+            return '1=1';
+        }
+
+        // Build fiscal context (computed dates for fiscal-aware periods)
+        const ctx = buildFiscalContext();
+
+        return def.sql(dateField, ctx);
     }
 
     /**
@@ -7163,6 +7348,10 @@ EXAMPLES:
 
         // ReAct Pattern Support
         suggestBroaderParams: suggestBroaderParams,  // Auto-broaden on empty results
+
+        // Period Definitions (dynamic - add period once, available everywhere)
+        getAvailablePeriods: getAvailablePeriods,  // For LLM prompt injection
+        PERIOD_DEFINITIONS: PERIOD_DEFINITIONS,    // For direct access if needed
 
         // Individual tool categories (for direct access if needed)
         DISCOVERY_TOOLS: DISCOVERY_TOOLS,
