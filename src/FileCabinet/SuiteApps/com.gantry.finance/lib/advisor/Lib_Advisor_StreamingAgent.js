@@ -206,9 +206,70 @@ define([
     };
 
     // ═══════════════════════════════════════════════════════════════════════════
+    // SEMANTIC ERROR CLASSIFICATION
+    // Uses LLM to classify errors when available, with fast fallback
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Classify an error semantically using fast LLM call
+     * @param {string} errorMessage - The error message to classify
+     * @returns {Object} - { category, recoverable, suggestion }
+     */
+    function classifyErrorSemantically(errorMessage) {
+        const errorText = errorMessage || 'Unknown error';
+
+        try {
+            // Fast LLM classification (< 50 tokens response)
+            const result = AIProviders.callAI(
+                `Classify this NetSuite/SuiteQL error into ONE category:
+
+Error: "${errorText.substring(0, 500)}"
+
+Categories:
+- PERMISSION_DENIED: Access/role issues
+- INVALID_RECORD: Bad record type or ID
+- INVALID_FIELD: Unknown column/field
+- INVALID_QUERY: SQL syntax error
+- RATE_LIMITED: Governance/concurrency
+- NOT_FOUND: Record doesn't exist
+- VALIDATION: Business rule violation
+- TYPE_MISMATCH: Wrong data type provided
+- TIMEOUT: Query took too long
+- NETWORK: Connection/timeout
+- UNKNOWN: Can't determine
+
+Respond with JSON only: {"category":"...","recoverable":true/false,"suggestion":"one line fix"}`,
+                { max_tokens: 100, temperature: 0 }
+            );
+
+            const responseText = result.text || result;
+
+            // Try to parse the JSON response
+            const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+                const parsed = JSON.parse(jsonMatch[0]);
+                return {
+                    category: parsed.category || 'UNKNOWN',
+                    recoverable: parsed.recoverable !== false,
+                    suggestion: parsed.suggestion || 'Check error details'
+                };
+            }
+        } catch (classificationError) {
+            log.debug('Semantic error classification failed', { error: classificationError.message });
+        }
+
+        // Fallback if LLM response isn't valid JSON or call failed
+        return {
+            category: 'UNKNOWN',
+            recoverable: true,
+            suggestion: 'Check error details'
+        };
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
     // FIX 2: ERROR SEMANTIC PARSER
     // Parses error messages to extract actionable insights for the LLM
-    // Converts cryptic database errors into guidance for parameter correction
+    // Uses semantic classification with fast fallback for critical checks
     // ═══════════════════════════════════════════════════════════════════════════
 
     /**
@@ -216,9 +277,10 @@ define([
      * @param {string} errorMessage - The raw error message
      * @param {string} toolName - The tool that generated the error
      * @param {Object} args - The arguments that were passed
+     * @param {Object} options - Optional settings: { useSemanticClassification: boolean }
      * @returns {Object} { category, insight, suggestedAction, parameterHints }
      */
-    function parseErrorSemantics(errorMessage, toolName, args) {
+    function parseErrorSemantics(errorMessage, toolName, args, options) {
         if (!errorMessage || typeof errorMessage !== 'string') {
             return {
                 category: 'unknown',
@@ -229,122 +291,151 @@ define([
         }
 
         const lowerError = errorMessage.toLowerCase();
+        options = options || {};
 
         // ═══════════════════════════════════════════════════════════════════════
-        // TYPE MISMATCH ERRORS - NaN, type conversion failures
-        // ═══════════════════════════════════════════════════════════════════════
-        if (lowerError.includes('nan') || lowerError.includes('not a number') ||
-            lowerError.includes('unknown identifier') && lowerError.includes('nan')) {
-            // Extract the parameter name if possible
-            const paramMatch = errorMessage.match(/parameter["\s]+(\w+)|(\w+)["\s]+expects/i);
-            const paramName = paramMatch ? (paramMatch[1] || paramMatch[2]) : 'unknown';
-
-            return {
-                category: 'type_mismatch',
-                insight: `A non-numeric value was passed where a number was expected. ` +
-                    `The value could not be converted to a number (resulted in NaN).`,
-                suggestedAction: `Use a numeric value instead of a string. ` +
-                    `For time ranges: "last 2 years" should be 24 (months), "last 6 months" should be 6.`,
-                parameterHints: {
-                    likelyParameter: paramName,
-                    expectedType: 'number',
-                    commonMistake: 'Passing "last_2_years" instead of 24'
-                }
-            };
-        }
-
-        // ═══════════════════════════════════════════════════════════════════════
-        // UNKNOWN PARAMETER ERRORS
-        // ═══════════════════════════════════════════════════════════════════════
-        if (lowerError.includes('unknown parameter') || lowerError.includes('invalid parameter')) {
-            const paramMatch = errorMessage.match(/unknown parameter["\s:]+(\w+)/i);
-            const wrongParam = paramMatch ? paramMatch[1] : null;
-            const validMatch = errorMessage.match(/valid parameters[:\s]+([^.]+)/i);
-            const validParams = validMatch ? validMatch[1].trim() : 'Check tool documentation';
-
-            return {
-                category: 'invalid_parameter',
-                insight: `Parameter "${wrongParam || 'unknown'}" is not recognized by this tool.`,
-                suggestedAction: `Use one of the valid parameters: ${validParams}`,
-                parameterHints: {
-                    invalidParameter: wrongParam,
-                    validParameters: validParams
-                }
-            };
-        }
-
-        // ═══════════════════════════════════════════════════════════════════════
-        // ENTITY NOT FOUND ERRORS
-        // ═══════════════════════════════════════════════════════════════════════
-        if (lowerError.includes('not found') || lowerError.includes('no match') ||
-            lowerError.includes('does not exist')) {
-            return {
-                category: 'entity_not_found',
-                insight: `The entity or record referenced does not exist in the system.`,
-                suggestedAction: `Verify the entity name spelling or try a broader search. ` +
-                    `Use resolve_vendor or resolve_customer to find valid entities.`,
-                parameterHints: {}
-            };
-        }
-
-        // ═══════════════════════════════════════════════════════════════════════
-        // SQL/QUERY ERRORS
-        // ═══════════════════════════════════════════════════════════════════════
-        if (lowerError.includes('sql') || lowerError.includes('query') ||
-            lowerError.includes('search error') || lowerError.includes('syntax')) {
-            return {
-                category: 'query_error',
-                insight: `The database query failed due to invalid parameters or syntax.`,
-                suggestedAction: `Check parameter values match expected types. ` +
-                    `Numeric fields require numbers, not strings.`,
-                parameterHints: {
-                    checkTypes: true,
-                    usedArgs: args
-                }
-            };
-        }
-
-        // ═══════════════════════════════════════════════════════════════════════
-        // PERMISSION/ACCESS ERRORS
+        // SECURITY-CRITICAL CHECKS - Always run these regardless of LLM
         // ═══════════════════════════════════════════════════════════════════════
         if (lowerError.includes('permission') || lowerError.includes('access denied') ||
-            lowerError.includes('unauthorized')) {
+            lowerError.includes('unauthorized') || lowerError.includes('insufficient')) {
             return {
                 category: 'permission_error',
                 insight: `Access to the requested data is restricted.`,
                 suggestedAction: `Try accessing data from a different subsidiary or record type.`,
-                parameterHints: {}
+                parameterHints: {},
+                recoverable: false
             };
         }
 
         // ═══════════════════════════════════════════════════════════════════════
-        // TIMEOUT/PERFORMANCE ERRORS
+        // SEMANTIC CLASSIFICATION - Use LLM for intelligent error categorization
         // ═══════════════════════════════════════════════════════════════════════
+        if (options.useSemanticClassification !== false) {
+            try {
+                const semanticResult = classifyErrorSemantically(errorMessage);
+
+                // Map semantic categories to detailed insights
+                const categoryMappings = {
+                    'TYPE_MISMATCH': {
+                        insight: `A value of the wrong type was provided. The operation expected a different data type.`,
+                        suggestedAction: `Use numeric values for numbers (24 instead of "last 2 years"), check date formats, and ensure IDs are integers.`,
+                        parameterHints: { checkTypes: true, usedArgs: args }
+                    },
+                    'INVALID_FIELD': {
+                        insight: `The field or column referenced does not exist or is not accessible.`,
+                        suggestedAction: `Verify field names using get_record_schema or check available columns in the record type.`,
+                        parameterHints: {}
+                    },
+                    'INVALID_QUERY': {
+                        insight: `The database query has a syntax error or invalid structure.`,
+                        suggestedAction: `Check SQL syntax, ensure all referenced tables/columns exist, and verify JOIN conditions.`,
+                        parameterHints: { checkTypes: true, usedArgs: args }
+                    },
+                    'NOT_FOUND': {
+                        insight: `The entity or record referenced does not exist in the system.`,
+                        suggestedAction: `Verify the entity name spelling or try a broader search. Use resolve_vendor or resolve_customer to find valid entities.`,
+                        parameterHints: {}
+                    },
+                    'VALIDATION': {
+                        insight: `One or more values failed business rule validation.`,
+                        suggestedAction: `Check that all required parameters are provided and values match the expected format.`,
+                        parameterHints: {}
+                    },
+                    'RATE_LIMITED': {
+                        insight: `The operation was limited due to governance or concurrency restrictions.`,
+                        suggestedAction: `Wait a moment before retrying, or break the request into smaller operations.`,
+                        parameterHints: { suggestRetry: true }
+                    },
+                    'TIMEOUT': {
+                        insight: `The query took too long to execute.`,
+                        suggestedAction: `Add more filters to reduce the data volume, or use a shorter time period.`,
+                        parameterHints: { suggestShorterPeriod: true, suggestMoreFilters: true }
+                    },
+                    'PERMISSION_DENIED': {
+                        insight: `Access to the requested data is restricted.`,
+                        suggestedAction: `Try accessing data from a different subsidiary or record type.`,
+                        parameterHints: {}
+                    },
+                    'INVALID_RECORD': {
+                        insight: `The record type specified is invalid or not accessible.`,
+                        suggestedAction: `Verify the record type name using explore_schema or check available record types.`,
+                        parameterHints: {}
+                    },
+                    'NETWORK': {
+                        insight: `A network or connection error occurred.`,
+                        suggestedAction: `Retry the operation. If the problem persists, check system status.`,
+                        parameterHints: { suggestRetry: true }
+                    }
+                };
+
+                const mapping = categoryMappings[semanticResult.category] || {
+                    insight: semanticResult.suggestion || `Error occurred: ${errorMessage.substring(0, 100)}`,
+                    suggestedAction: `Try a different tool or different parameter values.`,
+                    parameterHints: {}
+                };
+
+                return {
+                    category: semanticResult.category.toLowerCase(),
+                    insight: mapping.insight,
+                    suggestedAction: mapping.suggestedAction,
+                    parameterHints: mapping.parameterHints,
+                    recoverable: semanticResult.recoverable,
+                    semanticClassification: true
+                };
+            } catch (e) {
+                log.debug('Semantic classification failed, using fallback', { error: e.message });
+            }
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // FALLBACK: Simple pattern matching when LLM unavailable
+        // ═══════════════════════════════════════════════════════════════════════
+
+        // Type mismatch errors - NaN, type conversion failures
+        if (lowerError.includes('nan') || lowerError.includes('not a number') ||
+            (lowerError.includes('unknown identifier') && lowerError.includes('nan'))) {
+            return {
+                category: 'type_mismatch',
+                insight: `A non-numeric value was passed where a number was expected.`,
+                suggestedAction: `Use a numeric value instead of a string. For time ranges: "last 2 years" should be 24 (months).`,
+                parameterHints: { expectedType: 'number' },
+                recoverable: true
+            };
+        }
+
+        // Entity not found errors
+        if (lowerError.includes('not found') || lowerError.includes('no match') ||
+            lowerError.includes('does not exist')) {
+            return {
+                category: 'not_found',
+                insight: `The entity or record referenced does not exist in the system.`,
+                suggestedAction: `Verify the entity name spelling or try a broader search.`,
+                parameterHints: {},
+                recoverable: true
+            };
+        }
+
+        // Query/SQL errors
+        if (lowerError.includes('sql') || lowerError.includes('query') ||
+            lowerError.includes('search error') || lowerError.includes('syntax')) {
+            return {
+                category: 'invalid_query',
+                insight: `The database query failed due to invalid parameters or syntax.`,
+                suggestedAction: `Check parameter values match expected types.`,
+                parameterHints: { checkTypes: true, usedArgs: args },
+                recoverable: true
+            };
+        }
+
+        // Timeout errors
         if (lowerError.includes('timeout') || lowerError.includes('took too long') ||
             lowerError.includes('exceeded')) {
             return {
-                category: 'timeout_error',
+                category: 'timeout',
                 insight: `The query took too long to execute.`,
-                suggestedAction: `Add more filters to reduce the data volume, ` +
-                    `or use a shorter time period.`,
-                parameterHints: {
-                    suggestShorterPeriod: true,
-                    suggestMoreFilters: true
-                }
-            };
-        }
-
-        // ═══════════════════════════════════════════════════════════════════════
-        // VALIDATION ERRORS
-        // ═══════════════════════════════════════════════════════════════════════
-        if (lowerError.includes('validation') || lowerError.includes('invalid value') ||
-            lowerError.includes('required')) {
-            return {
-                category: 'validation_error',
-                insight: `One or more parameter values failed validation.`,
-                suggestedAction: `Check that all required parameters are provided ` +
-                    `and values match the expected format.`,
-                parameterHints: {}
+                suggestedAction: `Add more filters to reduce the data volume.`,
+                parameterHints: { suggestShorterPeriod: true },
+                recoverable: true
             };
         }
 
@@ -353,7 +444,8 @@ define([
             category: 'unknown',
             insight: `Error occurred: ${errorMessage.substring(0, 100)}`,
             suggestedAction: `Try a different tool or different parameter values.`,
-            parameterHints: {}
+            parameterHints: {},
+            recoverable: true
         };
     }
 
