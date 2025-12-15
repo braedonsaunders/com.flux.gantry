@@ -14,8 +14,9 @@
 define([
     'N/log',
     'N/query',
-    './Lib_Advisor_QueryValidator'
-], function(log, query, QueryValidator) {
+    './Lib_Advisor_QueryValidator',
+    './Lib_Advisor_AIProviders'
+], function(log, query, QueryValidator, AIProviders) {
     'use strict';
 
     const DEFAULT_ROW_LIMIT = 1000;
@@ -175,11 +176,92 @@ define([
     }
 
     /**
-     * Categorize error for better AI understanding
+     * Classify a SQL error semantically using fast LLM call
+     * @param {string} errorMessage - The error message to classify
+     * @returns {Object} - { category, recoverable, suggestion }
      */
-    function categorizeError(error) {
-        const msg = error.message.toLowerCase();
+    function classifySQLErrorSemantically(errorMessage) {
+        const errorText = errorMessage || 'Unknown error';
 
+        try {
+            // Fast LLM classification (< 50 tokens response)
+            const result = AIProviders.callAI(
+                `Classify this SuiteQL/SQL error into ONE category:
+
+Error: "${errorText.substring(0, 500)}"
+
+Categories:
+- INVALID_COLUMN: Unknown column/field/identifier
+- INVALID_TABLE: Table or view does not exist
+- SYNTAX_ERROR: SQL syntax error (ORA-00xxx errors)
+- PERMISSION_DENIED: Access/role issues
+- TIMEOUT: Query took too long
+- AMBIGUOUS_COLUMN: Column reference is ambiguous
+- GROUP_BY_ERROR: GROUP BY clause issue
+- TYPE_ERROR: Type conversion/mismatch
+- UNKNOWN: Can't determine
+
+Respond with JSON only: {"category":"...","recoverable":true/false,"suggestion":"one line fix"}`,
+                { max_tokens: 100, temperature: 0 }
+            );
+
+            const responseText = result.text || result;
+
+            // Try to parse the JSON response
+            const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+                const parsed = JSON.parse(jsonMatch[0]);
+                return {
+                    category: parsed.category || 'UNKNOWN',
+                    recoverable: parsed.recoverable !== false,
+                    suggestion: parsed.suggestion || 'Check query syntax'
+                };
+            }
+        } catch (classificationError) {
+            log.debug('Semantic SQL error classification failed', { error: classificationError.message });
+        }
+
+        // Fallback if LLM response isn't valid JSON or call failed
+        return {
+            category: 'UNKNOWN',
+            recoverable: true,
+            suggestion: 'Check query syntax'
+        };
+    }
+
+    /**
+     * Categorize error for better AI understanding
+     * Uses semantic classification with fallback for when LLM unavailable
+     * @param {Error} error - The error to categorize
+     * @param {Object} options - Optional settings: { useSemanticClassification: boolean }
+     * @returns {string} - Error category
+     */
+    function categorizeError(error, options) {
+        const msg = (error.message || '').toLowerCase();
+        options = options || {};
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // SECURITY-CRITICAL CHECKS - Always run these regardless of LLM
+        // ═══════════════════════════════════════════════════════════════════════
+        if (msg.includes('permission') || msg.includes('access denied') || msg.includes('insufficient')) {
+            return 'PERMISSION_DENIED';
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // SEMANTIC CLASSIFICATION - Use LLM for intelligent error categorization
+        // ═══════════════════════════════════════════════════════════════════════
+        if (options.useSemanticClassification !== false) {
+            try {
+                const semanticResult = classifySQLErrorSemantically(error.message);
+                return semanticResult.category;
+            } catch (e) {
+                log.debug('Semantic SQL classification failed, using fallback', { error: e.message });
+            }
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // FALLBACK: Simple pattern matching when LLM unavailable
+        // ═══════════════════════════════════════════════════════════════════════
         if (msg.includes('invalid column') || msg.includes('invalid identifier')) {
             return 'INVALID_COLUMN';
         }
@@ -188,9 +270,6 @@ define([
         }
         if (msg.includes('syntax error') || msg.includes('ora-00')) {
             return 'SYNTAX_ERROR';
-        }
-        if (msg.includes('permission') || msg.includes('access denied') || msg.includes('insufficient')) {
-            return 'PERMISSION_DENIED';
         }
         if (msg.includes('timeout') || msg.includes('timed out')) {
             return 'TIMEOUT';
