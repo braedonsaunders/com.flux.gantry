@@ -573,6 +573,43 @@ define([], function() {
                             totalBurden: { type: 'currency', desc: 'Burden rate for category' },
                             percentOfTotal: { type: 'percent', desc: 'Percentage of total overhead' }
                         }
+                    },
+
+                    // ═══ DEPARTMENT BURDEN BREAKDOWN ═══
+                    // FIX: Added to expose per-department burden rates for answering
+                    // questions like "which departments have highest burden"
+                    byDepartment: {
+                        type: 'keyed_object',
+                        desc: 'Composite burden rate by department',
+                        path: 'summary.compositeByDept',
+                        labelField: 'name',
+                        valueField: 'rate',
+                        sortField: 'rate',
+                        sortDirection: 'desc',
+                        itemFields: {
+                            id: { type: 'number', desc: 'Department ID' },
+                            name: { type: 'string', desc: 'Department name' },
+                            rate: { type: 'currency', desc: 'Composite burden rate ($/hr)' }
+                        }
+                    },
+
+                    // ═══ HOURS BY DEPARTMENT ═══
+                    hoursByDepartment: {
+                        type: 'keyed_object',
+                        desc: 'Hours breakdown by department',
+                        path: 'hours.byDept',
+                        labelField: 'name',
+                        valueField: 'billed',
+                        sortField: 'billed',
+                        sortDirection: 'desc',
+                        itemFields: {
+                            id: { type: 'number', desc: 'Department ID' },
+                            name: { type: 'string', desc: 'Department name' },
+                            billed: { type: 'number', desc: 'Billed hours' },
+                            unbilled: { type: 'number', desc: 'Unbilled hours' },
+                            total: { type: 'number', desc: 'Total hours' },
+                            utilization: { type: 'percent', desc: 'Utilization rate' }
+                        }
                     }
                 }
             }

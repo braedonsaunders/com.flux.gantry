@@ -350,6 +350,45 @@ define([
         }
 
         const props = tool.parameters.properties;
+        const required = tool.parameters.required || [];
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // VALIDATE REQUIRED PARAMETERS
+        // Ensure all required params are provided with non-empty values
+        // ═══════════════════════════════════════════════════════════════════════
+        for (const requiredParam of required) {
+            if (args[requiredParam] === undefined || args[requiredParam] === null || args[requiredParam] === '') {
+                const paramDef = props[requiredParam];
+                errors.push(
+                    `Missing required parameter "${requiredParam}". ` +
+                    `Expected: ${paramDef?.description || requiredParam}. ` +
+                    `Use {"${requiredParam}": "your_value"} in args.`
+                );
+            }
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // VALIDATE UNKNOWN PARAMETERS
+        // Detect when LLM uses wrong parameter names and provide helpful hints
+        // ═══════════════════════════════════════════════════════════════════════
+        const validParamNames = Object.keys(props);
+        for (const providedParam of Object.keys(args)) {
+            if (!props[providedParam]) {
+                // Find similar parameter name to suggest
+                const similar = findSimilarParamName(providedParam, validParamNames);
+                if (similar) {
+                    errors.push(
+                        `Unknown parameter "${providedParam}". Did you mean "${similar}"? ` +
+                        `Valid parameters for ${toolName}: ${validParamNames.join(', ')}`
+                    );
+                } else {
+                    errors.push(
+                        `Unknown parameter "${providedParam}". ` +
+                        `Valid parameters for ${toolName}: ${validParamNames.join(', ')}`
+                    );
+                }
+            }
+        }
 
         // Validate transaction_type if present
         if (args.transaction_type && props.transaction_type) {
@@ -392,6 +431,48 @@ define([
             errors: errors,
             warnings: warnings
         };
+    }
+
+    /**
+     * Find similar parameter name for helpful error messages
+     * Uses simple heuristics to catch common LLM mistakes
+     */
+    function findSimilarParamName(input, validParams) {
+        const inputLower = input.toLowerCase();
+
+        // Common semantic confusions LLMs make
+        const commonConfusions = {
+            'name': 'term',           // resolve_classification expects 'term' not 'name'
+            'term': 'name',           // resolve_entity expects 'name' not 'term'
+            'query': 'term',
+            'search': 'term',
+            'id': 'entity_id',
+            'vendor': 'vendor_id',
+            'customer': 'customer_id',
+            'dept': 'department_id',
+            'department': 'department_id',
+            'class': 'class_id',
+            'type': 'dimension',
+            'category': 'dimension'
+        };
+
+        // Check common confusions first
+        if (commonConfusions[inputLower]) {
+            const suggestion = commonConfusions[inputLower];
+            if (validParams.includes(suggestion)) {
+                return suggestion;
+            }
+        }
+
+        // Check for substring matches
+        for (const param of validParams) {
+            const paramLower = param.toLowerCase();
+            if (paramLower.includes(inputLower) || inputLower.includes(paramLower)) {
+                return param;
+            }
+        }
+
+        return null;
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -1169,7 +1250,9 @@ Examples: "Travel expenses", "4000", "Bank accounts", "COGS"`,
                 return formatted;
             },
             displayName: function(args) {
-                return `Looking up GL account "${args.term}"...`;
+                // FIX: Handle case where LLM uses wrong param name
+                const searchTerm = args.term || args.name || args.account || 'unknown';
+                return `Looking up GL account "${searchTerm}"...`;
             }
         },
 
@@ -1302,7 +1385,9 @@ Only specify a specific dimension if you are CERTAIN which type it is.
                 return formatted;
             },
             displayName: function(args) {
-                return `Finding classification "${args.term}"...`;
+                // FIX: Handle case where LLM uses wrong param name (e.g., 'name' instead of 'term')
+                const searchTerm = args.term || args.name || 'unknown';
+                return `Finding classification "${searchTerm}"...`;
             }
         },
 
@@ -3884,7 +3969,8 @@ Can filter by account type, department, class, and specific accounts.`,
                 required: []
             },
             execute: function(args) {
-                const periodFilter = buildPeriodFilter(args.period || 'ytd');
+                // FIX: Pass 't.trandate' to match the SQL alias for transaction table in CTE
+                const periodFilter = buildPeriodFilter(args.period || 'ytd', 't.trandate');
                 const limit = Math.min(args.limit || 50, 100);
 
                 // Account type filter
@@ -4151,7 +4237,8 @@ Can filter by subsidiary and time period.`,
                 required: []
             },
             execute: function(args) {
-                const periodFilter = buildPeriodFilter(args.period || 'ytd');
+                // FIX: Pass 't.trandate' to match the SQL alias for transaction table
+                const periodFilter = buildPeriodFilter(args.period || 'ytd', 't.trandate');
                 const limit = Math.min(args.limit || 50, 100);
                 const subsidiaryFilter = args.subsidiary_id ? `AND t.subsidiary = ${args.subsidiary_id}` : '';
                 const inactiveFilter = args.include_inactive ? '' : `AND dept.isinactive = 'F'`;
@@ -4272,7 +4359,8 @@ Can filter by period, expense category, and approval status.`,
                 required: []
             },
             execute: function(args) {
-                const periodFilter = buildPeriodFilter(args.period || 'ytd');
+                // FIX: Pass 't.trandate' to match the SQL alias for transaction table
+                const periodFilter = buildPeriodFilter(args.period || 'ytd', 't.trandate');
                 const limit = Math.min(args.limit || 50, 100);
                 const groupBy = args.group_by || 'employee';
 
@@ -4826,7 +4914,8 @@ Can filter by period, memo text, account, and amount.`,
                 required: []
             },
             execute: function(args) {
-                const periodFilter = buildPeriodFilter(args.period || 'this_month');
+                // FIX: Pass 't.trandate' to match the SQL alias for transaction table
+                const periodFilter = buildPeriodFilter(args.period || 'this_month', 't.trandate');
                 const limit = Math.min(args.limit || 100, 200);
 
                 const accountFilter = args.account_id ? `AND tal.account = ${args.account_id}` : '';
