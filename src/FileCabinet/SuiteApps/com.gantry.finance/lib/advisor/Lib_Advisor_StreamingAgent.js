@@ -76,6 +76,107 @@ define([
         PREMIUM: 3    // Premium: Opus, GPT-4, Gemini Pro - for complex analysis, SQL synthesis
     };
 
+    // ═══════════════════════════════════════════════════════════════════════════
+    // SQL COMPLEXITY ASSESSMENT FOR SYNTHESIZE TIER
+    // Allows BALANCED tier for simple SQL, requires PREMIUM for complex queries
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Assess SQL query complexity to determine required tier
+     * @param {string} sql - The SQL query to assess
+     * @returns {string} 'SIMPLE' or 'COMPLEX'
+     */
+    function assessQueryComplexity(sql) {
+        if (!sql) return 'SIMPLE';
+
+        const sqlUpper = sql.toUpperCase();
+
+        // Complex indicators: JOINs, subqueries, window functions, aggregations with GROUP BY
+        const complexIndicators = [
+            /\bJOIN\b/,                           // Any JOIN operation
+            /\(\s*SELECT\b/,                      // Subqueries
+            /\bWITH\s+\w+\s+AS\s*\(/,            // CTEs
+            /\bGROUP\s+BY\b.*\bHAVING\b/,        // GROUP BY with HAVING
+            /\bOVER\s*\(/,                        // Window functions
+            /\bUNION\b/,                          // UNION queries
+            /\bINTERSECT\b/,                      // Set operations
+            /\bEXCEPT\b/,
+            /\bCASE\s+WHEN\b.*\bCASE\s+WHEN\b/,  // Nested CASE statements
+        ];
+
+        // Check for complex patterns
+        for (const pattern of complexIndicators) {
+            if (pattern.test(sqlUpper)) {
+                return 'COMPLEX';
+            }
+        }
+
+        // Simple: single table SELECT, basic WHERE, ORDER BY, LIMIT
+        return 'SIMPLE';
+    }
+
+    /**
+     * Check if synthesize is allowed based on tier and query complexity
+     * @param {number} tier - Current tier (1=FAST, 2=BALANCED, 3=PREMIUM)
+     * @param {string} queryComplexity - 'SIMPLE' or 'COMPLEX'
+     * @returns {boolean} True if synthesize is allowed
+     */
+    function canUseSynthesize(tier, queryComplexity) {
+        if (tier >= TIERS.PREMIUM) return true;
+        if (tier >= TIERS.BALANCED && queryComplexity === 'SIMPLE') return true;
+        return false;
+    }
+
+    /**
+     * Get the appropriate tier for SYNTHESIZE phase based on question complexity
+     * Predicts likely query complexity from the question/intent before SQL generation
+     * @param {Object} state - Current state
+     * @returns {number} The tier (2=BALANCED or 3=PREMIUM)
+     */
+    function getSynthesizeTier(state) {
+        // If we already have a generated query, assess its actual complexity
+        if (state.synthesize?.queries?.length > 0) {
+            const lastQuery = state.synthesize.queries[state.synthesize.queries.length - 1];
+            if (lastQuery?.sql) {
+                const complexity = assessQueryComplexity(lastQuery.sql);
+                return complexity === 'COMPLEX' ? TIERS.PREMIUM : TIERS.BALANCED;
+            }
+        }
+
+        // Predict complexity from question/intent
+        const message = (state.message || '').toLowerCase();
+        const intent = state.intent?.intent || '';
+
+        // Indicators that suggest complex queries will be needed
+        const complexIntentIndicators = [
+            /compar/i,           // compare, comparison
+            /year.over.year|yoy|y\/y/i,
+            /month.over.month|mom|m\/m/i,
+            /trend/i,
+            /correlat/i,
+            /breakdown.*by.*and/i,  // Multiple groupings
+            /ratio/i,
+            /percent.*of.*total/i,
+            /rank/i,
+            /top.*bottom/i,
+            /vs\.?\s|versus/i,
+        ];
+
+        for (const pattern of complexIntentIndicators) {
+            if (pattern.test(message)) {
+                return TIERS.PREMIUM;
+            }
+        }
+
+        // Comparison intent typically needs complex queries
+        if (intent === 'comparison') {
+            return TIERS.PREMIUM;
+        }
+
+        // Default to BALANCED for simpler synthesize requests
+        return TIERS.BALANCED;
+    }
+
     /**
      * Get the appropriate tier for a phase based on task requirements
      * @param {string} phase - The SCA phase
@@ -96,9 +197,10 @@ define([
             case 'reason_act':  // ReAct loop requires good reasoning
                 return TIERS.BALANCED;
 
-            // Premium tier - complex SQL generation needs best model
+            // Synthesize tier - adaptive based on query complexity
+            // Simple SQL can use BALANCED, complex SQL needs PREMIUM
             case 'synthesize':
-                return TIERS.PREMIUM;
+                return getSynthesizeTier(state);
 
             // Adaptive - based on response complexity
             case 'respond':
@@ -472,116 +574,103 @@ Respond with JSON only: {"category":"...","recoverable":true/false,"suggestion":
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // FIX 4: TOOL DIVERSIFICATION REQUIREMENT
-    // Forces the agent to try different tools after repeated failures
+    // SEMANTIC TOOL DIVERSIFICATION
+    // Uses LLM to intelligently suggest alternative tools after failures
+    // Replaces hardcoded tool→alternatives mapping with semantic selection
     // ═══════════════════════════════════════════════════════════════════════════
 
     /**
-     * Get alternative tools for a given tool based on context
+     * SEMANTIC TOOL DIVERSIFICATION PROMPT
+     * Used to find alternative tools when one fails repeatedly
+     */
+    const TOOL_DIVERSIFICATION_PROMPT = `Tool "${'{failed_tool}'}" has failed {failure_reason}.
+
+Original question: "{question}"
+
+Tool description: {tool_description}
+
+Available tools (excluding the failed one):
+{available_tools}
+
+Which 2-3 alternative tools could provide similar or complementary data to answer the question?
+Consider:
+- Tools that access related data sources
+- Tools that might have the same information in a different format
+- Fallback tools for when specialized queries fail
+
+Reply JSON only:
+{
+  "alternatives": [
+    {"tool": "tool_name", "reason": "why this could help", "suggested_args": {}}
+  ]
+}`;
+
+    /**
+     * Get alternative tools using semantic LLM selection
      * @param {string} failedTool - The tool that failed
      * @param {Object} args - The arguments that were passed
      * @param {Object} resolvedEntities - Any resolved entities in state
-     * @returns {Array} List of alternative tools to try
+     * @param {Object} state - Current agent state for context
+     * @returns {Array} List of alternative tools to try [{tool, reason, args}]
      */
-    function getAlternativeToolsForDiversification(failedTool, args, resolvedEntities) {
-        const alternatives = [];
+    function getAlternativeToolsForDiversification(failedTool, args, resolvedEntities, state) {
+        // Get tool manifest for descriptions
+        const toolManifest = getToolManifest();
+        const failedToolDesc = toolManifest[failedTool] || 'Unknown tool';
 
-        // Revenue-related tool alternatives
-        if (failedTool === 'get_revenue_by_month' || failedTool === 'get_customer_revenue') {
-            alternatives.push({
-                tool: 'income_statement',
-                reason: 'Get revenue from income statement',
-                args: { period: 'ytd' }
-            });
-            alternatives.push({
-                tool: 'get_dashboard',
-                reason: 'Get revenue metrics from health dashboard',
-                args: { dashboard_id: 'health' }
-            });
-        }
+        // Build list of available tools (excluding failed one and already tried)
+        const alreadyTried = new Set(
+            (state?.toolInvocations || []).map(t => t.tool)
+        );
+        alreadyTried.add(failedTool);
 
-        // Expense/spend-related alternatives
-        if (failedTool === 'get_vendor_spend' || failedTool === 'get_expense_by_category') {
-            alternatives.push({
-                tool: 'income_statement',
-                reason: 'Get expenses from income statement',
-                args: { period: 'ytd' }
-            });
-            alternatives.push({
-                tool: 'get_ap_aging',
-                reason: 'Get vendor-related data from AP aging',
-                args: {}
-            });
-        }
+        const availableTools = Object.entries(toolManifest)
+            .filter(([name]) => !alreadyTried.has(name))
+            .map(([name, desc]) => `- ${name}: ${desc}`)
+            .join('\n');
 
-        // Transaction search alternatives
-        if (failedTool === 'search_entity_transactions' || failedTool === 'get_transaction_details') {
-            alternatives.push({
-                tool: 'search_transaction_text',
-                reason: 'Search transactions by text',
-                args: { search_text: args.name || args.entity_id || '' }
-            });
-            alternatives.push({
-                tool: 'get_recent_transactions',
-                reason: 'Get recent transactions',
-                args: { limit: 20 }
-            });
-        }
+        // Determine failure reason
+        const failureReason = state?.synthesize?.lastError ?
+            `with error: ${state.synthesize.lastError.substring(0, 100)}` :
+            'multiple times without success';
 
-        // Entity resolution alternatives
-        if (failedTool === 'resolve_vendor') {
-            alternatives.push({
-                tool: 'resolve_customer',
-                reason: 'Try as customer instead',
-                args: { name: args.name }
-            });
-        }
-        if (failedTool === 'resolve_customer') {
-            alternatives.push({
-                tool: 'resolve_vendor',
-                reason: 'Try as vendor instead',
-                args: { name: args.name }
-            });
-        }
+        try {
+            const prompt = TOOL_DIVERSIFICATION_PROMPT
+                .replace('{failed_tool}', failedTool)
+                .replace('{failure_reason}', failureReason)
+                .replace('{question}', state?.message || '')
+                .replace('{tool_description}', failedToolDesc)
+                .replace('{available_tools}', availableTools);
 
-        // Dashboard alternatives
-        if (failedTool === 'get_dashboard') {
-            const dashboards = DashboardRegistry.getDataDashboards()
-                .filter(d => !d.isSpecial)
-                .map(d => d.id);
-            const currentDashboard = args.dashboard_id;
-            for (const dash of dashboards) {
-                if (dash !== currentDashboard) {
-                    alternatives.push({
-                        tool: 'get_dashboard',
-                        reason: `Try ${dash} dashboard instead`,
-                        args: { dashboard_id: dash }
-                    });
-                    break; // Just suggest one alternative dashboard
-                }
+            const response = AIProviders.callAI(prompt, {
+                tier: TIERS.FAST,
+                temperature: 0.2,
+                jsonMode: true,
+                purpose: 'SCA:tool_diversification'
+            });
+
+            const parsed = parseJsonResponse(response?.text);
+
+            if (parsed?.alternatives && Array.isArray(parsed.alternatives)) {
+                // Validate suggested tools exist and format response
+                return parsed.alternatives
+                    .filter(alt => alt.tool && toolManifest[alt.tool])
+                    .slice(0, 3)
+                    .map(alt => ({
+                        tool: alt.tool,
+                        reason: alt.reason || 'LLM suggested alternative',
+                        args: alt.suggested_args || {}
+                    }));
             }
+        } catch (e) {
+            log.debug('Semantic tool diversification failed, using empty fallback', {
+                error: e.message,
+                failedTool: failedTool
+            });
         }
 
-        // If we have a resolved entity, suggest entity-specific tools
-        if (Object.keys(resolvedEntities || {}).length > 0) {
-            const entity = Object.values(resolvedEntities)[0];
-            if (entity.type === 'vendor') {
-                alternatives.push({
-                    tool: 'get_vendor_details',
-                    reason: 'Get vendor details directly',
-                    args: { vendor_id: entity.id }
-                });
-            }
-            if (entity.type === 'customer') {
-                alternatives.push({
-                    tool: 'get_customer_details',
-                    reason: 'Get customer details directly',
-                    args: { customer_id: entity.id }
-                });
-            }
-        }
-
-        return alternatives.slice(0, 3); // Return max 3 alternatives
+        // Fallback: return empty array - ReAct loop will handle recovery
+        return [];
     }
 
     /**
@@ -609,7 +698,8 @@ Respond with JSON only: {"category":"...","recoverable":true/false,"suggestion":
                 const alternatives = getAlternativeToolsForDiversification(
                     tool,
                     state.accumulatedData.find(d => d.tool === tool)?.args || {},
-                    state.resolvedEntities
+                    state.resolvedEntities,
+                    state
                 );
 
                 return {
@@ -1612,45 +1702,67 @@ Now write your analysis:`;
     // ═══════════════════════════════════════════════════════════════════════════
 
     /**
-     * Get alternative tools to try when a tool fails
+     * SEMANTIC SIMPLE TOOL FALLBACK PROMPT
+     * Used for quick tool alternative suggestions
+     */
+    const SIMPLE_TOOL_FALLBACK_PROMPT = `Tool "${'{tool_name}'}" failed.
+
+Tool description: {tool_description}
+
+Available alternative tools:
+{available_tools}
+
+Which 2 tools could provide similar data? Reply JSON only:
+{"alternatives": ["tool1", "tool2"]}`;
+
+    /**
+     * Get alternative tools to try when a tool fails (semantic version)
+     * Uses LLM to find semantically similar tools instead of hardcoded mapping
      * @param {string} toolName - The failed tool
+     * @param {Object} state - Optional state for context
      * @returns {string[]} Array of alternative tool names to try
      */
-    function getAlternativeTools(toolName) {
-        const alternatives = {
-            // AR tools - try related data sources
-            'get_ar_aging': ['dashboard_customervalue', 'get_recent_transactions'],
-            'get_customer_revenue': ['get_top_customers', 'dashboard_customervalue'],
-            'get_top_customers': ['get_customer_revenue', 'dashboard_customervalue'],
+    function getAlternativeTools(toolName, state) {
+        // Get tool manifest for descriptions
+        const toolManifest = getToolManifest();
+        const toolDesc = toolManifest[toolName] || 'Unknown tool';
 
-            // AP tools - try related data sources
-            'get_ap_aging': ['dashboard_vendorperformance', 'get_recent_transactions'],
-            'get_vendor_spend': ['get_top_vendors', 'dashboard_vendorperformance'],
-            'get_top_vendors': ['get_vendor_spend', 'dashboard_vendorperformance'],
+        // Build list of available tools (excluding failed one)
+        const availableTools = Object.entries(toolManifest)
+            .filter(([name]) => name !== toolName)
+            .map(([name, desc]) => `- ${name}: ${desc}`)
+            .join('\n');
 
-            // Financial reporting - try related reports
-            'get_income_statement': ['get_trial_balance', 'get_gl_activity'],
-            'get_balance_sheet': ['get_trial_balance', 'get_cash_position'],
-            'get_trial_balance': ['get_gl_activity', 'get_income_statement'],
-            'get_gl_activity': ['get_trial_balance', 'get_recent_transactions'],
+        try {
+            const prompt = SIMPLE_TOOL_FALLBACK_PROMPT
+                .replace('{tool_name}', toolName)
+                .replace('{tool_description}', toolDesc)
+                .replace('{available_tools}', availableTools);
 
-            // Dashboards - try related dashboards
-            'dashboard_health': ['dashboard_cashflow', 'get_cash_position'],
-            'dashboard_cashflow': ['get_cash_position', 'dashboard_health'],
-            'dashboard_customervalue': ['get_top_customers', 'get_ar_aging'],
-            'dashboard_vendorperformance': ['get_top_vendors', 'get_ap_aging'],
+            const response = AIProviders.callAI(prompt, {
+                tier: TIERS.FAST,
+                temperature: 0.1,
+                jsonMode: true,
+                purpose: 'SCA:tool_fallback'
+            });
 
-            // Entity resolution - try broader search
-            'resolve_entity': ['run_custom_query'],
-            'resolve_gl_account': ['get_trial_balance'],
-            'resolve_classification': ['run_custom_query'],
+            const parsed = parseJsonResponse(response?.text);
 
-            // Transactions
-            'get_transaction_detail': ['get_recent_transactions'],
-            'get_recent_transactions': ['run_custom_query']
-        };
+            if (parsed?.alternatives && Array.isArray(parsed.alternatives)) {
+                // Validate suggested tools exist
+                return parsed.alternatives
+                    .filter(alt => toolManifest[alt])
+                    .slice(0, 2);
+            }
+        } catch (e) {
+            log.debug('Semantic tool fallback failed', {
+                error: e.message,
+                failedTool: toolName
+            });
+        }
 
-        return alternatives[toolName] || [];
+        // Fallback: return empty array - ReAct loop will handle recovery
+        return [];
     }
 
     /**
@@ -3043,7 +3155,7 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
                 case 'tool_exhausted':
                     errorMessage = `Tool '${toolName}' is BLOCKED - it has been tried ${blockCheck.count} times without success.`;
                     suggestion = 'You MUST try a completely different tool. Consider: ' +
-                        getAlternativeToolsForDiversification(toolName, args, state.resolvedEntities)
+                        getAlternativeToolsForDiversification(toolName, args, state.resolvedEntities, state)
                             .map(a => a.tool).join(', ');
                     break;
 
@@ -3929,7 +4041,7 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
 
                 // Get default tools if LLM didn't select any
                 if (selectedTools.length === 0) {
-                    selectedTools = getDefaultToolsForIntent(state.intent.intent);
+                    selectedTools = getDefaultToolsForIntent(state.intent.intent, state);
                 }
 
                 state.selectedTools = selectedTools;
@@ -3988,7 +4100,7 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
             state.errors.push({ phase: 'select', error: e.message, timestamp: Date.now() });
 
             // Default to a sensible tool based on intent
-            state.selectedTools = getDefaultToolsForIntent(state.intent.intent);
+            state.selectedTools = getDefaultToolsForIntent(state.intent.intent, state);
 
             // OPTIMIZATION: Skip directly to RESPOND for conversational queries
             if (state.selectedTools.length === 0 && state.intent.intent === 'general') {
@@ -4498,7 +4610,7 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
 
             // Check if we haven't already tried recovery for this tool
             if (!state.recoveryAttempts[toolName]) {
-                const alternatives = getAlternativeTools(toolName);
+                const alternatives = getAlternativeTools(toolName, state);
 
                 // Filter out tools we've already selected or invoked
                 const alreadyTried = [...state.selectedTools, ...state.toolInvocations.map(t => t.tool)];
@@ -7194,29 +7306,77 @@ Response:`;
     }
 
     /**
-     * Get default tools for a given intent when LLM selection fails
-     * FIXED: Added 'follow_up' intent to use cached data instead of refetching
+     * SEMANTIC INTENT TOOL SELECTION PROMPT
+     * Used to select appropriate tools for an intent when LLM selection fails
      */
-    function getDefaultToolsForIntent(intent) {
-        const defaults = {
-            'entity_lookup': ['resolve_entity'],
-            // entity_transactions: First resolve the entity, then fetch their transactions
-            // This ensures we have the entity ID before querying transactions
-            'entity_transactions': ['resolve_entity', 'get_recent_transactions'],
-            'top_list': ['get_top_customers'],
-            'aging': ['get_ar_aging'],
-            'reporting': ['get_recent_transactions'],
-            'dashboard': ['dashboard_health'],
-            'comparison': ['compare_periods'],
-            'transaction': ['get_transaction_detail'],
-            // FIXED: general intent (greetings, chitchat) should NOT invoke tools
-            // Let the conversational handler in RESPOND phase deal with it
-            'general': [],
-            // FIXED: follow_up intent should NOT invoke new tools - it should use cached data
-            // Empty array signals to skip INVOKE phase and go directly to RESPOND with existing data
-            'follow_up': []
-        };
-        return defaults[intent] || ['get_recent_transactions'];
+    const INTENT_TOOL_SELECTION_PROMPT = `User intent: {intent}
+Message: "{message}"
+
+Select 1-2 most relevant tools from:
+{available_tools}
+
+Consider what data the user needs and which tools can provide it.
+Reply JSON only: {"tools": ["tool1", "tool2"], "reasoning": "brief explanation"}`;
+
+    /**
+     * Get default tools for a given intent using semantic LLM selection
+     * FIXED: Added 'follow_up' intent to use cached data instead of refetching
+     * @param {string} intent - The classified intent
+     * @param {Object} state - Current state for context
+     * @returns {string[]} Array of tool names to use
+     */
+    function getDefaultToolsForIntent(intent, state) {
+        // Special cases that should NOT invoke tools
+        // These must remain hardcoded as they're behavioral requirements
+        if (intent === 'general' || intent === 'follow_up') {
+            // general: greetings, chitchat - let conversational handler deal with it
+            // follow_up: use cached data, skip INVOKE phase
+            return [];
+        }
+
+        // Try semantic selection for other intents
+        try {
+            const toolManifest = getToolManifest();
+            const availableTools = Object.entries(toolManifest)
+                .map(([name, desc]) => `- ${name}: ${desc}`)
+                .join('\n');
+
+            const prompt = INTENT_TOOL_SELECTION_PROMPT
+                .replace('{intent}', intent)
+                .replace('{message}', state?.message || '')
+                .replace('{available_tools}', availableTools);
+
+            const response = AIProviders.callAI(prompt, {
+                tier: TIERS.FAST,
+                temperature: 0.1,
+                jsonMode: true,
+                purpose: 'SCA:intent_tools'
+            });
+
+            const parsed = parseJsonResponse(response?.text);
+
+            if (parsed?.tools && Array.isArray(parsed.tools)) {
+                // Validate suggested tools exist
+                const validTools = parsed.tools.filter(t => toolManifest[t]).slice(0, 2);
+                if (validTools.length > 0) {
+                    log.debug('Semantic intent tool selection', {
+                        intent: intent,
+                        selectedTools: validTools,
+                        reasoning: parsed.reasoning
+                    });
+                    return validTools;
+                }
+            }
+        } catch (e) {
+            log.debug('Semantic intent tool selection failed', {
+                error: e.message,
+                intent: intent
+            });
+        }
+
+        // Ultimate fallback: let ReAct loop figure it out
+        // Return empty array instead of hardcoded defaults
+        return [];
     }
 
     function synthesizeFromDataRefs(state) {
