@@ -775,6 +775,29 @@ SENSIBLE DEFAULTS - AVOID UNNECESSARY CLARIFICATION:
   • The request is genuinely ambiguous (not just missing a period)
   • You've tried getting data but need more specific criteria from user
 
+═══════════════════════════════════════════════════════════════════════════════
+⚠️ DATA-QUESTION SEMANTIC FIT - CRITICAL VALIDATION
+═══════════════════════════════════════════════════════════════════════════════
+Before choosing ANSWER, verify the data you collected can DERIVE the answer:
+
+Ask yourself: "What METRIC does the user want?"
+- Speed/velocity questions (faster, slower, how long) → need TIME-based data (dates, durations)
+- Amount questions (how much, total, balance) → need QUANTITY data (amounts, counts)
+- Trend questions (increasing, declining) → need TIME-SERIES data (multiple periods)
+- Comparison questions → need COMPARABLE data for both entities
+
+Then ask: "Does my collected data contain this metric type?"
+- Aging reports show CURRENT OUTSTANDING BALANCES by age bucket
+  → They do NOT show payment speed, payment history, or average days to pay
+- Transaction lists show WHAT transactions occurred
+  → They may NOT show comparative metrics unless you compute them
+- Summary dashboards show AGGREGATE metrics
+  → They may NOT have the granular detail needed
+
+If the data type doesn't match the question's metric type:
+→ Use SYNTHESIZE to get the right data, or try a different tool
+→ Do NOT fabricate conclusions from mismatched data
+
 WHEN A QUERY RETURNS 0 ROWS:
 - Look at "💡 BROADENING OPTIONS" - YOU DECIDE whether to use them
 - Look at "🔄 ALTERNATIVE TOOLS TO CONSIDER" - consider different approaches
@@ -5754,12 +5777,89 @@ Now write your analysis:`;
     }
 
     /**
+     * Build mapping from resolved entity names to their corresponding dataRefs
+     * Enables entity-based token addressing: {{Teva.total_unpaid}} or {{Birla.current_amount}}
+     *
+     * Strategy: Match entity IDs in resolved entities to entity IDs in tool results
+     */
+    function buildEntityToRefMapping(state) {
+        if (!state.resolvedEntities || !state.dataReferences) return null;
+
+        const mapping = {};
+
+        for (const [entityName, entity] of Object.entries(state.resolvedEntities)) {
+            const entityId = entity.id;
+            const entityType = entity.type; // 'customer', 'vendor', etc.
+
+            // Find dataRefs that contain this entity's data
+            for (const dataRef of state.dataReferences) {
+                const summary = dataRef.summary || {};
+
+                // Check if this dataRef was for this entity
+                // Method 1: Check tool args for customer_id, vendor_id, entity_id
+                const toolInvocation = state.toolInvocations.find(inv =>
+                    inv.tool === summary.tool &&
+                    (inv.args?.customer_id === entityId ||
+                     inv.args?.vendor_id === entityId ||
+                     inv.args?.entity_id === entityId)
+                );
+
+                if (toolInvocation) {
+                    mapping[entityName] = dataRef;
+                    break;
+                }
+
+                // Method 2: Check if first row contains this entity's ID
+                // Load first row to check
+                try {
+                    const data = Cache.loadRows(
+                        dataRef.requestId || state.requestId,
+                        dataRef.refId,
+                        0,
+                        1
+                    );
+                    if (data && data.rows && data.rows.length > 0) {
+                        const row = data.rows[0];
+                        if (row.customer_id === entityId ||
+                            row.vendor_id === entityId ||
+                            row.entity_id === entityId) {
+                            mapping[entityName] = dataRef;
+                            break;
+                        }
+                        // Also check if customer_name or vendor_name matches
+                        const nameMatch = entity.name?.toLowerCase();
+                        if (nameMatch &&
+                            (row.customer_name?.toLowerCase()?.includes(nameMatch) ||
+                             row.vendor_name?.toLowerCase()?.includes(nameMatch))) {
+                            mapping[entityName] = dataRef;
+                            break;
+                        }
+                    }
+                } catch (e) {
+                    // Ignore cache errors, continue checking
+                }
+            }
+        }
+
+        return Object.keys(mapping).length > 0 ? mapping : null;
+    }
+
+    /**
      * Resolve {{tokens}} in a text string
-     * Supports: {{data.rows[N].column}}, {{data.rows[N].column:currency}}, {{data.stats.X}}
-     * FIXED: Added explicit bounds checking for array index access (Bug 4 / Rec 3)
+     * Supports multiple addressing modes:
+     *   - {{data.rows[N].column}}         - Uses first dataRef, row N
+     *   - {{data[R].rows[N].column}}      - Uses dataRef R, row N (multi-ref support)
+     *   - {{ref:REF_ID.rows[N].column}}   - Explicit ref by ID
+     *   - {{EntityName.column}}           - Entity-based addressing (uses resolved entities)
+     *   - {{data.stats.X}}                - Stats from first dataRef
+     *
+     * FIXED: Multi-dataRef support - LLM can address specific data sources
      */
     function resolveTokensInText(text, state) {
         if (!text) return '';
+
+        // Build entity-to-dataRef mapping for entity-based addressing
+        const entityToRef = buildEntityToRefMapping(state);
 
         // Pattern: {{data.rows[N].column}} or {{data.rows[N].column:format}}
         let resolved = text.replace(/\{\{([^}]+)\}\}/g, (match, expr) => {
@@ -5772,8 +5872,66 @@ Now write your analysis:`;
                 const format = formatMatch ? formatMatch[1] : null;
                 const path = format ? trimmed.replace(/:(\w+)$/, '') : trimmed;
 
-                // Get the first data reference (most common case)
-                const dataRef = state.dataReferences[0];
+                // ═══════════════════════════════════════════════════════════════════════
+                // FIX: Multi-DataRef Addressing Modes
+                // ═══════════════════════════════════════════════════════════════════════
+
+                let dataRef = null;
+                let adjustedPath = path;
+
+                // Mode 1: Explicit ref by ID - {{ref:ref_get__xyz.rows[0].column}}
+                const explicitRefMatch = path.match(/^ref:([^.]+)\.(.+)$/);
+                if (explicitRefMatch) {
+                    const refId = explicitRefMatch[1];
+                    adjustedPath = 'data.' + explicitRefMatch[2];
+                    dataRef = state.dataReferences.find(r => r.refId === refId);
+                    if (!dataRef) {
+                        log.debug('Token resolution: explicit ref not found', { refId: refId });
+                        return match;
+                    }
+                }
+
+                // Mode 2: Indexed dataRef - {{data[1].rows[0].column}}
+                if (!dataRef) {
+                    const indexedRefMatch = path.match(/^data\[(\d+)\]\.(.+)$/);
+                    if (indexedRefMatch) {
+                        const refIdx = parseInt(indexedRefMatch[1], 10);
+                        adjustedPath = 'data.' + indexedRefMatch[2];
+                        if (refIdx >= 0 && refIdx < state.dataReferences.length) {
+                            dataRef = state.dataReferences[refIdx];
+                        } else {
+                            log.debug('Token resolution: dataRef index out of bounds', {
+                                refIdx: refIdx,
+                                available: state.dataReferences.length
+                            });
+                            return match;
+                        }
+                    }
+                }
+
+                // Mode 3: Entity-based addressing - {{Teva.total_unpaid}} or {{Birla.current_amount}}
+                if (!dataRef && entityToRef) {
+                    const entityMatch = path.match(/^([A-Za-z][A-Za-z0-9_\s]*?)\.(.+)$/);
+                    if (entityMatch) {
+                        const entityName = entityMatch[1].trim();
+                        const columnPath = entityMatch[2];
+                        // Find matching entity (case-insensitive)
+                        const matchingEntity = Object.keys(entityToRef).find(
+                            e => e.toLowerCase() === entityName.toLowerCase()
+                        );
+                        if (matchingEntity && entityToRef[matchingEntity]) {
+                            dataRef = entityToRef[matchingEntity];
+                            adjustedPath = 'data.rows[0].' + columnPath;
+                        }
+                    }
+                }
+
+                // Mode 4: Default - first dataRef (backwards compatible)
+                if (!dataRef) {
+                    dataRef = state.dataReferences[0];
+                    adjustedPath = path;
+                }
+
                 if (!dataRef) return match;
 
                 // Use dataRef.requestId for follow-up queries
@@ -5782,8 +5940,8 @@ Now write your analysis:`;
 
                 const totalRows = data.range?.total || data.rows.length;
 
-                // Handle data.rows[N].column
-                const rowMatch = path.match(/data\.rows\[(\d+)\]\.(\w+)/);
+                // Handle data.rows[N].column - use adjustedPath for multi-ref support
+                const rowMatch = adjustedPath.match(/data\.rows\[(\d+)\]\.(\w+)/);
                 if (rowMatch) {
                     const rowIdx = parseInt(rowMatch[1], 10);
                     const column = rowMatch[2];
@@ -5798,7 +5956,8 @@ Now write your analysis:`;
                         log.debug('Token resolution: index out of bounds', {
                             expr: expr,
                             rowIdx: rowIdx,
-                            availableRows: data.rows.length
+                            availableRows: data.rows.length,
+                            refId: dataRef.refId
                         });
                         return match; // Keep original token as fallback
                     }
@@ -5809,8 +5968,8 @@ Now write your analysis:`;
                     return formatResolvedValue(value, format, column);
                 }
 
-                // Handle data.stats.X - compute from schema
-                const statsMatch = path.match(/data\.stats\.(\w+)/);
+                // Handle data.stats.X - compute from schema (use adjustedPath)
+                const statsMatch = adjustedPath.match(/data\.stats\.(\w+)/);
                 if (statsMatch) {
                     const statName = statsMatch[1];
                     const summary = dataRef.summary || {};
