@@ -328,6 +328,10 @@ CRITICAL RULES:
   Example: "YoY comparison" needs income_statement for BOTH "ytd" AND "prior_year_ytd"
 - Don't guess or assume - if you need data, GET IT
 - After getting data, think: "Does this ACTUALLY answer the question?"
+- ENTITY IDs: When you resolve an entity (customer/vendor), look for "RESOLVED ENTITIES"
+  in the data summary. Use the ACTUAL numeric entity_id (e.g., 416), NOT placeholders.
+  WRONG: vendor_id: "{{resolve_entity result}}"
+  RIGHT: vendor_id: 416
 ═══════════════════════════════════════════════════════════════════════════════
 
 RESPOND WITH JSON:
@@ -1793,6 +1797,15 @@ Now write your analysis:`;
                         lines.push(`      - ${rowStr}`);
                     });
                 }
+
+                // ═══════════════════════════════════════════════════════════════
+                // RESOLVED ENTITY: Show the actual entity data for use in queries
+                // ═══════════════════════════════════════════════════════════════
+                if (item.resolvedEntity) {
+                    lines.push(`    ✓ RESOLVED: "${item.args?.name || 'entity'}" → ${item.resolvedEntity.name}`);
+                    lines.push(`      ID: ${item.resolvedEntity.id} | Type: ${item.resolvedEntity.type}`);
+                    lines.push(`      → USE entity_id: ${item.resolvedEntity.id} in subsequent tool calls`);
+                }
             } else {
                 lines.push(`    Error: ${item.error || 'Unknown error'}`);
             }
@@ -1804,6 +1817,19 @@ Now write your analysis:`;
             lines.push('\n⚠️ DATA SANITY WARNINGS:');
             warnings.forEach(w => lines.push(`  - ${w}`));
             lines.push('  Consider verifying the data or adjusting your query if these seem unexpected.');
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // RESOLVED ENTITIES SUMMARY: Show all resolved entities with their IDs
+        // This is CRITICAL - LLM must use these actual IDs, not placeholders!
+        // ═══════════════════════════════════════════════════════════════════════
+        if (state.resolvedEntities && Object.keys(state.resolvedEntities).length > 0) {
+            lines.push('\n✅ RESOLVED ENTITIES (use these IDs in your queries):');
+            Object.entries(state.resolvedEntities).forEach(([searchName, entity]) => {
+                lines.push(`  • "${searchName}" → ${entity.name} (${entity.type})`);
+                lines.push(`    entity_id: ${entity.id}`);
+            });
+            lines.push('  ⚠️ IMPORTANT: Use the actual entity_id number above, NOT placeholders like {{resolve_entity result}}');
         }
 
         // ═══════════════════════════════════════════════════════════════════════
