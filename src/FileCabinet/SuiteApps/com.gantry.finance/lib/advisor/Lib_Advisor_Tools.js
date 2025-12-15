@@ -546,6 +546,31 @@ define([
     }
 
     /**
+     * Build period filter for queries using accounting period table (ap.startdate)
+     * Used by income statement, balance sheet, and other financial reports
+     * that join with accountingperiod table instead of filtering on transaction.trandate
+     *
+     * @param {string} period - Period string from PERIOD_DEFINITIONS
+     * @returns {string} SQL WHERE clause fragment for accounting period filtering
+     */
+    function buildAccountingPeriodFilter(period) {
+        const def = PERIOD_DEFINITIONS[period];
+        if (!def) {
+            if (period && period !== 'all') {
+                log.audit('buildAccountingPeriodFilter', 'Unknown period "' + period + '", defaulting to all. Valid periods: ' + Object.keys(PERIOD_DEFINITIONS).join(', '));
+            }
+            return '1=1';
+        }
+
+        // Build fiscal context
+        const ctx = buildFiscalContext();
+
+        // Use ap.startdate as the date field for accounting period filtering
+        // The PERIOD_DEFINITIONS sql functions will generate proper date comparisons
+        return def.sql('ap.startdate', ctx);
+    }
+
+    /**
      * Format query result for LLM consumption
      *
      * TRUNCATION AWARENESS: When results hit the query limit, the response includes
@@ -2159,14 +2184,14 @@ Use for: "trial balance", "account balances", "GL balances", "income statement",
             category: 'data',
             description: `Get a complete Income Statement / P&L (Profit and Loss) for a period.
 Returns Revenue, COGS, Gross Profit, Operating Expenses, and Net Income with proper calculations.
-ALWAYS use this for: "income statement", "P&L", "profit and loss", "show me P&L", "how much profit", "net income"`,
+ALWAYS use this for: "income statement", "P&L", "profit and loss", "show me P&L", "how much profit", "net income"
+Supports ALL period values including ytd, prior_year_ytd, last_fiscal_year, fiscal quarters, etc.`,
             parameters: {
                 type: 'object',
                 properties: {
                     period: {
                         type: 'string',
-                        enum: ['ytd', 'this_month', 'last_month', 'this_quarter', 'last_quarter'],
-                        description: 'Period for the income statement (default: ytd)'
+                        description: 'Period for the income statement. Use any valid period: ytd, prior_year_ytd, this_month, last_month, this_quarter, last_quarter, last_fiscal_year, fiscal_q1-q4, etc. Default: ytd'
                     },
                     department_id: {
                         type: 'number',
@@ -2186,20 +2211,10 @@ ALWAYS use this for: "income statement", "P&L", "profit and loss", "show me P&L"
                 const classFilter = args.class_id ?
                     `AND tl.class = ${args.class_id}` : '';
 
-                // Get fiscal year start dynamically
-                // FIXED: Use ROWNUM instead of FETCH FIRST in subquery (SuiteQL doesn't support FETCH FIRST)
-                let dateFilter = '';
-                if (period === 'ytd') {
-                    dateFilter = `AND ap.startdate >= (SELECT startdate FROM (SELECT startdate FROM accountingperiod WHERE isyear = 'T' AND startdate <= SYSDATE ORDER BY startdate DESC) WHERE ROWNUM <= 1)`;
-                } else if (period === 'this_month') {
-                    dateFilter = `AND ap.startdate >= TRUNC(SYSDATE, 'MM')`;
-                } else if (period === 'last_month') {
-                    dateFilter = `AND ap.startdate >= ADD_MONTHS(TRUNC(SYSDATE, 'MM'), -1) AND ap.enddate < TRUNC(SYSDATE, 'MM')`;
-                } else if (period === 'this_quarter') {
-                    dateFilter = `AND ap.startdate >= TRUNC(SYSDATE, 'Q')`;
-                } else if (period === 'last_quarter') {
-                    dateFilter = `AND ap.startdate >= ADD_MONTHS(TRUNC(SYSDATE, 'Q'), -3) AND ap.enddate < TRUNC(SYSDATE, 'Q')`;
-                }
+                // Use unified period filter from PERIOD_DEFINITIONS
+                // Supports ALL 38+ periods including prior_year_ytd for YoY comparisons
+                const periodFilter = buildAccountingPeriodFilter(period);
+                const dateFilter = periodFilter !== '1=1' ? `AND ${periodFilter}` : '';
 
                 const query = `
                     SELECT
@@ -2395,10 +2410,11 @@ ALWAYS use this for: "balance sheet", "assets and liabilities", "financial posit
             name: 'get_top_customers',
             shortDescription: 'Top N customers by revenue or transaction volume',
             category: 'data',
-            description: `Get top customers by revenue for current fiscal year.
+            description: `Get top customers by revenue for a specified period.
 ALWAYS use this for: "top customers", "best customers", "biggest customers", "customer revenue", "who are our best customers"
 
-Supports filtering by minimum revenue, subsidiary, class, and can include AR aging data.`,
+Supports filtering by minimum revenue, subsidiary, class, and can include AR aging data.
+Supports ALL period values including ytd, prior_year_ytd, last_fiscal_year, fiscal quarters, etc.`,
             parameters: {
                 type: 'object',
                 properties: {
@@ -2408,8 +2424,7 @@ Supports filtering by minimum revenue, subsidiary, class, and can include AR agi
                     },
                     period: {
                         type: 'string',
-                        enum: ['ytd', 'this_quarter', 'this_month', 'last_12_months'],
-                        description: 'Time period (default: ytd)'
+                        description: 'Time period. Use any valid period: ytd, prior_year_ytd, this_month, last_month, this_quarter, last_quarter, last_fiscal_year, last_12_months, etc. Default: ytd'
                     },
                     min_revenue: {
                         type: 'number',
@@ -2461,17 +2476,10 @@ Supports filtering by minimum revenue, subsidiary, class, and can include AR agi
                 else if (args.sort_by === 'outstanding_ar') orderBy = 'outstanding_ar DESC';
                 else if (args.sort_by === 'customer_name') orderBy = 'customer_name ASC';
 
-                // FIXED: Use ROWNUM instead of FETCH FIRST in subquery (SuiteQL doesn't support FETCH FIRST)
-                let dateFilter = '';
-                if (period === 'ytd') {
-                    dateFilter = `AND ap.startdate >= (SELECT startdate FROM (SELECT startdate FROM accountingperiod WHERE isyear = 'T' AND startdate <= SYSDATE ORDER BY startdate DESC) WHERE ROWNUM <= 1)`;
-                } else if (period === 'this_quarter') {
-                    dateFilter = `AND ap.startdate >= TRUNC(SYSDATE, 'Q')`;
-                } else if (period === 'this_month') {
-                    dateFilter = `AND ap.startdate >= TRUNC(SYSDATE, 'MM')`;
-                } else if (period === 'last_12_months') {
-                    dateFilter = `AND t.trandate >= ADD_MONTHS(SYSDATE, -12)`;
-                }
+                // Use unified period filter from PERIOD_DEFINITIONS
+                // Supports ALL 38+ periods including prior_year_ytd for YoY comparisons
+                const periodFilter = buildAccountingPeriodFilter(period);
+                const dateFilter = periodFilter !== '1=1' ? `AND ${periodFilter}` : '';
 
                 // Optional AR aging join
                 let arAgingSelect = '';
@@ -2574,10 +2582,11 @@ Supports filtering by minimum revenue, subsidiary, class, and can include AR agi
             name: 'get_top_vendors',
             shortDescription: 'Top N vendors by spend amount',
             category: 'data',
-            description: `Get top vendors by spend for current fiscal year.
+            description: `Get top vendors by spend for a specified period.
 ALWAYS use this for: "top vendors", "biggest vendors", "vendor spend", "who do we pay most", "where do we spend"
 
-Supports filtering by minimum spend, subsidiary, class, department, and can include AP aging data.`,
+Supports filtering by minimum spend, subsidiary, class, department, and can include AP aging data.
+Supports ALL period values including ytd, prior_year_ytd, last_fiscal_year, fiscal quarters, etc.`,
             parameters: {
                 type: 'object',
                 properties: {
@@ -2587,8 +2596,7 @@ Supports filtering by minimum spend, subsidiary, class, department, and can incl
                     },
                     period: {
                         type: 'string',
-                        enum: ['ytd', 'this_quarter', 'this_month', 'last_12_months'],
-                        description: 'Time period (default: ytd)'
+                        description: 'Time period. Use any valid period: ytd, prior_year_ytd, this_month, last_month, this_quarter, last_quarter, last_fiscal_year, last_12_months, etc. Default: ytd'
                     },
                     min_spend: {
                         type: 'number',
@@ -2636,17 +2644,10 @@ Supports filtering by minimum spend, subsidiary, class, department, and can incl
                 else if (args.sort_by === 'outstanding_ap') orderBy = 'outstanding_ap DESC';
                 else if (args.sort_by === 'vendor_name') orderBy = 'vendor_name ASC';
 
-                // FIXED: Use ROWNUM instead of FETCH FIRST in subquery (SuiteQL doesn't support FETCH FIRST)
-                let dateFilter = '';
-                if (period === 'ytd') {
-                    dateFilter = `AND ap.startdate >= (SELECT startdate FROM (SELECT startdate FROM accountingperiod WHERE isyear = 'T' AND startdate <= SYSDATE ORDER BY startdate DESC) WHERE ROWNUM <= 1)`;
-                } else if (period === 'this_quarter') {
-                    dateFilter = `AND ap.startdate >= TRUNC(SYSDATE, 'Q')`;
-                } else if (period === 'this_month') {
-                    dateFilter = `AND ap.startdate >= TRUNC(SYSDATE, 'MM')`;
-                } else if (period === 'last_12_months') {
-                    dateFilter = `AND t.trandate >= ADD_MONTHS(SYSDATE, -12)`;
-                }
+                // Use unified period filter from PERIOD_DEFINITIONS
+                // Supports ALL 38+ periods including prior_year_ytd for YoY comparisons
+                const periodFilter = buildAccountingPeriodFilter(period);
+                const dateFilter = periodFilter !== '1=1' ? `AND ${periodFilter}` : '';
 
                 // Optional AP aging join
                 let apAgingSelect = '';
