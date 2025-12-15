@@ -322,14 +322,9 @@ define([
             return { normalized: normalized, wasNormalized: true, original: value, error: null };
         }
 
-        // Invalid value - return error with suggestions
-        return {
-            normalized: null,
-            wasNormalized: false,
-            original: value,
-            error: `Invalid transaction_type "${value}". Valid values: ${VALID_TRANSACTION_TYPES.join(', ')}. ` +
-                   `Common mappings: bill→VendBill, invoice→CustInvc, payment→VendPymt, credit→VendCred`
-        };
+        // Unknown type - log warning but allow it through (may be custom transaction type)
+        log.debug('Unknown transaction type (may be custom):', value);
+        return { normalized: value, wasNormalized: false, original: value, error: null };
     }
 
     /**
@@ -1210,6 +1205,84 @@ inventorybalance (stock levels), budget (budget data), ProjectFinancials (projec
             },
             displayName: function(args) {
                 return `Exploring ${args.table} schema...`;
+            }
+        },
+
+        discover_transaction_types: {
+            name: 'discover_transaction_types',
+            shortDescription: 'List all transaction types in this NetSuite instance',
+            category: 'discovery',
+            description: `Discovers all transaction types available in this NetSuite instance, including custom types.
+Returns type codes and transaction counts.
+Use this to understand what transaction types exist before querying.
+This is especially useful for finding custom transaction types that may not be in standard mappings.`,
+            parameters: {
+                type: 'object',
+                properties: {
+                    include_counts: {
+                        type: 'boolean',
+                        description: 'Include transaction counts per type (default: true)'
+                    },
+                    min_count: {
+                        type: 'integer',
+                        description: 'Only return types with at least this many transactions (default: 0)'
+                    }
+                },
+                required: []
+            },
+            execute: function(args) {
+                const includeCounts = args.include_counts !== false; // Default true
+                const minCount = args.min_count || 0;
+
+                const sql = `
+                    SELECT
+                        type,
+                        COUNT(*) AS transaction_count
+                    FROM transaction
+                    GROUP BY type
+                    ORDER BY COUNT(*) DESC
+                `;
+
+                try {
+                    const results = QueryExecutor.executeQuery(sql);
+
+                    if (!results || !results.rows || results.rows.length === 0) {
+                        return {
+                            success: true,
+                            types: [],
+                            rowCount: 0,
+                            message: 'No transaction types found',
+                            tool: 'discover_transaction_types'
+                        };
+                    }
+
+                    // Enhance with canonical name hints where available
+                    const types = results.rows
+                        .map(row => ({
+                            type_code: row.type,
+                            display_name: TRANSACTION_TYPE_CANONICAL[row.type?.toLowerCase()] || row.type,
+                            count: includeCounts ? parseInt(row.transaction_count) : undefined
+                        }))
+                        .filter(t => (t.count || 0) >= minCount);
+
+                    return {
+                        success: true,
+                        types: types,
+                        rowCount: types.length,
+                        hint: 'Use type_code value when filtering transactions by type',
+                        tool: 'discover_transaction_types'
+                    };
+                } catch (e) {
+                    return {
+                        success: false,
+                        error: e.message,
+                        rowCount: 0,
+                        tool: 'discover_transaction_types'
+                    };
+                }
+            },
+            displayName: function(args) {
+                return 'Discovering transaction types...';
             }
         }
     };
