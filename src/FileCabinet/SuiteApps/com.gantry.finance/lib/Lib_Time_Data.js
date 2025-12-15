@@ -5,26 +5,29 @@ define(["N/query", "N/log", "./Lib_Core", "./Lib_Config"], function (query, log,
 
     function getData(context) {
         try {
-            const today = new Date();
-            
             // Load configuration (may be subsidiary-specific)
             const subsidiaryId = context.subsidiary || null;
             const configName = subsidiaryId ? 'time_' + subsidiaryId : 'time';
             const config = ConfigLib.getStoredConfiguration(configName.split('_')[0]); // Get base config
-            
+
             let rangeStart, rangeEnd;
 
-            // 1. Resolve Dates (Default to last month if not provided)
-            if (context.endDate) {
-                rangeEnd = new Date(context.endDate);
-            } else {
-                rangeEnd = new Date(today.getFullYear(), today.getMonth(), 0); // Last day of last month
-            }
-
-            if (context.startDate) {
+            // 1. Resolve Dates using unified period system
+            // Priority: explicit dates > period parameter > default (last_month)
+            if (context.startDate && context.endDate) {
+                // Explicit dates provided
                 rangeStart = new Date(context.startDate);
+                rangeEnd = new Date(context.endDate);
+            } else if (context.period) {
+                // Use unified period system from Lib_Core
+                const periodDates = Core.getPeriodDates(context.period, 'last_month');
+                rangeStart = new Date(periodDates.start);
+                rangeEnd = new Date(periodDates.end);
             } else {
-                rangeStart = new Date(rangeEnd.getFullYear(), rangeEnd.getMonth(), 1); // First day of last month
+                // Default to last_month for backward compatibility
+                const periodDates = Core.getPeriodDates('last_month', 'last_month');
+                rangeStart = new Date(periodDates.start);
+                rangeEnd = new Date(periodDates.end);
             }
 
             // Calculate Prior Range (Same duration immediately preceding)

@@ -64,12 +64,28 @@ function(query, record, search, runtime, format, Core, Utils) {
     // ==========================================
     
     function analyzeIntegrity(params) {
-        let startDate = params.startDate || getDefaultStartDate();
-        let endDate = params.endDate || getDefaultEndDate();
+        // Resolve dates using unified period system
+        // Priority: explicit dates > period parameter > default (last_30_days)
+        let startDate, endDate;
+
+        if (params.startDate && params.endDate) {
+            startDate = params.startDate;
+            endDate = params.endDate;
+        } else if (params.period) {
+            const periodDates = Core.getPeriodDates(params.period, 'last_30_days');
+            startDate = periodDates.start;
+            endDate = periodDates.end;
+        } else {
+            // Default to last_30_days for integrity analysis
+            const periodDates = Core.getPeriodDates('last_30_days', 'last_30_days');
+            startDate = periodDates.start;
+            endDate = periodDates.end;
+        }
+
         const subsidiaryId = params.subsidiary || null;
         const config = params.config || getDefaultConfig();
         const debugMode = Utils.isDebugMode();  // Use shared isDebugMode from Lib_Advisor_Utils
-        
+
         // ENFORCE 30-day maximum date range for performance
         const maxDays = 30;
         const startDt = new Date(startDate);

@@ -30,6 +30,7 @@ define([
     './Lib_Advisor_Cache',
     '../Lib_Dashboard_Registry',
     '../Lib_Config',
+    '../Lib_Core',
     // Dashboard data modules - loaded as dependencies to avoid dynamic require() errors
     '../Lib_Cashflow_Data',
     '../Lib_Health_Data',
@@ -50,6 +51,7 @@ define([
     Cache,
     DashboardRegistry,
     ConfigLib,
+    Core,
     // Dashboard data modules
     CashflowData,
     HealthData,
@@ -579,356 +581,22 @@ define([
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // PERIOD DEFINITIONS - Single Source of Truth
-    // Add a period here ONCE - automatically available to LLM and SQL generation
+    // PERIOD SYSTEM - Delegated to Lib_Core (Single Source of Truth)
+    // All period definitions, date calculations, and SQL generation are in Core
     // ═══════════════════════════════════════════════════════════════════════════
-    const PERIOD_DEFINITIONS = {
-        // === Daily ===
-        'today': {
-            desc: 'Current day only',
-            category: 'daily',
-            sql: (df) => `${df} = CURRENT_DATE`
-        },
-        'yesterday': {
-            desc: 'Previous day only',
-            category: 'daily',
-            sql: (df) => `${df} = CURRENT_DATE - 1`
-        },
 
-        // === Weekly ===
-        'this_week': {
-            desc: 'Current week (Monday to now)',
-            category: 'weekly',
-            sql: (df) => `${df} >= TRUNC(CURRENT_DATE, 'IW')`
-        },
-        'last_week': {
-            desc: 'Previous full week',
-            category: 'weekly',
-            sql: (df) => `${df} >= TRUNC(CURRENT_DATE, 'IW') - 7 AND ${df} < TRUNC(CURRENT_DATE, 'IW')`
-        },
+    // Reference to Core's PERIOD_DEFINITIONS for backwards compatibility
+    const PERIOD_DEFINITIONS = Core.PERIOD_DEFINITIONS;
 
-        // === Monthly ===
-        'this_month': {
-            desc: 'Current calendar month',
-            category: 'monthly',
-            sql: (df) => `${df} >= TRUNC(CURRENT_DATE, 'MM')`
-        },
-        'last_month': {
-            desc: 'Previous calendar month',
-            category: 'monthly',
-            sql: (df) => `${df} >= ADD_MONTHS(TRUNC(CURRENT_DATE, 'MM'), -1) AND ${df} < TRUNC(CURRENT_DATE, 'MM')`
-        },
+    // Delegate to Core's unified period functions
+    const getAvailablePeriods = Core.getAvailablePeriods;
+    const buildPeriodFilter = Core.buildPeriodFilter;
+    const buildAccountingPeriodFilter = Core.buildAccountingPeriodFilter;
+    const getValidPeriods = Core.getValidPeriods;
+    const getPeriodDates = Core.getPeriodDates;
 
-        // === Calendar Quarters ===
-        'this_quarter': {
-            desc: 'Current calendar quarter',
-            category: 'quarterly',
-            sql: (df) => `${df} >= TRUNC(CURRENT_DATE, 'Q')`
-        },
-        'last_quarter': {
-            desc: 'Previous calendar quarter',
-            category: 'quarterly',
-            sql: (df) => `${df} >= ADD_MONTHS(TRUNC(CURRENT_DATE, 'Q'), -3) AND ${df} < TRUNC(CURRENT_DATE, 'Q')`
-        },
-
-        // === Fiscal Year-to-Date ===
-        'ytd': {
-            desc: 'Fiscal year-to-date (FY start to now)',
-            category: 'fiscal_ytd',
-            sql: (df, ctx) => `${df} >= TO_DATE('${ctx.fyStartDate}', 'YYYY-MM-DD')`
-        },
-        'fytd': {
-            desc: 'Alias for ytd',
-            category: 'fiscal_ytd',
-            sql: (df, ctx) => `${df} >= TO_DATE('${ctx.fyStartDate}', 'YYYY-MM-DD')`
-        },
-        'ytd_closed': {
-            desc: 'Fiscal YTD to last closed period (complete data only)',
-            category: 'fiscal_ytd',
-            sql: (df, ctx) => `${df} >= TO_DATE('${ctx.fyStartDate}', 'YYYY-MM-DD') AND ${df} <= TO_DATE('${ctx.closedPeriodEnd}', 'YYYY-MM-DD')`
-        },
-        'fytd_closed': {
-            desc: 'Alias for ytd_closed',
-            category: 'fiscal_ytd',
-            sql: (df, ctx) => `${df} >= TO_DATE('${ctx.fyStartDate}', 'YYYY-MM-DD') AND ${df} <= TO_DATE('${ctx.closedPeriodEnd}', 'YYYY-MM-DD')`
-        },
-
-        // === Full Fiscal Years ===
-        'this_fiscal_year': {
-            desc: 'Current full fiscal year',
-            category: 'fiscal_year',
-            sql: (df, ctx) => `${df} >= TO_DATE('${ctx.fyStartDate}', 'YYYY-MM-DD') AND ${df} <= TO_DATE('${ctx.fyEndDate}', 'YYYY-MM-DD')`
-        },
-        'last_fiscal_year': {
-            desc: 'Previous full fiscal year',
-            category: 'fiscal_year',
-            sql: (df, ctx) => `${df} >= TO_DATE('${ctx.lastFyStart}', 'YYYY-MM-DD') AND ${df} <= TO_DATE('${ctx.lastFyEnd}', 'YYYY-MM-DD')`
-        },
-        '2_fiscal_years_ago': {
-            desc: 'Two fiscal years ago (full year)',
-            category: 'fiscal_year',
-            sql: (df, ctx) => `${df} >= TO_DATE('${ctx.twoFyStart}', 'YYYY-MM-DD') AND ${df} <= TO_DATE('${ctx.twoFyEnd}', 'YYYY-MM-DD')`
-        },
-        '3_fiscal_years_ago': {
-            desc: 'Three fiscal years ago (full year)',
-            category: 'fiscal_year',
-            sql: (df, ctx) => `${df} >= TO_DATE('${ctx.threeFyStart}', 'YYYY-MM-DD') AND ${df} <= TO_DATE('${ctx.threeFyEnd}', 'YYYY-MM-DD')`
-        },
-
-        // === YoY Comparison (CRITICAL for comparisons) ===
-        'prior_year_ytd': {
-            desc: 'Same point in LAST fiscal year - USE FOR YoY YTD COMPARISON',
-            category: 'comparison',
-            sql: (df, ctx) => `${df} >= TO_DATE('${ctx.lastFyStart}', 'YYYY-MM-DD') AND ${df} <= TO_DATE('${ctx.priorYtdEnd}', 'YYYY-MM-DD')`
-        },
-
-        // === Current Fiscal Year Quarters ===
-        'fiscal_q1': {
-            desc: 'Q1 of current fiscal year',
-            category: 'fiscal_quarter',
-            sql: (df, ctx) => `${df} >= TO_DATE('${ctx.fyQ1.start}', 'YYYY-MM-DD') AND ${df} <= TO_DATE('${ctx.fyQ1.end}', 'YYYY-MM-DD')`
-        },
-        'fiscal_q2': {
-            desc: 'Q2 of current fiscal year',
-            category: 'fiscal_quarter',
-            sql: (df, ctx) => `${df} >= TO_DATE('${ctx.fyQ2.start}', 'YYYY-MM-DD') AND ${df} <= TO_DATE('${ctx.fyQ2.end}', 'YYYY-MM-DD')`
-        },
-        'fiscal_q3': {
-            desc: 'Q3 of current fiscal year',
-            category: 'fiscal_quarter',
-            sql: (df, ctx) => `${df} >= TO_DATE('${ctx.fyQ3.start}', 'YYYY-MM-DD') AND ${df} <= TO_DATE('${ctx.fyQ3.end}', 'YYYY-MM-DD')`
-        },
-        'fiscal_q4': {
-            desc: 'Q4 of current fiscal year',
-            category: 'fiscal_quarter',
-            sql: (df, ctx) => `${df} >= TO_DATE('${ctx.fyQ4.start}', 'YYYY-MM-DD') AND ${df} <= TO_DATE('${ctx.fyQ4.end}', 'YYYY-MM-DD')`
-        },
-
-        // === Last Fiscal Year Quarters ===
-        'last_fiscal_q1': {
-            desc: 'Q1 of last fiscal year',
-            category: 'fiscal_quarter',
-            sql: (df, ctx) => `${df} >= TO_DATE('${ctx.lastFyQ1.start}', 'YYYY-MM-DD') AND ${df} <= TO_DATE('${ctx.lastFyQ1.end}', 'YYYY-MM-DD')`
-        },
-        'last_fiscal_q2': {
-            desc: 'Q2 of last fiscal year',
-            category: 'fiscal_quarter',
-            sql: (df, ctx) => `${df} >= TO_DATE('${ctx.lastFyQ2.start}', 'YYYY-MM-DD') AND ${df} <= TO_DATE('${ctx.lastFyQ2.end}', 'YYYY-MM-DD')`
-        },
-        'last_fiscal_q3': {
-            desc: 'Q3 of last fiscal year',
-            category: 'fiscal_quarter',
-            sql: (df, ctx) => `${df} >= TO_DATE('${ctx.lastFyQ3.start}', 'YYYY-MM-DD') AND ${df} <= TO_DATE('${ctx.lastFyQ3.end}', 'YYYY-MM-DD')`
-        },
-        'last_fiscal_q4': {
-            desc: 'Q4 of last fiscal year',
-            category: 'fiscal_quarter',
-            sql: (df, ctx) => `${df} >= TO_DATE('${ctx.lastFyQ4.start}', 'YYYY-MM-DD') AND ${df} <= TO_DATE('${ctx.lastFyQ4.end}', 'YYYY-MM-DD')`
-        },
-
-        // === Rolling Periods (calendar-based) ===
-        'last_30_days': {
-            desc: 'Last 30 calendar days',
-            category: 'rolling',
-            sql: (df) => `${df} >= CURRENT_DATE - 30`
-        },
-        'last_60_days': {
-            desc: 'Last 60 calendar days',
-            category: 'rolling',
-            sql: (df) => `${df} >= CURRENT_DATE - 60`
-        },
-        'last_90_days': {
-            desc: 'Last 90 calendar days',
-            category: 'rolling',
-            sql: (df) => `${df} >= CURRENT_DATE - 90`
-        },
-        'last_180_days': {
-            desc: 'Last 180 calendar days (6 months)',
-            category: 'rolling',
-            sql: (df) => `${df} >= CURRENT_DATE - 180`
-        },
-        'last_365_days': {
-            desc: 'Last 365 calendar days (1 year)',
-            category: 'rolling',
-            sql: (df) => `${df} >= CURRENT_DATE - 365`
-        },
-        'last_2_years': {
-            desc: 'Last 730 calendar days (2 years)',
-            category: 'rolling',
-            sql: (df) => `${df} >= CURRENT_DATE - 730`
-        },
-        'last_3_years': {
-            desc: 'Last 1095 calendar days (3 years)',
-            category: 'rolling',
-            sql: (df) => `${df} >= CURRENT_DATE - 1095`
-        },
-
-        // === Multi-Year Fiscal ===
-        'last_2_fiscal_years': {
-            desc: 'Last 2 fiscal years combined',
-            category: 'multi_year',
-            sql: (df, ctx) => `${df} >= TO_DATE('${ctx.lastFyStart}', 'YYYY-MM-DD')`
-        },
-        'last_3_fiscal_years': {
-            desc: 'Last 3 fiscal years combined',
-            category: 'multi_year',
-            sql: (df, ctx) => `${df} >= TO_DATE('${ctx.twoFyStart}', 'YYYY-MM-DD')`
-        },
-
-        // === All Time ===
-        'all': {
-            desc: 'All available data (no date filter)',
-            category: 'all',
-            sql: () => '1=1'
-        }
-    };
-
-    /**
-     * Build fiscal context with all computed dates
-     * Called once per buildPeriodFilter invocation
-     */
-    function buildFiscalContext() {
-        const fiscalCalendar = ConfigLib.getFiscalCalendar();
-        const now = new Date();
-        const fyStart = new Date(fiscalCalendar.fiscalYearStartDate);
-        const fyEnd = new Date(fiscalCalendar.fiscalYearEndDate);
-
-        // Helper to format date for SQL
-        const toSqlDate = (d) => {
-            const year = d.getFullYear();
-            const month = String(d.getMonth() + 1).padStart(2, '0');
-            const day = String(d.getDate()).padStart(2, '0');
-            return `${year}-${month}-${day}`;
-        };
-
-        // Calculate fiscal quarters
-        const getFiscalQuarterDates = (fyStartDate, quarterNum) => {
-            const fy = new Date(fyStartDate);
-            const qStart = new Date(fy);
-            qStart.setMonth(fy.getMonth() + (quarterNum - 1) * 3);
-            const qEnd = new Date(qStart);
-            qEnd.setMonth(qStart.getMonth() + 3);
-            qEnd.setDate(qEnd.getDate() - 1);
-            return { start: toSqlDate(qStart), end: toSqlDate(qEnd) };
-        };
-
-        // Last fiscal year
-        const lastFyStart = new Date(fyStart);
-        lastFyStart.setFullYear(lastFyStart.getFullYear() - 1);
-        const lastFyEnd = new Date(fyEnd);
-        lastFyEnd.setFullYear(lastFyEnd.getFullYear() - 1);
-
-        // 2 fiscal years ago
-        const twoFyStart = new Date(fyStart);
-        twoFyStart.setFullYear(twoFyStart.getFullYear() - 2);
-        const twoFyEnd = new Date(fyEnd);
-        twoFyEnd.setFullYear(twoFyEnd.getFullYear() - 2);
-
-        // 3 fiscal years ago
-        const threeFyStart = new Date(fyStart);
-        threeFyStart.setFullYear(threeFyStart.getFullYear() - 3);
-        const threeFyEnd = new Date(fyEnd);
-        threeFyEnd.setFullYear(threeFyEnd.getFullYear() - 3);
-
-        // YTD comparison point in prior year (same elapsed time)
-        const daysIntoFy = Math.floor((now - fyStart) / (1000 * 60 * 60 * 24));
-        const priorYtdEnd = new Date(lastFyStart);
-        priorYtdEnd.setDate(priorYtdEnd.getDate() + daysIntoFy);
-
-        return {
-            fyStartDate: fiscalCalendar.fiscalYearStartDate,
-            fyEndDate: fiscalCalendar.fiscalYearEndDate,
-            lastFyStart: toSqlDate(lastFyStart),
-            lastFyEnd: toSqlDate(lastFyEnd),
-            twoFyStart: toSqlDate(twoFyStart),
-            twoFyEnd: toSqlDate(twoFyEnd),
-            threeFyStart: toSqlDate(threeFyStart),
-            threeFyEnd: toSqlDate(threeFyEnd),
-            priorYtdEnd: toSqlDate(priorYtdEnd),
-            closedPeriodEnd: fiscalCalendar.latestClosedPeriod ?
-                fiscalCalendar.latestClosedPeriod.endDate : toSqlDate(now),
-            // Current FY quarters
-            fyQ1: getFiscalQuarterDates(fyStart, 1),
-            fyQ2: getFiscalQuarterDates(fyStart, 2),
-            fyQ3: getFiscalQuarterDates(fyStart, 3),
-            fyQ4: getFiscalQuarterDates(fyStart, 4),
-            // Last FY quarters
-            lastFyQ1: getFiscalQuarterDates(lastFyStart, 1),
-            lastFyQ2: getFiscalQuarterDates(lastFyStart, 2),
-            lastFyQ3: getFiscalQuarterDates(lastFyStart, 3),
-            lastFyQ4: getFiscalQuarterDates(lastFyStart, 4)
-        };
-    }
-
-    /**
-     * Get available period options for LLM prompts
-     * Dynamically generated from PERIOD_DEFINITIONS - add a period once, it appears here
-     * @returns {string} Formatted period options for injection into prompts
-     */
-    function getAvailablePeriods() {
-        const lines = ['VALID PERIOD VALUES (use exact strings for "period" parameter):'];
-        let lastCategory = '';
-
-        Object.entries(PERIOD_DEFINITIONS).forEach(([key, def]) => {
-            if (def.category !== lastCategory) {
-                lastCategory = def.category;
-            }
-            lines.push(`  "${key}": ${def.desc}`);
-        });
-
-        lines.push('');
-        lines.push('COMPARISON TIP: For YoY comparison, call same tool twice:');
-        lines.push('  - First with period="ytd" (current year-to-date)');
-        lines.push('  - Then with period="prior_year_ytd" (same point last year)');
-
-        return lines.join('\n');
-    }
-
-    /**
-     * Build date filter based on period string
-     * Uses PERIOD_DEFINITIONS as single source of truth
-     */
-    function buildPeriodFilter(period, dateField) {
-        dateField = dateField || 'transaction.trandate';
-
-        const def = PERIOD_DEFINITIONS[period];
-        if (!def) {
-            if (period && period !== 'all') {
-                log.audit('buildPeriodFilter', 'Unknown period "' + period + '", defaulting to all. Valid periods: ' + Object.keys(PERIOD_DEFINITIONS).join(', '));
-            }
-            return '1=1';
-        }
-
-        // Build fiscal context (computed dates for fiscal-aware periods)
-        const ctx = buildFiscalContext();
-
-        return def.sql(dateField, ctx);
-    }
-
-    /**
-     * Build period filter for queries using accounting period table (ap.startdate)
-     * Used by income statement, balance sheet, and other financial reports
-     * that join with accountingperiod table instead of filtering on transaction.trandate
-     *
-     * @param {string} period - Period string from PERIOD_DEFINITIONS
-     * @returns {string} SQL WHERE clause fragment for accounting period filtering
-     */
-    function buildAccountingPeriodFilter(period) {
-        const def = PERIOD_DEFINITIONS[period];
-        if (!def) {
-            if (period && period !== 'all') {
-                log.audit('buildAccountingPeriodFilter', 'Unknown period "' + period + '", defaulting to all. Valid periods: ' + Object.keys(PERIOD_DEFINITIONS).join(', '));
-            }
-            return '1=1';
-        }
-
-        // Build fiscal context
-        const ctx = buildFiscalContext();
-
-        // Use ap.startdate as the date field for accounting period filtering
-        // The PERIOD_DEFINITIONS sql functions will generate proper date comparisons
-        return def.sql('ap.startdate', ctx);
-    }
+    // Legacy compatibility - buildFiscalContext is internal to Core now
+    // If any code still calls this, it should be refactored to use Core functions
 
     /**
      * Format query result for LLM consumption
@@ -5413,15 +5081,14 @@ PREFERRED for: "income statement", "P&L", "profit and loss", "financial health",
                     },
                     period: {
                         type: 'string',
-                        enum: ['ytd', 'this_quarter', 'this_month'],
-                        description: 'Period for analysis (default: ytd)'
+                        description: 'Period for analysis. Valid values: today, yesterday, this_week, last_week, this_month, last_month, mtd, this_quarter, last_quarter, qtd, ytd, fytd, ytd_closed, this_fiscal_year, last_fiscal_year, prior_year_ytd, fiscal_q1-q4, last_30_days, last_90_days, last_365_days, all. Default: ytd_closed'
                     }
                 },
                 required: []
             },
             execute: function(args) {
                 try {
-                    // Get raw data from dashboard module
+                    // Pass period to data module - it now uses Core.getPeriodDates()
                     const rawData = HealthData.getData(args);
 
                     // Process through intelligence layer - extracts key metrics, generates insights
@@ -5472,15 +5139,14 @@ Use for: "burden rate", "overhead", "labor burden", "cost recovery", "fringe rat
                     },
                     period: {
                         type: 'string',
-                        enum: ['ytd', 'this_quarter', 'this_month', 'last_quarter'],
-                        description: 'Period for analysis (default: ytd)'
+                        description: 'Period for analysis. Valid values: today, yesterday, this_week, last_week, this_month, last_month, mtd, this_quarter, last_quarter, qtd, ytd, fytd, ytd_closed, this_fiscal_year, last_fiscal_year, prior_year_ytd, fiscal_q1-q4, last_30_days, last_90_days, last_365_days, all. Default: ytd_closed'
                     }
                 },
                 required: []
             },
             execute: function(args) {
                 try {
-                    // Get raw data from dashboard module
+                    // Pass period to data module - it now uses Core.getPeriodDates()
                     const rawData = BurdenData.getData(args);
 
                     // Process through intelligence layer - extracts key metrics, generates insights
@@ -5536,15 +5202,14 @@ Use for: "utilization", "billable hours", "time tracking", "unbilled time", "emp
                     },
                     period: {
                         type: 'string',
-                        enum: ['this_week', 'this_month', 'last_month', 'this_quarter', 'ytd'],
-                        description: 'Period for analysis (default: this_month)'
+                        description: 'Period for analysis. Valid values: today, yesterday, this_week, last_week, this_month, last_month, mtd, this_quarter, last_quarter, qtd, ytd, fytd, ytd_closed, this_fiscal_year, last_fiscal_year, prior_year_ytd, fiscal_q1-q4, last_30_days, last_90_days, last_365_days, all. Default: this_month'
                     }
                 },
                 required: []
             },
             execute: function(args) {
                 try {
-                    // Get raw data from dashboard module
+                    // Pass period to data module - it now uses Core.getPeriodDates()
                     const rawData = TimeData.getData(args);
 
                     // Process through intelligence layer - extracts key metrics, generates insights
@@ -5591,15 +5256,14 @@ Use for: "fraud detection", "anomalies", "duplicates", "Benford's law", "suspici
                 properties: {
                     period: {
                         type: 'string',
-                        enum: ['last_30_days', 'last_90_days', 'ytd'],
-                        description: 'Period for analysis (default: last_90_days)'
+                        description: 'Period for analysis. Valid values: today, yesterday, this_week, last_week, this_month, last_month, mtd, this_quarter, last_quarter, qtd, ytd, fytd, ytd_closed, this_fiscal_year, last_fiscal_year, prior_year_ytd, fiscal_q1-q4, last_30_days, last_90_days, last_365_days, all. Default: last_30_days (capped at 30 days for performance)'
                     }
                 },
                 required: []
             },
             execute: function(args) {
                 try {
-                    // Get raw data from dashboard module
+                    // Pass period to data module - it now uses Core.getPeriodDates()
                     const rawData = IntegrityData.getData(args);
 
                     // Process through intelligence layer - extracts key metrics, generates insights
@@ -5651,15 +5315,14 @@ Use for: "vendor performance", "procurement", "vendor leverage", "payment terms"
                     },
                     period: {
                         type: 'string',
-                        enum: ['last_90_days', 'ytd', 'last_365_days'],
-                        description: 'Period for analysis (default: ytd)'
+                        description: 'Period for analysis. Valid values: today, yesterday, this_week, last_week, this_month, last_month, mtd, this_quarter, last_quarter, qtd, ytd, fytd, ytd_closed, this_fiscal_year, last_fiscal_year, prior_year_ytd, fiscal_q1-q4, last_30_days, last_90_days, last_365_days, all. Default: ytd'
                     }
                 },
                 required: []
             },
             execute: function(args) {
                 try {
-                    // Get raw data from dashboard module
+                    // Pass period to data module - it now uses Core.getPeriodDates()
                     const rawData = VendorPerformanceData.getData(args);
 
                     // Process through intelligence layer - extracts key metrics, generates insights
@@ -5711,15 +5374,14 @@ Use for: "customer value", "CLV", "lifetime value", "RFM", "churn risk", "custom
                     },
                     period: {
                         type: 'string',
-                        enum: ['last_365_days', 'ytd', 'all_time'],
-                        description: 'Period for analysis (default: last_365_days)'
+                        description: 'Period for analysis. Valid values: today, yesterday, this_week, last_week, this_month, last_month, mtd, this_quarter, last_quarter, qtd, ytd, fytd, ytd_closed, this_fiscal_year, last_fiscal_year, prior_year_ytd, fiscal_q1-q4, last_30_days, last_90_days, last_365_days, last_12_months, all. Default: last_12_months'
                     }
                 },
                 required: []
             },
             execute: function(args) {
                 try {
-                    // Get raw data from dashboard module
+                    // Pass period to data module - it now uses Core.getPeriodDates()
                     const rawData = CustomerValueData.getData(args);
 
                     // Process through intelligence layer - extracts key metrics, generates insights
@@ -5771,15 +5433,14 @@ Use for: "spend velocity", "subscription creep", "shadow IT", "commitment cliff"
                     },
                     period: {
                         type: 'string',
-                        enum: ['last_6_months', 'last_12_months', 'ytd'],
-                        description: 'Period for analysis (default: last_12_months)'
+                        description: 'Period for analysis. Valid values: today, yesterday, this_week, last_week, this_month, last_month, mtd, this_quarter, last_quarter, qtd, ytd, fytd, ytd_closed, this_fiscal_year, last_fiscal_year, prior_year_ytd, fiscal_q1-q4, last_30_days, last_90_days, last_365_days, last_6_months, last_12_months, all. Default: ytd'
                     }
                 },
                 required: []
             },
             execute: function(args) {
                 try {
-                    // Get raw data from dashboard module
+                    // Pass period to data module - it now uses Core.getPeriodDates()
                     const rawData = SpendVelocityData.getData(args);
 
                     // Process through intelligence layer - extracts key metrics, generates insights

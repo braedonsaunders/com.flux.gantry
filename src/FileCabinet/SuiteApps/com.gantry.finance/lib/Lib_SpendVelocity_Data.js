@@ -103,10 +103,23 @@ define(['N/query', 'N/log', './Lib_Core'], function(query, log, Core) {
     // MAIN ANALYSIS FUNCTION
     // ==========================================
     function analyzeSpendVelocity(params) {
-        // Use fiscal year defaults if no dates provided
-        var fiscalDates = getFiscalYearDates();
-        var startDate = params.startDate || fiscalDates.startDate;
-        var endDate = params.endDate || fiscalDates.endDate;
+        // Resolve dates using unified period system
+        // Priority: explicit dates > period parameter > default (ytd)
+        var startDate, endDate;
+
+        if (params.startDate && params.endDate) {
+            startDate = params.startDate;
+            endDate = params.endDate;
+        } else if (params.period) {
+            var periodDates = Core.getPeriodDates(params.period, 'ytd');
+            startDate = periodDates.start;
+            endDate = periodDates.end;
+        } else {
+            var periodDates = Core.getPeriodDates('ytd', 'ytd');
+            startDate = periodDates.start;
+            endDate = periodDates.end;
+        }
+
         var subsidiaryId = params.subsidiaryId;
         var config = Object.assign(getDefaultConfig(), params.config || {});
         
