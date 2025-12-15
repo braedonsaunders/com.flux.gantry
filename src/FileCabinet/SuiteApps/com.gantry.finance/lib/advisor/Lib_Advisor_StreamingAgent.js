@@ -2073,8 +2073,8 @@ Now write your analysis:`;
 
         // Track entity resolution
         if (toolName.startsWith('resolve_') && result.found && result.entity) {
-            const searchTerm = args.term || args.name || 'unknown';
-            state.resolvedEntities[searchTerm] = result.entity;
+            const searchName = args.name || 'unknown';
+            state.resolvedEntities[searchName] = result.entity;
             dataEntry.resolvedEntity = result.entity;
         }
 
@@ -2091,7 +2091,7 @@ Now write your analysis:`;
         } else if (isEmptyResult || isEntityNotFound) {
             // Track empty results too - repeating them won't help
             const reason = isEntityNotFound
-                ? `Entity not found: "${args.term || args.name || 'unknown'}"`
+                ? `Entity not found: "${args.name || 'unknown'}"`
                 : 'Query returned 0 rows';
             trackFailedToolCall(state, toolName, args, reason);
         }
@@ -2982,8 +2982,8 @@ Now write your analysis:`;
             // ═══════════════════════════════════════════════════════════════════════
             if (toolName.startsWith('resolve_')) {
                 if (result.found && result.entity) {
-                    const searchTerm = args.term || args.name || 'unknown';
-                    state.resolvedEntities[searchTerm] = result.entity;
+                    const searchName = args.name || 'unknown';
+                    state.resolvedEntities[searchName] = result.entity;
                     state.reflection.entityFound = true;
 
                     // Record in journey
@@ -2999,8 +2999,8 @@ Now write your analysis:`;
                     state.reflection.entityFound = false;
                     state.reflection.journey.push({
                         action: 'entity_not_found',
-                        searchTerm: args.term,
-                        typeHint: args.type_hint || 'auto'
+                        searchName: args.name,
+                        searchType: args.type || 'auto'
                     });
                 }
             }
@@ -3171,7 +3171,7 @@ Now write your analysis:`;
             } else {
                 return {
                     classification: 'ENTITY_NOT_FOUND',
-                    details: { searchTerm: args.term, typeHint: args.type_hint }
+                    details: { searchName: args.name, searchType: args.type }
                 };
             }
         }

@@ -695,16 +695,16 @@ Use this when the user mentions a company name, person name, product, or project
 Examples: "Oracle", "John Smith", "Widget Pro", "Project Alpha"
 
 IMPORTANT: Use transaction_context to help determine entity type:
-- For bills/payments to vendors → use type_hint: "vendor"
-- For invoices/payments from customers → use type_hint: "customer"`,
+- For bills/payments to vendors → use type: "vendor"
+- For invoices/payments from customers → use type: "customer"`,
             parameters: {
                 type: 'object',
                 properties: {
-                    term: {
+                    name: {
                         type: 'string',
-                        description: 'The name to search for'
+                        description: 'The entity name to search for'
                     },
-                    type_hint: {
+                    type: {
                         type: 'string',
                         enum: ['customer', 'vendor', 'employee', 'item', 'project', 'auto'],
                         description: 'Expected entity type. Use "vendor" for AP/bill queries, "customer" for AR/invoice queries, or "auto" to search all types.'
@@ -715,74 +715,64 @@ IMPORTANT: Use transaction_context to help determine entity type:
                         description: 'Optional: NetSuite transaction type code. VendBill/VendPymt/VendCred/ExpRept/PurchOrd → vendor, CustInvc/CustPymt/CustCred/SalesOrd → customer'
                     }
                 },
-                required: ['term']
+                required: ['name']
             },
             execute: function(args) {
-                // ═══════════════════════════════════════════════════════════════════════
-                // PARAMETER ALIASING: Accept both naming conventions
-                // LLM sometimes uses: { name: "oblender", type: "vendor" }
-                // Tool expects:       { term: "oblender", type_hint: "vendor" }
-                // ═══════════════════════════════════════════════════════════════════════
-                const term = args.term || args.name;
-                let typeHint = args.type_hint || args.type || 'auto';
+                const name = args.name;
+                let entityType = args.type || 'auto';
 
-                // Validate that we have a search term
-                if (!term) {
+                // Validate required parameter
+                if (!name) {
                     return {
                         success: false,
                         found: false,
-                        error: "Missing search term. Provide either 'term' or 'name' parameter.",
+                        error: "Missing required 'name' parameter.",
                         rowCount: 0,
                         tool: 'resolve_entity'
                     };
                 }
 
-                // Infer type_hint from transaction_context if not explicitly set
-                if (typeHint === 'auto' && args.transaction_context) {
+                // Infer type from transaction_context if not explicitly set
+                if (entityType === 'auto' && args.transaction_context) {
                     const vendorTypes = ['VendBill', 'VendPymt', 'VendCred', 'ExpRept', 'PurchOrd'];
                     const customerTypes = ['CustInvc', 'CustPymt', 'CustCred', 'SalesOrd'];
 
                     if (vendorTypes.includes(args.transaction_context)) {
-                        typeHint = 'vendor';
+                        entityType = 'vendor';
                     } else if (customerTypes.includes(args.transaction_context)) {
-                        typeHint = 'customer';
+                        entityType = 'customer';
                     }
                     log.debug('resolve_entity inferred type from transaction_context', {
-                        term: term,
+                        name: name,
                         transaction_context: args.transaction_context,
-                        inferred_type: typeHint
+                        inferred_type: entityType
                     });
                 }
 
                 try {
-                    let result = EntityResolver.resolveEntityWithFallback(term, typeHint);
+                    let result = EntityResolver.resolveEntityWithFallback(name, entityType);
 
                     // ═══════════════════════════════════════════════════════════════════════
-                    // FALLBACK: If specific type_hint search fails, try searching all types
+                    // FALLBACK: If specific type search fails, try searching all types
                     // This prevents misclassification issues (e.g., "birla" as vendor when
                     // it's actually a customer) from causing complete entity resolution failure
                     // ═══════════════════════════════════════════════════════════════════════
-                    if ((!result.resolved || !result.entity) && typeHint && typeHint !== 'auto') {
+                    if ((!result.resolved || !result.entity) && entityType && entityType !== 'auto') {
                         log.debug('resolve_entity fallback: specific type not found, trying auto', {
-                            term: term,
-                            failedTypeHint: typeHint
+                            name: name,
+                            failedType: entityType
                         });
-                        result = EntityResolver.resolveEntityWithFallback(term, 'auto');
+                        result = EntityResolver.resolveEntityWithFallback(name, 'auto');
                         if (result.resolved && result.entity) {
                             log.debug('resolve_entity fallback succeeded', {
-                                term: term,
-                                originalTypeHint: typeHint,
+                                name: name,
+                                originalType: entityType,
                                 foundType: result.actualType
                             });
                         }
                     }
 
                     if (result.resolved && result.entity) {
-                        // ═══════════════════════════════════════════════════════════════════════
-                        // FIX: Include proper rowCount metadata
-                        // rowCount: 1 when entity found, enables correct downstream processing
-                        // Alternative matches included for disambiguation
-                        // ═══════════════════════════════════════════════════════════════════════
                         return {
                             success: true,
                             found: true,
@@ -792,27 +782,19 @@ IMPORTANT: Use transaction_context to help determine entity type:
                                 type: result.actualType || 'unknown'
                             },
                             confidence: result.confidence || 1.0,
-                            // FIXED: rowCount reflects that we found an entity
                             rowCount: 1,
-                            // Include alternative matches if available (for ambiguity detection)
                             alternatives: result.alternatives || [],
                             ambiguous: result.ambiguous || false,
                             tool: 'resolve_entity'
                         };
                     } else {
-                        // ═══════════════════════════════════════════════════════════════════════
-                        // FIX: rowCount: 0 when entity NOT found
-                        // This enables proper failure mode detection in REFLECT phase
-                        // ═══════════════════════════════════════════════════════════════════════
                         return {
                             success: true,
                             found: false,
-                            searchTerm: term,
-                            typeHint: typeHint,
-                            message: `No entity found matching "${term}"`,
-                            // FIXED: rowCount reflects no matches
+                            searchName: name,
+                            searchType: entityType,
+                            message: `No entity found matching "${name}"`,
                             rowCount: 0,
-                            // Include suggestions if available
                             suggestions: result.suggestions || [],
                             tool: 'resolve_entity'
                         };
@@ -827,8 +809,7 @@ IMPORTANT: Use transaction_context to help determine entity type:
                 }
             },
             displayName: function(args) {
-                const searchTerm = args.term || args.name || 'entity';
-                return `Searching for "${searchTerm}"...`;
+                return `Searching for "${args.name || 'entity'}"...`;
             }
         },
 
