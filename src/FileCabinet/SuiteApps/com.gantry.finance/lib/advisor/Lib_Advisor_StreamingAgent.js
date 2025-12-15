@@ -2073,16 +2073,27 @@ Now write your analysis:`;
 
         // Track entity resolution
         if (toolName.startsWith('resolve_') && result.found && result.entity) {
-            const searchTerm = args.term || args.name || 'unknown';
-            state.resolvedEntities[searchTerm] = result.entity;
+            const searchName = args.name || 'unknown';
+            state.resolvedEntities[searchName] = result.entity;
             dataEntry.resolvedEntity = result.entity;
         }
 
         // ═══════════════════════════════════════════════════════════════════════
-        // FAILURE TRACKING: Track failed tool calls to prevent infinite retries
+        // FAILURE & EMPTY RESULT TRACKING: Prevent infinite retries
+        // Track both actual failures AND empty results (success but no data)
         // ═══════════════════════════════════════════════════════════════════════
-        if (!dataEntry.success && dataEntry.error) {
+        const isFailure = !dataEntry.success && dataEntry.error;
+        const isEmptyResult = dataEntry.success && dataEntry.rowCount === 0 && !dataEntry.metrics;
+        const isEntityNotFound = toolName.startsWith('resolve_') && result.found === false;
+
+        if (isFailure) {
             trackFailedToolCall(state, toolName, args, dataEntry.error);
+        } else if (isEmptyResult || isEntityNotFound) {
+            // Track empty results too - repeating them won't help
+            const reason = isEntityNotFound
+                ? `Entity not found: "${args.name || 'unknown'}"`
+                : 'Query returned 0 rows';
+            trackFailedToolCall(state, toolName, args, reason);
         }
 
         // Record tool invocation for compatibility
@@ -2971,8 +2982,8 @@ Now write your analysis:`;
             // ═══════════════════════════════════════════════════════════════════════
             if (toolName.startsWith('resolve_')) {
                 if (result.found && result.entity) {
-                    const searchTerm = args.term || args.name || 'unknown';
-                    state.resolvedEntities[searchTerm] = result.entity;
+                    const searchName = args.name || 'unknown';
+                    state.resolvedEntities[searchName] = result.entity;
                     state.reflection.entityFound = true;
 
                     // Record in journey
@@ -2988,8 +2999,8 @@ Now write your analysis:`;
                     state.reflection.entityFound = false;
                     state.reflection.journey.push({
                         action: 'entity_not_found',
-                        searchTerm: args.term,
-                        typeHint: args.type_hint || 'auto'
+                        searchName: args.name,
+                        searchType: args.type || 'auto'
                     });
                 }
             }
@@ -3160,7 +3171,7 @@ Now write your analysis:`;
             } else {
                 return {
                     classification: 'ENTITY_NOT_FOUND',
-                    details: { searchTerm: args.term, typeHint: args.type_hint }
+                    details: { searchName: args.name, searchType: args.type }
                 };
             }
         }
