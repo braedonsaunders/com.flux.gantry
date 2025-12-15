@@ -2310,7 +2310,17 @@ Now write your analysis:`;
 
             if (item.success) {
                 lines.push(`    Rows: ${item.rowCount || 0}`);
-                if (item.columns && item.columns.length > 0) {
+                // ═══════════════════════════════════════════════════════════════════════
+                // COLUMN SCHEMA: Show types so LLM can reason about data structure
+                // Critical for chart generation: LLM needs to know which columns are
+                // dates (x-axis labels) vs numbers (y-axis values)
+                // ═══════════════════════════════════════════════════════════════════════
+                if (item.schema && typeof item.schema === 'object') {
+                    const colTypes = Object.entries(item.schema)
+                        .map(([col, info]) => `${col}(${info.type || 'unknown'})`)
+                        .join(', ');
+                    lines.push(`    Columns [type]: ${colTypes}`);
+                } else if (item.columns && item.columns.length > 0) {
                     lines.push(`    Columns: ${item.columns.join(', ')}`);
                 }
                 if (item.summary) {
@@ -2936,6 +2946,14 @@ Now write your analysis:`;
 
             // Add preview for LLM context
             dataEntry.preview = result.rows.slice(0, 5);
+
+            // ═══════════════════════════════════════════════════════════════════════
+            // AGENTIC FIX: Include schema with column types so LLM can reason about
+            // data structure - critical for chart generation (date vs numeric columns)
+            // ═══════════════════════════════════════════════════════════════════════
+            if (dataRef?.summary?.schema) {
+                dataEntry.schema = dataRef.summary.schema;
+            }
 
             // Build summary
             if (result.columns && result.columns.length > 0) {
@@ -6349,38 +6367,6 @@ Now write your analysis:`;
     }
 
     /**
-     * Detect if a value looks like a date string (MM/DD/YYYY, YYYY-MM-DD, etc.)
-     */
-    function looksLikeDate(val) {
-        if (!val || typeof val !== 'string') return false;
-        // Match common date patterns
-        return /^\d{1,2}\/\d{1,2}\/\d{2,4}$/.test(val) ||  // MM/DD/YYYY
-               /^\d{4}-\d{2}-\d{2}/.test(val);             // YYYY-MM-DD
-    }
-
-    /**
-     * Detect if a value is numeric (number or numeric string without currency)
-     */
-    function isNumericValue(val) {
-        if (typeof val === 'number') return true;
-        if (typeof val !== 'string') return false;
-        // Remove currency symbols and commas for check
-        const cleaned = val.replace(/[$,]/g, '').trim();
-        return !isNaN(parseFloat(cleaned)) && !looksLikeDate(val);
-    }
-
-    /**
-     * Extract numeric value from various formats
-     */
-    function extractNumericValue(val) {
-        if (typeof val === 'number') return val;
-        if (typeof val !== 'string') return 0;
-        // Remove currency symbols and commas
-        const cleaned = val.replace(/[$,]/g, '').trim();
-        return parseFloat(cleaned) || 0;
-    }
-
-    /**
      * Build a chart block from a dataRef
      * @param {Object} block - Block with dataRef, chartType, x, y columns
      * @param {Object} state - Current state with dataReferences
@@ -6402,8 +6388,8 @@ Now write your analysis:`;
             }
 
             // Validate x and y columns exist
-            let xCol = block.x;
-            let yCol = block.y;
+            const xCol = block.x;
+            const yCol = block.y;
             if (!data.columns.includes(xCol) || !data.columns.includes(yCol)) {
                 log.debug('buildChartBlock: invalid columns', {
                     x: xCol,
@@ -6411,50 +6397,6 @@ Now write your analysis:`;
                     availableColumns: data.columns
                 });
                 return null;
-            }
-
-            // ═══════════════════════════════════════════════════════════════════════
-            // AUTO-DETECT AND FIX SWAPPED AXES
-            // x should be labels (dates, names), y should be numeric values
-            // If LLM got it backwards, auto-swap them
-            // ═══════════════════════════════════════════════════════════════════════
-            const sampleRow = data.rows[0];
-            const xVal = sampleRow[xCol];
-            const yVal = sampleRow[yCol];
-
-            const xIsNumeric = isNumericValue(xVal);
-            const yIsNumeric = isNumericValue(yVal);
-            const xIsDate = looksLikeDate(xVal);
-            const yIsDate = looksLikeDate(yVal);
-
-            // If x looks numeric/currency and y looks like date/string, swap them
-            if (xIsNumeric && !yIsNumeric) {
-                log.debug('buildChartBlock: auto-swapping axes (x was numeric, y was not)', {
-                    originalX: xCol,
-                    originalY: yCol
-                });
-                const temp = xCol;
-                xCol = yCol;
-                yCol = temp;
-            }
-            // If y looks like a date (not numeric), it's wrong - try to find a better y
-            else if (yIsDate && !yIsNumeric) {
-                // Look for a numeric column to use instead
-                const numericCols = data.columns.filter(col => {
-                    const val = sampleRow[col];
-                    return isNumericValue(val) && col !== xCol;
-                });
-                if (numericCols.length > 0) {
-                    // Prefer amount-like columns
-                    const amountCol = numericCols.find(c =>
-                        /amount|total|sum|count|value|balance|paid/i.test(c)
-                    ) || numericCols[0];
-                    log.debug('buildChartBlock: replacing date y-axis with numeric column', {
-                        originalY: yCol,
-                        newY: amountCol
-                    });
-                    yCol = amountCol;
-                }
             }
 
             // Validate chart type
@@ -6468,18 +6410,11 @@ Now write your analysis:`;
             // Build chart data structure (Plotly-compatible)
             const chartData = {
                 labels: chartRows.map(row => formatCellValue(row[xCol], xCol)),
-                values: chartRows.map(row => extractNumericValue(row[yCol]))
+                values: chartRows.map(row => {
+                    const val = row[yCol];
+                    return typeof val === 'number' ? val : parseFloat(val) || 0;
+                })
             };
-
-            // Validate we got actual numeric values (not all zeros)
-            const hasValidValues = chartData.values.some(v => v !== 0);
-            if (!hasValidValues) {
-                log.debug('buildChartBlock: all values are zero, chart skipped', {
-                    yCol: yCol,
-                    sampleValue: sampleRow[yCol]
-                });
-                return null;
-            }
 
             // Determine title
             const title = block.title || `${yCol} by ${xCol}`;
