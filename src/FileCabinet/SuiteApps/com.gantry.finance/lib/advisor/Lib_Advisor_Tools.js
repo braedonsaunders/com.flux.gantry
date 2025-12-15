@@ -3851,7 +3851,7 @@ Use for: "expense breakdown", "where is money going", "expenses by category"`,
                     INNER JOIN transaction ON tal.transaction = transaction.id
                     INNER JOIN account ON tal.account = account.id
                     LEFT JOIN transactionline tl ON tl.transaction = transaction.id AND tl.mainline = 'F'
-                    WHERE account.accttype = 'Expense'
+                    WHERE account.accttype IN ('Expense', 'OthExpense')
                         AND transaction.posting = 'T'
                         AND transaction.voided = 'F'
                         AND ${periodFilter}

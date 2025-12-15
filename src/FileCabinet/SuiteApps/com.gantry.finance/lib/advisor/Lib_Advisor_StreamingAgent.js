@@ -5203,7 +5203,24 @@ Now write your analysis:`;
                 section += `Columns: ${data.columns.join(', ')}\n`;
             }
 
-            // Show sample data (first 3 rows)
+            // ═══════════════════════════════════════════════════════════════════════
+            // AGENTIC FIX: Show tool-computed summary FIRST (critical for financial reports)
+            // Tools like get_income_statement compute totals across ALL categories
+            // The LLM MUST see these totals to include all P&L categories in response
+            // ═══════════════════════════════════════════════════════════════════════
+            if (summary.toolSummary && typeof summary.toolSummary === 'object') {
+                section += `\n*** COMPUTED TOTALS (use these values!) ***\n`;
+                Object.entries(summary.toolSummary).forEach(([key, value]) => {
+                    // Format numbers nicely
+                    if (typeof value === 'number') {
+                        section += `  ${key}: ${value.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 })}\n`;
+                    } else {
+                        section += `  ${key}: ${value}\n`;
+                    }
+                });
+            }
+
+            // Show sample data (first 3 rows) - secondary to computed totals
             if (data && data.rows && data.rows.length > 0) {
                 section += `\nSample data (first ${Math.min(3, data.rows.length)} rows):\n`;
                 const sampleRows = data.rows.slice(0, 3);
