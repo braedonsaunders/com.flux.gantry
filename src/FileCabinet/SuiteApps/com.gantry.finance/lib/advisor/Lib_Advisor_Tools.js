@@ -1501,6 +1501,372 @@ inventorybalance (stock levels), budget (budget data), ProjectFinancials (projec
             displayName: function(args) {
                 return `Exploring ${args.table} schema...`;
             }
+        },
+
+        // ═══════════════════════════════════════════════════════════════════════════
+        // SEARCH_TRANSACTION_TEXT - Universal text search across all transaction data
+        // ═══════════════════════════════════════════════════════════════════════════
+        search_transaction_text: {
+            name: 'search_transaction_text',
+            shortDescription: 'Search ALL transaction text fields (memos, vendors, items, accounts) for keywords',
+            category: 'discovery',
+            description: `Universal search across ALL text fields in transaction data.
+Use when user mentions a CONCEPT that could appear anywhere: memos, vendor names, item descriptions, account names, etc.
+
+WHEN TO USE THIS vs resolve_entity:
+- resolve_entity: User names a SPECIFIC entity ("Show transactions for Acme Corp")
+- search_transaction_text: User mentions a CONCEPT ("Show me hotel expenses", "variance in software")
+
+This tool searches:
+• GL Account names (e.g., "Travel and Overnight")
+• Vendor/Entity names on transactions (e.g., "Marriott", "Hilton")
+• Transaction header memos (e.g., "Hotel for client meeting")
+• Transaction LINE memos (e.g., "2 nights accommodation")
+• Item/Service descriptions (e.g., "Hotel Booking Service")
+
+Returns categorized results showing WHERE matches were found and amounts.
+Use the results to understand what data exists, then drill down with specific tools.
+
+Examples:
+- "hotels and accommodations" → keywords: ["hotel", "accommodation", "lodging"]
+- "software subscriptions" → keywords: ["software", "subscription", "saas"]
+- "conference expenses" → keywords: ["conference", "convention", "summit"]`,
+            parameters: {
+                type: 'object',
+                properties: {
+                    keywords: {
+                        type: 'array',
+                        items: { type: 'string' },
+                        description: 'Keywords to search for. Include synonyms and related terms based on your knowledge (e.g., for hotels: ["hotel", "accommodation", "lodging", "marriott", "hilton"])'
+                    },
+                    start_date: {
+                        type: 'string',
+                        description: 'Optional: Start date (YYYY-MM-DD). Defaults to last 365 days.'
+                    },
+                    end_date: {
+                        type: 'string',
+                        description: 'Optional: End date (YYYY-MM-DD). Defaults to today.'
+                    },
+                    transaction_types: {
+                        type: 'array',
+                        items: {
+                            type: 'string',
+                            enum: ['ExpRept', 'VendBill', 'VendCred', 'Check', 'CustInvc', 'CustCred', 'Journal']
+                        },
+                        description: 'Optional: Limit to specific transaction types. Defaults to expense types (ExpRept, VendBill, VendCred, Check).'
+                    },
+                    min_amount: {
+                        type: 'number',
+                        description: 'Optional: Minimum transaction amount to include. Helps filter noise.'
+                    }
+                },
+                required: ['keywords']
+            },
+            execute: function(args) {
+                // ═══════════════════════════════════════════════════════════════════════
+                // VALIDATE INPUT
+                // ═══════════════════════════════════════════════════════════════════════
+                if (!args.keywords || !Array.isArray(args.keywords) || args.keywords.length === 0) {
+                    return {
+                        success: false,
+                        error: 'Missing required "keywords" array. Provide search terms based on user\'s query.',
+                        tool: 'search_transaction_text'
+                    };
+                }
+
+                // Filter out empty keywords and limit to reasonable count
+                const keywords = args.keywords
+                    .filter(k => k && typeof k === 'string' && k.trim().length > 0)
+                    .slice(0, 10)  // Max 10 keywords to prevent query explosion
+                    .map(k => k.trim().toLowerCase());
+
+                if (keywords.length === 0) {
+                    return {
+                        success: false,
+                        error: 'No valid keywords provided after filtering.',
+                        tool: 'search_transaction_text'
+                    };
+                }
+
+                // ═══════════════════════════════════════════════════════════════════════
+                // BUILD SEARCH PATTERNS
+                // ═══════════════════════════════════════════════════════════════════════
+                // Create LIKE patterns for each keyword, properly escaped
+                const likePatterns = keywords.map(k => `'%${escapeSqlLike(k)}%'`);
+
+                // Date filters
+                const endDate = args.end_date || new Date().toISOString().split('T')[0];
+                const startDate = args.start_date || (() => {
+                    const d = new Date();
+                    d.setFullYear(d.getFullYear() - 1);
+                    return d.toISOString().split('T')[0];
+                })();
+
+                // Transaction type filter
+                const defaultTypes = ['ExpRept', 'VendBill', 'VendCred', 'Check'];
+                const txnTypes = args.transaction_types && args.transaction_types.length > 0
+                    ? args.transaction_types
+                    : defaultTypes;
+                const typeList = txnTypes.map(t => `'${escapeSql(t)}'`).join(',');
+
+                // Amount filter
+                const minAmount = args.min_amount && args.min_amount > 0 ? args.min_amount : 0;
+
+                // ═══════════════════════════════════════════════════════════════════════
+                // BUILD INDIVIDUAL DIMENSION QUERIES
+                // Each query searches one dimension and returns standardized columns
+                // ═══════════════════════════════════════════════════════════════════════
+
+                // Helper to create the LIKE condition for a specific field
+                const buildLikeCondition = (fieldName) => {
+                    return likePatterns.map(p => `LOWER(${fieldName}) LIKE ${p} ESCAPE '\\\\'`).join(' OR ');
+                };
+
+                // 1. ACCOUNT DIMENSION - Search GL account names
+                const accountQuery = `
+                    SELECT
+                        'ACCOUNT' AS match_type,
+                        acct.id AS match_id,
+                        acct.accountsearchdisplayname AS match_value,
+                        'account_name' AS hit_field,
+                        COUNT(DISTINCT t.id) AS txn_count,
+                        SUM(ABS(COALESCE(tal.debit, 0) - COALESCE(tal.credit, 0))) AS total_amount
+                    FROM account acct
+                    INNER JOIN transactionaccountingline tal ON tal.account = acct.id
+                    INNER JOIN transaction t ON tal.transaction = t.id
+                    WHERE t.posting = 'T'
+                        AND t.voided = 'F'
+                        AND t.type IN (${typeList})
+                        AND t.trandate >= TO_DATE('${escapeSql(startDate)}', 'YYYY-MM-DD')
+                        AND t.trandate <= TO_DATE('${escapeSql(endDate)}', 'YYYY-MM-DD')
+                        AND ABS(COALESCE(tal.debit, 0) - COALESCE(tal.credit, 0)) >= ${minAmount}
+                        AND (${buildLikeCondition('acct.accountsearchdisplayname')})
+                    GROUP BY acct.id, acct.accountsearchdisplayname
+                `;
+
+                // 2. VENDOR DIMENSION - Search vendor names on transactions
+                const vendorQuery = `
+                    SELECT
+                        'VENDOR' AS match_type,
+                        v.id AS match_id,
+                        v.companyname AS match_value,
+                        'vendor_name' AS hit_field,
+                        COUNT(DISTINCT t.id) AS txn_count,
+                        SUM(ABS(COALESCE(t.foreigntotal, 0))) AS total_amount
+                    FROM vendor v
+                    INNER JOIN transaction t ON t.entity = v.id
+                    WHERE t.posting = 'T'
+                        AND t.voided = 'F'
+                        AND t.type IN (${typeList})
+                        AND t.trandate >= TO_DATE('${escapeSql(startDate)}', 'YYYY-MM-DD')
+                        AND t.trandate <= TO_DATE('${escapeSql(endDate)}', 'YYYY-MM-DD')
+                        AND ABS(COALESCE(t.foreigntotal, 0)) >= ${minAmount}
+                        AND (${buildLikeCondition('v.companyname')})
+                    GROUP BY v.id, v.companyname
+                `;
+
+                // 3. HEADER_MEMO DIMENSION - Search transaction memos
+                const headerMemoQuery = `
+                    SELECT
+                        'HEADER_MEMO' AS match_type,
+                        t.id AS match_id,
+                        t.memo AS match_value,
+                        'transaction_memo' AS hit_field,
+                        1 AS txn_count,
+                        ABS(COALESCE(t.foreigntotal, 0)) AS total_amount
+                    FROM transaction t
+                    WHERE t.posting = 'T'
+                        AND t.voided = 'F'
+                        AND t.type IN (${typeList})
+                        AND t.trandate >= TO_DATE('${escapeSql(startDate)}', 'YYYY-MM-DD')
+                        AND t.trandate <= TO_DATE('${escapeSql(endDate)}', 'YYYY-MM-DD')
+                        AND ABS(COALESCE(t.foreigntotal, 0)) >= ${minAmount}
+                        AND t.memo IS NOT NULL
+                        AND (${buildLikeCondition('t.memo')})
+                `;
+
+                // 4. LINE_MEMO DIMENSION - Search transaction line memos
+                const lineMemoQuery = `
+                    SELECT
+                        'LINE_MEMO' AS match_type,
+                        tl.id AS match_id,
+                        tl.memo AS match_value,
+                        'line_memo' AS hit_field,
+                        COUNT(DISTINCT t.id) AS txn_count,
+                        SUM(ABS(COALESCE(tl.netamount, 0))) AS total_amount
+                    FROM transactionline tl
+                    INNER JOIN transaction t ON tl.transaction = t.id
+                    WHERE t.posting = 'T'
+                        AND t.voided = 'F'
+                        AND t.type IN (${typeList})
+                        AND t.trandate >= TO_DATE('${escapeSql(startDate)}', 'YYYY-MM-DD')
+                        AND t.trandate <= TO_DATE('${escapeSql(endDate)}', 'YYYY-MM-DD')
+                        AND ABS(COALESCE(tl.netamount, 0)) >= ${minAmount}
+                        AND tl.memo IS NOT NULL
+                        AND (${buildLikeCondition('tl.memo')})
+                    GROUP BY tl.id, tl.memo
+                `;
+
+                // 5. ITEM DIMENSION - Search item descriptions on lines
+                const itemQuery = `
+                    SELECT
+                        'ITEM' AS match_type,
+                        i.id AS match_id,
+                        i.itemid AS match_value,
+                        'item_name' AS hit_field,
+                        COUNT(DISTINCT t.id) AS txn_count,
+                        SUM(ABS(COALESCE(tl.netamount, 0))) AS total_amount
+                    FROM item i
+                    INNER JOIN transactionline tl ON tl.item = i.id
+                    INNER JOIN transaction t ON tl.transaction = t.id
+                    WHERE t.posting = 'T'
+                        AND t.voided = 'F'
+                        AND t.type IN (${typeList})
+                        AND t.trandate >= TO_DATE('${escapeSql(startDate)}', 'YYYY-MM-DD')
+                        AND t.trandate <= TO_DATE('${escapeSql(endDate)}', 'YYYY-MM-DD')
+                        AND ABS(COALESCE(tl.netamount, 0)) >= ${minAmount}
+                        AND (${buildLikeCondition('i.itemid')} OR ${buildLikeCondition('i.displayname')})
+                    GROUP BY i.id, i.itemid
+                `;
+
+                // ═══════════════════════════════════════════════════════════════════════
+                // EXECUTE QUERIES AND AGGREGATE RESULTS
+                // Run each dimension query separately to avoid UNION complexity issues
+                // ═══════════════════════════════════════════════════════════════════════
+                const results = {
+                    success: true,
+                    keywords_searched: keywords,
+                    date_range: { start: startDate, end: endDate },
+                    transaction_types: txnTypes,
+                    total_matches: 0,
+                    total_amount: 0,
+                    by_dimension: {},
+                    top_transactions: [],
+                    tool: 'search_transaction_text'
+                };
+
+                const dimensionQueries = [
+                    { name: 'ACCOUNT', query: accountQuery },
+                    { name: 'VENDOR', query: vendorQuery },
+                    { name: 'HEADER_MEMO', query: headerMemoQuery },
+                    { name: 'LINE_MEMO', query: lineMemoQuery },
+                    { name: 'ITEM', query: itemQuery }
+                ];
+
+                for (const dim of dimensionQueries) {
+                    try {
+                        // Wrap in SELECT * FROM (...) WHERE ROWNUM <= 25 to limit results
+                        const wrappedQuery = `SELECT * FROM (${dim.query}) WHERE ROWNUM <= 25`;
+                        const queryResult = QueryExecutor.executeQuery(wrappedQuery);
+
+                        if (queryResult.success && queryResult.rows && queryResult.rows.length > 0) {
+                            const matches = queryResult.rows.map(row => ({
+                                id: row.match_id,
+                                value: row.match_value,
+                                hit_field: row.hit_field,
+                                txn_count: parseInt(row.txn_count) || 1,
+                                amount: parseFloat(row.total_amount) || 0
+                            }));
+
+                            // Sort by amount descending within dimension
+                            matches.sort((a, b) => b.amount - a.amount);
+
+                            // Aggregate stats for this dimension
+                            const dimTxnCount = matches.reduce((sum, m) => sum + m.txn_count, 0);
+                            const dimAmount = matches.reduce((sum, m) => sum + m.amount, 0);
+
+                            results.by_dimension[dim.name] = {
+                                match_count: matches.length,
+                                total_txn_count: dimTxnCount,
+                                total_amount: dimAmount,
+                                matches: matches.slice(0, 10) // Top 10 per dimension
+                            };
+
+                            results.total_matches += matches.length;
+                            results.total_amount += dimAmount;
+                        }
+                    } catch (e) {
+                        log.debug('search_transaction_text dimension query failed', {
+                            dimension: dim.name,
+                            error: e.message
+                        });
+                        // Continue with other dimensions
+                    }
+                }
+
+                // ═══════════════════════════════════════════════════════════════════════
+                // GET TOP TRANSACTIONS FOR QUICK DRILL-DOWN
+                // Find the largest individual transactions matching keywords
+                // ═══════════════════════════════════════════════════════════════════════
+                try {
+                    const topTxnQuery = `
+                        SELECT * FROM (
+                            SELECT
+                                t.id,
+                                t.tranid AS document_number,
+                                t.type AS transaction_type,
+                                TO_CHAR(t.trandate, 'YYYY-MM-DD') AS transaction_date,
+                                t.memo,
+                                BUILTIN.DF(t.entity) AS entity_name,
+                                ABS(COALESCE(t.foreigntotal, 0)) AS amount
+                            FROM transaction t
+                            WHERE t.posting = 'T'
+                                AND t.voided = 'F'
+                                AND t.type IN (${typeList})
+                                AND t.trandate >= TO_DATE('${escapeSql(startDate)}', 'YYYY-MM-DD')
+                                AND t.trandate <= TO_DATE('${escapeSql(endDate)}', 'YYYY-MM-DD')
+                                AND ABS(COALESCE(t.foreigntotal, 0)) >= ${minAmount}
+                                AND (
+                                    ${buildLikeCondition('t.memo')}
+                                    OR ${buildLikeCondition('BUILTIN.DF(t.entity)')}
+                                )
+                            ORDER BY ABS(COALESCE(t.foreigntotal, 0)) DESC
+                        ) WHERE ROWNUM <= 10
+                    `;
+
+                    const topResult = QueryExecutor.executeQuery(topTxnQuery);
+                    if (topResult.success && topResult.rows) {
+                        results.top_transactions = topResult.rows.map(row => ({
+                            id: row.id,
+                            document_number: row.document_number,
+                            type: row.transaction_type,
+                            date: row.transaction_date,
+                            memo: row.memo,
+                            entity: row.entity_name,
+                            amount: parseFloat(row.amount) || 0
+                        }));
+                    }
+                } catch (e) {
+                    log.debug('search_transaction_text top transactions query failed', { error: e.message });
+                }
+
+                // ═══════════════════════════════════════════════════════════════════════
+                // BUILD SUMMARY MESSAGE
+                // ═══════════════════════════════════════════════════════════════════════
+                const dimensionCount = Object.keys(results.by_dimension).length;
+
+                if (dimensionCount === 0) {
+                    results.message = `No matches found for keywords: ${keywords.join(', ')}. Try different search terms or broaden the date range.`;
+                    results.suggestions = [
+                        'Try alternative keywords or synonyms',
+                        'Expand the date range',
+                        'Check if the data exists under a different name/category'
+                    ];
+                } else {
+                    const dimSummaries = [];
+                    for (const [dimName, dimData] of Object.entries(results.by_dimension)) {
+                        dimSummaries.push(`${dimName}: ${dimData.match_count} matches ($${Math.round(dimData.total_amount).toLocaleString()})`);
+                    }
+                    results.message = `Found matches in ${dimensionCount} dimension(s): ${dimSummaries.join(', ')}`;
+                }
+
+                results.rowCount = results.total_matches;
+                return results;
+            },
+            displayName: function(args) {
+                const keywords = args.keywords || [];
+                return `Searching transaction text for "${keywords.slice(0, 3).join('", "')}"...`;
+            }
         }
     };
 
