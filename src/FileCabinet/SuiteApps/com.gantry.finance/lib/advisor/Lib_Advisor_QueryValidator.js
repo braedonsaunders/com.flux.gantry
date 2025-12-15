@@ -36,111 +36,60 @@ define(['N/log'], function(log) {
         'apitoken'
     ];
 
-    /**
-     * STANDARD tables - known good tables for autocomplete/suggestions
-     * These are always allowed and used for schema hints
-     */
-    const STANDARD_TABLES = [
-        // Core transaction tables
-        'transaction',
-        'transactionline',
-        'transactionaccountingline',
-        
-        // Entity tables
-        'customer',
-        'vendor',
-        'employee',
-        'contact',
-        'partner',
-        'entity',  // Generic entity table for joins
-        
-        // Accounting tables
-        'account',
-        'accountingperiod',
-        'accounttype',
-        
-        // Item tables
-        'item',
-        'inventoryitem',
-        'noninventoryitem',
-        'serviceitem',
-        'assemblyitem',
-        'kititem',
-        'itemgroup',
-        
-        // Organization tables
-        'subsidiary',
-        'department',
-        'classification',
-        'location',
-        
-        // Project/Job tables
-        'job',
-        'projecttask',
-        'projecttaskassignment',
-        
-        // Time tracking
-        'timebill',
-        'timeentry',
-        
-        // Other common tables
-        'currency',
-        'customlist',
-        'file',
-        'note',
-        'message',
-        'billingaccount',
-        'nexus',
-        'unitstype',
-        
-        // System/utility
-        'dual'
-    ];
+    // DEPRECATED: Dynamic discovery now used via Utils.discoverTableSchema().
+    // Tables are now validated dynamically - blocked tables are rejected,
+    // all others are allowed and will fail at query time if invalid.
+    // Kept for historical reference only.
+    // const STANDARD_TABLES = [
+    //     'transaction', 'transactionline', 'transactionaccountingline',
+    //     'customer', 'vendor', 'employee', 'contact', 'partner', 'entity',
+    //     'account', 'accountingperiod', 'accounttype',
+    //     'item', 'inventoryitem', 'noninventoryitem', 'serviceitem',
+    //     'assemblyitem', 'kititem', 'itemgroup',
+    //     'subsidiary', 'department', 'classification', 'location',
+    //     'job', 'projecttask', 'projecttaskassignment',
+    //     'timebill', 'timeentry',
+    //     'currency', 'customlist', 'file', 'note', 'message',
+    //     'billingaccount', 'nexus', 'unitstype', 'dual'
+    // ];
 
     /**
      * Check if a table is allowed for querying
      * Strategy: Block known-bad, allow everything else (including custom records)
+     * Dynamic discovery will catch truly invalid tables at query time
      * @param {string} tableName - The table name to check
-     * @returns {Object} { allowed: boolean, isStandard?: boolean, isCustomRecord?: boolean, reason?: string }
+     * @returns {Object} { allowed: boolean, isCustomRecord?: boolean, reason?: string }
      */
     function isTableAllowed(tableName) {
         const normalized = tableName.toLowerCase();
-        
-        // Always block sensitive tables
+
+        // Always block sensitive tables - security boundary
         if (BLOCKED_TABLES.includes(normalized)) {
-            return { 
-                allowed: false, 
-                reason: `Table '${tableName}' contains sensitive security data and cannot be queried`
+            return {
+                allowed: false,
+                reason: `Access to table '${tableName}' is not permitted`
             };
         }
-        
-        // Always allow standard tables
-        if (STANDARD_TABLES.includes(normalized)) {
-            return { allowed: true, isStandard: true };
-        }
-        
+
         // Allow all custom records (custrecord_*, customrecord_*)
         if (normalized.startsWith('custrecord') || normalized.startsWith('customrecord')) {
             return { allowed: true, isCustomRecord: true };
         }
-        
+
         // Allow custom lists (customlist_*)
         if (normalized.startsWith('customlist')) {
             return { allowed: true, isCustomList: true };
         }
-        
+
         // Allow custom transaction types (customtransaction_*)
         if (normalized.startsWith('customtransaction')) {
             return { allowed: true, isCustomTransaction: true };
         }
-        
-        // Unknown table - allow but flag as potentially unknown
-        // The query will fail at runtime if the table doesn't exist
-        return { 
-            allowed: true, 
-            isUnknown: true, 
-            warning: `Table '${tableName}' is not a known standard table - query may fail if it doesn't exist`
-        };
+
+        // All other tables - allow through
+        // Log for monitoring but allow - dynamic discovery will catch invalid tables at query time
+        log.debug('Non-standard table queried:', tableName);
+        return { allowed: true };
     }
 
     /**
@@ -491,135 +440,6 @@ define(['N/log'], function(log) {
     }
 
     /**
-     * Get schema information for tables
-     * This helps the AI understand what fields are available
-     */
-    function getTableSchema(tableNames) {
-        // Return commonly used fields for known tables
-        // This is a simplified schema - in production you might query metadata
-        
-        const schemas = {
-            transaction: {
-                description: 'Header-level transaction data',
-                fields: [
-                    'id', 'tranid', 'trandate', 'type', 'entity', 'subsidiary',
-                    'status', 'foreigntotal', 'amountremaining', 'duedate', 'posting',
-                    'memo', 'createddate', 'lastmodifieddate', 'foreignamountremaining'
-                ],
-                commonTypes: [
-                    'CustInvc (Customer Invoice)', 'CashSale', 'CustPymt (Customer Payment)',
-                    'VendBill (Vendor Bill)', 'VendPymt (Vendor Payment)', 'Check',
-                    'Journal', 'Deposit', 'ExpRept (Expense Report)', 'SalesOrd',
-                    'PurchOrd', 'ItemRcpt', 'ItemShip'
-                ],
-                notes: 'Use foreigntotal for amounts. amount/currency fields are NOT exposed in SuiteQL.'
-            },
-            transactionline: {
-                description: 'Line-level transaction data',
-                fields: [
-                    'id', 'transaction', 'linesequencenumber', 'item',
-                    'netamount', 'quantity', 'rate', 'department', 'class', 'location',
-                    'memo', 'entity', 'mainline', 'costestimate'
-                ],
-                notes: 'Use netamount instead of amount. amount/account/debit/credit fields are NOT exposed in SuiteQL. Filter mainline=F for line items.'
-            },
-            customer: {
-                description: 'Customer records',
-                fields: [
-                    'id', 'entityid', 'companyname', 'email', 'phone', 'subsidiary',
-                    'salesrep', 'territory', 'category', 'stage', 'status',
-                    'balance', 'overduebalance', 'creditlimit', 'isinactive'
-                ]
-            },
-            vendor: {
-                description: 'Vendor records',
-                fields: [
-                    'id', 'entityid', 'companyname', 'email', 'phone', 'subsidiary',
-                    'category', 'balance', 'unbilledorders', 'isinactive',
-                    'paymentterms', 'currency'
-                ]
-            },
-            employee: {
-                description: 'Employee records',
-                fields: [
-                    'id', 'entityid', 'firstname', 'lastname', 'email', 'supervisor',
-                    'department', 'subsidiary', 'title', 'hiredate', 'releasedate',
-                    'laborcost', 'isinactive', 'issalesrep'
-                ]
-            },
-            account: {
-                description: 'Chart of accounts',
-                fields: [
-                    'id', 'acctnumber', 'accountsearchdisplayname', 'accttype',
-                    'balance', 'subsidiary', 'isinactive', 'parent',
-                    'generalrate', 'cashflowrate'
-                ],
-                commonTypes: [
-                    'Bank', 'AcctRec (Accounts Receivable)', 'AcctPay (Accounts Payable)',
-                    'Income', 'COGS', 'Expense', 'OthIncome', 'OthExpense',
-                    'Equity', 'FixedAsset', 'OthAsset', 'LongTermLiab'
-                ],
-                notes: 'currency field is NOT exposed in SuiteQL. Use subsidiary to infer currency.'
-            },
-            item: {
-                description: 'Items (products and services)',
-                fields: [
-                    'id', 'itemid', 'displayname', 'description', 'type',
-                    'salesprice', 'cost', 'averagecost', 'quantityonhand',
-                    'quantityonorder', 'reorderpoint', 'subsidiary', 'isinactive',
-                    'incomeaccount', 'cogsaccount', 'assetaccount'
-                ]
-            },
-            department: {
-                description: 'Departments',
-                fields: ['id', 'name', 'parent', 'subsidiary', 'isinactive']
-            },
-            subsidiary: {
-                description: 'Subsidiaries',
-                fields: ['id', 'name', 'currency', 'parent', 'isinactive', 'country']
-            },
-            job: {
-                description: 'Projects/Jobs',
-                fields: [
-                    'id', 'entityid', 'companyname', 'parent', 'subsidiary',
-                    'entitystatus', 'startdate', 'projectedenddate', 'actualenddate',
-                    'isinactive'
-                ]
-            },
-            timebill: {
-                description: 'Time entries',
-                fields: [
-                    'id', 'employee', 'customer', 'item', 'hours', 'trandate',
-                    'department', 'class', 'location', 'memo', 'isbillable',
-                    'price', 'rate'
-                ]
-            },
-            transactionaccountingline: {
-                description: 'Accounting line data with account and debit/credit amounts',
-                fields: [
-                    'id', 'transaction', 'account', 'amount', 'debit', 'credit',
-                    'department', 'class', 'location', 'posting'
-                ],
-                notes: 'Use this table when you need account-level financial data with debit/credit/amount fields. Joins to account table via account field.'
-            }
-        };
-
-        if (!tableNames || tableNames.length === 0) {
-            return schemas;
-        }
-
-        const result = {};
-        tableNames.forEach(name => {
-            const lower = name.toLowerCase();
-            if (schemas[lower]) {
-                result[lower] = schemas[lower];
-            }
-        });
-
-        return result;
-    }
-
-    /**
      * Suggest fixes for common query errors
      */
     function suggestFix(errorMessage, failedQuery) {
@@ -666,11 +486,10 @@ define(['N/log'], function(log) {
         hasFetchFirst: hasFetchFirst,
         hasLimitClause: hasLimitClause,
         hasRowLimit: hasRowLimit,
-        getTableSchema: getTableSchema,
         suggestFix: suggestFix,
         isTableAllowed: isTableAllowed,
         checkTransactionFilters: checkTransactionFilters,
-        STANDARD_TABLES: STANDARD_TABLES,
+        // STANDARD_TABLES removed - use dynamic discovery via Utils.discoverTableSchema()
         BLOCKED_TABLES: BLOCKED_TABLES,
         MAX_ROWS: MAX_ROWS
     };
