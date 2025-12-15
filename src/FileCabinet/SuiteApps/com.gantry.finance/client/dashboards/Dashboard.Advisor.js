@@ -5311,12 +5311,12 @@
             if (item.type === 'list') {
                 let html = '<div class="rich-list">';
                 if (item.title) {
-                    html += `<div class="list-title">${this.escapeHtml(item.title)}</div>`;
+                    html += `<div class="list-title">${this.formatTextInline(item.title)}</div>`;
                 }
                 html += '<ul class="rich-list-items">';
                 if (item.items && Array.isArray(item.items)) {
                     item.items.forEach(li => {
-                        html += `<li>${this.escapeHtml(String(li))}</li>`;
+                        html += `<li>${this.formatTextInline(String(li))}</li>`;
                     });
                 }
                 html += '</ul></div>';
@@ -6322,7 +6322,32 @@
             
             return html;
         },
-        
+
+        /**
+         * Format text with inline markdown only (bold, italic, code)
+         * Use for list items to avoid nested block structures
+         */
+        formatTextInline: function(text) {
+            if (!text) return '';
+
+            // Strip Cohere citation tags
+            text = text.replace(/<co>([^<]*)<\/co:[^>]*>/g, '$1');
+
+            // Escape HTML first
+            let html = text
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;');
+
+            // Inline markdown only - NO block-level (headers, lists)
+            html = html.replace(/\*\*\*(.*?)\*\*\*/g, '<strong><em>$1</em></strong>');
+            html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+            html = html.replace(/\*(.*?)\*/g, '<em>$1</em>');
+            html = html.replace(/`(.*?)`/g, '<code class="md-code">$1</code>');
+
+            return html;
+        },
+
         /**
          * Copy response to clipboard
          */
