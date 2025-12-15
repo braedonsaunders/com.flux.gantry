@@ -1057,24 +1057,179 @@ Only specify a specific dimension if you are CERTAIN which type it is.
                 const searchTerm = args.term || args.name || 'unknown';
                 return `Finding classification "${searchTerm}"...`;
             }
-        },
+        }
+    };
 
+    // ═══════════════════════════════════════════════════════════════════════════
+    // STATIC SCHEMA HINTS
+    // Reference data preserved from legacy explore_schema tool.
+    // These hints provide curated tips, common joins, and gotchas that complement
+    // the dynamic schema discovery from get_record_schema.
+    // ═══════════════════════════════════════════════════════════════════════════
+    const STATIC_SCHEMA_HINTS = {
+        transaction: {
+            key_fields: ['id', 'type', 'tranid', 'entity', 'trandate', 'postingperiod',
+                        'foreigntotal', 'foreignamountunpaid', 'status', 'posting',
+                        'voided', 'memo', 'duedate', 'subsidiary'],
+            common_joins: ['customer', 'vendor', 'transactionline', 'accountingperiod'],
+            tips: [
+                'transaction.amount NOT EXPOSED in SuiteQL - use foreigntotal',
+                'transaction.entity is customer for sales txns, vendor for purchase txns',
+                'type values: CustInvc, CustPymt, VendBill, VendPymt, CashSale, etc.',
+                'Use posting = \'T\' and voided = \'F\' for posted transactions'
+            ],
+            joins: {
+                'entity': 'customer.id or vendor.id (depends on transaction type)',
+                'postingperiod': 'accountingperiod.id',
+                'subsidiary': 'subsidiary.id'
+            }
+        },
+        transactionline: {
+            key_fields: ['id', 'transaction', 'item', 'quantity', 'rate', 'netamount',
+                        'class', 'department', 'location', 'mainline'],
+            common_joins: ['transaction', 'item', 'classification', 'department', 'location'],
+            tips: [
+                'Use mainline = \'F\' for detail lines, \'T\' for summary line',
+                'class, department, location are classification dimensions',
+                'Join to transaction via transactionline.transaction = transaction.id'
+            ],
+            joins: {
+                'transaction': 'transaction.id',
+                'item': 'item.id',
+                'class': 'classification.id',
+                'department': 'department.id',
+                'location': 'location.id'
+            }
+        },
+        transactionaccountingline: {
+            key_fields: ['transaction', 'account', 'debit', 'credit', 'amount'],
+            common_joins: ['transaction', 'account'],
+            tips: [
+                'This is the GL impact of transactions - debits and credits',
+                'Use for GL-level analysis and account activity',
+                'department NOT directly available here - join through transactionline',
+                'amount = debit - credit (net impact)'
+            ],
+            joins: {
+                'transaction': 'transaction.id',
+                'account': 'account.id'
+            }
+        },
+        customer: {
+            key_fields: ['id', 'entityid', 'companyname', 'email', 'phone',
+                        'balance', 'overduebalance', 'depositbalance', 'subsidiary'],
+            common_joins: ['transaction', 'contact', 'address'],
+            tips: [
+                'companyname is the display name (may be null for individuals)',
+                'balance is total outstanding AR',
+                'overduebalance is past due AR'
+            ]
+        },
+        vendor: {
+            key_fields: ['id', 'entityid', 'companyname', 'email', 'phone',
+                        'balance', 'subsidiary'],
+            common_joins: ['transaction', 'contact', 'address'],
+            tips: [
+                'companyname is the display name',
+                'balance is total outstanding AP'
+            ]
+        },
+        account: {
+            key_fields: ['id', 'acctnumber', 'accountsearchdisplayname', 'accttype',
+                        'balance', 'parent', 'isinactive', 'subsidiary'],
+            common_joins: ['transactionaccountingline', 'budget'],
+            tips: [
+                'accountsearchdisplayname is the full account name',
+                'accttype: Bank, Income, Expense, COGS, AcctRec, AcctPay, etc.',
+                'balance is current balance for balance sheet accounts'
+            ]
+        },
+        accountingperiod: {
+            key_fields: ['id', 'periodname', 'startdate', 'enddate', 'isyear', 'isquarter',
+                        'closed', 'alllocked', 'arlocked', 'aplocked', 'fiscalyear'],
+            common_joins: ['transaction', 'budget'],
+            tips: [
+                'isyear = \'T\' for year records, \'F\' for months',
+                'isquarter = \'T\' for quarter records',
+                'Use isyear = \'F\' AND isquarter = \'F\' for monthly periods'
+            ]
+        },
+        inventorybalance: {
+            key_fields: ['item', 'location', 'quantityonhand', 'quantityavailable',
+                        'quantityonorder', 'quantitybackordered'],
+            common_joins: ['item', 'location'],
+            tips: ['Real-time inventory by item/location', 'Join to item for details'],
+            joins: { 'item': 'item.id', 'location': 'location.id' }
+        },
+        budget: {
+            key_fields: ['id', 'account', 'accountingperiod', 'amount', 'subsidiary', 'department', 'class'],
+            common_joins: ['account', 'accountingperiod'],
+            tips: ['Budget amounts by account/period', 'Compare with transactionaccountingline for variance'],
+            joins: { 'account': 'account.id', 'accountingperiod': 'accountingperiod.id' }
+        },
+        ProjectFinancials: {
+            key_fields: ['PROJECT', 'projecttask', 'item', 'ACCOUNT', 'actual', 'amount', 'DATE', 'subsidiary'],
+            common_joins: ['project', 'account'],
+            tips: ['Project P&L data', 'actual=T for actuals', 'Negative=revenue, positive=cost'],
+            joins: { 'PROJECT': 'project.id', 'ACCOUNT': 'account.id' }
+        },
+        employee: {
+            key_fields: ['id', 'entityid', 'firstname', 'lastname', 'email', 'supervisor', 'department', 'subsidiary'],
+            common_joins: ['transaction', 'department'],
+            tips: ['entityid is the employee ID/code', 'supervisor links to another employee record']
+        },
+        item: {
+            key_fields: ['id', 'itemid', 'displayname', 'itemtype', 'baseprice', 'cost', 'isinactive'],
+            common_joins: ['transactionline', 'inventorybalance'],
+            tips: ['itemtype distinguishes inventory, service, non-inventory, etc.', 'Use displayname for user-facing names']
+        },
+        classification: {
+            key_fields: ['id', 'name', 'isinactive', 'parent'],
+            common_joins: ['transactionline'],
+            tips: ['Used for class/category segmentation', 'parent allows hierarchical structure']
+        },
+        department: {
+            key_fields: ['id', 'name', 'isinactive', 'parent'],
+            common_joins: ['transactionline', 'employee'],
+            tips: ['Organizational unit for reporting', 'parent allows hierarchical structure']
+        },
+        location: {
+            key_fields: ['id', 'name', 'isinactive', 'parent'],
+            common_joins: ['transactionline', 'inventorybalance'],
+            tips: ['Physical or logical location', 'parent allows hierarchical structure']
+        },
+        subsidiary: {
+            key_fields: ['id', 'name', 'legalname', 'isinactive', 'parent', 'currency'],
+            common_joins: ['transaction', 'customer', 'vendor', 'account'],
+            tips: ['Legal entity for multi-subsidiary accounts', 'parent allows hierarchy']
+        },
+        project: {
+            key_fields: ['id', 'entityid', 'companyname', 'parent', 'projectexpensetype', 'status'],
+            common_joins: ['ProjectFinancials', 'transaction'],
+            tips: ['Also known as "job" record type', 'parent links to customer or another project']
+        }
+    };
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // DEPRECATED TOOLS
+    // Tools kept for backward compatibility that redirect to newer implementations
+    // ═══════════════════════════════════════════════════════════════════════════
+    const DEPRECATED_TOOLS = {
         explore_schema: {
             name: 'explore_schema',
-            shortDescription: 'Explore NetSuite record schema and fields',
+            shortDescription: 'DEPRECATED: Use get_record_schema instead',
             category: 'discovery',
-            description: `Get available fields and relationships for a NetSuite SuiteQL table.
-Use this to understand what data is available before writing custom queries.
+            deprecated: true,
+            superseded_by: 'get_record_schema',
+            description: `DEPRECATED - Use get_record_schema instead for dynamic schema discovery.
 
-IMPORTANT: Tables are NOT the same as transaction types!
-- VendBill, CustInvc, etc. are TYPE VALUES in the 'transaction' table, NOT table names
-- To query vendor bills: SELECT * FROM transaction WHERE type = 'VendBill'
-- The 'transaction' table contains ALL transaction types
+This tool returns static schema hints only. The get_record_schema tool provides:
+- Dynamic runtime introspection of any record type
+- Support for custom records (custrecord_*, customrecord_*)
+- Complete field lists including custom fields
+- Sublist discovery
 
-Available tables: transaction (all txn types), transactionline (line items),
-transactionaccountingline (GL entries), customer, vendor, employee, item, account,
-classification, department, location, subsidiary, accountingperiod, project,
-inventorybalance (stock levels), budget (budget data), ProjectFinancials (project P&L)`,
+For backward compatibility, this tool redirects to get_record_schema and merges static hints.`,
             parameters: {
                 type: 'object',
                 properties: {
@@ -1085,131 +1240,96 @@ inventorybalance (stock levels), budget (budget data), ProjectFinancials (projec
                                'classification', 'department', 'location', 'subsidiary',
                                'accountingperiod', 'project', 'inventorybalance', 'budget',
                                'ProjectFinancials'],
-                        description: 'SuiteQL table name (NOT transaction type - use transaction table with type filter)'
+                        description: 'DEPRECATED - use get_record_schema for any record type'
                     }
                 },
                 required: ['table']
             },
             execute: function(args) {
-                // Pre-defined schema knowledge for key tables
-                const schemas = {
-                    transaction: {
-                        key_fields: ['id', 'type', 'tranid', 'entity', 'trandate', 'postingperiod',
-                                    'foreigntotal', 'foreignamountunpaid', 'status', 'posting',
-                                    'voided', 'memo', 'duedate', 'subsidiary'],
-                        notes: [
-                            'transaction.amount NOT EXPOSED in SuiteQL - use foreigntotal',
-                            'transaction.entity is customer for sales txns, vendor for purchase txns',
-                            'type values: CustInvc, CustPymt, VendBill, VendPymt, CashSale, etc.',
-                            'Use posting = \'T\' and voided = \'F\' for posted transactions'
-                        ],
-                        joins: {
-                            'entity': 'customer.id or vendor.id (depends on transaction type)',
-                            'postingperiod': 'accountingperiod.id',
-                            'subsidiary': 'subsidiary.id'
-                        }
-                    },
-                    transactionline: {
-                        key_fields: ['id', 'transaction', 'item', 'quantity', 'rate', 'netamount',
-                                    'class', 'department', 'location', 'mainline'],
-                        notes: [
-                            'Use mainline = \'F\' for detail lines, \'T\' for summary line',
-                            'class, department, location are classification dimensions',
-                            'Join to transaction via transactionline.transaction = transaction.id'
-                        ],
-                        joins: {
-                            'transaction': 'transaction.id',
-                            'item': 'item.id',
-                            'class': 'classification.id',
-                            'department': 'department.id',
-                            'location': 'location.id'
-                        }
-                    },
-                    transactionaccountingline: {
-                        key_fields: ['transaction', 'account', 'debit', 'credit', 'amount'],
-                        notes: [
-                            'This is the GL impact of transactions - debits and credits',
-                            'Use for GL-level analysis and account activity',
-                            'department NOT directly available here - join through transactionline',
-                            'amount = debit - credit (net impact)'
-                        ],
-                        joins: {
-                            'transaction': 'transaction.id',
-                            'account': 'account.id'
-                        }
-                    },
-                    customer: {
-                        key_fields: ['id', 'entityid', 'companyname', 'email', 'phone',
-                                    'balance', 'overduebalance', 'depositbalance', 'subsidiary'],
-                        notes: [
-                            'companyname is the display name',
-                            'balance is total outstanding AR',
-                            'overduebalance is past due AR'
-                        ]
-                    },
-                    vendor: {
-                        key_fields: ['id', 'entityid', 'companyname', 'email', 'phone',
-                                    'balance', 'subsidiary'],
-                        notes: [
-                            'companyname is the display name',
-                            'balance is total outstanding AP'
-                        ]
-                    },
-                    account: {
-                        key_fields: ['id', 'acctnumber', 'accountsearchdisplayname', 'accttype',
-                                    'balance', 'parent', 'isinactive', 'subsidiary'],
-                        notes: [
-                            'accountsearchdisplayname is the full account name',
-                            'accttype: Bank, Income, Expense, COGS, AcctRec, AcctPay, etc.',
-                            'balance is current balance for balance sheet accounts'
-                        ]
-                    },
-                    accountingperiod: {
-                        key_fields: ['id', 'periodname', 'startdate', 'enddate', 'isyear', 'isquarter',
-                                    'closed', 'alllocked', 'arlocked', 'aplocked', 'fiscalyear'],
-                        notes: [
-                            'isyear = \'T\' for year records, \'F\' for months',
-                            'isquarter = \'T\' for quarter records',
-                            'Use isyear = \'F\' AND isquarter = \'F\' for monthly periods'
-                        ]
-                    },
-                    inventorybalance: {
-                        key_fields: ['item', 'location', 'quantityonhand', 'quantityavailable',
-                                    'quantityonorder', 'quantitybackordered'],
-                        notes: ['Real-time inventory by item/location', 'Join to item for details'],
-                        joins: { 'item': 'item.id', 'location': 'location.id' }
-                    },
-                    budget: {
-                        key_fields: ['id', 'account', 'accountingperiod', 'amount', 'subsidiary', 'department', 'class'],
-                        notes: ['Budget amounts by account/period', 'Compare with transactionaccountingline for variance'],
-                        joins: { 'account': 'account.id', 'accountingperiod': 'accountingperiod.id' }
-                    },
-                    ProjectFinancials: {
-                        key_fields: ['PROJECT', 'projecttask', 'item', 'ACCOUNT', 'actual', 'amount', 'DATE', 'subsidiary'],
-                        notes: ['Project P&L data', 'actual=T for actuals', 'Negative=revenue, positive=cost'],
-                        joins: { 'PROJECT': 'project.id', 'ACCOUNT': 'account.id' }
-                    }
-                };
+                // Log deprecation warning
+                log.audit('DEPRECATED_TOOL', 'explore_schema called - use get_record_schema instead. Table: ' + args.table);
 
-                const schema = schemas[args.table];
-                if (!schema) {
-                    return {
-                        success: true,
+                try {
+                    // Redirect to dynamic schema discovery
+                    const dynamicResult = Utils.getRecordSchema(args.table);
+
+                    // Get static hints if available
+                    const staticHints = STATIC_SCHEMA_HINTS[args.table] || null;
+
+                    // Build merged response
+                    const response = {
+                        success: dynamicResult.success,
                         table: args.table,
-                        message: 'Schema details not pre-cached. Use with caution.',
-                        tool: 'explore_schema'
+                        tool: 'explore_schema',
+                        _deprecation_notice: 'This tool is deprecated. Use get_record_schema for dynamic schema discovery.',
+                        _superseded_by: 'get_record_schema'
+                    };
+
+                    // Include dynamic schema if available
+                    if (dynamicResult.success && dynamicResult.schema) {
+                        response.schema = dynamicResult.schema;
+                        response.fieldList = dynamicResult.fieldList;
+                        if (dynamicResult.sublistSummary) {
+                            response.sublistSummary = dynamicResult.sublistSummary;
+                        }
+                    }
+
+                    // Merge static hints
+                    if (staticHints) {
+                        response._static_hints = staticHints;
+                        // Include tips prominently since they contain valuable gotchas
+                        if (staticHints.tips) {
+                            response.tips = staticHints.tips;
+                        }
+                        if (staticHints.common_joins) {
+                            response.common_joins = staticHints.common_joins;
+                        }
+                    }
+
+                    // Fallback if dynamic discovery failed
+                    if (!dynamicResult.success && staticHints) {
+                        response.success = true;
+                        response.schema = {
+                            key_fields: staticHints.key_fields,
+                            joins: staticHints.joins
+                        };
+                        response._note = 'Dynamic schema unavailable, returning static hints only';
+                    }
+
+                    return response;
+
+                } catch (e) {
+                    log.error('explore_schema failed', { error: e.message, table: args.table });
+
+                    // Fallback to static hints on error
+                    const staticHints = STATIC_SCHEMA_HINTS[args.table];
+                    if (staticHints) {
+                        return {
+                            success: true,
+                            table: args.table,
+                            schema: {
+                                key_fields: staticHints.key_fields,
+                                joins: staticHints.joins
+                            },
+                            tips: staticHints.tips,
+                            common_joins: staticHints.common_joins,
+                            tool: 'explore_schema',
+                            _deprecation_notice: 'This tool is deprecated. Use get_record_schema for dynamic schema discovery.',
+                            _note: 'Dynamic discovery failed, returning static hints only'
+                        };
+                    }
+
+                    return {
+                        success: false,
+                        error: e.message,
+                        table: args.table,
+                        tool: 'explore_schema',
+                        _deprecation_notice: 'This tool is deprecated. Use get_record_schema instead.'
                     };
                 }
-
-                return {
-                    success: true,
-                    table: args.table,
-                    schema: schema,
-                    tool: 'explore_schema'
-                };
             },
             displayName: function(args) {
-                return `Exploring ${args.table} schema...`;
+                return '[Deprecated] Exploring ' + args.table + ' schema...';
             }
         }
     };
@@ -7593,12 +7713,13 @@ EXAMPLES:
     // TOOL REGISTRY & EXPORTS
     // ═══════════════════════════════════════════════════════════════════════════
 
-    // Combine all tools
+    // Combine all tools (including deprecated for backward compatibility)
     const ALL_TOOLS = {
         ...DISCOVERY_TOOLS,
         ...DATA_TOOLS,
         ...DASHBOARD_TOOLS,
-        ...UTILITY_TOOLS
+        ...UTILITY_TOOLS,
+        ...DEPRECATED_TOOLS
     };
 
     /**
