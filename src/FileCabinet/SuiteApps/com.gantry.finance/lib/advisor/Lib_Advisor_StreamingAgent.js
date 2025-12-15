@@ -1357,6 +1357,12 @@ Now write your analysis:`;
             alternativeToolsQueue: [], // Queue of alternative tools to try
 
             // ═══════════════════════════════════════════════════════════════════════
+            // Failed Tool Tracking - Prevent infinite retry loops
+            // ═══════════════════════════════════════════════════════════════════════
+            failedToolCalls: [],      // Array of { tool, args, error, count } for failed calls
+            toolRetryCount: {},       // Map of "tool:argsHash" -> retry count
+
+            // ═══════════════════════════════════════════════════════════════════════
             // ReAct Pattern State - Reflection and Reasoning
             // ═══════════════════════════════════════════════════════════════════════
             reflection: {
@@ -1744,6 +1750,10 @@ Now write your analysis:`;
                     item.collections.forEach(col => {
                         const preview = col.preview ? ` - Preview: ${col.preview.slice(0, 2).join(', ')}...` : '';
                         lines.push(`      • ${col.name}: ${col.count} items${preview}`);
+                        // Show the refId and query hint so LLM knows exactly how to query
+                        if (col.refId) {
+                            lines.push(`        → Query with: load_collection(refId="${col.refId}", collection="${col.name}")`);
+                        }
                     });
                 }
 
@@ -1794,6 +1804,18 @@ Now write your analysis:`;
             lines.push('\n⚠️ DATA SANITY WARNINGS:');
             warnings.forEach(w => lines.push(`  - ${w}`));
             lines.push('  Consider verifying the data or adjusting your query if these seem unexpected.');
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // FAILED TOOL CALLS: Show what has already failed to prevent retries
+        // ═══════════════════════════════════════════════════════════════════════
+        if (state.failedToolCalls && state.failedToolCalls.length > 0) {
+            lines.push('\n🚫 FAILED TOOL CALLS (DO NOT RETRY WITH SAME ARGUMENTS):');
+            state.failedToolCalls.forEach(f => {
+                lines.push(`  - ${f.tool}(${JSON.stringify(f.args)})`);
+                lines.push(`    Error: ${f.error}`);
+                lines.push(`    Failed ${f.count} time(s) - try different arguments or a different approach`);
+            });
         }
 
         return lines.join('\n');
@@ -1872,6 +1894,45 @@ Now write your analysis:`;
     }
 
     /**
+     * Generate a hash key for tool+args combination to track retries
+     */
+    function getToolArgsKey(toolName, args) {
+        return toolName + ':' + JSON.stringify(args || {});
+    }
+
+    /**
+     * Check if this tool+args combination has already failed too many times
+     */
+    function shouldBlockRetry(state, toolName, args) {
+        const key = getToolArgsKey(toolName, args);
+        const retryCount = state.toolRetryCount[key] || 0;
+        return retryCount >= 2; // Block after 2 failures with same args
+    }
+
+    /**
+     * Track a failed tool call
+     */
+    function trackFailedToolCall(state, toolName, args, error) {
+        const key = getToolArgsKey(toolName, args);
+        state.toolRetryCount[key] = (state.toolRetryCount[key] || 0) + 1;
+
+        // Also add to failedToolCalls array for prompt visibility
+        const existing = state.failedToolCalls.find(f => f.key === key);
+        if (existing) {
+            existing.count++;
+            existing.lastError = error;
+        } else {
+            state.failedToolCalls.push({
+                key: key,
+                tool: toolName,
+                args: args,
+                error: error,
+                count: 1
+            });
+        }
+    }
+
+    /**
      * Execute a single tool and return the result
      */
     function executeToolForReasonAct(state, toolName, args) {
@@ -1885,6 +1946,23 @@ Now write your analysis:`;
                 success: false,
                 error: 'Unknown tool: ' + toolName,
                 rowCount: 0
+            };
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // RETRY PREVENTION: Block if same tool+args already failed multiple times
+        // ═══════════════════════════════════════════════════════════════════════
+        if (shouldBlockRetry(state, toolName, args)) {
+            const key = getToolArgsKey(toolName, args);
+            const failedCall = state.failedToolCalls.find(f => f.key === key);
+            log.debug('REASON_ACT blocking retry', { tool: toolName, args: args, previousFailures: failedCall?.count });
+            return {
+                tool: toolName,
+                args: args,
+                success: false,
+                error: `Tool '${toolName}' with these arguments has already failed ${failedCall?.count || 2} times. Previous error: ${failedCall?.error || 'Unknown'}. Try a different approach or different arguments.`,
+                rowCount: 0,
+                blockedRetry: true
             };
         }
 
@@ -1957,12 +2035,18 @@ Now write your analysis:`;
                     dataEntry.metrics = result.intelligence.metrics;
                 }
 
-                // Extract collections info for LLM awareness
+                // Extract collections info for LLM awareness - INCLUDE refId for querying
                 if (result.intelligence?.collections) {
+                    // Get the base dashboard refId from the stored data
+                    const dashboardRefId = stored.dataRef?.refId || result.intelligence?.refId;
+
                     dataEntry.collections = Object.entries(result.intelligence.collections).map(([name, info]) => ({
                         name: name,
                         count: info.count,
-                        preview: info.preview
+                        preview: info.preview,
+                        // Include the refId so LLM knows how to query this collection
+                        refId: dashboardRefId,
+                        queryHint: `Use load_collection(refId="${dashboardRefId}", collection="${name}") to load full data`
                     }));
                 }
             }
@@ -1992,6 +2076,13 @@ Now write your analysis:`;
             const searchTerm = args.term || args.name || 'unknown';
             state.resolvedEntities[searchTerm] = result.entity;
             dataEntry.resolvedEntity = result.entity;
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // FAILURE TRACKING: Track failed tool calls to prevent infinite retries
+        // ═══════════════════════════════════════════════════════════════════════
+        if (!dataEntry.success && dataEntry.error) {
+            trackFailedToolCall(state, toolName, args, dataEntry.error);
         }
 
         // Record tool invocation for compatibility
