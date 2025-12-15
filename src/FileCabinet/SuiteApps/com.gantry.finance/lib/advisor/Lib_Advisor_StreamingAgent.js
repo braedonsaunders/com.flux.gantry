@@ -5180,6 +5180,7 @@ Now write your analysis:`;
 
     /**
      * Build data summary for REFLECT prompt
+     * AGENTIC STRUCTURAL AWARENESS: Shows categorical distributions, not just sample rows
      */
     function buildDataSummaryForReflection(state) {
         if (state.dataReferences.length === 0) {
@@ -5192,37 +5193,92 @@ Now write your analysis:`;
             const summary = ref.summary || {};
             const toolName = summary.tool || 'Unknown';
 
-            // Load actual data from cache for inspection
-            const data = Cache.loadRows(ref.requestId || state.requestId, ref.refId, 0, 10);
-
             let section = `\n═══ DATA SOURCE ${idx + 1}: ${toolName} ═══\n`;
             section += `RefId: ${ref.refId}\n`;
             section += `Rows: ${summary.rowCount || 0}\n`;
 
-            if (data && data.columns && data.columns.length > 0) {
-                section += `Columns: ${data.columns.join(', ')}\n`;
+            if (summary.columns && summary.columns.length > 0) {
+                section += `Columns: ${summary.columns.join(', ')}\n`;
             }
 
-            // Show sample data (first 3 rows)
-            if (data && data.rows && data.rows.length > 0) {
-                section += `\nSample data (first ${Math.min(3, data.rows.length)} rows):\n`;
-                const sampleRows = data.rows.slice(0, 3);
-                const displayCols = (data.columns || Object.keys(sampleRows[0] || {})).slice(0, 5);
-                sampleRows.forEach((row, i) => {
-                    const values = displayCols.map(col => {
-                        const val = row[col];
-                        if (val === null || val === undefined) return 'null';
-                        if (typeof val === 'number') return val.toLocaleString();
-                        return String(val).substring(0, 30);
+            // ═══════════════════════════════════════════════════════════════════════
+            // STRUCTURAL AWARENESS: Show categorical column distributions
+            // This is the KEY feature - LLM sees ALL categories that exist in data
+            // ═══════════════════════════════════════════════════════════════════════
+            if (summary.categoricalColumns && summary.categoricalColumns.length > 0) {
+                section += `\n*** DATA STRUCTURE (categorical columns with distributions) ***\n`;
+
+                summary.categoricalColumns.forEach(catCol => {
+                    section += `\n  ${catCol.column} (${catCol.uniqueCount} unique values):\n`;
+
+                    // Show distribution with counts and sums
+                    catCol.distribution.forEach(item => {
+                        let line = `    • ${item.value}: ${item.count} rows`;
+                        if (item.sumFormatted && catCol.sumColumn) {
+                            line += `, ${catCol.sumColumn}_total: ${item.sumFormatted}`;
+                        }
+                        section += line + '\n';
                     });
-                    section += `  Row ${i}: ${displayCols.map((c, j) => `${c}=${values[j]}`).join(', ')}\n`;
                 });
+
+                // Show drill-down hint
+                section += `\n  → To filter: load_cached_data(ref_id="${ref.refId}", filter={"column": "value"})\n`;
+                section += `  → To aggregate: load_cached_data(ref_id="${ref.refId}", group_by="column", aggregate_column="amount", aggregate_op="sum")\n`;
+            }
+
+            // ═══════════════════════════════════════════════════════════════════════
+            // NUMERIC COLUMN STATS: Show computed statistics
+            // ═══════════════════════════════════════════════════════════════════════
+            if (summary.schema) {
+                const numericCols = Object.entries(summary.schema)
+                    .filter(([_, schema]) => schema.stats)
+                    .slice(0, 3); // Limit to top 3 numeric columns
+
+                if (numericCols.length > 0) {
+                    section += `\n*** NUMERIC COLUMN STATS ***\n`;
+                    numericCols.forEach(([colName, schema]) => {
+                        const s = schema.stats;
+                        section += `  ${colName}: sum=${formatNumberForSummary(s.sum)}, avg=${formatNumberForSummary(s.avg)}, range=[${formatNumberForSummary(s.min)} to ${formatNumberForSummary(s.max)}]\n`;
+                    });
+                }
+            }
+
+            // ═══════════════════════════════════════════════════════════════════════
+            // STRATIFIED SAMPLE: Show representative rows from each category
+            // Better than "first 3 rows" which can miss entire categories
+            // ═══════════════════════════════════════════════════════════════════════
+            if (summary.stratifiedSample && summary.stratifiedSample.length > 0) {
+                section += `\n*** REPRESENTATIVE SAMPLE (1 per ${summary.stratifiedBy}) ***\n`;
+                summary.stratifiedSample.forEach(sample => {
+                    const parts = [`${summary.stratifiedBy}=${sample.category}`];
+                    if (sample.name) parts.push(`name="${sample.name}"`);
+                    if (sample.value !== undefined) parts.push(`${sample.valueColumn}=${typeof sample.value === 'number' ? sample.value.toLocaleString() : sample.value}`);
+                    section += `  • ${parts.join(', ')}\n`;
+                });
+            } else {
+                // Fallback to traditional sample if no stratified sample
+                const data = Cache.loadRows(ref.requestId || state.requestId, ref.refId, 0, 5);
+                if (data && data.rows && data.rows.length > 0) {
+                    section += `\nSample data (first ${Math.min(3, data.rows.length)} rows):\n`;
+                    const sampleRows = data.rows.slice(0, 3);
+                    const displayCols = (data.columns || Object.keys(sampleRows[0] || {})).slice(0, 5);
+                    sampleRows.forEach((row, i) => {
+                        const values = displayCols.map(col => {
+                            const val = row[col];
+                            if (val === null || val === undefined) return 'null';
+                            if (typeof val === 'number') return val.toLocaleString();
+                            return String(val).substring(0, 30);
+                        });
+                        section += `  Row ${i}: ${displayCols.map((c, j) => `${c}=${values[j]}`).join(', ')}\n`;
+                    });
+                }
             }
 
             // ═══════════════════════════════════════════════════════════════════════
             // DASHBOARD COLLECTIONS: Critical for agentic data loading
             // If this is a dashboard, show available collections that can be loaded
             // ═══════════════════════════════════════════════════════════════════════
+            const data = Cache.loadRows(ref.requestId || state.requestId, ref.refId, 0, 1);
             if (data && data.isDashboard && data.intelligence) {
                 const collections = data.intelligence.collections || {};
                 const collectionNames = Object.keys(collections);
@@ -5255,6 +5311,19 @@ Now write your analysis:`;
         });
 
         return sections.join('\n');
+    }
+
+    /**
+     * Format number for data summary display
+     */
+    function formatNumberForSummary(num) {
+        if (num === null || num === undefined || isNaN(num)) return 'N/A';
+        const absNum = Math.abs(num);
+        const sign = num < 0 ? '-' : '';
+        if (absNum >= 1000000000) return sign + '$' + (absNum / 1000000000).toFixed(1) + 'B';
+        if (absNum >= 1000000) return sign + '$' + (absNum / 1000000).toFixed(1) + 'M';
+        if (absNum >= 1000) return sign + '$' + (absNum / 1000).toFixed(1) + 'K';
+        return sign + '$' + absNum.toFixed(0);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════

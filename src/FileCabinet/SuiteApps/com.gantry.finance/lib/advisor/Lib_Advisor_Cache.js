@@ -555,6 +555,14 @@ define(['N/cache', 'N/log', '../Lib_Dashboard_Registry'], function(cache, log, D
         return sign + '$' + absNum.toFixed(2);
     }
 
+    // ═══════════════════════════════════════════════════════════════════════════
+    // AGENTIC STRUCTURAL DATA AWARENESS
+    // Auto-detect categorical columns, compute distributions, stratified sampling
+    // This ensures LLM knows the COMPLETE structure of data, not just first N rows
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    const CATEGORICAL_THRESHOLD = 50; // Max unique values to be considered categorical
+
     function generateDataSummary(result, toolName) {
         const rows = result.rows || [];
         const columns = result.columns || Object.keys(rows[0] || {});
@@ -572,6 +580,9 @@ define(['N/cache', 'N/log', '../Lib_Dashboard_Registry'], function(cache, log, D
             return summary;
         }
 
+        // ═══════════════════════════════════════════════════════════════════════
+        // STEP 1: Schema detection with column types and stats
+        // ═══════════════════════════════════════════════════════════════════════
         summary.schema = {};
         columns.forEach(col => {
             const type = detectColumnType(rows, col);
@@ -586,30 +597,135 @@ define(['N/cache', 'N/log', '../Lib_Dashboard_Registry'], function(cache, log, D
             summary.schema[col].type === 'number' || summary.schema[col].type === 'currency'
         );
 
-        summary.insights = [];
-        if (numericColumns.length > 0) {
-            const mainCol = numericColumns.find(c =>
-                c.includes('total') || c.includes('revenue') || c.includes('amount') || c.includes('spend')
-            ) || numericColumns[0];
+        // Find the "main" numeric column for aggregations
+        const mainNumericCol = numericColumns.find(c =>
+            c.includes('total') || c.includes('revenue') || c.includes('amount') || c.includes('spend')
+        ) || numericColumns[0];
 
-            const stats = summary.schema[mainCol].stats;
+        // ═══════════════════════════════════════════════════════════════════════
+        // STEP 2: CATEGORICAL COLUMN DETECTION & DISTRIBUTION
+        // This is the KEY agentic feature - LLM sees ALL categories that exist
+        // ═══════════════════════════════════════════════════════════════════════
+        summary.categoricalColumns = [];
+
+        columns.forEach(col => {
+            const colType = summary.schema[col].type;
+            // Only analyze string columns or columns that look categorical
+            if (colType !== 'string' && colType !== 'unknown') return;
+
+            // Get unique values
+            const uniqueValues = new Set();
+            rows.forEach(row => {
+                const val = row[col];
+                if (val !== null && val !== undefined && val !== '') {
+                    uniqueValues.add(val);
+                }
+            });
+
+            // If under threshold, treat as categorical
+            if (uniqueValues.size > 0 && uniqueValues.size <= CATEGORICAL_THRESHOLD) {
+                // Compute distribution: count and sum per category
+                const distribution = {};
+                rows.forEach(row => {
+                    const catValue = row[col];
+                    if (catValue === null || catValue === undefined || catValue === '') return;
+
+                    if (!distribution[catValue]) {
+                        distribution[catValue] = { count: 0, sum: 0 };
+                    }
+                    distribution[catValue].count++;
+
+                    // Sum the main numeric column for this category
+                    if (mainNumericCol) {
+                        const numVal = row[mainNumericCol];
+                        if (typeof numVal === 'number' && !isNaN(numVal)) {
+                            distribution[catValue].sum += numVal;
+                        }
+                    }
+                });
+
+                // Convert to sorted array (by count descending)
+                const distArray = Object.entries(distribution)
+                    .map(([value, stats]) => ({
+                        value,
+                        count: stats.count,
+                        sum: stats.sum,
+                        sumFormatted: mainNumericCol ? formatNumber(stats.sum) : null
+                    }))
+                    .sort((a, b) => b.count - a.count);
+
+                summary.categoricalColumns.push({
+                    column: col,
+                    uniqueCount: uniqueValues.size,
+                    distribution: distArray,
+                    sumColumn: mainNumericCol || null
+                });
+
+                // Mark in schema
+                summary.schema[col].categorical = true;
+                summary.schema[col].uniqueCount = uniqueValues.size;
+            }
+        });
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // STEP 3: Generate insights from ALL numeric columns
+        // ═══════════════════════════════════════════════════════════════════════
+        summary.insights = [];
+        if (numericColumns.length > 0 && mainNumericCol) {
+            const stats = summary.schema[mainNumericCol].stats;
             if (stats) {
-                summary.insights.push(`Total ${mainCol}: ${formatNumber(stats.sum)}`);
+                summary.insights.push(`Total ${mainNumericCol}: ${formatNumber(stats.sum)}`);
                 summary.insights.push(`Average: ${formatNumber(stats.avg)}`);
                 summary.insights.push(`Range: ${formatNumber(stats.min)} - ${formatNumber(stats.max)}`);
 
-                if (rows.length > 0 && stats.sum > 0) {
-                    const topValue = Math.max(...rows.map(r => r[mainCol] || 0));
-                    const concentration = ((topValue / stats.sum) * 100).toFixed(1);
+                if (rows.length > 0 && Math.abs(stats.sum) > 0) {
+                    const topValue = Math.max(...rows.map(r => Math.abs(r[mainNumericCol] || 0)));
+                    const concentration = ((topValue / Math.abs(stats.sum)) * 100).toFixed(1);
                     summary.insights.push(`Top item: ${concentration}% of total`);
                 }
             }
         }
 
+        // ═══════════════════════════════════════════════════════════════════════
+        // STEP 4: STRATIFIED SAMPLING - Show representative rows from each category
+        // Instead of just "first 5 rows", show diversity of data
+        // ═══════════════════════════════════════════════════════════════════════
         const nameCol = columns.find(c =>
             c.includes('name') || c.includes('Name') || c === 'customer_name' || c === 'vendor_name'
         );
 
+        // If we have categorical columns, do stratified sampling
+        if (summary.categoricalColumns.length > 0) {
+            const primaryCatCol = summary.categoricalColumns[0].column;
+            const sampledCategories = new Set();
+            const stratifiedSample = [];
+
+            // Get one representative row per category (up to 10 categories)
+            for (const row of rows) {
+                const catValue = row[primaryCatCol];
+                if (catValue && !sampledCategories.has(catValue) && stratifiedSample.length < 10) {
+                    sampledCategories.add(catValue);
+                    const sampleRow = { category: catValue };
+                    if (nameCol) sampleRow.name = row[nameCol];
+                    if (mainNumericCol) {
+                        sampleRow.value = row[mainNumericCol];
+                        sampleRow.valueColumn = mainNumericCol;
+                    }
+                    // Include a few other columns for context
+                    columns.slice(0, 4).forEach(col => {
+                        if (col !== primaryCatCol && col !== nameCol && col !== mainNumericCol) {
+                            sampleRow[col] = row[col];
+                        }
+                    });
+                    stratifiedSample.push(sampleRow);
+                }
+            }
+
+            summary.stratifiedSample = stratifiedSample;
+            summary.stratifiedBy = primaryCatCol;
+        }
+
+        // Also keep traditional preview for backwards compatibility
         summary.preview = rows.slice(0, 5).map((row, idx) => {
             const preview = { rank: idx + 1 };
             if (nameCol) preview.name = row[nameCol];
@@ -735,13 +851,186 @@ define(['N/cache', 'N/log', '../Lib_Dashboard_Registry'], function(cache, log, D
         return { refId, column, operation, result, count: values.length };
     }
 
+    // ═══════════════════════════════════════════════════════════════════════════
+    // AGENTIC DATA ACCESS: Filter and Group-By Aggregate for cached query results
+    // Enables LLM to drill into ANY cached data, not just dashboards
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Filter cached data rows by column value(s)
+     * @param {string} requestId - Request ID
+     * @param {string} refId - Data reference ID
+     * @param {Object} filterObj - Filter criteria: { column: value } or { column: { op: 'eq'|'gt'|'lt'|'gte'|'lte'|'contains'|'in', value: X } }
+     * @returns {Object} Filtered rows with metadata
+     */
+    function dataFilter(requestId, refId, filterObj) {
+        const data = dataLoad(requestId, refId);
+        if (!data) return null;
+
+        if (!filterObj || typeof filterObj !== 'object') {
+            return { refId, rows: data.rows, columns: data.columns, totalRows: data.rows.length, filtered: false };
+        }
+
+        const filteredRows = data.rows.filter(row => {
+            for (const [column, condition] of Object.entries(filterObj)) {
+                const rowValue = row[column];
+
+                // Simple equality: { category: 'Expense' }
+                if (typeof condition !== 'object' || condition === null) {
+                    if (rowValue !== condition) return false;
+                    continue;
+                }
+
+                // Complex condition: { amount: { op: 'gt', value: 1000 } }
+                const op = condition.op || 'eq';
+                const compareValue = condition.value;
+
+                switch (op) {
+                    case 'eq':
+                        if (rowValue !== compareValue) return false;
+                        break;
+                    case 'neq':
+                        if (rowValue === compareValue) return false;
+                        break;
+                    case 'gt':
+                        if (!(rowValue > compareValue)) return false;
+                        break;
+                    case 'gte':
+                        if (!(rowValue >= compareValue)) return false;
+                        break;
+                    case 'lt':
+                        if (!(rowValue < compareValue)) return false;
+                        break;
+                    case 'lte':
+                        if (!(rowValue <= compareValue)) return false;
+                        break;
+                    case 'contains':
+                        if (!String(rowValue).toLowerCase().includes(String(compareValue).toLowerCase())) return false;
+                        break;
+                    case 'in':
+                        if (!Array.isArray(compareValue) || !compareValue.includes(rowValue)) return false;
+                        break;
+                    default:
+                        if (rowValue !== compareValue) return false;
+                }
+            }
+            return true;
+        });
+
+        return {
+            refId,
+            rows: filteredRows,
+            columns: data.columns,
+            rowCount: filteredRows.length,
+            totalRows: data.rows.length,
+            filtered: true,
+            filterApplied: filterObj
+        };
+    }
+
+    /**
+     * Aggregate cached data with GROUP BY support
+     * @param {string} requestId - Request ID
+     * @param {string} refId - Data reference ID
+     * @param {string} groupByColumn - Column to group by (null for overall aggregate)
+     * @param {string} aggregateColumn - Column to aggregate
+     * @param {string} operation - sum, avg, min, max, count
+     * @returns {Object} Aggregated results by group
+     */
+    function dataAggregateGroupBy(requestId, refId, groupByColumn, aggregateColumn, operation) {
+        const data = dataLoad(requestId, refId);
+        if (!data) return null;
+
+        operation = (operation || 'sum').toLowerCase();
+
+        // If no groupBy, return overall aggregate
+        if (!groupByColumn) {
+            const result = dataAggregate(requestId, refId, aggregateColumn, operation);
+            return {
+                refId,
+                grouped: false,
+                aggregateColumn,
+                operation,
+                result: result ? result.result : null
+            };
+        }
+
+        // Group rows by the groupBy column
+        const groups = {};
+        data.rows.forEach(row => {
+            const groupKey = row[groupByColumn];
+            if (groupKey === undefined || groupKey === null) return;
+
+            if (!groups[groupKey]) {
+                groups[groupKey] = [];
+            }
+            groups[groupKey].push(row);
+        });
+
+        // Compute aggregate for each group
+        const results = [];
+        for (const [groupValue, groupRows] of Object.entries(groups)) {
+            const values = groupRows
+                .map(row => row[aggregateColumn])
+                .filter(v => typeof v === 'number' && !isNaN(v));
+
+            let aggregateResult = null;
+            if (values.length > 0) {
+                switch (operation) {
+                    case 'sum':
+                        aggregateResult = values.reduce((a, b) => a + b, 0);
+                        break;
+                    case 'avg':
+                    case 'average':
+                        aggregateResult = values.reduce((a, b) => a + b, 0) / values.length;
+                        break;
+                    case 'min':
+                        aggregateResult = Math.min(...values);
+                        break;
+                    case 'max':
+                        aggregateResult = Math.max(...values);
+                        break;
+                    case 'count':
+                        aggregateResult = values.length;
+                        break;
+                }
+            }
+
+            results.push({
+                [groupByColumn]: groupValue,
+                rowCount: groupRows.length,
+                [aggregateColumn + '_' + operation]: aggregateResult
+            });
+        }
+
+        // Sort by aggregate value descending (for sum/avg/max) or ascending (for min)
+        const sortDesc = ['sum', 'avg', 'average', 'max', 'count'].includes(operation);
+        results.sort((a, b) => {
+            const aVal = a[aggregateColumn + '_' + operation] || 0;
+            const bVal = b[aggregateColumn + '_' + operation] || 0;
+            return sortDesc ? bVal - aVal : aVal - bVal;
+        });
+
+        return {
+            refId,
+            grouped: true,
+            groupByColumn,
+            aggregateColumn,
+            operation,
+            groups: results,
+            groupCount: results.length
+        };
+    }
+
     function dataExecuteCommand(requestId, command) {
-        const { action, refId, start, end, columns, column, operation } = command;
+        const { action, refId, start, end, columns, column, operation, filter, groupBy } = command;
 
         switch (action) {
             case 'LOAD_ROWS': return dataLoadRows(requestId, refId, start || 0, end || 9);
             case 'LOAD_COLUMNS': return dataLoadColumns(requestId, refId, columns || []);
             case 'AGGREGATE': return dataAggregate(requestId, refId, column, operation || 'sum');
+            case 'FILTER': return dataFilter(requestId, refId, filter);
+            case 'GROUP_BY': return dataAggregateGroupBy(requestId, refId, groupBy, column, operation || 'sum');
             case 'LOAD_ALL': return dataLoad(requestId, refId);
             default: return { error: `Unknown command: ${action}` };
         }
@@ -1329,6 +1618,8 @@ define(['N/cache', 'N/log', '../Lib_Dashboard_Registry'], function(cache, log, D
         loadRows: dataLoadRows,
         loadColumns: dataLoadColumns,
         aggregate: dataAggregate,
+        filter: dataFilter,
+        aggregateGroupBy: dataAggregateGroupBy,
         executeCommand: dataExecuteCommand,
         formatReferenceForPrompt: dataFormatReferenceForPrompt,
         generateSummary: generateDataSummary,

@@ -3851,7 +3851,7 @@ Use for: "expense breakdown", "where is money going", "expenses by category"`,
                     INNER JOIN transaction ON tal.transaction = transaction.id
                     INNER JOIN account ON tal.account = account.id
                     LEFT JOIN transactionline tl ON tl.transaction = transaction.id AND tl.mainline = 'F'
-                    WHERE account.accttype = 'Expense'
+                    WHERE account.accttype IN ('Expense', 'OthExpense')
                         AND transaction.posting = 'T'
                         AND transaction.voided = 'F'
                         AND ${periodFilter}
@@ -5980,31 +5980,35 @@ Use to understand what "YTD", "this quarter", etc. mean for this organization.`,
 
         load_cached_data: {
             name: 'load_cached_data',
-            shortDescription: 'Load/drill-down into previously fetched data',
+            shortDescription: 'Load/filter/aggregate previously fetched data',
             category: 'utility',
-            description: `Load data from cache - use this to access previously fetched data or drill into dashboard collections.
+            description: `Load data from cache - drill into dashboard collections OR query results with filter/aggregate support.
 
 USE THIS TOOL WHEN:
 1. User asks for more details about data you already have (drill-down)
-2. User wants to see a specific collection from a dashboard (e.g., "show me the weekly projection")
-3. User asks to filter or sort previously loaded data
-4. You need to access data stored with a refId from a previous response
+2. User wants to see a specific collection from a dashboard
+3. User asks to filter previously loaded data (e.g., "show me only expenses")
+4. User needs aggregates by category (e.g., "sum by category", "total per account type")
+5. You need to access data stored with a refId from a previous response
 
-TYPES OF DATA YOU CAN ACCESS:
-1. Dashboard Collections: Use refId from dashboard + collection_name (e.g., "weeklyProjection", "arBuckets")
-2. Query Results: Use refId from previous query to load more rows or filter
-3. Any cached data: Use the refId shown in previous responses
+WORKS FOR BOTH DASHBOARDS AND QUERY RESULTS:
+1. Dashboard Collections: Use refId + collection_name
+2. Query Results: Use refId + filter/group_by for drill-down
 
 EXAMPLES:
-- Load weekly projection: { "ref_id": "dash_cash_abc123", "collection_name": "weeklyProjection" }
-- Load with filter: { "ref_id": "dash_cash_abc123", "collection_name": "arBuckets", "filter": { "amount": { "min": 10000 } } }
-- Load query rows: { "ref_id": "ref_geta_xyz789", "start_row": 0, "end_row": 49 }`,
+- Filter query rows: { "ref_id": "ref_geti_abc123", "filter": { "category": "Operating Expenses" } }
+- Sum by category: { "ref_id": "ref_geti_abc123", "group_by": "category", "aggregate_column": "amount", "aggregate_op": "sum" }
+- Dashboard collection: { "ref_id": "dash_cash_abc123", "collection_name": "arBuckets" }
+- Filter with operator: { "ref_id": "ref_xyz", "filter": { "amount": { "op": "gt", "value": 10000 } } }
+
+FILTER OPERATORS: eq, neq, gt, gte, lt, lte, contains, in
+AGGREGATE OPERATIONS: sum, avg, min, max, count`,
             parameters: {
                 type: 'object',
                 properties: {
                     ref_id: {
                         type: 'string',
-                        description: 'The refId from a previous tool result (e.g., "dash_cash_abc123" or "ref_geta_xyz789")'
+                        description: 'The refId from a previous tool result (e.g., "dash_cash_abc123" or "ref_geti_xyz789")'
                     },
                     request_id: {
                         type: 'string',
@@ -6012,23 +6016,36 @@ EXAMPLES:
                     },
                     collection_name: {
                         type: 'string',
-                        description: 'For dashboards: name of the collection to load (e.g., "weeklyProjection", "arBuckets", "topCustomers")'
-                    },
-                    start_row: {
-                        type: 'number',
-                        description: 'For query results: starting row index (0-based). Default: 0'
-                    },
-                    end_row: {
-                        type: 'number',
-                        description: 'For query results: ending row index (inclusive). Default: 49'
+                        description: 'For dashboards: name of the collection to load (e.g., "weeklyProjection", "arBuckets")'
                     },
                     filter: {
                         type: 'object',
-                        description: 'Optional filter for collections. Format: { "fieldName": value } or { "fieldName": { "min": N, "max": N, "contains": "text" } }'
+                        description: 'Filter rows by column value. Simple: { "category": "Expense" }. With operator: { "amount": { "op": "gt", "value": 1000 } }. Operators: eq, neq, gt, gte, lt, lte, contains, in'
+                    },
+                    group_by: {
+                        type: 'string',
+                        description: 'Column to group by for aggregation (e.g., "category", "account_type"). Use with aggregate_column.'
+                    },
+                    aggregate_column: {
+                        type: 'string',
+                        description: 'Column to aggregate when using group_by (e.g., "amount"). Required if group_by is specified.'
+                    },
+                    aggregate_op: {
+                        type: 'string',
+                        enum: ['sum', 'avg', 'min', 'max', 'count'],
+                        description: 'Aggregation operation. Default: sum'
+                    },
+                    start_row: {
+                        type: 'number',
+                        description: 'Starting row index (0-based) when loading raw rows. Default: 0'
+                    },
+                    end_row: {
+                        type: 'number',
+                        description: 'Ending row index (inclusive) when loading raw rows. Default: 49'
                     },
                     sort: {
                         type: 'object',
-                        description: 'Optional sort for collections. Format: { "field": "fieldName", "direction": "asc" or "desc" }'
+                        description: 'Sort results. Format: { "field": "fieldName", "direction": "asc" or "desc" }'
                     },
                     limit: {
                         type: 'number',
@@ -6122,11 +6139,85 @@ EXAMPLES:
                         };
 
                     } else {
-                        // Load from DataStore (query results)
+                        // ═══════════════════════════════════════════════════════════════
+                        // AGENTIC DATA ACCESS: Full filter/aggregate support for query results
+                        // Enables LLM to drill into ANY cached data, not just dashboards
+                        // ═══════════════════════════════════════════════════════════════
+
+                        // Case 1: GROUP BY aggregation
+                        if (args.group_by && args.aggregate_column) {
+                            const groupResult = Cache.aggregateGroupBy(
+                                requestId,
+                                refId,
+                                args.group_by,
+                                args.aggregate_column,
+                                args.aggregate_op || 'sum'
+                            );
+
+                            if (!groupResult) {
+                                return {
+                                    success: false,
+                                    error: 'Data not found or expired',
+                                    hint: 'The cached data may have expired. Try re-running the original query.',
+                                    refId: refId,
+                                    tool: 'load_cached_data'
+                                };
+                            }
+
+                            return {
+                                success: true,
+                                source: 'query_aggregate',
+                                refId: refId,
+                                grouped: true,
+                                groupByColumn: args.group_by,
+                                aggregateColumn: args.aggregate_column,
+                                operation: args.aggregate_op || 'sum',
+                                rows: groupResult.groups,
+                                columns: [args.group_by, 'rowCount', args.aggregate_column + '_' + (args.aggregate_op || 'sum')],
+                                rowCount: groupResult.groupCount,
+                                tool: 'load_cached_data'
+                            };
+                        }
+
+                        // Case 2: Filter rows
+                        if (args.filter && typeof args.filter === 'object') {
+                            const filterResult = Cache.filter(requestId, refId, args.filter);
+
+                            if (!filterResult) {
+                                return {
+                                    success: false,
+                                    error: 'Data not found or expired',
+                                    hint: 'The cached data may have expired. Try re-running the original query.',
+                                    refId: refId,
+                                    tool: 'load_cached_data'
+                                };
+                            }
+
+                            // Apply limit if specified
+                            let rows = filterResult.rows;
+                            if (args.limit && rows.length > args.limit) {
+                                rows = rows.slice(0, args.limit);
+                            }
+
+                            return {
+                                success: true,
+                                source: 'query_filter',
+                                refId: refId,
+                                filtered: true,
+                                filterApplied: args.filter,
+                                rows: rows,
+                                columns: filterResult.columns,
+                                rowCount: rows.length,
+                                totalMatching: filterResult.rowCount,
+                                totalRows: filterResult.totalRows,
+                                tool: 'load_cached_data'
+                            };
+                        }
+
+                        // Case 3: Load by row range (original behavior)
                         const startRow = args.start_row || 0;
                         const endRow = args.end_row || 49;
 
-                        // Try to load with provided requestId, then fall back to refId-only lookup
                         let data = null;
                         if (requestId) {
                             data = Cache.loadRows(requestId, refId, startRow, endRow);
