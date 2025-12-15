@@ -63,25 +63,6 @@ define([
         });
 
         try {
-            // Check for simple conversational patterns (no agent needed)
-            const conversationalResponse = matchConversationalPattern(message);
-            if (conversationalResponse) {
-                // Create progress entry without agent state
-                Cache.create(requestId, message, null);
-                Cache.complete(requestId, {
-                    answer: conversationalResponse,
-                    richContent: [{ type: 'text', content: conversationalResponse }],
-                    sessionContext: sessionContext,
-                    model: 'Gantry',
-                    provider: 'system'
-                });
-
-                return {
-                    request_id: requestId,
-                    status: 'complete'
-                };
-            }
-
             // Initialize Streaming Agent
             const agentState = StreamingAgent.initState(message, sessionContext, requestId, history);
 
@@ -260,79 +241,6 @@ define([
             Cache.releaseProcessingLock(requestId);
             return Cache.getPollingResponse(requestId);
         }
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════════
-    // CONVERSATIONAL PATTERN MATCHING
-    // ═══════════════════════════════════════════════════════════════════════════
-
-    /**
-     * Match simple conversational patterns that don't need LLM
-     */
-    function matchConversationalPattern(message) {
-        if (!message) return null;
-
-        const lower = message.toLowerCase().trim();
-
-        // Greetings
-        const greetings = ['hi', 'hello', 'hey', 'good morning', 'good afternoon', 'good evening'];
-        if (greetings.some(g => lower === g || lower === g + '!')) {
-            return "Hello! I'm your financial advisor. Ask me anything about your company's finances - cash position, vendor spend, customer revenue, GL activity, or use one of our specialized dashboards for deeper analysis.";
-        }
-
-        // Thanks
-        const thanks = ['thanks', 'thank you', 'thx', 'ty'];
-        if (thanks.some(t => lower === t || lower === t + '!')) {
-            return "You're welcome! Let me know if you have any other financial questions.";
-        }
-
-        // Help
-        if (lower === 'help' || lower === '?') {
-            return getHelpMessage();
-        }
-
-        return null;
-    }
-
-    /**
-     * Get help message
-     */
-    function getHelpMessage() {
-        return `**I can help you with:**
-
-**Cash & Treasury**
-- Cash position, bank balances, runway
-- Cash flow projections
-
-**Accounts Payable**
-- AP aging, vendor balances
-- Vendor spend analysis
-
-**Accounts Receivable**
-- AR aging, customer balances
-- Customer revenue analysis
-
-**General Ledger**
-- GL activity by account, class, or department
-- Trial balance
-- Variance analysis
-
-**Dashboards** (ask about any):
-- Treasury (cashflow)
-- Profitability Pulse (health)
-- Rate Engine (burden)
-- Utilization (time)
-- Sentinel (integrity)
-- Procurement (vendor performance)
-- Revenue Intelligence (customer value)
-- Cost Dynamics (spend velocity)
-
-**Example questions:**
-- "What's our cash position?"
-- "Show me AP aging"
-- "Top 10 customers by revenue"
-- "GL activity for the Hotels class"
-- "What's causing the variance in expenses?"`;
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
