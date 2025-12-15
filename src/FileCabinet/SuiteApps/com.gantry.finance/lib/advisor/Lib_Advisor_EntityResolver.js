@@ -73,6 +73,184 @@ define([
     const escapeSqlLike = Utils.escapeSqlLike;
 
     // ═══════════════════════════════════════════════════════════════════════════
+    // DYNAMIC ENTITY DISCOVERY
+    // Allows resolution of custom entity types and custom records
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    // In-memory cache for dynamic entity configs (persists for request lifecycle)
+    const dynamicConfigCache = {};
+
+    /**
+     * Find the ID field from a list of schema fields
+     * Priority: id, internalid, recordid, then any *id field
+     * @param {Array} fields - Array of field objects with id and type properties
+     * @returns {string} The identified ID field name
+     */
+    function findIdField(fields) {
+        // Priority order for ID fields
+        const priorities = ['id', 'internalid', 'recordid'];
+        for (const p of priorities) {
+            if (fields.find(f => f.id.toLowerCase() === p)) return p;
+        }
+        // Fallback to first id-like field that's an integer
+        const idField = fields.find(f => f.id.toLowerCase().endsWith('id') && f.type === 'integer');
+        return idField?.id || 'id';
+    }
+
+    /**
+     * Find the name field from a list of schema fields
+     * Priority: common name fields, then first text field
+     * @param {Array} fields - Array of field objects with id and type properties
+     * @returns {string} The identified name field name
+     */
+    function findNameField(fields) {
+        // Priority order for name fields
+        const priorities = ['companyname', 'entityid', 'name', 'displayname', 'title', 'altname'];
+        for (const p of priorities) {
+            if (fields.find(f => f.id.toLowerCase() === p)) return p;
+        }
+        // Fallback to first text field
+        const textField = fields.find(f => f.type === 'text' || f.type === 'varchar');
+        return textField?.id || 'name';
+    }
+
+    /**
+     * Find all text fields suitable for search
+     * @param {Array} fields - Array of field objects with id and type properties
+     * @returns {Array} Array of searchable field names (max 5)
+     */
+    function findSearchableFields(fields) {
+        return fields
+            .filter(f => ['text', 'varchar', 'email'].includes(f.type?.toLowerCase()))
+            .map(f => f.id)
+            .slice(0, 5); // Limit to 5 fields for performance
+    }
+
+    /**
+     * Discover entity configuration dynamically for unknown types
+     * Uses schema introspection to find name/id fields
+     * @param {string} recordType - The record type to discover
+     * @param {Object} context - Optional context with cache
+     * @returns {Object|null} Entity config or null if not discoverable
+     */
+    function discoverEntityConfig(recordType, context) {
+        // Check in-memory cache first
+        const cacheKey = `entity_config_${recordType}`;
+        if (dynamicConfigCache[cacheKey]) {
+            return dynamicConfigCache[cacheKey];
+        }
+
+        // Check context cache if available
+        const cached = context?.cache?.get?.(cacheKey);
+        if (cached) {
+            dynamicConfigCache[cacheKey] = cached;
+            return cached;
+        }
+
+        try {
+            // Use existing dynamic schema discovery from Utils
+            const schema = Utils.getRecordSchema ? Utils.getRecordSchema(recordType) : null;
+
+            if (!schema || !schema.fields) {
+                log.debug('Could not get schema for record type', { recordType: recordType });
+                return null;
+            }
+
+            const fields = schema.fields;
+
+            // Build config heuristically from schema
+            const config = {
+                table: recordType,
+                idField: findIdField(fields),
+                nameField: findNameField(fields),
+                codeField: findNameField(fields), // Use name field as code field fallback
+                searchFields: findSearchableFields(fields),
+                isDynamic: true
+            };
+
+            // Cache for future use
+            dynamicConfigCache[cacheKey] = config;
+            if (context?.cache?.set) {
+                context.cache.set(cacheKey, config, 3600); // 1 hour TTL
+            }
+
+            log.debug('Dynamically discovered entity config', {
+                recordType: recordType,
+                config: config
+            });
+
+            return config;
+        } catch (error) {
+            log.debug('Could not discover entity config', {
+                recordType: recordType,
+                error: error.message || error
+            });
+            return null;
+        }
+    }
+
+    /**
+     * Get entity configuration, checking static config first then dynamic discovery
+     * @param {string} entityType - The entity type to get config for
+     * @param {Object} context - Optional context with cache
+     * @returns {Object|null} Entity config or null if not found
+     */
+    function getEntityConfig(entityType, context) {
+        // Check static config first (faster)
+        if (ENTITY_CONFIG[entityType]) {
+            return ENTITY_CONFIG[entityType];
+        }
+
+        // Try dynamic discovery for unknown types
+        const dynamicConfig = discoverEntityConfig(entityType, context);
+
+        if (dynamicConfig) {
+            log.debug('Using dynamically discovered entity config', { entityType: entityType });
+            return dynamicConfig;
+        }
+
+        // Return null - will trigger 'auto' fallback
+        return null;
+    }
+
+    /**
+     * Discover custom records that might be entity-like
+     * Finds custom record types with name-like fields
+     * @param {Object} context - Context for query execution
+     * @returns {Array} Array of custom record scriptids
+     */
+    function discoverCustomEntityRecords(context) {
+        // Check cache first
+        const cacheKey = 'custom_entity_records';
+        if (dynamicConfigCache[cacheKey]) {
+            return dynamicConfigCache[cacheKey];
+        }
+
+        const sql = `
+            SELECT scriptid
+            FROM customrecordtype
+            WHERE scriptid LIKE 'customrecord_%'
+            ORDER BY scriptid
+            FETCH FIRST 20 ROWS ONLY
+        `;
+
+        try {
+            const result = QueryExecutor.executeQuery(sql);
+            if (result.success && result.rows) {
+                const records = result.rows.map(r => r.scriptid);
+                dynamicConfigCache[cacheKey] = records;
+                return records;
+            }
+        } catch (error) {
+            log.debug('Could not discover custom entity records', {
+                error: error.message || error
+            });
+        }
+
+        return [];
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
     // PRIMARY RESOLUTION INTERFACE (v2 - LLM-driven)
     // These functions are called by the resolve_entity tool
     // ═══════════════════════════════════════════════════════════════════════════
@@ -86,73 +264,165 @@ define([
     }
 
     /**
-     * Synchronous entity resolution (for legacy code)
+     * Search for entities in a specific table using the provided config
+     * @param {string} term - Search term
+     * @param {Object} config - Entity configuration with table, nameField, codeField
+     * @param {string} entityType - The entity type being searched
+     * @param {string} preferredType - Optional preferred type for scoring
+     * @returns {Array} Array of matching candidates
      */
-    function resolveEntitySync(userTerm, entityType, preferredType) {
+    function searchEntityInTable(term, config, entityType, preferredType) {
+        const candidates = [];
+
+        const termSafe = escapeSql(term);
+        const termSafeLike = escapeSqlLike(term);
+
+        // Build query, handling cases where codeField might not exist
+        const codeFieldSelect = config.codeField ? `, ${config.codeField} AS code` : '';
+        const codeFieldWhere = config.codeField
+            ? `OR LOWER(${config.codeField}) LIKE '%' || LOWER('${termSafeLike}') || '%' ESCAPE '\\'`
+            : '';
+
+        const query = `
+            SELECT * FROM (
+                SELECT
+                    id,
+                    ${config.nameField} AS name
+                    ${codeFieldSelect},
+                    CASE
+                        WHEN LOWER(${config.nameField}) = LOWER('${termSafe}') THEN 1.00
+                        WHEN LOWER(${config.nameField}) LIKE LOWER('${termSafeLike}') || '%' ESCAPE '\\' THEN 0.90
+                        WHEN LOWER(${config.nameField}) LIKE '%' || LOWER('${termSafeLike}') || '%' ESCAPE '\\' THEN 0.75
+                        ELSE 0.50
+                    END AS match_score
+                FROM ${config.table}
+                WHERE isinactive = 'F'
+                  AND (LOWER(${config.nameField}) LIKE '%' || LOWER('${termSafeLike}') || '%' ESCAPE '\\'
+                       ${codeFieldWhere})
+                ORDER BY match_score DESC
+            ) WHERE ROWNUM <= 10
+        `;
+
+        try {
+            const result = QueryExecutor.executeQuery(query);
+            if (result.success && result.rows && result.rows.length > 0) {
+                for (const row of result.rows) {
+                    candidates.push({
+                        id: row.id,
+                        name: row.name,
+                        code: row.code || row.name,
+                        type: entityType,
+                        score: parseFloat(row.match_score) || 0.5,
+                        isPreferredType: entityType === preferredType,
+                        isDynamic: config.isDynamic || false
+                    });
+                }
+            }
+        } catch (e) {
+            log.debug('Entity search failed', { type: entityType, table: config.table, error: e.message });
+        }
+
+        return candidates;
+    }
+
+    /**
+     * Resolve entity in auto mode, searching all standard types and custom records
+     * @param {string} term - Search term
+     * @param {string} preferredType - Optional preferred type for ranking
+     * @param {Object} context - Optional context
+     * @returns {Array} Array of all matching candidates
+     */
+    function resolveEntityAuto(term, preferredType, context) {
+        const allCandidates = [];
+
+        // Search standard entity types first
+        for (const [type, config] of Object.entries(ENTITY_CONFIG)) {
+            const matches = searchEntityInTable(term, config, type, preferredType);
+            allCandidates.push(...matches);
+        }
+
+        // Also search discovered custom record types
+        try {
+            const customRecordTypes = discoverCustomEntityRecords(context);
+            for (const customType of customRecordTypes) {
+                try {
+                    const config = discoverEntityConfig(customType, context);
+                    if (config) {
+                        const matches = searchEntityInTable(term, config, customType, preferredType);
+                        allCandidates.push(...matches);
+                    }
+                } catch (e) {
+                    // Skip custom records that fail - continue with others
+                    log.debug('Skipping custom record in auto search', { type: customType, error: e.message });
+                }
+            }
+        } catch (e) {
+            log.debug('Custom record discovery failed in auto mode', { error: e.message });
+        }
+
+        return allCandidates;
+    }
+
+    /**
+     * Rank entity matches by score and preferred type
+     * @param {Array} candidates - Array of candidate matches
+     * @param {string} preferredType - Optional preferred type for bonus
+     * @returns {Array} Sorted array of candidates
+     */
+    function rankEntityMatches(candidates, preferredType) {
+        return candidates.sort((a, b) => {
+            const aScore = a.score + (a.isPreferredType ? 0.1 : 0);
+            const bScore = b.score + (b.isPreferredType ? 0.1 : 0);
+            return bScore - aScore;
+        });
+    }
+
+    /**
+     * Synchronous entity resolution (for legacy code)
+     * Enhanced to support dynamic discovery of unknown entity types
+     */
+    function resolveEntitySync(userTerm, entityType, preferredType, context) {
         if (!userTerm || typeof userTerm !== 'string') {
             return { success: false, error: 'Missing or invalid userTerm' };
         }
-        
+
         const term = userTerm.trim();
-        const type = entityType || 'auto';
-        
-        // Determine search order
-        let typesToSearch = type === 'auto' 
-            ? ['customer', 'vendor', 'employee', 'item', 'project']
-            : [type];
-        
-        // Put preferred type first
-        if (preferredType && typesToSearch.includes(preferredType)) {
-            typesToSearch = [preferredType, ...typesToSearch.filter(t => t !== preferredType)];
-        }
-        
-        const allCandidates = [];
-        
-        for (const searchType of typesToSearch) {
-            const config = ENTITY_CONFIG[searchType];
-            if (!config) continue;
-            
-            const termSafe = escapeSql(term);
-            const termSafeLike = escapeSqlLike(term);
-            const query = `
-                SELECT * FROM (
-                    SELECT
-                        id,
-                        ${config.nameField} AS name,
-                        ${config.codeField} AS code,
-                        CASE
-                            WHEN LOWER(${config.nameField}) = LOWER('${termSafe}') THEN 1.00
-                            WHEN LOWER(${config.nameField}) LIKE LOWER('${termSafeLike}') || '%' ESCAPE '\\' THEN 0.90
-                            WHEN LOWER(${config.nameField}) LIKE '%' || LOWER('${termSafeLike}') || '%' ESCAPE '\\' THEN 0.75
-                            ELSE 0.50
-                        END AS match_score
-                    FROM ${config.table}
-                    WHERE isinactive = 'F'
-                      AND (LOWER(${config.nameField}) LIKE '%' || LOWER('${termSafeLike}') || '%' ESCAPE '\\'
-                           OR LOWER(${config.codeField}) LIKE '%' || LOWER('${termSafeLike}') || '%' ESCAPE '\\')
-                    ORDER BY match_score DESC
-                ) WHERE ROWNUM <= 10
-            `;
-            
-            try {
-                const result = QueryExecutor.executeQuery(query);
-                if (result.success && result.rows && result.rows.length > 0) {
-                    for (const row of result.rows) {
-                        allCandidates.push({
-                            id: row.id,
-                            name: row.name,
-                            code: row.code,
-                            type: searchType,
-                            score: parseFloat(row.match_score) || 0.5,
-                            isPreferredType: searchType === preferredType
-                        });
-                    }
+        let type = entityType || 'auto';
+
+        // For specific entity types (not auto), try to get config
+        if (type !== 'auto') {
+            const config = getEntityConfig(type, context);
+
+            if (!config) {
+                // Unknown type - try dynamic discovery before falling back to auto
+                const dynamicConfig = discoverEntityConfig(type, context);
+
+                if (!dynamicConfig) {
+                    log.warn('Unknown entity type, falling back to auto', { requestedType: type });
+                    type = 'auto';
                 }
-            } catch (e) {
-                log.debug('Entity search failed', { type: searchType, error: e.message });
             }
         }
-        
+
+        let allCandidates = [];
+
+        if (type === 'auto') {
+            // Use auto resolution which includes custom records
+            allCandidates = resolveEntityAuto(term, preferredType, context);
+        } else {
+            // Search specific type (static or dynamically discovered)
+            const config = getEntityConfig(type, context);
+            if (config) {
+                allCandidates = searchEntityInTable(term, config, type, preferredType);
+            }
+
+            // If no results for specific type, fall back to auto mode
+            if (allCandidates.length === 0) {
+                log.debug('No results for specific type, falling back to auto', { type: type });
+                allCandidates = resolveEntityAuto(term, preferredType, context);
+            }
+        }
+
         if (allCandidates.length === 0) {
             return {
                 success: true,
@@ -416,6 +686,12 @@ define([
         // ═══ Entity queries ═══
         getEntitiesOfType: getEntitiesOfType,
         searchEntitiesDirectly: searchEntitiesDirectly,
+
+        // ═══ Dynamic discovery ═══
+        discoverEntityConfig: discoverEntityConfig,
+        getEntityConfig: getEntityConfig,
+        discoverCustomEntityRecords: discoverCustomEntityRecords,
+        resolveEntityAuto: resolveEntityAuto,
 
         // ═══ Configuration ═══
         ENTITY_CONFIG: ENTITY_CONFIG
