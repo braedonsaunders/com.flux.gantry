@@ -921,6 +921,13 @@ DECIDE YOUR ACTION:
 - GIVE_UP: Exhausted all options
 
 ═══════════════════════════════════════════════════════════════════════════════
+CHART AXIS RULES:
+- x = LABEL axis (categories, dates, names) - displayed on horizontal axis
+- y = VALUE axis (numeric amounts, counts) - displayed on vertical axis
+- Example: For "Invoice Amounts Over Time", use x="trandate", y="amount"
+- NEVER put numeric values on x-axis or dates on y-axis
+
+═══════════════════════════════════════════════════════════════════════════════
 RESPONSE FORMAT (JSON only):
 
 {{
@@ -948,7 +955,7 @@ RESPONSE FORMAT (JSON only):
       {{"type": "text", "content": "Analysis with {{{{data.rows[N].column}}}} tokens..."}},
       {{"type": "metrics", "items": [{{"label": "Label", "value": "{{{{token}}}}", "trend": "up|down|neutral"}}]}},
       {{"type": "table", "dataRef": "ref_xxx", "title": "Title"}},
-      {{"type": "chart", "chartType": "bar|line|pie", "dataRef": "ref_xxx", "x": "col", "y": "col"}},
+      {{"type": "chart", "chartType": "bar|line|pie", "dataRef": "ref_xxx", "x": "label_column", "y": "value_column"}},
       {{"type": "list", "title": "Findings", "items": ["item1", "item2"]}}
     ]
   }}
@@ -2303,7 +2310,17 @@ Now write your analysis:`;
 
             if (item.success) {
                 lines.push(`    Rows: ${item.rowCount || 0}`);
-                if (item.columns && item.columns.length > 0) {
+                // ═══════════════════════════════════════════════════════════════════════
+                // COLUMN SCHEMA: Show types so LLM can reason about data structure
+                // Critical for chart generation: LLM needs to know which columns are
+                // dates (x-axis labels) vs numbers (y-axis values)
+                // ═══════════════════════════════════════════════════════════════════════
+                if (item.schema && typeof item.schema === 'object') {
+                    const colTypes = Object.entries(item.schema)
+                        .map(([col, info]) => `${col}(${info.type || 'unknown'})`)
+                        .join(', ');
+                    lines.push(`    Columns [type]: ${colTypes}`);
+                } else if (item.columns && item.columns.length > 0) {
                     lines.push(`    Columns: ${item.columns.join(', ')}`);
                 }
                 if (item.summary) {
@@ -2929,6 +2946,14 @@ Now write your analysis:`;
 
             // Add preview for LLM context
             dataEntry.preview = result.rows.slice(0, 5);
+
+            // ═══════════════════════════════════════════════════════════════════════
+            // AGENTIC FIX: Include schema with column types so LLM can reason about
+            // data structure - critical for chart generation (date vs numeric columns)
+            // ═══════════════════════════════════════════════════════════════════════
+            if (dataRef?.summary?.schema) {
+                dataEntry.schema = dataRef.summary.schema;
+            }
 
             // Build summary
             if (result.columns && result.columns.length > 0) {
