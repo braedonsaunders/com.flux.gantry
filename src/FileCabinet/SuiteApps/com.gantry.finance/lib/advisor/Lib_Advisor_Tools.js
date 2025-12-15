@@ -219,6 +219,285 @@ define([
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
+    // CANONICAL VALUE MAPPINGS - Normalize common terms to NetSuite codes
+    // Maps user-friendly terms to exact NetSuite type codes
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    const TRANSACTION_TYPE_CANONICAL = {
+        // User says → NetSuite code
+        'bill': 'VendBill',
+        'bills': 'VendBill',
+        'vendor bill': 'VendBill',
+        'vendor bills': 'VendBill',
+        'vendbill': 'VendBill',
+
+        'invoice': 'CustInvc',
+        'invoices': 'CustInvc',
+        'customer invoice': 'CustInvc',
+        'customer invoices': 'CustInvc',
+        'custinvc': 'CustInvc',
+
+        'payment': 'VendPymt',  // Default to vendor payment (AP context more common)
+        'payments': 'VendPymt',
+        'vendor payment': 'VendPymt',
+        'vendor payments': 'VendPymt',
+        'vendpymt': 'VendPymt',
+
+        'customer payment': 'CustPymt',
+        'customer payments': 'CustPymt',
+        'custpymt': 'CustPymt',
+
+        'credit': 'VendCred',
+        'vendor credit': 'VendCred',
+        'vendor credits': 'VendCred',
+        'vendcred': 'VendCred',
+
+        'credit memo': 'CustCred',
+        'credit memos': 'CustCred',
+        'customer credit': 'CustCred',
+        'custcred': 'CustCred',
+
+        'cash sale': 'CashSale',
+        'cash sales': 'CashSale',
+        'cashsale': 'CashSale',
+
+        'journal': 'Journal',
+        'journal entry': 'Journal',
+        'journal entries': 'Journal',
+        'je': 'Journal',
+
+        'check': 'Check',
+        'checks': 'Check',
+
+        'deposit': 'Deposit',
+        'deposits': 'Deposit',
+
+        'expense': 'ExpRept',
+        'expense report': 'ExpRept',
+        'expense reports': 'ExpRept',
+        'exprept': 'ExpRept',
+
+        'po': 'PurchOrd',
+        'purchase order': 'PurchOrd',
+        'purchase orders': 'PurchOrd',
+        'purchord': 'PurchOrd',
+
+        'so': 'SalesOrd',
+        'sales order': 'SalesOrd',
+        'sales orders': 'SalesOrd',
+        'salesord': 'SalesOrd'
+    };
+
+    // Valid enum values for transaction_type (the official NetSuite codes)
+    const VALID_TRANSACTION_TYPES = [
+        'VendBill', 'VendPymt', 'VendCred',
+        'CustInvc', 'CustPymt', 'CustCred',
+        'CashSale', 'Journal', 'Check', 'Deposit',
+        'ExpRept', 'PurchOrd', 'SalesOrd'
+    ];
+
+    /**
+     * Normalize a transaction type value to its canonical NetSuite code
+     * @param {string} value - The value to normalize
+     * @returns {Object} { normalized: string|null, wasNormalized: boolean, original: string, error: string|null }
+     */
+    function normalizeTransactionType(value) {
+        if (!value) {
+            return { normalized: null, wasNormalized: false, original: value, error: null };
+        }
+
+        const lowerValue = value.toLowerCase().trim();
+
+        // Already a valid NetSuite code?
+        if (VALID_TRANSACTION_TYPES.includes(value)) {
+            return { normalized: value, wasNormalized: false, original: value, error: null };
+        }
+
+        // Check canonical mappings
+        if (TRANSACTION_TYPE_CANONICAL[lowerValue]) {
+            const normalized = TRANSACTION_TYPE_CANONICAL[lowerValue];
+            log.audit('Normalized transaction_type', { original: value, normalized: normalized });
+            return { normalized: normalized, wasNormalized: true, original: value, error: null };
+        }
+
+        // Invalid value - return error with suggestions
+        return {
+            normalized: null,
+            wasNormalized: false,
+            original: value,
+            error: `Invalid transaction_type "${value}". Valid values: ${VALID_TRANSACTION_TYPES.join(', ')}. ` +
+                   `Common mappings: bill→VendBill, invoice→CustInvc, payment→VendPymt, credit→VendCred`
+        };
+    }
+
+    /**
+     * Validate and normalize tool arguments before execution
+     * Validates enum values and normalizes common terms to NetSuite codes
+     *
+     * @param {string} toolName - Name of the tool
+     * @param {Object} args - Original arguments
+     * @returns {Object} { valid: boolean, args: Object, errors: Array, warnings: Array }
+     */
+    function validateAndNormalizeArgs(toolName, args) {
+        const errors = [];
+        const warnings = [];
+        const normalizedArgs = { ...args };
+
+        // Get tool schema for validation
+        const tool = ALL_TOOLS[toolName];
+        if (!tool || !tool.parameters || !tool.parameters.properties) {
+            return { valid: true, args: normalizedArgs, errors: [], warnings: [] };
+        }
+
+        const props = tool.parameters.properties;
+
+        // Validate transaction_type if present
+        if (args.transaction_type && props.transaction_type) {
+            const result = normalizeTransactionType(args.transaction_type);
+            if (result.error) {
+                errors.push(result.error);
+            } else if (result.wasNormalized) {
+                normalizedArgs.transaction_type = result.normalized;
+                warnings.push(`Normalized transaction_type: "${result.original}" → "${result.normalized}"`);
+            }
+        }
+
+        // Generic enum validation for other fields
+        for (const [paramName, paramDef] of Object.entries(props)) {
+            if (paramName === 'transaction_type') continue; // Already handled above
+
+            if (paramDef.enum && args[paramName] !== undefined) {
+                const value = args[paramName];
+                if (!paramDef.enum.includes(value)) {
+                    errors.push(
+                        `Invalid ${paramName} "${value}". Valid values: ${paramDef.enum.join(', ')}`
+                    );
+                }
+            }
+        }
+
+        // Deduplicate entity IDs (vendor_id vs entity_id pointing to same value)
+        if (args.vendor_id && args.entity_id && args.vendor_id === args.entity_id) {
+            delete normalizedArgs.vendor_id;
+            warnings.push(`Removed redundant vendor_id (same as entity_id: ${args.entity_id})`);
+        }
+        if (args.customer_id && args.entity_id && args.customer_id === args.entity_id) {
+            delete normalizedArgs.customer_id;
+            warnings.push(`Removed redundant customer_id (same as entity_id: ${args.entity_id})`);
+        }
+
+        return {
+            valid: errors.length === 0,
+            args: normalizedArgs,
+            errors: errors,
+            warnings: warnings
+        };
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // ENTITY-AWARE ALTERNATIVE TOOL SUGGESTIONS
+    // When a query fails, suggest alternative tools based on entity type
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Get alternative tool suggestions based on entity type and failed tool
+     * @param {string} failedTool - The tool that returned no data
+     * @param {Object} args - The arguments that were used
+     * @param {Object} resolvedEntities - Map of resolved entities from session
+     * @returns {Array} List of suggested alternative tools with reasoning
+     */
+    function getEntityAwareAlternatives(failedTool, args, resolvedEntities) {
+        const suggestions = [];
+
+        // Determine entity type from args or resolved entities
+        let entityType = null;
+        let entityId = args.entity_id || args.vendor_id || args.customer_id;
+
+        // Check resolved entities for type
+        if (resolvedEntities) {
+            for (const [name, entity] of Object.entries(resolvedEntities)) {
+                if (entity.id === entityId) {
+                    entityType = entity.type;
+                    break;
+                }
+            }
+        }
+
+        // Infer from args if not found
+        if (!entityType) {
+            if (args.vendor_id) entityType = 'vendor';
+            else if (args.customer_id) entityType = 'customer';
+        }
+
+        // Transaction search failed
+        if (failedTool === 'get_recent_transactions') {
+            if (entityType === 'vendor') {
+                suggestions.push({
+                    tool: 'get_vendor_details',
+                    reason: 'Get vendor summary including total spend and outstanding AP',
+                    args: { vendor_id: entityId }
+                });
+                suggestions.push({
+                    tool: 'get_ap_aging',
+                    reason: 'Check if vendor has any outstanding bills in AP aging',
+                    args: { vendor_ids: [entityId] }
+                });
+                suggestions.push({
+                    tool: 'get_recent_transactions',
+                    reason: 'Try without transaction_type filter to see ALL transactions for this vendor',
+                    args: { entity_id: entityId, period: 'all' }
+                });
+            } else if (entityType === 'customer') {
+                suggestions.push({
+                    tool: 'get_customer_details',
+                    reason: 'Get customer summary including total revenue and outstanding AR',
+                    args: { customer_id: entityId }
+                });
+                suggestions.push({
+                    tool: 'get_ar_aging',
+                    reason: 'Check if customer has any outstanding invoices in AR aging',
+                    args: { customer_ids: [entityId] }
+                });
+                suggestions.push({
+                    tool: 'get_recent_transactions',
+                    reason: 'Try without transaction_type filter to see ALL transactions for this customer',
+                    args: { entity_id: entityId, period: 'all' }
+                });
+            }
+        }
+
+        // AP aging failed
+        if (failedTool === 'get_ap_aging' && entityType === 'vendor') {
+            suggestions.push({
+                tool: 'get_vendor_details',
+                reason: 'Vendor may have no open AP - check overall relationship',
+                args: { vendor_id: entityId }
+            });
+            suggestions.push({
+                tool: 'get_recent_transactions',
+                reason: 'Search for any vendor bills regardless of payment status',
+                args: { entity_id: entityId, transaction_type: 'VendBill', period: 'all' }
+            });
+        }
+
+        // AR aging failed
+        if (failedTool === 'get_ar_aging' && entityType === 'customer') {
+            suggestions.push({
+                tool: 'get_customer_details',
+                reason: 'Customer may have no open AR - check overall relationship',
+                args: { customer_id: entityId }
+            });
+            suggestions.push({
+                tool: 'get_recent_transactions',
+                reason: 'Search for any customer invoices regardless of payment status',
+                args: { entity_id: entityId, transaction_type: 'CustInvc', period: 'all' }
+            });
+        }
+
+        return suggestions;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
     // PERIOD DEFINITIONS - Single Source of Truth
     // Add a period here ONCE - automatically available to LLM and SQL generation
     // ═══════════════════════════════════════════════════════════════════════════
@@ -7223,16 +7502,53 @@ EXAMPLES:
             };
         }
 
+        // ═══════════════════════════════════════════════════════════════════════
+        // VALIDATION & NORMALIZATION: Validate enum values, normalize common terms
+        // ═══════════════════════════════════════════════════════════════════════
+        const validation = validateAndNormalizeArgs(toolName, args);
+
+        if (!validation.valid) {
+            log.audit('Tool validation failed', {
+                tool: toolName,
+                args: args,
+                errors: validation.errors
+            });
+            return {
+                success: false,
+                error: validation.errors.join('; '),
+                validationErrors: validation.errors,
+                tool: toolName,
+                originalArgs: args
+            };
+        }
+
+        // Use normalized args (with warnings logged)
+        const normalizedArgs = validation.args;
+        if (validation.warnings.length > 0) {
+            log.audit('Tool args normalized', {
+                tool: toolName,
+                warnings: validation.warnings,
+                original: args,
+                normalized: normalizedArgs
+            });
+        }
+
         try {
-            log.debug('Executing tool', { toolName: toolName, args: JSON.stringify(args) });
+            log.debug('Executing tool', { toolName: toolName, args: JSON.stringify(normalizedArgs) });
             const startTime = Date.now();
 
-            const result = tool.execute(args);
+            const result = tool.execute(normalizedArgs);
 
             const duration = Date.now() - startTime;
             log.debug('Tool executed', { toolName: toolName, duration: duration, success: result.success });
 
             result.duration = duration;
+
+            // Include normalization warnings in result for LLM awareness
+            if (validation.warnings.length > 0) {
+                result.normalizationWarnings = validation.warnings;
+            }
+
             return result;
         } catch (e) {
             log.error('Tool execution failed', { toolName: toolName, error: e.message, stack: e.stack });
@@ -7399,6 +7715,12 @@ EXAMPLES:
 
         // ReAct Pattern Support
         suggestBroaderParams: suggestBroaderParams,  // Auto-broaden on empty results
+        getEntityAwareAlternatives: getEntityAwareAlternatives,  // Alternative tools based on entity type
+
+        // Validation & Normalization
+        validateAndNormalizeArgs: validateAndNormalizeArgs,  // Validate enums, normalize terms
+        normalizeTransactionType: normalizeTransactionType,  // Normalize transaction types
+        VALID_TRANSACTION_TYPES: VALID_TRANSACTION_TYPES,    // Valid transaction type codes
 
         // Period Definitions (dynamic - add period once, available everywhere)
         getAvailablePeriods: getAvailablePeriods,  // For LLM prompt injection
