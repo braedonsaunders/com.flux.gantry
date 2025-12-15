@@ -504,58 +504,74 @@ define([], function() {
                 summary: 'Burden rate and overhead allocation metrics for cost recovery analysis',
 
                 extraction: {
-                    keyMetrics: ['currentBurdenRate', 'targetBurdenRate', 'totalOverhead', 'totalDirectLabor', 'overheadRecovery'],
-                    alertFields: ['currentBurdenRate'],
+                    // FIXED: Updated to match actual data structure fields
+                    keyMetrics: ['compositeRate', 'totalOverhead', 'totalBilledHours', 'totalUnbilledHours', 'utilizationRate'],
+                    alertFields: ['compositeRate'],
                     insightTemplates: [
-                        { condition: 'currentBurdenRate > targetBurdenRate', template: 'Burden rate ({currentBurdenRate}%) exceeds target ({targetBurdenRate}%)' }
+                        { condition: 'compositeRate > 100', template: 'Composite burden rate is ${compositeRate}/hr' },
+                        { condition: 'utilizationRate < 70', template: 'Utilization rate is low at {utilizationRate}%' }
                     ]
                 },
 
                 fields: {
-                    currentBurdenRate: {
-                        type: 'percent',
-                        desc: 'Current burden rate (overhead / direct labor)',
-                        path: 'summary.currentBurdenRate',
+                    // ═══ CORRECTED PATHS - Match Lib_Burden_Data.js actual structure ═══
+                    compositeRate: {
+                        type: 'currency',
+                        desc: 'Composite burden rate ($/hr) across all categories',
+                        path: 'summary.totals.burden.Overall',
                         priority: 1,
-                        thresholds: { danger: 200, warning: 150, healthy: 100 }
-                    },
-                    targetBurdenRate: {
-                        type: 'percent',
-                        desc: 'Target burden rate from configuration',
-                        path: 'summary.targetBurdenRate',
-                        priority: 1
+                        thresholds: { danger: 150, warning: 100, healthy: 50 }
                     },
                     totalOverhead: {
                         type: 'currency',
-                        desc: 'Total overhead costs for period',
-                        path: 'summary.totalOverhead',
+                        desc: 'Total overhead costs for period (sum of all categories)',
+                        path: 'summary.totals.expense.Overall',
                         priority: 1
                     },
-                    totalDirectLabor: {
-                        type: 'currency',
-                        desc: 'Total direct labor costs for period',
-                        path: 'summary.totalDirectLabor',
+                    totalBilledHours: {
+                        type: 'number',
+                        desc: 'Total billed hours in period',
+                        path: 'hours.totals.billed',
                         priority: 1
                     },
-                    overheadRecovery: {
+                    totalUnbilledHours: {
+                        type: 'number',
+                        desc: 'Total unbilled hours in period',
+                        path: 'hours.totals.unbilled',
+                        priority: 2
+                    },
+                    totalHours: {
+                        type: 'number',
+                        desc: 'Total hours (billed + unbilled)',
+                        path: 'hours.totals.total',
+                        priority: 2
+                    },
+                    utilizationRate: {
                         type: 'percent',
-                        desc: 'Overhead recovery percentage',
-                        path: 'summary.overheadRecovery',
-                        priority: 1
+                        desc: 'Billed hours / total hours',
+                        computed: '(totalBilledHours / totalHours) * 100',
+                        priority: 1,
+                        thresholds: { danger: 50, warning: 65, healthy: 75 }
                     },
 
+                    // ═══ CATEGORIES COLLECTION ═══
                     byCategory: {
                         type: 'array',
                         desc: 'Overhead breakdown by category',
-                        path: 'categories',
-                        labelField: 'category',
-                        valueField: 'amount',
-                        sortField: 'amount',
+                        path: 'summary.categories',
+                        labelField: 'label',
+                        valueField: 'totalExpense',
+                        sortField: 'totalExpense',
                         sortDirection: 'desc',
                         itemFields: {
-                            category: { type: 'string', desc: 'Overhead category name' },
-                            amount: { type: 'currency', desc: 'Amount for category' },
-                            percent: { type: 'percent', desc: 'Percentage of total overhead' }
+                            id: { type: 'string', desc: 'Category ID' },
+                            label: { type: 'string', desc: 'Category name' },
+                            color: { type: 'string', desc: 'Category display color' },
+                            categoryType: { type: 'string', desc: 'Type: expense or timebill' },
+                            allocationBase: { type: 'string', desc: 'Allocation base (billed_hours, headcount, etc)' },
+                            totalExpense: { type: 'currency', desc: 'Total expense for category' },
+                            totalBurden: { type: 'currency', desc: 'Burden rate for category' },
+                            percentOfTotal: { type: 'percent', desc: 'Percentage of total overhead' }
                         }
                     }
                 }
@@ -593,90 +609,124 @@ define([], function() {
             ],
             
             dataModule: './Lib_Time_Data',
-            
+
             dataSchema: {
                 summary: 'Billable time and utilization metrics for labor tracking and revenue recognition',
 
                 extraction: {
-                    keyMetrics: ['totalBillableHours', 'totalNonBillableHours', 'utilizationRate', 'unbilledAmount', 'effectiveRate'],
-                    alertFields: ['utilizationRate', 'unbilledAmount'],
+                    // Updated to match actual available metrics
+                    keyMetrics: ['totalHours', 'totalBillableHours', 'totalNonBillableHours', 'utilizationRate', 'totalNonBillableCost'],
+                    alertFields: ['utilizationRate'],
                     insightTemplates: [
                         { condition: 'utilizationRate >= 75', template: 'Utilization is healthy at {utilizationRate}%' },
-                        { condition: 'utilizationRate < 60', template: 'Utilization is low at {utilizationRate}%' },
-                        { condition: 'unbilledAmount > 50000', template: 'Significant unbilled time: {unbilledAmount}' }
+                        { condition: 'utilizationRate < 60', template: 'Utilization is low at {utilizationRate}%' }
                     ]
                 },
 
                 fields: {
+                    // ═══ METRICS - Corrected paths to match Lib_Time_Data.js structure ═══
+                    totalHours: {
+                        type: 'number',
+                        desc: 'Total hours worked in period',
+                        path: 'company.range.hours',
+                        priority: 1
+                    },
                     totalBillableHours: {
                         type: 'number',
                         desc: 'Total billable hours in period',
-                        path: 'summary.totalBillableHours',
+                        path: 'company.range.billableHours',
                         priority: 1
                     },
                     totalNonBillableHours: {
                         type: 'number',
                         desc: 'Total non-billable hours',
-                        path: 'summary.totalNonBillableHours',
+                        path: 'company.range.nonBillableHours',
                         priority: 1
                     },
                     utilizationRate: {
                         type: 'percent',
                         desc: 'Billable / total hours worked',
-                        path: 'summary.utilizationRate',
+                        path: 'company.range.percentBilled',
                         priority: 1,
                         thresholds: { danger: 50, warning: 65, healthy: 75 }
                     },
-                    unbilledAmount: {
+                    totalNonBillableCost: {
                         type: 'currency',
-                        desc: 'Value of unbilled time entries',
-                        path: 'summary.unbilledAmount',
-                        priority: 1,
-                        thresholds: { warning: 50000, danger: 100000 }
-                    },
-                    averageBillRate: {
-                        type: 'currency',
-                        desc: 'Average billing rate per hour',
-                        path: 'summary.averageBillRate',
-                        priority: 2
-                    },
-                    effectiveRate: {
-                        type: 'currency',
-                        desc: 'Effective rate (actual collected / hours)',
-                        path: 'summary.effectiveRate',
+                        desc: 'Total non-billable labor cost',
+                        path: 'company.range.totalNonBillableCost',
                         priority: 1
                     },
+                    nonBillableCostPerDay: {
+                        type: 'currency',
+                        desc: 'Average non-billable cost per day',
+                        path: 'company.range.nonBillableCostPerDay',
+                        priority: 2
+                    },
+                    // Period comparison deltas
+                    utilizationDelta: {
+                        type: 'percent',
+                        desc: 'Change in utilization vs prior period',
+                        path: 'company.deltas.percentBilledDelta',
+                        priority: 2
+                    },
 
+                    // ═══ COLLECTIONS - Corrected paths ═══
                     byEmployee: {
                         type: 'array',
-                        desc: 'Hours by employee',
-                        path: 'byEmployee',
-                        labelField: 'employee',
-                        valueField: 'billable',
-                        sortField: 'billable',
+                        desc: 'Utilization breakdown by employee',
+                        path: 'employees',  // FIXED: was 'byEmployee', actual field is 'employees'
+                        labelField: 'employee.name',
+                        valueField: 'range.billableHours',
+                        sortField: 'range.billableHours',
                         sortDirection: 'desc',
                         itemFields: {
-                            employeeId: { type: 'number', desc: 'Employee ID' },
-                            employee: { type: 'string', desc: 'Employee name' },
-                            billable: { type: 'number', desc: 'Billable hours' },
-                            nonBillable: { type: 'number', desc: 'Non-billable hours' },
-                            utilization: { type: 'percent', desc: 'Utilization rate' }
+                            employeeId: { type: 'number', desc: 'Employee ID', path: 'employee.netsuiteId' },
+                            employee: { type: 'string', desc: 'Employee name', path: 'employee.name' },
+                            title: { type: 'string', desc: 'Job title', path: 'employee.title' },
+                            department: { type: 'string', desc: 'Department', path: 'employee.departmentName' },
+                            totalHours: { type: 'number', desc: 'Total hours', path: 'range.hours' },
+                            billableHours: { type: 'number', desc: 'Billable hours', path: 'range.billableHours' },
+                            nonBillableHours: { type: 'number', desc: 'Non-billable hours', path: 'range.nonBillableHours' },
+                            utilization: { type: 'percent', desc: 'Utilization rate', path: 'range.percentBilled' },
+                            nonBillableCost: { type: 'currency', desc: 'Non-billable cost', path: 'range.nonBillableCost' }
                         }
                     },
 
-                    byCustomer: {
+                    byDepartment: {
                         type: 'array',
-                        desc: 'Hours by customer',
-                        path: 'byCustomer',
-                        labelField: 'customer',
-                        valueField: 'hours',
-                        sortField: 'hours',
+                        desc: 'Utilization breakdown by department',
+                        path: 'departments',
+                        labelField: 'department.name',
+                        valueField: 'range.billableHours',
+                        sortField: 'range.nonBillableCost',
                         sortDirection: 'desc',
                         itemFields: {
-                            customerId: { type: 'number', desc: 'Customer ID' },
-                            customer: { type: 'string', desc: 'Customer name' },
-                            hours: { type: 'number', desc: 'Hours logged' },
-                            amount: { type: 'currency', desc: 'Billable amount' }
+                            departmentId: { type: 'number', desc: 'Department ID', path: 'department.netsuiteId' },
+                            department: { type: 'string', desc: 'Department name', path: 'department.name' },
+                            totalHours: { type: 'number', desc: 'Total hours', path: 'range.hours' },
+                            billableHours: { type: 'number', desc: 'Billable hours', path: 'range.billableHours' },
+                            nonBillableHours: { type: 'number', desc: 'Non-billable hours', path: 'range.nonBillableHours' },
+                            utilization: { type: 'percent', desc: 'Utilization rate', path: 'range.percentBilled' },
+                            nonBillableCost: { type: 'currency', desc: 'Non-billable cost', path: 'range.nonBillableCost' },
+                            noBillable: { type: 'boolean', desc: 'Department has no billable expectation', path: 'noBillable' }
+                        }
+                    },
+
+                    byItem: {
+                        type: 'array',
+                        desc: 'Hours breakdown by service item',
+                        path: 'items',
+                        labelField: 'item.name',
+                        valueField: 'range.hours',
+                        sortField: 'range.nonBillableCost',
+                        sortDirection: 'desc',
+                        itemFields: {
+                            itemId: { type: 'number', desc: 'Item ID', path: 'item.netsuiteId' },
+                            item: { type: 'string', desc: 'Service item name', path: 'item.name' },
+                            totalHours: { type: 'number', desc: 'Total hours', path: 'range.hours' },
+                            billableHours: { type: 'number', desc: 'Billable hours', path: 'range.billableHours' },
+                            nonBillableHours: { type: 'number', desc: 'Non-billable hours', path: 'range.nonBillableHours' },
+                            utilization: { type: 'percent', desc: 'Utilization rate', path: 'range.percentBilled' }
                         }
                     }
                 }
@@ -718,20 +768,22 @@ define([], function() {
                 summary: 'Transaction integrity analysis including Benford\'s Law, duplicate detection, and anomaly flagging',
 
                 extraction: {
-                    keyMetrics: ['riskScore', 'flaggedCount', 'duplicateCount', 'weekendCount', 'benfordDeviation'],
-                    alertFields: ['riskScore', 'flaggedCount'],
+                    // FIXED: Updated to match Lib_Integrity_Data.js actual field names
+                    keyMetrics: ['overallRiskScore', 'flaggedCount', 'duplicateCount', 'weekendEntryCount', 'benfordConformity'],
+                    alertFields: ['overallRiskScore', 'flaggedCount'],
                     insightTemplates: [
-                        { condition: 'riskScore < 30', template: 'Transaction integrity is excellent (risk score: {riskScore})' },
-                        { condition: 'riskScore > 70', template: 'High risk detected - {flaggedCount} flagged transactions need review' },
+                        { condition: 'overallRiskScore < 30', template: 'Transaction integrity is excellent (risk score: {overallRiskScore})' },
+                        { condition: 'overallRiskScore > 70', template: 'High risk detected - {flaggedCount} flagged transactions need review' },
                         { condition: 'duplicateCount > 0', template: '{duplicateCount} potential duplicate transactions detected' }
                     ]
                 },
 
                 fields: {
-                    riskScore: {
+                    // ═══ CORRECTED PATHS - Match Lib_Integrity_Data.js calculateSummary() ═══
+                    overallRiskScore: {
                         type: 'number',
                         desc: 'Overall risk score 0-100',
-                        path: 'summary.riskScore',
+                        path: 'summary.overallRiskScore',
                         priority: 1,
                         thresholds: { healthy: 30, warning: 50, danger: 70 }
                     },
@@ -747,16 +799,46 @@ define([], function() {
                         path: 'summary.duplicateCount',
                         priority: 1
                     },
-                    weekendCount: {
+                    weekendEntryCount: {
                         type: 'number',
                         desc: 'Transactions entered on weekends',
-                        path: 'summary.weekendCount',
+                        path: 'summary.weekendEntryCount',
                         priority: 2
                     },
-                    benfordDeviation: {
-                        type: 'percent',
-                        desc: 'Deviation from Benford\'s Law expected distribution',
-                        path: 'summary.benfordDeviation',
+                    weekendManualCount: {
+                        type: 'number',
+                        desc: 'Manual weekend entries (not system-generated)',
+                        path: 'summary.weekendManualCount',
+                        priority: 2
+                    },
+                    benfordConformity: {
+                        type: 'string',
+                        desc: 'Benford\'s Law conformity level (Excellent/Acceptable/Marginal/Non-Conforming)',
+                        path: 'summary.benfordConformity',
+                        priority: 1
+                    },
+                    rsfAnomalyCount: {
+                        type: 'number',
+                        desc: 'Relative Size Factor anomalies detected',
+                        path: 'summary.rsfAnomalyCount',
+                        priority: 2
+                    },
+                    zScoreAnomalyCount: {
+                        type: 'number',
+                        desc: 'Z-Score anomalies detected',
+                        path: 'summary.zScoreAnomalyCount',
+                        priority: 2
+                    },
+                    sequentialInvoiceGroups: {
+                        type: 'number',
+                        desc: 'Sequential invoice patterns detected (shell company indicator)',
+                        path: 'summary.sequentialInvoiceGroups',
+                        priority: 1
+                    },
+                    ghostVendorCount: {
+                        type: 'number',
+                        desc: 'Potential ghost vendors (address matches employee)',
+                        path: 'summary.ghostVendorCount',
                         priority: 1
                     },
 
@@ -818,21 +900,22 @@ define([], function() {
                 summary: 'Vendor performance and procurement intelligence including leverage matrix, term compliance, and renewal tracking',
 
                 extraction: {
-                    keyMetrics: ['performanceScore', 'totalVendors', 'totalSpend', 'cashFlowLeakage', 'earlyPaymentRate', 'upcomingRenewals'],
-                    alertFields: ['cashFlowLeakage', 'autoRenewRisks', 'earlyPaymentRate'],
+                    // FIXED: Updated to match actual available fields
+                    keyMetrics: ['procurementScore', 'totalVendors', 'totalSpend', 'maverickPct', 'otifOnTimeRate', 'concentrationRiskLevel'],
+                    alertFields: ['maverickPct', 'overdueAmount', 'concentrationRiskLevel'],
                     insightTemplates: [
-                        { condition: 'cashFlowLeakage > 10000', template: 'Cash flow leakage from early payments: {cashFlowLeakage}' },
-                        { condition: 'autoRenewRisks > 0', template: '{autoRenewRisks} high-value contracts have auto-renew risk' },
-                        { condition: 'earlyPaymentRate > 30', template: '{earlyPaymentRate}% of bills paid early - optimize payment timing' }
+                        { condition: 'maverickPct > 20', template: '{maverickPct}% maverick spend without PO - enforce purchasing policy' },
+                        { condition: 'otifOnTimeRate < 80', template: 'Only {otifOnTimeRate}% on-time delivery - review vendor performance' },
+                        { condition: 'concentrationRiskLevel === "high"', template: 'High vendor concentration risk - diversify supplier base' }
                     ]
                 },
 
                 fields: {
-                    // ═══ KEY METRICS (priority 1) ═══
-                    performanceScore: {
+                    // ═══ KEY METRICS - CORRECTED PATHS to match Lib_VendorPerformance_Data.js ═══
+                    procurementScore: {
                         type: 'number',
-                        desc: 'Overall vendor management score 0-100',
-                        path: 'summary.performanceScore',
+                        desc: 'Overall procurement health score 0-100',
+                        path: 'summary.procurementScore',
                         priority: 1,
                         thresholds: { danger: 40, warning: 60, healthy: 75 }
                     },
@@ -848,104 +931,107 @@ define([], function() {
                         path: 'summary.totalSpend',
                         priority: 1
                     },
-                    cashFlowLeakage: {
-                        type: 'currency',
-                        desc: 'Estimated cash flow loss from early payments',
-                        path: 'summary.cashFlowLeakage',
-                        priority: 1,
-                        thresholds: { warning: 10000, danger: 50000 }
+                    scoreGrade: {
+                        type: 'string',
+                        desc: 'Letter grade A-F',
+                        path: 'summary.scoreGrade',
+                        priority: 1
                     },
 
-                    // ═══ LEVERAGE MATRIX (priority 2) ═══
+                    // ═══ MAVERICK SPEND (priority 1) ═══
+                    maverickPct: {
+                        type: 'percent',
+                        desc: 'Percentage of transactions without PO',
+                        path: 'maverickSpend.summary.maverickPct',
+                        priority: 1
+                    },
+                    maverickSpendAmount: {
+                        type: 'currency',
+                        desc: 'Total unauthorized spend',
+                        path: 'maverickSpend.summary.maverickSpend',
+                        priority: 1
+                    },
+                    complianceRate: {
+                        type: 'percent',
+                        desc: 'PO compliance rate',
+                        path: 'maverickSpend.summary.complianceRate',
+                        priority: 1
+                    },
+
+                    // ═══ OTIF - On Time In Full (priority 1) ═══
+                    otifOnTimeRate: {
+                        type: 'percent',
+                        desc: 'On-time delivery rate',
+                        path: 'otif.summary.onTimeRate',
+                        priority: 1
+                    },
+                    otifLateCount: {
+                        type: 'number',
+                        desc: 'Number of late deliveries',
+                        path: 'otif.summary.lateCount',
+                        priority: 2
+                    },
+
+                    // ═══ CASH FLOW LEAKAGE (priority 1) ═══
+                    earlyPaymentRate: {
+                        type: 'percent',
+                        desc: 'Percentage of bills paid early',
+                        path: 'cashFlowLeakage.summary.earlyPct',
+                        priority: 1
+                    },
+                    onTimePaymentPct: {
+                        type: 'percent',
+                        desc: 'Percentage of bills paid on time',
+                        path: 'cashFlowLeakage.summary.onTimePct',
+                        priority: 2
+                    },
+                    overdueAmount: {
+                        type: 'currency',
+                        desc: 'Total overdue amount',
+                        path: 'cashFlowLeakage.summary.overdueAmount',
+                        priority: 1
+                    },
+
+                    // ═══ PPV - Purchase Price Variance (priority 2) ═══
+                    ppvTotalVariance: {
+                        type: 'currency',
+                        desc: 'Total price variance (positive = overpaid)',
+                        path: 'ppv.summary.totalVariance',
+                        priority: 2
+                    },
+
+                    // ═══ LEVERAGE MATRIX - CORRECTED PATHS ═══
                     strategicPartners: {
                         type: 'number',
                         desc: 'Count of strategic partner vendors',
-                        path: 'leverageMatrix.strategic',
+                        path: 'leverageMatrix.quadrantCounts.strategic',
                         priority: 2
                     },
                     commodityVendors: {
                         type: 'number',
                         desc: 'Count of commodity vendors',
-                        path: 'leverageMatrix.commodity',
-                        priority: 2
-                    },
-                    nicheVendors: {
-                        type: 'number',
-                        desc: 'Count of niche specialist vendors',
-                        path: 'leverageMatrix.niche',
-                        priority: 2
-                    },
-                    transactionalVendors: {
-                        type: 'number',
-                        desc: 'Count of transactional vendors',
-                        path: 'leverageMatrix.transactional',
+                        path: 'leverageMatrix.quadrantCounts.commodity',
                         priority: 2
                     },
 
-                    // ═══ TERM COMPLIANCE (priority 1) ═══
-                    earlyPaymentRate: {
-                        type: 'percent',
-                        desc: 'Percentage of bills paid early',
-                        path: 'termCompliance.earlyPaymentRate',
-                        priority: 1
-                    },
-                    onTimePaymentRate: {
-                        type: 'percent',
-                        desc: 'Percentage of bills paid on time',
-                        path: 'termCompliance.onTimePaymentRate',
-                        priority: 2
-                    },
-                    latePaymentRate: {
-                        type: 'percent',
-                        desc: 'Percentage of bills paid late',
-                        path: 'termCompliance.latePaymentRate',
-                        priority: 2
-                    },
-                    avgDaysFromTerms: {
-                        type: 'number',
-                        desc: 'Average days from payment terms (negative = early)',
-                        path: 'termCompliance.avgDaysFromTerms',
-                        priority: 2
-                    },
-
-                    // ═══ RENEWAL RADAR (priority 1) ═══
-                    upcomingRenewals: {
-                        type: 'number',
-                        desc: 'Contracts renewing in next 90 days',
-                        path: 'renewalRadar.upcomingCount',
-                        priority: 1
-                    },
-                    autoRenewRisks: {
-                        type: 'number',
-                        desc: 'High-value contracts with auto-renew enabled',
-                        path: 'renewalRadar.autoRenewRisks',
-                        priority: 1
-                    },
-                    totalAtRiskValue: {
-                        type: 'currency',
-                        desc: 'Total annual value of at-risk renewals',
-                        path: 'renewalRadar.totalAtRiskValue',
-                        priority: 1
-                    },
-
-                    // ═══ CONCENTRATION (priority 2) ═══
+                    // ═══ CONCENTRATION RISK - CORRECTED PATHS ═══
                     herfindahlIndex: {
                         type: 'number',
                         desc: 'HHI concentration index (>2500 = high)',
-                        path: 'concentration.herfindahlIndex',
+                        path: 'concentrationRisk.herfindahlIndex',
                         priority: 2
                     },
                     topVendorShare: {
                         type: 'percent',
                         desc: 'Spend share of largest vendor',
-                        path: 'concentration.topVendorShare',
+                        path: 'concentrationRisk.topVendorShare',
                         priority: 2
                     },
-                    top5Share: {
-                        type: 'percent',
-                        desc: 'Combined spend share of top 5 vendors',
-                        path: 'concentration.top5Share',
-                        priority: 2
+                    concentrationRiskLevel: {
+                        type: 'string',
+                        desc: 'Concentration risk level (low/moderate/high)',
+                        path: 'concentrationRisk.riskLevel',
+                        priority: 1
                     },
 
                     // ═══ COLLECTIONS ═══
@@ -1036,7 +1122,7 @@ define([], function() {
                 },
 
                 fields: {
-                    // ═══ KEY METRICS (priority 1) ═══
+                    // ═══ KEY METRICS - CORRECTED PATHS to match Lib_CustomerValue_Data.js ═══
                     intelligenceScore: {
                         type: 'number',
                         desc: 'Overall customer intelligence score 0-100',
@@ -1056,59 +1142,71 @@ define([], function() {
                         path: 'summary.totalRevenue',
                         priority: 1
                     },
+                    scoreGrade: {
+                        type: 'string',
+                        desc: 'Letter grade A-F',
+                        path: 'summary.scoreGrade',
+                        priority: 1
+                    },
                     projectedCLV: {
                         type: 'currency',
                         desc: 'Total projected customer lifetime value',
-                        path: 'summary.projectedCLV',
+                        path: 'summary.kpis.projectedCLV',
                         priority: 1
                     },
 
-                    // ═══ RFM SEGMENTATION (priority 1) ═══
+                    // ═══ RFM SEGMENTATION - CORRECTED PATHS ═══
                     championsCount: {
                         type: 'number',
                         desc: 'Number of champion customers',
-                        path: 'segments.champions',
+                        path: 'summary.kpis.championsCount',
                         priority: 1
                     },
                     atRiskCount: {
                         type: 'number',
                         desc: 'Number of at-risk customers',
-                        path: 'segments.atRisk',
+                        path: 'summary.kpis.atRiskCount',
                         priority: 1
                     },
                     atRiskRevenue: {
                         type: 'currency',
                         desc: 'Revenue at risk from churn',
-                        path: 'summary.atRiskRevenue',
+                        path: 'summary.kpis.atRiskRevenue',
                         priority: 1,
                         thresholds: { warning: 50000, danger: 100000 }
                     },
 
-                    // ═══ RETENTION (priority 2) ═══
+                    // ═══ RETENTION - CORRECTED PATHS ═══
                     retentionRate: {
                         type: 'percent',
                         desc: 'Average retention probability',
-                        path: 'summary.retentionRate',
+                        path: 'summary.kpis.retentionRate',
                         priority: 2
                     },
                     avgCustomerValue: {
                         type: 'currency',
                         desc: 'Average customer value',
-                        path: 'summary.avgCustomerValue',
+                        path: 'summary.kpis.avgCustomerValue',
                         priority: 2
                     },
 
-                    // ═══ GROWTH (priority 2) ═══
+                    // ═══ GROWTH - CORRECTED PATHS ═══
                     monthlyGrowth: {
                         type: 'percent',
                         desc: 'Average monthly growth rate',
-                        path: 'summary.monthlyGrowth',
+                        path: 'summary.kpis.monthlyGrowth',
                         priority: 2
                     },
                     newCustomers: {
                         type: 'number',
                         desc: 'New customers in period',
-                        path: 'summary.newCustomers',
+                        path: 'summary.kpis.newCustomers',
+                        priority: 2
+                    },
+                    concentrationIndex: {
+                        type: 'number',
+                        desc: 'HHI concentration index',
+                        path: 'summary.kpis.concentrationIndex',
                         priority: 2
                     },
 
@@ -1204,10 +1302,10 @@ define([], function() {
                         path: 'summary.totalSpend',
                         priority: 1
                     },
-                    vendorCount: {
+                    accountCount: {
                         type: 'number',
-                        desc: 'Number of vendors analyzed',
-                        path: 'summary.vendorCount',
+                        desc: 'Number of expense accounts analyzed',
+                        path: 'summary.accountCount',
                         priority: 2
                     },
                     avgVelocity: {
