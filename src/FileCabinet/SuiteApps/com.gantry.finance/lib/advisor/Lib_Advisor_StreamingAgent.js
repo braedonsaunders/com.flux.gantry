@@ -615,169 +615,339 @@ Response format (JSON only):
 }}`;
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // WORLD-CLASS RESPOND PROMPT - LLM as Data Analyst
+    // MARKDOWN DIRECTIVE ARCHITECTURE (MDA) - Revolutionary Fast Response System
+    // LLMs generate markdown naturally with simple directives for rich content
+    // Code parses directives and builds tables/charts from dataRefs - BLAZING FAST
     // ═══════════════════════════════════════════════════════════════════════════
 
-    const RESPOND_PROMPT = `You are a financial data analyst. Analyze this data and create a response.
+    const MDA_RESPOND_PROMPT = `You are a financial analyst. Analyze this data and write a clear response.
 
 {history_context}
-CURRENT QUESTION: "{question}"
+QUESTION: "{question}"
 
 {data_sections}
 
 ═══════════════════════════════════════════════════════════════════════════════
-CRITICAL INSTRUCTIONS - READ CAREFULLY:
+WRITE YOUR RESPONSE IN MARKDOWN with these special directives:
 
-1. NEVER INVENT DATA. Every number must come from tokens or the data above.
+1. TABLES - Show data from a dataRef:
+   :::table ref_xxx
+   Optional Title Here
+   :::
 
-2. AVAILABLE TOKEN SYNTAX:
-   Row values:
-   - {{{{data.rows[0].customer_name}}}} → first row's customer_name
-   - {{{{data.rows[0].total_revenue:currency}}}} → formats as currency
-   - {{{{data.rows[5].amount}}}} → 6th row's amount value
+2. CHARTS - Visualize data:
+   :::chart bar ref_xxx
+   x_column | y_column | Optional Title
+   :::
+   (chart types: bar, line, pie)
 
-   Aggregate stats (from STATS section above):
-   - {{{{data.stats.total:currency}}}} → sum of primary monetary column
-   - {{{{data.stats.average:currency}}}} → average
-   - {{{{data.stats.count}}}} → total row count
+3. METRICS - Key numbers (max 4):
+   :::metrics
+   | Label | Value | trend |
+   | Revenue | $1.2M | up |
+   | Expenses | $800K | down |
+   :::
+   (trend: up, down, or neutral)
 
-   Column-specific aggregates:
-   - {{{{data.stats.total_outstanding_ar:currency}}}} → sum of outstanding_ar column
-   - {{{{data.stats.total_revenue:currency}}}} → sum of total_revenue column
+4. LISTS - Findings or recommendations:
+   :::list Optional Title
+   - First item
+   - Second item
+   - Third item
+   :::
 
-3. OUTPUT FORMAT - Return a JSON object with a "blocks" array.
-   You decide the sequence and mix of blocks to tell the best story.
-
-4. AVAILABLE BLOCK TYPES:
-   - text: {{"type": "text", "content": "Markdown text with {{{{tokens}}}}"}}
-   - metrics: {{"type": "metrics", "items": [{{"label": "Max 4 Words", "value": "{{{{token}}}}", "trend": "up|down|neutral"}}]}}
-   - table: {{"type": "table", "dataRef": "ref_xxx", "title": "Optional Title"}}
-   - chart: {{"type": "chart", "chartType": "bar|line|pie", "dataRef": "ref_xxx", "x": "column_name", "y": "column_name", "title": "Optional"}}
-   - list: {{"type": "list", "title": "Optional Title", "items": ["item1", "item2"]}}
-
-5. BLOCK GUIDELINES:
-   - Start with context (text block explaining what you're showing)
-   - Place metrics early for quick insights (max 4 metrics)
-   - Interleave text explanations between data visualizations
-   - Use tables for detailed data (≥5 rows), charts for patterns/comparisons (<15 items)
-   - Charts: pie for composition, bar for comparison, line for trends over time
-   - End with findings/recommendations (list block)
-   - Aim for 3-7 blocks total for a natural narrative flow
-
-6. For metrics:
-   - Labels must be MAX 4 WORDS (e.g., "Total Revenue", "Outstanding Balance")
-   - ALWAYS use tokens for the value field
-
-7. For charts:
-   - Use the dataRef from the DATA section header (e.g., "ref_cust_abc123")
-   - x and y must be actual column names from the data
-   - Only create charts when the data has appropriate structure
-
-8. For tables:
-   - Reference the dataRef to include the full data
-   - Tables will show all rows with pagination
-
-9. DATA COMPLETENESS: Use the data available. The REFLECT phase has already loaded all necessary data.
+5. TEXT - Just write normally (no directive needed)
 
 ═══════════════════════════════════════════════════════════════════════════════
-⚠️ CRITICAL: OUTPUT STRUCTURE
+TOKEN SYNTAX - Reference actual data values:
 
-You MUST return EXACTLY this structure: {{"blocks": [...]}}
+Row values: {{{{data.rows[0].column_name}}}} or {{{{data.rows[0].column_name:currency}}}}
+Stats: {{{{data.stats.total:currency}}}}, {{{{data.stats.count}}}}, {{{{data.stats.average}}}}
+Column totals: {{{{data.stats.total_column_name:currency}}}}
 
-The ONLY valid top-level key is "blocks" - an array of typed block objects.
-Any other top-level keys will cause a validation error.
+═══════════════════════════════════════════════════════════════════════════════
+GUIDELINES:
 
-✅ CORRECT STRUCTURE:
-{{"blocks": [{{"type": "text", "content": "..."}}, ...]}}
+- Start with a brief overview of what the data shows
+- Interleave explanatory text between tables and charts
+- Use metrics for quick insights (place early)
+- Use tables for detailed breakdowns
+- Use charts for patterns/comparisons (bar: compare, line: trends, pie: composition)
+- End with key findings or recommendations
+- Write naturally - this is markdown, not JSON
+
+═══════════════════════════════════════════════════════════════════════════════
+EXAMPLE RESPONSE:
+
+Here's your year-over-year revenue comparison for {{{{data.rows[0].customer_name}}}}...
+
+:::metrics
+| Label | Value | trend |
+| Total Revenue | {{{{data.stats.total:currency}}}} | up |
+| Record Count | {{{{data.stats.count}}}} | neutral |
+:::
+
+The current period shows strong performance:
+
+:::table ref_abc123
+Current Period Revenue
+:::
+
+Compared to the prior period:
+
+:::table ref_def456
+Prior Period Revenue
+:::
+
+:::chart bar ref_abc123
+customer_name | total_revenue | Revenue by Customer
+:::
+
+:::list Key Findings
+- Revenue increased 15% year-over-year
+- Top 3 customers account for 60% of total
+- New customer acquisition up 20%
+:::
+
 ═══════════════════════════════════════════════════════════════════════════════
 
-Response format (JSON only):
-{{
-  "blocks": [
-    {{"type": "text", "content": "Here's an analysis of your data for {{{{data.rows[0].customer_name}}}}..."}},
-    {{"type": "metrics", "items": [
-      {{"label": "Total Revenue", "value": "{{{{data.stats.total:currency}}}}", "trend": "up"}},
-      {{"label": "Record Count", "value": "{{{{data.stats.count}}}}", "trend": "neutral"}}
-    ]}},
-    {{"type": "text", "content": "The distribution shows interesting patterns:"}},
-    {{"type": "chart", "chartType": "bar", "dataRef": "ref_xxx", "x": "customer_name", "y": "total_revenue", "title": "Revenue by Customer"}},
-    {{"type": "table", "dataRef": "ref_xxx", "title": "Detailed Breakdown"}},
-    {{"type": "list", "title": "Key Findings", "items": [
-      "{{{{data.rows[0].customer_name}}}} leads with {{{{data.rows[0].total_revenue:currency}}}}",
-      "Top 3 account for majority of total"
-    ]}}
-  ]
-}}`;
+Now write your analysis:`;
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // RESPOND_BLOCKS_SCHEMA - JSON Schema for structured output enforcement
-    // Used by providers that support schema-constrained JSON generation
+    // MARKDOWN DIRECTIVE PARSER (MDA)
+    // Parses markdown with :::directive blocks into structured block array
+    // BLAZING FAST - LLM writes markdown, code builds rich content
     // ═══════════════════════════════════════════════════════════════════════════
-    const RESPOND_BLOCKS_SCHEMA = {
-        name: 'advisor_response',
-        schema: {
-            type: 'object',
-            properties: {
-                blocks: {
-                    type: 'array',
-                    items: {
-                        type: 'object',
-                        properties: {
-                            type: {
-                                type: 'string',
-                                enum: ['text', 'metrics', 'table', 'chart', 'list']
-                            },
-                            content: { type: 'string' },
-                            items: {
-                                type: 'array',
-                                items: {
-                                    oneOf: [
-                                        { type: 'string' },
-                                        {
-                                            type: 'object',
-                                            properties: {
-                                                label: { type: 'string' },
-                                                value: { type: 'string' },
-                                                trend: { type: 'string', enum: ['up', 'down', 'neutral'] }
-                                            },
-                                            required: ['label', 'value']
-                                        }
-                                    ]
-                                }
-                            },
-                            title: { type: 'string' },
-                            dataRef: { type: 'string' },
-                            chartType: { type: 'string', enum: ['bar', 'line', 'pie'] },
-                            x: { type: 'string' },
-                            y: { type: 'string' }
-                        },
-                        required: ['type']
-                    }
-                }
-            },
-            required: ['blocks']
+
+    /**
+     * Parse markdown with directives into blocks array
+     * Directives: :::table, :::chart, :::metrics, :::list
+     * Regular text becomes text blocks
+     * @param {string} markdown - Raw markdown from LLM
+     * @param {Object} state - Current state for token resolution
+     * @returns {Array} Array of block objects
+     */
+    function parseMarkdownDirectives(markdown, state) {
+        if (!markdown || typeof markdown !== 'string') {
+            log.debug('MDA: empty or invalid markdown input');
+            return [];
         }
-    };
 
-    // ═══════════════════════════════════════════════════════════════════════════
-    // SCHEMA_CORRECTION_PROMPT - Used when LLM returns wrong format
-    // ═══════════════════════════════════════════════════════════════════════════
-    const SCHEMA_CORRECTION_PROMPT = `Your previous response used an invalid format.
+        const blocks = [];
+        let currentText = '';
 
-You MUST return EXACTLY: {"blocks": [...]}
+        // Split by directive markers (:::)
+        // Regex captures: opening directive, content, closing
+        const directiveRegex = /:::(table|chart|metrics|list)\s*([^\n]*)\n([\s\S]*?):::/g;
 
-The ONLY valid top-level key is "blocks" containing an array of typed block objects.
+        let lastIndex = 0;
+        let match;
 
-Correct structure:
-{
-  "blocks": [
-    {"type": "text", "content": "your analysis text here"},
-    {"type": "metrics", "items": [{"label": "Label", "value": "value", "trend": "neutral"}]},
-    {"type": "list", "title": "Key Takeaways", "items": ["item 1", "item 2"]}
-  ]
-}
+        while ((match = directiveRegex.exec(markdown)) !== null) {
+            // Capture text before this directive
+            const textBefore = markdown.substring(lastIndex, match.index).trim();
+            if (textBefore) {
+                blocks.push({
+                    type: 'text',
+                    content: textBefore
+                });
+            }
 
-Now provide the response using ONLY the blocks array format:`;
+            const directiveType = match[1];
+            const directiveMeta = match[2].trim();
+            const directiveContent = match[3].trim();
+
+            try {
+                const block = parseDirectiveBlock(directiveType, directiveMeta, directiveContent);
+                if (block) {
+                    blocks.push(block);
+                }
+            } catch (e) {
+                log.debug('MDA: error parsing directive', {
+                    type: directiveType,
+                    error: e.message
+                });
+            }
+
+            lastIndex = match.index + match[0].length;
+        }
+
+        // Capture remaining text after last directive
+        const remainingText = markdown.substring(lastIndex).trim();
+        if (remainingText) {
+            blocks.push({
+                type: 'text',
+                content: remainingText
+            });
+        }
+
+        log.debug('MDA: parsed markdown into blocks', {
+            inputLength: markdown.length,
+            blockCount: blocks.length,
+            blockTypes: blocks.map(b => b.type).join(',')
+        });
+
+        return blocks;
+    }
+
+    /**
+     * Parse a single directive block based on type
+     * @param {string} type - Directive type (table, chart, metrics, list)
+     * @param {string} meta - Metadata after directive type (e.g., "bar ref_xxx")
+     * @param {string} content - Content inside the directive
+     * @returns {Object|null} Block object or null if invalid
+     */
+    function parseDirectiveBlock(type, meta, content) {
+        switch (type) {
+            case 'table':
+                return parseTableDirective(meta, content);
+            case 'chart':
+                return parseChartDirective(meta, content);
+            case 'metrics':
+                return parseMetricsDirective(content);
+            case 'list':
+                return parseListDirective(meta, content);
+            default:
+                return null;
+        }
+    }
+
+    /**
+     * Parse :::table ref_xxx directive
+     * Format: :::table ref_xxx
+     *         Optional Title
+     *         :::
+     */
+    function parseTableDirective(meta, content) {
+        // meta contains the dataRef
+        const dataRef = meta.trim();
+        if (!dataRef || !dataRef.startsWith('ref_')) {
+            log.debug('MDA: invalid table dataRef', { meta });
+            return null;
+        }
+
+        return {
+            type: 'table',
+            dataRef: dataRef,
+            title: content.trim() || undefined
+        };
+    }
+
+    /**
+     * Parse :::chart type ref_xxx directive
+     * Format: :::chart bar ref_xxx
+     *         x_column | y_column | Optional Title
+     *         :::
+     */
+    function parseChartDirective(meta, content) {
+        // meta format: "bar ref_xxx" or "line ref_xxx" or "pie ref_xxx"
+        const metaParts = meta.trim().split(/\s+/);
+        if (metaParts.length < 2) {
+            log.debug('MDA: invalid chart meta', { meta });
+            return null;
+        }
+
+        const chartType = metaParts[0].toLowerCase();
+        const dataRef = metaParts[1];
+
+        if (!['bar', 'line', 'pie'].includes(chartType)) {
+            log.debug('MDA: invalid chart type', { chartType });
+            return null;
+        }
+
+        if (!dataRef || !dataRef.startsWith('ref_')) {
+            log.debug('MDA: invalid chart dataRef', { dataRef });
+            return null;
+        }
+
+        // content format: "x_column | y_column | Optional Title"
+        const contentParts = content.split('|').map(s => s.trim());
+        if (contentParts.length < 2) {
+            log.debug('MDA: invalid chart content', { content });
+            return null;
+        }
+
+        return {
+            type: 'chart',
+            chartType: chartType,
+            dataRef: dataRef,
+            x: contentParts[0],
+            y: contentParts[1],
+            title: contentParts[2] || undefined
+        };
+    }
+
+    /**
+     * Parse :::metrics directive
+     * Format: :::metrics
+     *         | Label | Value | trend |
+     *         | Revenue | $1.2M | up |
+     *         :::
+     */
+    function parseMetricsDirective(content) {
+        const lines = content.split('\n').filter(l => l.trim());
+        const items = [];
+
+        for (const line of lines) {
+            // Skip header row if present
+            if (line.toLowerCase().includes('label') && line.toLowerCase().includes('value')) {
+                continue;
+            }
+
+            // Parse pipe-delimited format: | Label | Value | trend |
+            const parts = line.split('|').map(s => s.trim()).filter(s => s);
+            if (parts.length >= 2) {
+                items.push({
+                    label: parts[0].substring(0, 50),
+                    value: parts[1],
+                    trend: ['up', 'down', 'neutral'].includes(parts[2]?.toLowerCase())
+                        ? parts[2].toLowerCase()
+                        : 'neutral'
+                });
+            }
+        }
+
+        if (items.length === 0) {
+            return null;
+        }
+
+        // Limit to 4 metrics
+        return {
+            type: 'metrics',
+            items: items.slice(0, 4)
+        };
+    }
+
+    /**
+     * Parse :::list directive
+     * Format: :::list Optional Title
+     *         - First item
+     *         - Second item
+     *         :::
+     */
+    function parseListDirective(meta, content) {
+        const title = meta.trim() || undefined;
+        const lines = content.split('\n').filter(l => l.trim());
+        const items = [];
+
+        for (const line of lines) {
+            // Parse bullet points: "- Item text" or "* Item text"
+            const match = line.match(/^[\-\*]\s*(.+)$/);
+            if (match) {
+                items.push(match[1].trim());
+            }
+        }
+
+        if (items.length === 0) {
+            return null;
+        }
+
+        return {
+            type: 'list',
+            title: title,
+            items: items
+        };
+    }
 
     // ═══════════════════════════════════════════════════════════════════════════
     // TOOL MANIFEST - Now delegated to Tools.js (single source of truth)
@@ -3810,7 +3980,12 @@ Now provide the response using ONLY the blocks array format:`;
         // Build data sections with ACTUAL ROWS for the prompt
         const dataSections = buildDataSectionsForPrompt(state);
 
-        const prompt = RESPOND_PROMPT
+        // ═══════════════════════════════════════════════════════════════════════
+        // MARKDOWN DIRECTIVE ARCHITECTURE (MDA)
+        // LLM writes natural markdown with :::directives
+        // Code parses directives and builds rich blocks - BLAZING FAST
+        // ═══════════════════════════════════════════════════════════════════════
+        const prompt = MDA_RESPOND_PROMPT
             .replace('{history_context}', buildHistoryContext(state))
             .replace('{question}', state.message)
             .replace('{data_sections}', dataSections);
@@ -3822,107 +3997,74 @@ Now provide the response using ONLY the blocks array format:`;
             status: 'active',
             context: {
                 dataRefs: state.dataReferences.length,
-                phase: 'respond'
+                phase: 'respond',
+                architecture: 'MDA'
             }
         });
 
         // ═══════════════════════════════════════════════════════════════════════
-        // LLM RETRY LOOP - Retry up to 3 times if response is invalid
+        // MDA LLM CALL - Single fast call, no JSON mode needed
+        // Markdown is natural for LLMs - generates 5-10x faster than complex JSON
         // ═══════════════════════════════════════════════════════════════════════
-        const MAX_LLM_RETRIES = 3;
         let lastError = null;
-        let parsed = null;
+        let parsedBlocks = null;
         let resolved = null;
-        let lastRawResponse = null;
+        let rawMarkdown = null;
 
-        for (let attempt = 1; attempt <= MAX_LLM_RETRIES; attempt++) {
-            try {
-                // ═══════════════════════════════════════════════════════════════════════
-                // ATTEMPT 1: Call with JSON schema enforcement (if provider supports it)
-                // maxTokens dynamically calculated from model's maxOutput (100% for respond)
-                // ═══════════════════════════════════════════════════════════════════════
-                const response = AIProviders.callAI(prompt, {
-                    tier: getTierForPhase('respond', state),
-                    temperature: 0.3 + (attempt - 1) * 0.1, // Slightly increase temperature on retries
-                    jsonMode: true,
-                    jsonSchema: RESPOND_BLOCKS_SCHEMA,
-                    purpose: 'SCA:respond'
-                });
+        try {
+            const response = AIProviders.callAI(prompt, {
+                tier: getTierForPhase('respond', state),
+                temperature: 0.4,
+                purpose: 'SCA:respond:MDA'
+            });
 
-                parsed = parseJsonResponse(response?.text);
-                lastRawResponse = response?.text; // Capture for diagnostics
+            rawMarkdown = response?.text || '';
 
-                // ═══════════════════════════════════════════════════════════════════════
-                // ATTEMPT 2: If wrong format, retry with explicit correction prompt
-                // LLMs sometimes ignore schema and return familiar patterns from training
-                // ═══════════════════════════════════════════════════════════════════════
-                if (parsed && !parsed.blocks) {
-                    log.debug('SCA Respond: wrong format detected, retrying with correction', {
-                        receivedKeys: Object.keys(parsed),
-                        hasNarrative: !!parsed.narrative,
-                        hasFindings: !!parsed.findings,
-                        rawPreview: (response?.text || '').substring(0, 300)
-                    });
+            log.debug('MDA: received markdown response', {
+                length: rawMarkdown.length,
+                preview: rawMarkdown.substring(0, 200)
+            });
 
-                    // Build correction prompt with original context + correction instructions
-                    const correctionPrompt = prompt + '\n\n' + SCHEMA_CORRECTION_PROMPT;
+            // Parse markdown with directives into blocks
+            parsedBlocks = parseMarkdownDirectives(rawMarkdown, state);
 
-                    const retryResponse = AIProviders.callAI(correctionPrompt, {
-                        tier: getTierForPhase('respond', state),
-                        temperature: 0.2, // Lower temperature for more deterministic output
-                        jsonMode: true,
-                        purpose: 'SCA:respond'
-                    });
-
-                    parsed = parseJsonResponse(retryResponse?.text);
-                    lastRawResponse = retryResponse?.text;
+            if (!parsedBlocks || parsedBlocks.length === 0) {
+                // If no blocks parsed, treat entire response as text block
+                if (rawMarkdown.trim()) {
+                    parsedBlocks = [{ type: 'text', content: rawMarkdown.trim() }];
+                } else {
+                    throw new Error('MDA: empty response from LLM');
                 }
-
-                if (!parsed) {
-                    throw new Error('Invalid respond output - failed to parse JSON');
-                }
-
-                // Validate we have blocks array (Block Sequence Architecture)
-                if (!parsed.blocks || !Array.isArray(parsed.blocks)) {
-                    throw new Error('Invalid respond output - expected blocks array');
-                }
-
-                // Resolve all {{tokens}} in the blocks
-                resolved = resolveBlockSequence(parsed.blocks, state);
-
-                // Validate we have usable content
-                if (!resolved || resolved.length === 0) {
-                    throw new Error('Invalid respond output - no blocks resolved');
-                }
-
-                // Success - break out of retry loop
-                log.debug('SCA RESPOND LLM succeeded', { attempt: attempt });
-                break;
-
-            } catch (e) {
-                lastError = e;
-                log.debug('SCA RESPOND LLM attempt failed', {
-                    attempt: attempt,
-                    maxAttempts: MAX_LLM_RETRIES,
-                    error: e.message
-                });
-
-                parsed = null;
-                resolved = null;
-
-                if (attempt < MAX_LLM_RETRIES) {
-                    // Will retry
-                    continue;
-                }
-                // Last attempt failed - will fall through to fallback
             }
+
+            // Resolve blocks - builds tables/charts from dataRefs, resolves {{tokens}}
+            resolved = resolveBlockSequence(parsedBlocks, state);
+
+            if (!resolved || resolved.length === 0) {
+                throw new Error('MDA: no blocks resolved');
+            }
+
+            log.debug('MDA: successfully parsed and resolved blocks', {
+                parsedCount: parsedBlocks.length,
+                resolvedCount: resolved.length,
+                blockTypes: resolved.map(b => b.type).join(',')
+            });
+
+        } catch (e) {
+            lastError = e;
+            log.error('MDA RESPOND failed', {
+                error: e.message,
+                rawLength: rawMarkdown?.length
+            });
         }
 
         const duration = Date.now() - phaseStart;
         state.phaseTimings.respond = duration;
 
-        // Check if we got a valid response after retries
-        if (parsed && resolved && resolved.length > 0) {
+        // ═══════════════════════════════════════════════════════════════════════
+        // MDA SUCCESS - Blocks parsed and resolved successfully
+        // ═══════════════════════════════════════════════════════════════════════
+        if (resolved && resolved.length > 0) {
             // Extract summary from first text block
             const firstTextBlock = resolved.find(b => b.type === 'text');
             const summary = firstTextBlock?.content?.substring(0, 150) || '';
@@ -3942,31 +4084,36 @@ Now provide the response using ONLY the blocks array format:`;
                 status: 'complete',
                 duration: duration,
                 context: {
+                    architecture: 'MDA',
                     blockCount: resolved.length,
                     tokensResolved: true,
                     hasCharts: resolved.some(b => b.type === 'chart'),
                     hasTables: resolved.some(b => b.type === 'table')
                 },
                 debug: buildDebugInfo(prompt, null, state, {
+                    architecture: 'MDA',
                     blockCount: resolved.length,
                     blockTypes: resolved.map(b => b.type).join(',')
                 })
             });
 
-            log.debug('SCA Respond phase complete', { duration: duration, blockCount: resolved.length });
+            log.debug('MDA Respond phase complete', { duration: duration, blockCount: resolved.length });
             return { success: true, nextPhase: PHASES.COMPLETE };
         }
 
-        // All retries exhausted - fallback
-        log.error('SCA Respond phase failed after retries', { error: lastError?.message, duration: duration });
-        state.errors.push({ phase: 'respond', error: lastError?.message || 'LLM retries exhausted', timestamp: Date.now() });
+        // ═══════════════════════════════════════════════════════════════════════
+        // MDA FALLBACK - If parsing failed, build tables directly from dataRefs
+        // This ensures users always see their data even if LLM output is malformed
+        // ═══════════════════════════════════════════════════════════════════════
+        log.error('MDA Respond phase failed', { error: lastError?.message, duration: duration });
+        state.errors.push({ phase: 'respond', error: lastError?.message || 'MDA parse failed', timestamp: Date.now() });
 
-        // Fallback: use data summaries directly
-        const fallbackNarrative = buildFallbackNarrative(state);
+        // Build fallback with actual data tables (not just "X results found")
+        const fallbackBlocks = buildMDAFallbackBlocks(state);
         state.formattedResponse = {
             title: 'Analysis Results',
-            summary: fallbackNarrative.substring(0, 150),
-            blocks: [{ type: 'text', content: fallbackNarrative }]
+            summary: 'Here is the data from your query.',
+            blocks: fallbackBlocks
         };
         state.phase = PHASES.COMPLETE;
 
@@ -3976,12 +4123,45 @@ Now provide the response using ONLY the blocks array format:`;
             status: 'complete',
             duration: duration,
             context: {
+                architecture: 'MDA',
                 fallback: true,
-                error: (lastError?.message || 'LLM retries exhausted').substring(0, 100)
+                error: (lastError?.message || 'MDA parse failed').substring(0, 100)
             }
         });
 
         return { success: true, nextPhase: PHASES.COMPLETE };
+    }
+
+    /**
+     * Build fallback blocks with actual data tables when MDA parsing fails
+     * Ensures users always see their data even if LLM output is malformed
+     * @param {Object} state - Current state with dataReferences
+     * @returns {Array} Array of table blocks
+     */
+    function buildMDAFallbackBlocks(state) {
+        const blocks = [];
+
+        // Add intro text
+        blocks.push({
+            type: 'text',
+            content: 'Here is the data from your query:'
+        });
+
+        // Build table blocks for each data reference
+        state.dataReferences.forEach(ref => {
+            const tableBlock = buildTableBlockFromRef({ dataRef: ref.refId }, state);
+            if (tableBlock) {
+                blocks.push(tableBlock);
+            }
+        });
+
+        // If no tables could be built, add a simple text summary
+        if (blocks.length === 1) {
+            const fallbackNarrative = buildFallbackNarrative(state);
+            blocks.push({ type: 'text', content: fallbackNarrative });
+        }
+
+        return blocks;
     }
 
     /**
