@@ -1892,6 +1892,292 @@ Can filter by minimum/maximum revenue, class, department, subsidiary, and sales 
             }
         },
 
+        // ═══════════════════════════════════════════════════════════════════════════
+        // PAYMENT SPEED TOOLS - For "who pays faster" type questions
+        // These analyze actual payment behavior, NOT current outstanding balances
+        // ═══════════════════════════════════════════════════════════════════════════
+
+        get_customer_payment_speed: {
+            name: 'get_customer_payment_speed',
+            shortDescription: 'Analyze how fast customers pay their invoices',
+            category: 'data',
+            description: `Analyze customer payment behavior and speed.
+Shows average days to pay, DSO, on-time rate, and payment patterns.
+Use for: "who pays faster", "payment speed", "days to pay", "payment behavior", "slow payers", "DSO by customer"
+
+This tool analyzes ACTUAL PAYMENT HISTORY by comparing invoice dates to payment dates.
+It is DIFFERENT from AR aging which shows current outstanding balances.
+
+Key metrics:
+- avg_days_to_pay: Average days between invoice date and payment date
+- dso: Days Sales Outstanding (avg days receivables are outstanding)
+- on_time_rate: Percentage of invoices paid by due date
+- payment_count: Number of payments analyzed`,
+            parameters: {
+                type: 'object',
+                properties: {
+                    customer_id: {
+                        type: 'number',
+                        description: 'Filter to specific customer ID (use customer_ids for multiple)'
+                    },
+                    customer_ids: {
+                        type: 'array',
+                        items: { type: 'number' },
+                        description: 'Array of customer IDs for batch lookup (efficient for comparisons)'
+                    },
+                    period: {
+                        type: 'string',
+                        enum: [
+                            'last_30_days', 'last_60_days', 'last_90_days', 'last_180_days', 'last_365_days',
+                            'ytd', 'fytd', 'this_fiscal_year', 'last_fiscal_year',
+                            'last_2_years', 'last_3_years', 'all'
+                        ],
+                        description: 'Time period for payment analysis (default: last_365_days)'
+                    },
+                    min_payments: {
+                        type: 'number',
+                        description: 'Minimum number of payments to include customer in results (default: 1)'
+                    },
+                    limit: {
+                        type: 'number',
+                        description: 'Maximum customers to return (default: 50)'
+                    },
+                    sort_by: {
+                        type: 'string',
+                        enum: ['avg_days_to_pay', 'dso', 'on_time_rate', 'payment_count', 'total_paid', 'customer_name'],
+                        description: 'Sort results by field (default: avg_days_to_pay for fastest first)'
+                    },
+                    sort_direction: {
+                        type: 'string',
+                        enum: ['asc', 'desc'],
+                        description: 'Sort direction (default: asc for fastest first)'
+                    }
+                },
+                required: []
+            },
+            execute: function(args) {
+                // Handle single customer_id or batch customer_ids
+                let customerFilter = '';
+                if (args.customer_ids && args.customer_ids.length > 0) {
+                    customerFilter = `AND inv.entity IN (${args.customer_ids.join(',')})`;
+                } else if (args.customer_id) {
+                    customerFilter = `AND inv.entity = ${args.customer_id}`;
+                }
+
+                const periodFilter = buildPeriodFilter(args.period || 'last_365_days', 'pmt.trandate');
+                const minPayments = args.min_payments || 1;
+                const limit = args.limit || 50;
+
+                // Determine sort order
+                const sortMappings = {
+                    'avg_days_to_pay': 'avg_days_to_pay',
+                    'dso': 'dso',
+                    'on_time_rate': 'on_time_rate',
+                    'payment_count': 'payment_count',
+                    'total_paid': 'total_paid',
+                    'customer_name': 'customer_name'
+                };
+                const sortCol = sortMappings[args.sort_by] || 'avg_days_to_pay';
+                const sortDir = args.sort_direction === 'desc' ? 'DESC' : 'ASC';
+                // For payment speed, ascending means fastest first (lower days = faster)
+                const orderBy = `${sortCol} ${sortDir}`;
+
+                // Query: Match invoices to their payments via appliedtotransaction
+                // This links CustPymt records to the CustInvc they paid
+                const query = `
+                    SELECT
+                        c.id AS customer_id,
+                        c.companyname AS customer_name,
+                        COUNT(DISTINCT pmt.id) AS payment_count,
+                        COUNT(DISTINCT inv.id) AS invoice_count,
+                        SUM(pmt.foreigntotal) AS total_paid,
+                        ROUND(AVG(pmt.trandate - inv.trandate), 1) AS avg_days_to_pay,
+                        ROUND(AVG(pmt.trandate - inv.trandate), 1) AS dso,
+                        MIN(pmt.trandate - inv.trandate) AS fastest_payment_days,
+                        MAX(pmt.trandate - inv.trandate) AS slowest_payment_days,
+                        ROUND(
+                            100.0 * SUM(CASE WHEN pmt.trandate <= inv.duedate THEN 1 ELSE 0 END) /
+                            NULLIF(COUNT(*), 0),
+                            1
+                        ) AS on_time_rate,
+                        ROUND(
+                            100.0 * SUM(CASE WHEN pmt.trandate > inv.duedate THEN 1 ELSE 0 END) /
+                            NULLIF(COUNT(*), 0),
+                            1
+                        ) AS late_rate
+                    FROM transaction pmt
+                    INNER JOIN transactionline pmtline ON pmtline.transaction = pmt.id
+                        AND pmtline.mainline = 'F'
+                    INNER JOIN transaction inv ON inv.id = ABS(pmtline.appliedtotransaction)
+                        AND inv.type = 'CustInvc'
+                    INNER JOIN customer c ON c.id = inv.entity
+                    WHERE pmt.type = 'CustPymt'
+                        AND pmt.posting = 'T'
+                        AND pmt.voided = 'F'
+                        AND inv.posting = 'T'
+                        AND inv.voided = 'F'
+                        AND ${periodFilter}
+                        ${customerFilter}
+                    GROUP BY c.id, c.companyname
+                    HAVING COUNT(DISTINCT pmt.id) >= ${minPayments}
+                    ORDER BY ${orderBy}
+                    FETCH FIRST ${limit} ROWS ONLY
+                `;
+
+                const result = QueryExecutor.executeQuery(query);
+                return formatResult(result, 'get_customer_payment_speed', { limit: limit });
+            },
+            displayName: function(args) {
+                if (args.customer_ids && args.customer_ids.length > 0) {
+                    return `Analyzing payment speed for ${args.customer_ids.length} customers...`;
+                }
+                return args.customer_id ? 'Analyzing customer payment speed...' : 'Analyzing customer payment speeds...';
+            }
+        },
+
+        get_vendor_payment_speed: {
+            name: 'get_vendor_payment_speed',
+            shortDescription: 'Analyze how fast we pay our vendors',
+            category: 'data',
+            description: `Analyze vendor payment behavior - how quickly we pay our bills.
+Shows average days to pay, DPO, early/late payment rates, and payment patterns.
+Use for: "how fast do we pay vendors", "payment speed to vendor", "DPO", "days to pay vendors", "do we pay on time"
+
+This tool analyzes ACTUAL PAYMENT HISTORY by comparing bill dates to payment dates.
+It is DIFFERENT from AP aging which shows current outstanding balances.
+
+Key metrics:
+- avg_days_to_pay: Average days between bill date and payment date
+- dpo: Days Payable Outstanding (avg days payables are outstanding)
+- on_time_rate: Percentage of bills paid by due date
+- early_rate: Percentage of bills paid before due date
+- payment_count: Number of payments analyzed`,
+            parameters: {
+                type: 'object',
+                properties: {
+                    vendor_id: {
+                        type: 'number',
+                        description: 'Filter to specific vendor ID (use vendor_ids for multiple)'
+                    },
+                    vendor_ids: {
+                        type: 'array',
+                        items: { type: 'number' },
+                        description: 'Array of vendor IDs for batch lookup (efficient for comparisons)'
+                    },
+                    period: {
+                        type: 'string',
+                        enum: [
+                            'last_30_days', 'last_60_days', 'last_90_days', 'last_180_days', 'last_365_days',
+                            'ytd', 'fytd', 'this_fiscal_year', 'last_fiscal_year',
+                            'last_2_years', 'last_3_years', 'all'
+                        ],
+                        description: 'Time period for payment analysis (default: last_365_days)'
+                    },
+                    min_payments: {
+                        type: 'number',
+                        description: 'Minimum number of payments to include vendor in results (default: 1)'
+                    },
+                    limit: {
+                        type: 'number',
+                        description: 'Maximum vendors to return (default: 50)'
+                    },
+                    sort_by: {
+                        type: 'string',
+                        enum: ['avg_days_to_pay', 'dpo', 'on_time_rate', 'payment_count', 'total_paid', 'vendor_name'],
+                        description: 'Sort results by field (default: avg_days_to_pay)'
+                    },
+                    sort_direction: {
+                        type: 'string',
+                        enum: ['asc', 'desc'],
+                        description: 'Sort direction (default: asc for fastest first)'
+                    }
+                },
+                required: []
+            },
+            execute: function(args) {
+                // Handle single vendor_id or batch vendor_ids
+                let vendorFilter = '';
+                if (args.vendor_ids && args.vendor_ids.length > 0) {
+                    vendorFilter = `AND bill.entity IN (${args.vendor_ids.join(',')})`;
+                } else if (args.vendor_id) {
+                    vendorFilter = `AND bill.entity = ${args.vendor_id}`;
+                }
+
+                const periodFilter = buildPeriodFilter(args.period || 'last_365_days', 'pmt.trandate');
+                const minPayments = args.min_payments || 1;
+                const limit = args.limit || 50;
+
+                // Determine sort order
+                const sortMappings = {
+                    'avg_days_to_pay': 'avg_days_to_pay',
+                    'dpo': 'dpo',
+                    'on_time_rate': 'on_time_rate',
+                    'payment_count': 'payment_count',
+                    'total_paid': 'total_paid',
+                    'vendor_name': 'vendor_name'
+                };
+                const sortCol = sortMappings[args.sort_by] || 'avg_days_to_pay';
+                const sortDir = args.sort_direction === 'desc' ? 'DESC' : 'ASC';
+                const orderBy = `${sortCol} ${sortDir}`;
+
+                // Query: Match bills to their payments via appliedtotransaction
+                // This links VendPymt records to the VendBill they paid
+                const query = `
+                    SELECT
+                        v.id AS vendor_id,
+                        v.companyname AS vendor_name,
+                        COUNT(DISTINCT pmt.id) AS payment_count,
+                        COUNT(DISTINCT bill.id) AS bill_count,
+                        SUM(ABS(pmt.foreigntotal)) AS total_paid,
+                        ROUND(AVG(pmt.trandate - bill.trandate), 1) AS avg_days_to_pay,
+                        ROUND(AVG(pmt.trandate - bill.trandate), 1) AS dpo,
+                        MIN(pmt.trandate - bill.trandate) AS fastest_payment_days,
+                        MAX(pmt.trandate - bill.trandate) AS slowest_payment_days,
+                        ROUND(
+                            100.0 * SUM(CASE WHEN pmt.trandate <= bill.duedate THEN 1 ELSE 0 END) /
+                            NULLIF(COUNT(*), 0),
+                            1
+                        ) AS on_time_rate,
+                        ROUND(
+                            100.0 * SUM(CASE WHEN pmt.trandate < bill.duedate THEN 1 ELSE 0 END) /
+                            NULLIF(COUNT(*), 0),
+                            1
+                        ) AS early_rate,
+                        ROUND(
+                            100.0 * SUM(CASE WHEN pmt.trandate > bill.duedate THEN 1 ELSE 0 END) /
+                            NULLIF(COUNT(*), 0),
+                            1
+                        ) AS late_rate
+                    FROM transaction pmt
+                    INNER JOIN transactionline pmtline ON pmtline.transaction = pmt.id
+                        AND pmtline.mainline = 'F'
+                    INNER JOIN transaction bill ON bill.id = ABS(pmtline.appliedtotransaction)
+                        AND bill.type = 'VendBill'
+                    INNER JOIN vendor v ON v.id = bill.entity
+                    WHERE pmt.type = 'VendPymt'
+                        AND pmt.posting = 'T'
+                        AND pmt.voided = 'F'
+                        AND bill.posting = 'T'
+                        AND bill.voided = 'F'
+                        AND ${periodFilter}
+                        ${vendorFilter}
+                    GROUP BY v.id, v.companyname
+                    HAVING COUNT(DISTINCT pmt.id) >= ${minPayments}
+                    ORDER BY ${orderBy}
+                    FETCH FIRST ${limit} ROWS ONLY
+                `;
+
+                const result = QueryExecutor.executeQuery(query);
+                return formatResult(result, 'get_vendor_payment_speed', { limit: limit });
+            },
+            displayName: function(args) {
+                if (args.vendor_ids && args.vendor_ids.length > 0) {
+                    return `Analyzing payment speed to ${args.vendor_ids.length} vendors...`;
+                }
+                return args.vendor_id ? 'Analyzing vendor payment speed...' : 'Analyzing vendor payment speeds...';
+            }
+        },
+
         get_gl_activity: {
             name: 'get_gl_activity',
             shortDescription: 'GL account activity and transaction details',
