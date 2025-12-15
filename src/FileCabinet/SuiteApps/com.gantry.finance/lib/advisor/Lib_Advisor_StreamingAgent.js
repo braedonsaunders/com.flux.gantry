@@ -747,7 +747,21 @@ NEEDS_RESOLUTION GUIDELINES - Set true ONLY when genuinely ambiguous:
 - FALSE: "Show expenses" (clear request - use ytd default)
 Most reporting requests should be FALSE - use sensible period defaults instead of asking.
 
-Response format: {"intent": "category", "entities": ["named items"], "time_scope": "ytd|mtd|last_30|custom|none", "needs_resolution": true|false, "references_previous": true|false, "semantic_topics": ["topic1", "topic2"], "transaction_context": "bills|invoices|payments|credits|all", "constraints": {"limit": null, "sort_by": null, "sort_direction": "desc", "highlight": null, "exclude": []}, "userNarration": "Looking into your customer revenue..."}`;
+DRILL-DOWN DETECTION:
+is_drill_down is true when user wants MORE detail on a previous result:
+- "show me the details"
+- "break that down"
+- "give me more"
+- "expand on that"
+- "dig deeper"
+- "elaborate"
+- "can you list them"
+- "what are those items"
+- "show the table"
+- "itemize that"
+drill_down_context should describe what they want to expand on (e.g., "vendor analysis", "weekly projection", "AR buckets").
+
+Response format: {"intent": "category", "entities": ["named items"], "time_scope": "ytd|mtd|last_30|custom|none", "needs_resolution": true|false, "references_previous": true|false, "semantic_topics": ["topic1", "topic2"], "transaction_context": "bills|invoices|payments|credits|all", "constraints": {"limit": null, "sort_by": null, "sort_direction": "desc", "highlight": null, "exclude": []}, "is_drill_down": false, "drill_down_context": null, "userNarration": "Looking into your customer revenue..."}`;
 
     const SELECT_PROMPT = `Select tools to answer this {intent} question. Respond with JSON only.
 {date_context}
@@ -2295,8 +2309,82 @@ Now write your analysis:`;
             if (parsed && parsed.intent) {
                 state.intent = parsed;
 
-                // Route conversational queries directly to RESPOND
+                // Handle general intent - check if tools would enhance the response
+                // Instead of always skipping to RESPOND, ask LLM if tools would help
+                // e.g., "How do I check my cash?" could benefit from Cash dashboard navigation
                 if (parsed.intent === 'general') {
+                    // Ask LLM if tools would enhance the response
+                    const toolCheckPrompt = `User asked: "${state.message}"
+
+Would any of these tools help answer this better?
+- navigate_to_dashboard: Guide to specific dashboard (cash, AR, AP, revenue, expenses, etc.)
+- list_dashboards: Show available analysis options
+- get_help_topic: Explain Gantry features
+
+Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null", "reason": "brief explanation"}`;
+
+                    let shouldUseTool = false;
+                    let toolSuggestion = null;
+
+                    try {
+                        const toolCheckResponse = AIProviders.callAI(toolCheckPrompt, {
+                            tier: TIERS.FAST,
+                            temperature: 0.1,
+                            jsonMode: true,
+                            purpose: 'SCA:general_tool_check'
+                        });
+
+                        const toolCheck = parseJsonResponse(toolCheckResponse?.text);
+
+                        if (toolCheck && toolCheck.use_tools && toolCheck.suggested_tool) {
+                            shouldUseTool = true;
+                            toolSuggestion = {
+                                suggested_tool: toolCheck.suggested_tool,
+                                reason: toolCheck.reason
+                            };
+                            log.debug('SCA Intent - general intent may benefit from tools', {
+                                suggestedTool: toolCheck.suggested_tool,
+                                reason: toolCheck.reason
+                            });
+                        }
+                    } catch (toolCheckError) {
+                        log.debug('SCA Intent - tool check failed, defaulting to no tools', {
+                            error: toolCheckError.message
+                        });
+                    }
+
+                    if (shouldUseTool && toolSuggestion) {
+                        // Tools would help - route through REASON_ACT with hint
+                        state.toolSelectionHint = toolSuggestion;
+                        state.phase = PHASES.REASON_ACT;
+                        state.accumulatedData = [];
+                        state.reasonActIterations = 0;
+
+                        state.narration = {
+                            text: parsed.userNarration || 'Let me help you with that...',
+                            phase: 'intent',
+                            timestamp: Date.now()
+                        };
+
+                        upsertThinkingStep(state, 'intent', {
+                            title: 'Understanding your question',
+                            phase: 'intent',
+                            status: 'complete',
+                            duration: duration,
+                            context: {
+                                question: state.message.substring(0, 100),
+                                intent: parsed.intent,
+                                toolsWouldHelp: true,
+                                suggestedTool: toolSuggestion.suggested_tool
+                            },
+                            debug: buildDebugInfo(prompt, response, state, { parsedIntent: parsed })
+                        });
+
+                        log.debug('SCA Intent - general intent routing to REASON_ACT for tool use');
+                        return { success: true, nextPhase: PHASES.REASON_ACT };
+                    }
+
+                    // No tools needed - pure conversational response
                     state.phase = PHASES.RESPOND;
                     log.debug('SCA Intent - general/conversational, skipping to RESPOND');
 
@@ -3631,44 +3719,113 @@ Now write your analysis:`;
         const phaseStart = Date.now();
 
         // ═══════════════════════════════════════════════════════════════════════
-        // CONVERSATIONAL QUERIES - Skip tool selection entirely for greetings/chitchat
-        // No point asking LLM to select tools when we know none are needed
+        // GENERAL INTENT - Check if tools would enhance the response
+        // Instead of skipping tools entirely, ask LLM if tools would help
+        // e.g., "How do I check my cash?" could benefit from Cash dashboard navigation
         // ═══════════════════════════════════════════════════════════════════════
         if (state.intent && state.intent.intent === 'general') {
-            state.selectedTools = [];
-            state.phase = PHASES.RESPOND;
+            // Ask LLM if tools would enhance the response
+            const toolCheckPrompt = `User asked: "${state.message}"
 
-            upsertThinkingStep(state, 'select', {
-                title: 'Selecting analysis tools',
-                phase: 'select',
-                status: 'complete',
-                duration: Date.now() - phaseStart,
-                context: {
-                    intent: 'general',
-                    selectedTools: [],
-                    conversational: true,
-                    skippedToolSelection: true
+Would any of these tools help answer this better?
+- navigate_to_dashboard: Guide to specific dashboard (cash, AR, AP, revenue, expenses, etc.)
+- list_dashboards: Show available analysis options
+- get_help_topic: Explain Gantry features
+
+Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null", "reason": "brief explanation"}`;
+
+            try {
+                const toolCheckResponse = AIProviders.callAI(toolCheckPrompt, {
+                    tier: TIERS.FAST,
+                    temperature: 0.1,
+                    jsonMode: true,
+                    purpose: 'SCA:general_tool_check'
+                });
+
+                const toolCheck = parseJsonResponse(toolCheckResponse?.text);
+
+                if (toolCheck && toolCheck.use_tools && toolCheck.suggested_tool) {
+                    // Tools would help - continue to normal tool selection with hint
+                    log.debug('SCA SELECT phase - general intent may benefit from tools', {
+                        suggestedTool: toolCheck.suggested_tool,
+                        reason: toolCheck.reason
+                    });
+
+                    // Store the suggestion as a hint for tool selection
+                    state.toolSelectionHint = {
+                        suggested_tool: toolCheck.suggested_tool,
+                        reason: toolCheck.reason
+                    };
+
+                    upsertThinkingStep(state, 'select', {
+                        title: 'Selecting analysis tools',
+                        phase: 'select',
+                        status: 'active',
+                        context: {
+                            intent: 'general',
+                            toolCheckResult: 'tools_may_help',
+                            suggestedTool: toolCheck.suggested_tool
+                        }
+                    });
+
+                    // Continue to normal tool selection (don't return here)
+                } else {
+                    // No tools needed - pure conversational response
+                    state.selectedTools = [];
+                    state.phase = PHASES.RESPOND;
+
+                    upsertThinkingStep(state, 'select', {
+                        title: 'Selecting analysis tools',
+                        phase: 'select',
+                        status: 'complete',
+                        duration: Date.now() - phaseStart,
+                        context: {
+                            intent: 'general',
+                            selectedTools: [],
+                            conversational: true,
+                            skippedToolSelection: true
+                        }
+                    });
+
+                    log.debug('SCA SELECT phase - general/conversational intent, skipping to RESPOND');
+                    return { success: true, nextPhase: PHASES.RESPOND };
                 }
-            });
+            } catch (toolCheckError) {
+                // If tool check fails, default to skipping tools for general intent
+                log.debug('SCA SELECT phase - tool check failed, defaulting to no tools', {
+                    error: toolCheckError.message
+                });
 
-            log.debug('SCA SELECT phase - general/conversational intent, skipping to RESPOND');
-            return { success: true, nextPhase: PHASES.RESPOND };
+                state.selectedTools = [];
+                state.phase = PHASES.RESPOND;
+
+                upsertThinkingStep(state, 'select', {
+                    title: 'Selecting analysis tools',
+                    phase: 'select',
+                    status: 'complete',
+                    duration: Date.now() - phaseStart,
+                    context: {
+                        intent: 'general',
+                        selectedTools: [],
+                        conversational: true,
+                        skippedToolSelection: true,
+                        toolCheckFailed: true
+                    }
+                });
+
+                return { success: true, nextPhase: PHASES.RESPOND };
+            }
         }
 
         // ═══════════════════════════════════════════════════════════════════════
         // FOLLOW-UP DATA REUSE vs DRILL-DOWN DETECTION
         // Check if user is asking for DRILL-DOWN details (specific collection data)
         // or just referencing previous data for context
+        // Uses semantic is_drill_down from INTENT phase (replaces hardcoded keywords)
         // ═══════════════════════════════════════════════════════════════════════
         if (state.intent.intent === 'follow_up' && state.previousDataRefs && state.previousDataRefs.length > 0) {
-            // Check if this looks like a drill-down request for specific data
-            const drillDownKeywords = [
-                'detail', 'details', 'show me', 'list', 'table', 'all',
-                'weekly', 'projection', 'bucket', 'breakdown', 'items',
-                'collection', 'drill', 'expand', 'full data', 'complete'
-            ];
-            const messageLower = state.message.toLowerCase();
-            const isDrillDownRequest = drillDownKeywords.some(kw => messageLower.includes(kw));
+            // Use semantic drill-down detection from INTENT phase
+            const isDrillDownRequest = state.intent.is_drill_down === true;
 
             // Check if previous data was from a dashboard (has collections)
             const hasDashboardData = state.previousDataRefs.some(ref => {
@@ -3680,7 +3837,8 @@ Now write your analysis:`;
                 // This looks like a drill-down request - let LLM select load_cached_data
                 log.debug('SCA SELECT phase - detected drill-down request, allowing tool selection', {
                     message: state.message.substring(0, 50),
-                    hasDashboardData: true
+                    hasDashboardData: true,
+                    drillDownContext: state.intent.drill_down_context
                 });
                 // Continue to normal tool selection (don't skip)
             } else {
