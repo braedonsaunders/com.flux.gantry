@@ -827,14 +827,22 @@ If the question is AMBIGUOUS and needs clarification:
 {history_context}
 CURRENT QUESTION: "{question}"
 
-TOOL EXECUTION SUMMARY:
-{tool_summary}
+═══════════════════════════════════════════════════════════════════════════════
+⚠️ CHECK DATA FIRST - THIS IS THE MOST IMPORTANT SECTION
+═══════════════════════════════════════════════════════════════════════════════
+
+DATA COLLECTED:
+{data_summary}
 
 RESOLVED ENTITIES:
 {resolved_entities}
 
-DATA COLLECTED:
-{data_summary}
+TOOL EXECUTION SUMMARY:
+{tool_summary}
+
+⚠️ IMPORTANT: If DATA COLLECTED shows rows with actual data, you HAVE data to work with!
+Custom SQL queries from SYNTHESIZE phase appear in both DATA COLLECTED and TOOL SUMMARY.
+Do NOT say "no data found" if the DATA COLLECTED section shows rows > 0.
 
 ═══════════════════════════════════════════════════════════════════════════════
 CRITICAL: QUESTION-DATA MATCHING
@@ -4299,13 +4307,23 @@ Now write your analysis:`;
         // Never skip LLM evaluation - "having data" != "having the RIGHT data"
         // The LLM must decide if it can answer the user's specific question
         // ═══════════════════════════════════════════════════════════════════════
-        const hasUsefulData = state.dataReferences.length > 0;
+
+        // FIX: Also check state.reflection.dataFound which SYNTHESIZE sets to true
+        // This ensures we don't miss data from custom SQL queries
+        const hasUsefulData = state.dataReferences.length > 0 || state.reflection.dataFound === true;
+
+        // FIX: Also count rows from successful SYNTHESIZE queries (defense-in-depth)
+        const synthesizeRows = (state.synthesize?.queries || [])
+            .filter(q => q.success)
+            .reduce((sum, q) => sum + (q.rowCount || 0), 0);
         const totalRows = state.toolInvocations.reduce((sum, inv) =>
-            sum + (inv.rowCount || 0), 0);
+            sum + (inv.rowCount || 0), 0) + synthesizeRows;
 
         log.debug('SCA REFLECT phase - evaluating with LLM (always-evaluate mode)', {
             dataRefs: state.dataReferences.length,
             totalRows: totalRows,
+            synthesizeRows: synthesizeRows,
+            dataFoundFlag: state.reflection.dataFound,
             tools: state.toolInvocations.map(t => t.tool)
         });
 
@@ -4769,6 +4787,25 @@ Now write your analysis:`;
                 state.dataReferences.push(dataRef);
                 state.reflection.dataFound = true;
 
+                // ═══════════════════════════════════════════════════════════════════════
+                // FIX: Record SYNTHESIZE as a tool invocation so REFLECT sees it
+                // Without this, buildToolSummaryForReflection() returns "No tools executed"
+                // even when SYNTHESIZE successfully found data
+                // ═══════════════════════════════════════════════════════════════════════
+                state.toolInvocations.push({
+                    tool: 'synthesized_query',
+                    args: {
+                        sql: generatedSql.substring(0, 200) + (generatedSql.length > 200 ? '...' : ''),
+                        purpose: purpose
+                    },
+                    success: true,
+                    rowCount: queryResult.rowCount,
+                    failed: false,
+                    resultClass: 'DATA',
+                    synthesized: true,  // Flag to indicate this came from SYNTHESIZE phase
+                    columns: queryResult.columns
+                });
+
                 state.reflection.journey.push({
                     action: 'synthesize_success',
                     purpose: purpose,
@@ -4915,34 +4952,78 @@ Now write your analysis:`;
 
     /**
      * Build tool execution summary for REFLECT prompt
+     *
+     * FIX: Also checks state.synthesize.queries as defense-in-depth
+     * In case SYNTHESIZE succeeds but toolInvocations wasn't updated
      */
     function buildToolSummaryForReflection(state) {
-        if (state.toolInvocations.length === 0) {
+        // ═══════════════════════════════════════════════════════════════════════
+        // FIX: Check for successful SYNTHESIZE queries even if toolInvocations is empty
+        // This is defense-in-depth - SYNTHESIZE should add to toolInvocations,
+        // but if it doesn't, we still want REFLECT to know about the data
+        // ═══════════════════════════════════════════════════════════════════════
+        const successfulSynthQueries = (state.synthesize?.queries || [])
+            .filter(q => q.success);
+
+        if (state.toolInvocations.length === 0 && successfulSynthQueries.length === 0) {
             return 'No tools were executed.';
         }
 
-        return state.toolInvocations.map((inv, idx) => {
-            const status = inv.failed ? 'FAILED' : (inv.rowCount > 0 ? 'SUCCESS' : 'NO_DATA');
-            const details = [];
+        let summaryParts = [];
 
-            if (inv.args) {
-                const argStr = Object.entries(inv.args)
-                    .filter(([k, v]) => v !== undefined && v !== null)
-                    .map(([k, v]) => `${k}=${JSON.stringify(v)}`)
-                    .join(', ');
-                if (argStr) details.push(`Args: ${argStr}`);
+        // Add regular tool invocations
+        if (state.toolInvocations.length > 0) {
+            const toolSummary = state.toolInvocations.map((inv, idx) => {
+                const status = inv.failed ? 'FAILED' : (inv.rowCount > 0 ? 'SUCCESS' : 'NO_DATA');
+                const details = [];
+
+                if (inv.args) {
+                    const argStr = Object.entries(inv.args)
+                        .filter(([k, v]) => v !== undefined && v !== null)
+                        .map(([k, v]) => `${k}=${JSON.stringify(v)}`)
+                        .join(', ');
+                    if (argStr) details.push(`Args: ${argStr}`);
+                }
+
+                if (inv.resultClass) {
+                    details.push(`Classification: ${inv.resultClass}`);
+                }
+
+                if (inv.error) {
+                    details.push(`Error: ${inv.error}`);
+                }
+
+                // Flag synthesized queries
+                if (inv.synthesized) {
+                    details.push('Source: SYNTHESIZE phase (custom SQL)');
+                }
+
+                return `${idx + 1}. ${inv.tool}: ${status} (${inv.rowCount || 0} rows)\n   ${details.join('\n   ')}`;
+            }).join('\n\n');
+
+            summaryParts.push(toolSummary);
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // FIX: Add SYNTHESIZE queries that may not be in toolInvocations
+        // This catches edge cases where SYNTHESIZE succeeded but wasn't recorded
+        // ═══════════════════════════════════════════════════════════════════════
+        if (successfulSynthQueries.length > 0) {
+            // Check if these are already in toolInvocations (avoid duplicates)
+            const alreadyRecorded = state.toolInvocations.some(inv => inv.synthesized);
+
+            if (!alreadyRecorded) {
+                let synthSummary = '\n═══ CUSTOM SQL QUERIES (SYNTHESIZE) ═══\n';
+                successfulSynthQueries.forEach((q, idx) => {
+                    synthSummary += `${idx + 1}. synthesized_query: SUCCESS (${q.rowCount || 0} rows)\n`;
+                    synthSummary += `   Purpose: ${q.purpose || 'Custom query'}\n`;
+                    synthSummary += `   SQL: ${(q.sql || '').substring(0, 150)}${(q.sql || '').length > 150 ? '...' : ''}\n`;
+                });
+                summaryParts.push(synthSummary);
             }
+        }
 
-            if (inv.resultClass) {
-                details.push(`Classification: ${inv.resultClass}`);
-            }
-
-            if (inv.error) {
-                details.push(`Error: ${inv.error}`);
-            }
-
-            return `${idx + 1}. ${inv.tool}: ${status} (${inv.rowCount || 0} rows)\n   ${details.join('\n   ')}`;
-        }).join('\n\n');
+        return summaryParts.join('\n') || 'No tools were executed.';
     }
 
     /**
