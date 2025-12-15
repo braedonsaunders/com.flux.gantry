@@ -620,15 +620,6 @@ define(['N/cache', 'N/log', '../Lib_Dashboard_Registry'], function(cache, log, D
             return preview;
         });
 
-        // ═══════════════════════════════════════════════════════════════════════
-        // AGENTIC FIX: Preserve tool-computed summaries for LLM reasoning
-        // Financial tools like get_income_statement return pre-calculated totals
-        // (revenue, COGS, expenses, net income) that the LLM MUST see
-        // ═══════════════════════════════════════════════════════════════════════
-        if (result.summary && typeof result.summary === 'object') {
-            summary.toolSummary = result.summary;
-        }
-
         return summary;
     }
 
@@ -648,15 +639,6 @@ define(['N/cache', 'N/log', '../Lib_Dashboard_Registry'], function(cache, log, D
             dataPayload.dashboardName = result.dashboardName;
             dataPayload.textSummary = result.textSummary;
             dataPayload.intelligence = result.intelligence;
-        }
-
-        // ═══════════════════════════════════════════════════════════════════════
-        // AGENTIC FIX: Preserve tool-computed summaries (e.g., P&L totals)
-        // Tools like get_income_statement compute rich summaries with calculated
-        // totals that the LLM needs to see for complete reasoning
-        // ═══════════════════════════════════════════════════════════════════════
-        if (result.summary && typeof result.summary === 'object') {
-            dataPayload.toolSummary = result.summary;
         }
 
         const json = JSON.stringify(dataPayload);
@@ -710,11 +692,6 @@ define(['N/cache', 'N/log', '../Lib_Dashboard_Registry'], function(cache, log, D
             result.dashboardName = data.dashboardName;
             result.textSummary = data.textSummary;
             result.intelligence = data.intelligence;
-        }
-
-        // Include tool-computed summary if available (e.g., P&L totals)
-        if (data.toolSummary) {
-            result.toolSummary = data.toolSummary;
         }
 
         return result;
