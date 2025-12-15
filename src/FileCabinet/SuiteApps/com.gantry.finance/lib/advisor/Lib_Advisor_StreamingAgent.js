@@ -205,15 +205,23 @@ define([
 {date_context}
 {history_context}
 Categories (determine based on semantic meaning, not keywords):
-- entity_lookup: Finding a specific customer, vendor, employee, account
+- entity_lookup: ONLY use when the question is JUST about identifying/finding an entity (e.g., "who is acme corp", "find vendor xyz")
+- entity_transactions: Finding transactions/documents FOR a specific entity (e.g., "bills from vendor X", "invoices to customer Y", "payments from Z")
+  → This is DIFFERENT from entity_lookup! If user wants bills/invoices/payments/transactions for an entity, use entity_transactions
 - top_list: Top N customers, vendors, items by some metric
 - aging: AR aging, AP aging, overdue amounts
 - reporting: Revenue, spend, GL activity, trial balance
 - dashboard: Health metrics, KPIs, trends
 - comparison: Compare periods, YoY, MoM
-- transaction: Specific transaction details
+- transaction: Specific transaction details (by ID, number, or specific document)
 - follow_up: Reference to previous question/data (e.g., "show that as a table", "more details")
 - general: General questions, greetings, help
+
+CRITICAL DISTINCTION:
+- "who is oblender" → entity_lookup (just identifying)
+- "bills from oblender" → entity_transactions (want transactions FOR the entity)
+- "what do we owe oblender" → entity_transactions (want AP data FOR the entity)
+- "invoices to acme" → entity_transactions (want transactions FOR the entity)
 
 Question: "{question}"
 
@@ -223,8 +231,9 @@ Analyze the SEMANTIC MEANING of the question. Extract:
 3. The time scope if mentioned
 4. Semantic topics - determine what financial domains this question relates to based on meaning (e.g., receivables, payables, revenue, expenses, cash management, profitability)
 5. A brief user-friendly narration (max 10 words) describing what you're analyzing, specific to their question
+6. For entity_transactions: the transaction_context hint (what type: bills, invoices, payments, credits)
 
-Response format: {"intent": "category", "entities": ["named items"], "time_scope": "ytd|mtd|last_30|custom|none", "needs_resolution": true|false, "references_previous": true|false, "semantic_topics": ["topic1", "topic2"], "userNarration": "Looking into your customer revenue..."}`;
+Response format: {"intent": "category", "entities": ["named items"], "time_scope": "ytd|mtd|last_30|custom|none", "needs_resolution": true|false, "references_previous": true|false, "semantic_topics": ["topic1", "topic2"], "transaction_context": "bills|invoices|payments|credits|all", "userNarration": "Looking into your customer revenue..."}`;
 
     const SELECT_PROMPT = `Select tools to answer this {intent} question. Respond with JSON only.
 {date_context}
@@ -332,6 +341,24 @@ CRITICAL RULES:
   in the data summary. Use the ACTUAL numeric entity_id (e.g., 416), NOT placeholders.
   WRONG: vendor_id: "{{resolve_entity result}}"
   RIGHT: vendor_id: 416
+
+WHEN A QUERY RETURNS 0 ROWS:
+- Look at "💡 BROADENING OPTIONS" - YOU DECIDE whether to use them
+- Look at "🔄 ALTERNATIVE TOOLS TO CONSIDER" - consider different approaches
+- Progressive strategy: Start specific, then broaden if needed
+  1. First try the exact request (e.g., bills from last 30 days)
+  2. If empty, consider: expand period (last_90_days → all) OR remove filters
+  3. If still empty, try alternative tools (get_vendor_details, get_ap_aging)
+  4. If entity has NO transaction history, that's a valid finding - report it
+- NEVER assume data doesn't exist without trying broader queries
+
+WHEN TO USE SYNTHESIZE (Custom SQL):
+- Use SYNTHESIZE only when pre-built tools CANNOT answer the question
+- Indicators that you should SYNTHESIZE:
+  • You've tried 3+ variations of a tool with no results AND the entity exists
+  • The question needs data that no pre-built tool provides
+  • You need to join data in ways tools don't support
+- Do NOT use SYNTHESIZE for simple queries - try broadening first
 ═══════════════════════════════════════════════════════════════════════════════
 
 RESPOND WITH JSON:
@@ -1666,11 +1693,14 @@ Now write your analysis:`;
                     status: 'complete',
                     duration: duration,
                     context: {
+                        phase: 'intent',
                         question: state.message.substring(0, 100),
                         intent: parsed.intent,
                         entities: parsed.entities || [],
                         timeScope: parsed.time_scope,
-                        needsResolution: parsed.needs_resolution
+                        needsResolution: parsed.needs_resolution,
+                        // Include transaction context for entity_transactions intent
+                        transactionContext: parsed.transaction_context
                     },
                     debug: buildDebugInfo(prompt, response, state, { parsedIntent: parsed })
                 });
@@ -1808,6 +1838,55 @@ Now write your analysis:`;
                 }
             } else {
                 lines.push(`    Error: ${item.error || 'Unknown error'}`);
+
+                // ═══════════════════════════════════════════════════════════════
+                // VALIDATION ERRORS: Show what was wrong with the parameters
+                // ═══════════════════════════════════════════════════════════════
+                if (item.validationErrors && item.validationErrors.length > 0) {
+                    lines.push(`    Validation Errors:`);
+                    item.validationErrors.forEach(err => {
+                        lines.push(`      ⚠️ ${err}`);
+                    });
+                }
+            }
+
+            // ═══════════════════════════════════════════════════════════════════
+            // SUGGESTIONS PIPELINE: Show tool suggestions for recovery
+            // These help the LLM decide what to try next when queries fail
+            // ═══════════════════════════════════════════════════════════════════
+            if (item.rowCount === 0 || !item.success) {
+                // Get broadening suggestions
+                const broaderParams = Tools.suggestBroaderParams(item.args, item.tool);
+                if (broaderParams.canBroaden) {
+                    lines.push(`    💡 BROADENING OPTIONS (you decide which to use):`);
+                    broaderParams.suggestions.forEach(s => lines.push(`      • ${s}`));
+                }
+
+                // Get entity-aware alternative tools
+                const alternatives = Tools.getEntityAwareAlternatives(
+                    item.tool,
+                    item.args,
+                    state.resolvedEntities
+                );
+                if (alternatives.length > 0) {
+                    lines.push(`    🔄 ALTERNATIVE TOOLS TO CONSIDER:`);
+                    alternatives.forEach(alt => {
+                        lines.push(`      • ${alt.tool}: ${alt.reason}`);
+                        lines.push(`        Suggested args: ${JSON.stringify(alt.args)}`);
+                    });
+                }
+
+                // Include tool-specific suggestions if any
+                if (item.suggestions && item.suggestions.length > 0) {
+                    lines.push(`    📋 Tool Suggestions:`);
+                    item.suggestions.forEach(s => lines.push(`      • ${s}`));
+                }
+            }
+
+            // Show normalization warnings (informational)
+            if (item.normalizationWarnings && item.normalizationWarnings.length > 0) {
+                lines.push(`    ℹ️ Parameter Normalization:`);
+                item.normalizationWarnings.forEach(w => lines.push(`      • ${w}`));
             }
         });
 
@@ -1842,6 +1921,14 @@ Now write your analysis:`;
                 lines.push(`    Error: ${f.error}`);
                 lines.push(`    Failed ${f.count} time(s) - try different arguments or a different approach`);
             });
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // SYNTHESIZE TRIGGER: Add hint if conditions are met for custom SQL
+        // ═══════════════════════════════════════════════════════════════════════
+        const synthesizeHint = detectSynthesizeTrigger(state);
+        if (synthesizeHint) {
+            lines.push(synthesizeHint);
         }
 
         return lines.join('\n');
@@ -1903,6 +1990,67 @@ Now write your analysis:`;
         });
 
         return warnings;
+    }
+
+    /**
+     * Detect if SYNTHESIZE (custom SQL) might be warranted
+     * Returns a hint string for the LLM if conditions are met, null otherwise
+     *
+     * Conditions for suggesting SYNTHESIZE:
+     * 1. An entity has been successfully resolved (we know who/what we're looking for)
+     * 2. Multiple tool calls have returned 0 rows (data tools are exhausted)
+     * 3. No SYNTHESIZE has been attempted yet
+     *
+     * @param {Object} state - Current agent state
+     * @returns {string|null} Hint message for LLM, or null if not triggered
+     */
+    function detectSynthesizeTrigger(state) {
+        // Check if we have resolved entities (entity exists in the system)
+        const hasResolvedEntities = state.resolvedEntities &&
+            Object.keys(state.resolvedEntities).length > 0;
+
+        if (!hasResolvedEntities) {
+            return null; // No point suggesting SYNTHESIZE if we don't know what entity we're looking for
+        }
+
+        // Count how many data tool calls returned 0 rows
+        const emptyDataToolCalls = (state.accumulatedData || []).filter(item => {
+            // Only count data tools (not resolve_* which are discovery tools)
+            const isDataTool = !item.tool.startsWith('resolve_') &&
+                              item.tool !== 'list_dashboards' &&
+                              item.tool !== 'get_fiscal_context';
+            return isDataTool && item.success && item.rowCount === 0;
+        });
+
+        // Check if we've already tried SYNTHESIZE
+        const alreadyTriedSynthesize = (state.accumulatedData || []).some(
+            item => item.tool === 'run_custom_query'
+        );
+
+        if (alreadyTriedSynthesize) {
+            return null; // Already tried custom SQL
+        }
+
+        // Trigger if 3+ data tool calls returned 0 rows with a resolved entity
+        if (emptyDataToolCalls.length >= 3) {
+            const entityNames = Object.keys(state.resolvedEntities);
+            const entitySummary = entityNames.map(name => {
+                const e = state.resolvedEntities[name];
+                return `${e.name} (${e.type}, ID: ${e.id})`;
+            }).join(', ');
+
+            const toolsTried = [...new Set(emptyDataToolCalls.map(t => t.tool))].join(', ');
+
+            return `\n⚡ SYNTHESIZE TRIGGER DETECTED:
+  • Entity confirmed: ${entitySummary}
+  • Pre-built tools exhausted: ${emptyDataToolCalls.length} queries returned 0 rows
+  • Tools tried: ${toolsTried}
+  • Consider using SYNTHESIZE to write custom SuiteQL that directly queries the transaction table
+  • Example: Search for all bills for this vendor with: SELECT * FROM transaction WHERE entity = ${state.resolvedEntities[entityNames[0]]?.id} AND type = 'VendBill'
+  • YOU DECIDE: If you believe the data genuinely doesn't exist, you can still ANSWER with "no data found"`;
+        }
+
+        return null;
     }
 
     /**
@@ -2017,7 +2165,13 @@ Now write your analysis:`;
             columns: result.columns || [],
             error: result.error,
             duration: toolDuration,
-            fromCache: fromCache
+            fromCache: fromCache,
+            // Include tool suggestions for empty results
+            suggestions: result.suggestions || [],
+            // Include validation errors if any
+            validationErrors: result.validationErrors || [],
+            // Include normalization warnings
+            normalizationWarnings: result.normalizationWarnings || []
         };
 
         // Store data reference if we got rows
@@ -2169,6 +2323,7 @@ Now write your analysis:`;
         }
 
         // Build the prompt with accumulated data
+        // Note: SYNTHESIZE hint is automatically computed inside buildAccumulatedDataSummary()
         const prompt = REASON_ACT_PROMPT
             .replace('{date_context}', getDateContext())
             .replace('{history_context}', buildHistoryContext(state))
@@ -5433,6 +5588,9 @@ Response:`;
     function getDefaultToolsForIntent(intent) {
         const defaults = {
             'entity_lookup': ['resolve_entity'],
+            // entity_transactions: First resolve the entity, then fetch their transactions
+            // This ensures we have the entity ID before querying transactions
+            'entity_transactions': ['resolve_entity', 'get_recent_transactions'],
             'top_list': ['get_top_customers'],
             'aging': ['get_ar_aging'],
             'reporting': ['get_recent_transactions'],
