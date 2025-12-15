@@ -454,7 +454,9 @@ define([
 
         // Dashboard alternatives
         if (failedTool === 'get_dashboard') {
-            const dashboards = ['health', 'cashflow', 'burden', 'time', 'integrity'];
+            const dashboards = DashboardRegistry.getDataDashboards()
+                .filter(d => !d.isSpecial)
+                .map(d => d.id);
             const currentDashboard = args.dashboard_id;
             for (const dash of dashboards) {
                 if (dash !== currentDashboard) {

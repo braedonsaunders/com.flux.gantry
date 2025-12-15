@@ -1655,20 +1655,6 @@ define([], function() {
     }
 
     /**
-     * Find dashboard by keyword match
-     */
-    function findDashboardByKeyword(message) {
-        const lower = message.toLowerCase();
-        
-        for (const dashboard of getDataDashboards()) {
-            if (dashboard.keywords && dashboard.keywords.some(k => lower.includes(k))) {
-                return dashboard;
-            }
-        }
-        return null;
-    }
-
-    /**
      * Get AI-ready schema description for a dashboard
      */
     function getSchemaDescription(dashboardId) {
@@ -1739,7 +1725,6 @@ define([], function() {
         getDashboard: getDashboard,
         getDashboardByRoute: getDashboardByRoute,
         getDataDashboards: getDataDashboards,
-        findDashboardByKeyword: findDashboardByKeyword,
         getSchemaDescription: getSchemaDescription,
         getCompactSchemaHints: getCompactSchemaHints,
         getAdvisorQueries: getAdvisorQueries,
