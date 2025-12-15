@@ -2019,7 +2019,7 @@ Key metrics:
                     WHERE inv.type = 'CustInvc'
                         AND inv.posting = 'T'
                         AND inv.voided = 'F'
-                        AND inv.status = 'CustInvc:B'
+                        AND inv.foreignamountunpaid = 0
                         AND inv.closedate IS NOT NULL
                         AND ${periodFilter}
                         ${customerFilter}
@@ -2167,7 +2167,7 @@ Key metrics:
                     WHERE bill.type = 'VendBill'
                         AND bill.posting = 'T'
                         AND bill.voided = 'F'
-                        AND bill.status = 'VendBill:B'
+                        AND bill.foreignamountunpaid = 0
                         AND bill.closedate IS NOT NULL
                         AND ${periodFilter}
                         ${vendorFilter}
