@@ -1847,7 +1847,7 @@ Now write your analysis:`;
             toolAttemptCount: {},      // FIX 8: Map of toolName -> attempt count
             consecutiveNoProgress: 0,  // FIX 6: Counter for consecutive 0-row results
             errorSemantics: [],        // FIX 2: Parsed error insights for LLM context
-            blockedTools: new Set(),   // FIX 3: Tools that are hard-blocked from retry
+            blockedTools: {},          // FIX 3: Tools that are hard-blocked from retry (Object for JSON serialization)
             diversificationTriggered: false, // FIX 4: Whether diversification was required
             circuitBreakerTriggered: false,  // FIX 6: Whether circuit breaker fired
             diagnostics: {             // FIX 7: Diagnostic information for failure response
@@ -2461,9 +2461,9 @@ Now write your analysis:`;
         // ═══════════════════════════════════════════════════════════════════════
         // FIX 3/8: BLOCKED TOOLS - Show which tools are completely blocked
         // ═══════════════════════════════════════════════════════════════════════
-        if (state.blockedTools && state.blockedTools.size > 0) {
+        if (state.blockedTools && Object.keys(state.blockedTools).length > 0) {
             lines.push('\n⛔ BLOCKED TOOLS (exhausted iteration budget):');
-            lines.push(`  The following tools are BLOCKED: ${Array.from(state.blockedTools).join(', ')}`);
+            lines.push(`  The following tools are BLOCKED: ${Object.keys(state.blockedTools).join(', ')}`);
             lines.push(`  You MUST use different tools to continue.`);
         }
 
@@ -2662,7 +2662,7 @@ Now write your analysis:`;
         }
 
         // FIX 3: Also check if this tool is completely blocked due to repeated failures
-        if (state.blockedTools && state.blockedTools.has(toolName)) {
+        if (state.blockedTools && state.blockedTools[toolName]) {
             return { blocked: true, reason: 'tool_exhausted', count: state.toolAttemptCount[toolName] || 0 };
         }
 
@@ -2674,9 +2674,9 @@ Now write your analysis:`;
                 d => d.tool === toolName && d.success && d.rowCount > 0
             );
             if (!hadSuccess) {
-                // Add to blocked tools set
-                if (!state.blockedTools) state.blockedTools = new Set();
-                state.blockedTools.add(toolName);
+                // Add to blocked tools object (not Set - must be JSON-serializable)
+                if (!state.blockedTools) state.blockedTools = {};
+                state.blockedTools[toolName] = true;
                 return { blocked: true, reason: 'budget_exhausted', count: toolAttempts };
             }
         }
@@ -3111,7 +3111,7 @@ Now write your analysis:`;
             // Add diversification context to the state for prompt building
             state.forcedDiversification = {
                 reason: diversification.reason,
-                blockedTools: Array.from(state.blockedTools || []),
+                blockedTools: Object.keys(state.blockedTools || {}),
                 suggestedAlternatives: diversification.suggestions
             };
         }
