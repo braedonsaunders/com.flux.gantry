@@ -643,11 +643,12 @@ WRITE YOUR RESPONSE IN MARKDOWN with these special directives:
 
 3. METRICS - Key numbers (max 4):
    :::metrics
-   | Label | Value | trend |
    | Revenue | $1.2M | up |
    | Expenses | $800K | down |
    :::
-   (trend: up, down, or neutral)
+   Format: | Label | Value | trend |
+   Trend must be: up, down, or neutral
+   ⚠️ DO NOT include header row or alignment rows like |:---|
 
 4. LISTS - Findings or recommendations:
    :::list Optional Title
@@ -682,7 +683,6 @@ EXAMPLE RESPONSE:
 Here's your year-over-year revenue comparison for {{{{data.rows[0].customer_name}}}}...
 
 :::metrics
-| Label | Value | trend |
 | Total Revenue | {{{{data.stats.total:currency}}}} | up |
 | Record Count | {{{{data.stats.count}}}} | neutral |
 :::
@@ -894,9 +894,20 @@ Now write your analysis:`;
                 continue;
             }
 
+            // Skip markdown table alignment rows: :---, :--:, ---:, ---, |---|
+            // These are formatting hints, not data
+            if (/^[\|\s\-:]+$/.test(line) || line.includes(':---') || line.includes('---:') || line.includes(':--:')) {
+                continue;
+            }
+
             // Parse pipe-delimited format: | Label | Value | trend |
             const parts = line.split('|').map(s => s.trim()).filter(s => s);
             if (parts.length >= 2) {
+                // Additional validation: skip if parts look like alignment syntax
+                if (parts[0].match(/^-+$/) || parts[1].match(/^-+$/)) {
+                    continue;
+                }
+
                 items.push({
                     label: parts[0].substring(0, 50),
                     value: parts[1],
@@ -1690,6 +1701,7 @@ Now write your analysis:`;
     /**
      * Build accumulated data summary for the LLM
      * Shows all data collected so far across iterations
+     * Includes data sanity warnings for comparison anomalies
      */
     function buildAccumulatedDataSummary(state) {
         if (!state.accumulatedData || state.accumulatedData.length === 0) {
@@ -1724,7 +1736,73 @@ Now write your analysis:`;
             }
         });
 
+        // Add data sanity warnings if comparison data looks anomalous
+        const warnings = detectDataAnomalies(state.accumulatedData);
+        if (warnings.length > 0) {
+            lines.push('\n⚠️ DATA SANITY WARNINGS:');
+            warnings.forEach(w => lines.push(`  - ${w}`));
+            lines.push('  Consider verifying the data or adjusting your query if these seem unexpected.');
+        }
+
         return lines.join('\n');
+    }
+
+    /**
+     * Detect anomalies in accumulated data for comparison queries
+     * Flags major discrepancies that might indicate query issues
+     * @param {Array} accumulatedData - Data collected from tool executions
+     * @returns {Array} Array of warning messages
+     */
+    function detectDataAnomalies(accumulatedData) {
+        const warnings = [];
+
+        if (!accumulatedData || accumulatedData.length < 2) {
+            return warnings;
+        }
+
+        // Group by tool name to compare similar queries
+        const byTool = {};
+        accumulatedData.forEach(item => {
+            if (item.success) {
+                if (!byTool[item.tool]) byTool[item.tool] = [];
+                byTool[item.tool].push(item);
+            }
+        });
+
+        // Check for row count anomalies in same-tool comparisons
+        Object.entries(byTool).forEach(([toolName, items]) => {
+            if (items.length >= 2) {
+                const rowCounts = items.map(i => i.rowCount || 0).filter(r => r > 0);
+                if (rowCounts.length >= 2) {
+                    const max = Math.max(...rowCounts);
+                    const min = Math.min(...rowCounts);
+                    const ratio = max / Math.max(min, 1);
+
+                    // Flag if one result has 5x+ more rows than another
+                    if (ratio >= 5) {
+                        warnings.push(`${toolName}: Large row count variance (${min} vs ${max} rows, ${ratio.toFixed(1)}x difference). Verify period filters are correct.`);
+                    }
+                }
+
+                // Check for total amount anomalies if we have stats
+                const totals = items
+                    .filter(i => i.stats && i.stats.total !== undefined)
+                    .map(i => ({ args: i.args, total: i.stats.total }));
+
+                if (totals.length >= 2) {
+                    const amounts = totals.map(t => Math.abs(t.total));
+                    const maxAmt = Math.max(...amounts);
+                    const minAmt = Math.min(...amounts);
+                    const amtRatio = maxAmt / Math.max(minAmt, 1);
+
+                    if (amtRatio >= 5 && minAmt > 0) {
+                        warnings.push(`${toolName}: Large total variance (${formatNumber(minAmt)} vs ${formatNumber(maxAmt)}, ${amtRatio.toFixed(1)}x difference). This may indicate different time periods.`);
+                    }
+                }
+            }
+        });
+
+        return warnings;
     }
 
     /**
