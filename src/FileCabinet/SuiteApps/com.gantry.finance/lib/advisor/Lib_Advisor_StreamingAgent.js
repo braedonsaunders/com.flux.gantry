@@ -2079,10 +2079,21 @@ Now write your analysis:`;
         }
 
         // ═══════════════════════════════════════════════════════════════════════
-        // FAILURE TRACKING: Track failed tool calls to prevent infinite retries
+        // FAILURE & EMPTY RESULT TRACKING: Prevent infinite retries
+        // Track both actual failures AND empty results (success but no data)
         // ═══════════════════════════════════════════════════════════════════════
-        if (!dataEntry.success && dataEntry.error) {
+        const isFailure = !dataEntry.success && dataEntry.error;
+        const isEmptyResult = dataEntry.success && dataEntry.rowCount === 0 && !dataEntry.metrics;
+        const isEntityNotFound = toolName.startsWith('resolve_') && result.found === false;
+
+        if (isFailure) {
             trackFailedToolCall(state, toolName, args, dataEntry.error);
+        } else if (isEmptyResult || isEntityNotFound) {
+            // Track empty results too - repeating them won't help
+            const reason = isEntityNotFound
+                ? `Entity not found: "${args.term || args.name || 'unknown'}"`
+                : 'Query returned 0 rows';
+            trackFailedToolCall(state, toolName, args, reason);
         }
 
         // Record tool invocation for compatibility

@@ -718,8 +718,24 @@ IMPORTANT: Use transaction_context to help determine entity type:
                 required: ['term']
             },
             execute: function(args) {
-                const term = args.term;
-                let typeHint = args.type_hint || 'auto';
+                // ═══════════════════════════════════════════════════════════════════════
+                // PARAMETER ALIASING: Accept both naming conventions
+                // LLM sometimes uses: { name: "oblender", type: "vendor" }
+                // Tool expects:       { term: "oblender", type_hint: "vendor" }
+                // ═══════════════════════════════════════════════════════════════════════
+                const term = args.term || args.name;
+                let typeHint = args.type_hint || args.type || 'auto';
+
+                // Validate that we have a search term
+                if (!term) {
+                    return {
+                        success: false,
+                        found: false,
+                        error: "Missing search term. Provide either 'term' or 'name' parameter.",
+                        rowCount: 0,
+                        tool: 'resolve_entity'
+                    };
+                }
 
                 // Infer type_hint from transaction_context if not explicitly set
                 if (typeHint === 'auto' && args.transaction_context) {
@@ -811,7 +827,8 @@ IMPORTANT: Use transaction_context to help determine entity type:
                 }
             },
             displayName: function(args) {
-                return `Searching for "${args.term}"...`;
+                const searchTerm = args.term || args.name || 'entity';
+                return `Searching for "${searchTerm}"...`;
             }
         },
 
