@@ -1305,7 +1305,11 @@ Now write your analysis:`;
             refId: dataRef?.refId
         });
 
-        return dataRef;
+        // Return both dataRef and dashboardData for caller to access textSummary, rowCount, etc.
+        return {
+            dataRef: dataRef,
+            dashboardData: dashboardData
+        };
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -1722,7 +1726,55 @@ Now write your analysis:`;
                 if (item.summary) {
                     lines.push(`    Summary: ${item.summary}`);
                 }
-                if (item.preview && item.preview.length > 0) {
+
+                // ═══════════════════════════════════════════════════════════════
+                // DASHBOARD DATA: Show metrics, collections, and full textSummary
+                // ═══════════════════════════════════════════════════════════════
+                if (item.metrics) {
+                    lines.push(`    Key Metrics:`);
+                    Object.entries(item.metrics).slice(0, 8).forEach(([name, data]) => {
+                        const statusIcon = data.status === 'danger' ? ' ⚠️' : data.status === 'warning' ? ' ⚡' : '';
+                        const trendIcon = data.trend === 'up' ? ' ↑' : data.trend === 'down' ? ' ↓' : '';
+                        lines.push(`      • ${name}: ${data.formatted || data.value}${trendIcon}${statusIcon}`);
+                    });
+                }
+
+                if (item.collections && item.collections.length > 0) {
+                    lines.push(`    Available Collections (queryable):`);
+                    item.collections.forEach(col => {
+                        const preview = col.preview ? ` - Preview: ${col.preview.slice(0, 2).join(', ')}...` : '';
+                        lines.push(`      • ${col.name}: ${col.count} items${preview}`);
+                    });
+                }
+
+                // For dashboards, show the full textSummary if available (truncated)
+                if (item.textSummary) {
+                    lines.push(`    ───── Full Dashboard Data ─────`);
+                    // Show truncated textSummary (first 1500 chars to keep context manageable)
+                    const truncatedSummary = item.textSummary.length > 1500
+                        ? item.textSummary.substring(0, 1500) + '\n    ... [truncated - use collection queries for more]'
+                        : item.textSummary;
+                    truncatedSummary.split('\n').forEach(line => {
+                        lines.push(`    ${line}`);
+                    });
+                }
+
+                // Available dashboards (from list_dashboards)
+                if (item.availableDashboards && item.availableDashboards.length > 0) {
+                    lines.push(`    Available Dashboards:`);
+                    item.availableDashboards.forEach(d => {
+                        lines.push(`      • ${d.id}: ${d.name}`);
+                        if (d.description) {
+                            lines.push(`        ${d.description.substring(0, 80)}${d.description.length > 80 ? '...' : ''}`);
+                        }
+                        if (d.use_cases && d.use_cases.length > 0) {
+                            lines.push(`        Use for: ${d.use_cases.join(', ')}`);
+                        }
+                    });
+                }
+
+                // Standard row data preview
+                if (item.preview && item.preview.length > 0 && !item.metrics) {
                     lines.push(`    Sample data:`);
                     item.preview.slice(0, 3).forEach(row => {
                         const rowStr = Object.entries(row)
@@ -1857,7 +1909,7 @@ Now write your analysis:`;
             tool: toolName,
             args: args,
             success: result.success !== false,
-            rowCount: result.rows?.length || 0,
+            rowCount: result.rowCount || result.rows?.length || 0,
             columns: result.columns || [],
             error: result.error,
             duration: toolDuration,
@@ -1886,19 +1938,53 @@ Now write your analysis:`;
                 }
             }
         } else if (isDashboardResult(result)) {
-            // Dashboard intelligence
-            const dataRef = storeDashboardDataReference(state.requestId, toolName, result);
-            if (dataRef) {
-                state.dataReferences.push(dataRef);
-                dataEntry.dataRef = dataRef.refId;
+            // Dashboard intelligence - bridge to first-class data
+            const stored = storeDashboardDataReference(state.requestId, toolName, result);
+            if (stored && stored.dataRef) {
+                state.dataReferences.push(stored.dataRef);
+                dataEntry.dataRef = stored.dataRef.refId;
                 dataEntry.success = true;
-                dataEntry.summary = result.textSummary || 'Dashboard data loaded';
 
-                // Extract key metrics for preview
+                // Use dashboardData for accurate rowCount and textSummary
+                const dashData = stored.dashboardData;
+                dataEntry.rowCount = dashData.rowCount || Object.keys(result.intelligence?.metrics || {}).length;
+                dataEntry.textSummary = dashData.textSummary;
+                dataEntry.summary = `Dashboard: ${dashData.dashboardName || result.dashboard} - ${dataEntry.rowCount} metrics loaded`;
+                dataEntry.columns = dashData.columns || [];
+
+                // Extract key metrics for preview display
                 if (result.intelligence?.metrics) {
                     dataEntry.metrics = result.intelligence.metrics;
                 }
+
+                // Extract collections info for LLM awareness
+                if (result.intelligence?.collections) {
+                    dataEntry.collections = Object.entries(result.intelligence.collections).map(([name, info]) => ({
+                        name: name,
+                        count: info.count,
+                        preview: info.preview
+                    }));
+                }
             }
+        } else if (result.success && result.dashboards && Array.isArray(result.dashboards)) {
+            // ═══════════════════════════════════════════════════════════════════════
+            // STRUCTURED DATA: list_dashboards returns dashboards array, not rows
+            // Make this first-class data so LLM knows what dashboards are available
+            // ═══════════════════════════════════════════════════════════════════════
+            dataEntry.rowCount = result.dashboards.length;
+            dataEntry.success = true;
+            dataEntry.summary = `${result.dashboards.length} dashboards available`;
+
+            // Build preview for LLM
+            dataEntry.availableDashboards = result.dashboards.map(d => ({
+                id: d.id,
+                name: d.name,
+                description: d.description,
+                use_cases: d.use_cases?.slice(0, 3)
+            }));
+
+            // Create columns for consistency
+            dataEntry.columns = ['id', 'name', 'description', 'use_cases'];
         }
 
         // Track entity resolution
