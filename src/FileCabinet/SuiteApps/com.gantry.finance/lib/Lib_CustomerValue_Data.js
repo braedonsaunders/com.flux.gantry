@@ -86,8 +86,23 @@ define(['N/query', 'N/runtime', 'N/search', 'N/log', './Lib_Core'], function(que
     // MAIN ANALYSIS FUNCTION
     // ==========================================
     function analyzeCustomerValue(params) {
-        const startDate = params.startDate || getDefaultStartDate();
-        const endDate = params.endDate || getDefaultEndDate();
+        // Resolve dates using unified period system
+        // Priority: explicit dates > period parameter > default (last_12_months)
+        let startDate, endDate;
+
+        if (params.startDate && params.endDate) {
+            startDate = params.startDate;
+            endDate = params.endDate;
+        } else if (params.period) {
+            const periodDates = Core.getPeriodDates(params.period, 'last_12_months');
+            startDate = periodDates.start;
+            endDate = periodDates.end;
+        } else {
+            const periodDates = Core.getPeriodDates('last_12_months', 'last_12_months');
+            startDate = periodDates.start;
+            endDate = periodDates.end;
+        }
+
         const subsidiaryId = params.subsidiary || params.subsidiaryId || null;
         const config = params.config || {};
         

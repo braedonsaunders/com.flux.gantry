@@ -643,6 +643,16 @@ Analyze the SEMANTIC MEANING of the question. Extract:
    - highlight: What to emphasize in the answer (e.g., "fastest growing category", "largest expense")
    - exclude: Items to exclude (e.g., "excluding COGS", "except marketing")
 
+NEEDS_RESOLUTION GUIDELINES - Set true ONLY when genuinely ambiguous:
+- TRUE: "Show me the stuff" (genuinely unclear what they want)
+- TRUE: "Bills from Smith" when multiple entities named Smith exist
+- TRUE: "Compare last quarter to the other one" (conflicting references)
+- FALSE: "Show utilization by employee" (clear request - use defaults)
+- FALSE: "What's our cash position" (clear request - just get the data)
+- FALSE: "Revenue by customer" (clear request - use ytd default)
+- FALSE: "Show expenses" (clear request - use ytd default)
+Most reporting requests should be FALSE - use sensible period defaults instead of asking.
+
 Response format: {"intent": "category", "entities": ["named items"], "time_scope": "ytd|mtd|last_30|custom|none", "needs_resolution": true|false, "references_previous": true|false, "semantic_topics": ["topic1", "topic2"], "transaction_context": "bills|invoices|payments|credits|all", "constraints": {"limit": null, "sort_by": null, "sort_direction": "desc", "highlight": null, "exclude": []}, "userNarration": "Looking into your customer revenue..."}`;
 
     const SELECT_PROMPT = `Select tools to answer this {intent} question. Respond with JSON only.
@@ -751,6 +761,19 @@ CRITICAL RULES:
   in the data summary. Use the ACTUAL numeric entity_id (e.g., 416), NOT placeholders.
   WRONG: vendor_id: "{{resolve_entity result}}"
   RIGHT: vendor_id: 416
+
+SENSIBLE DEFAULTS - AVOID UNNECESSARY CLARIFICATION:
+{needs_resolution_context}
+- For reporting requests WITHOUT a specific period, USE DEFAULT PERIODS and proceed:
+  • "Show utilization" → call dashboard_time with default period (this_month)
+  • "What are our expenses" → call get_expenses with default period (ytd)
+  • "Revenue by customer" → call the appropriate tool with ytd default
+  • "Cash position" → call dashboard_cashflow (no period needed)
+- DO NOT ask for clarification on straightforward reporting requests
+- Only use CLARIFY when:
+  • Multiple entities could match and disambiguation is required
+  • The request is genuinely ambiguous (not just missing a period)
+  • You've tried getting data but need more specific criteria from user
 
 WHEN A QUERY RETURNS 0 ROWS:
 - Look at "💡 BROADENING OPTIONS" - YOU DECIDE whether to use them
@@ -3095,13 +3118,21 @@ Now write your analysis:`;
 
         // Build the prompt with accumulated data
         // Note: SYNTHESIZE hint is automatically computed inside buildAccumulatedDataSummary()
+
+        // Build needs_resolution context from INTENT phase to guide CLARIFY behavior
+        const needsResolution = state.intent?.needsResolution;
+        const needsResolutionContext = needsResolution
+            ? '- Intent analysis suggests this question may need clarification - CLARIFY is acceptable if still unclear after analysis.'
+            : '- Intent was CLEAR - strongly prefer using DEFAULT PERIODS and proceeding. Do NOT ask for clarification unless data is genuinely missing after trying tools.';
+
         const prompt = REASON_ACT_PROMPT
             .replace('{date_context}', getDateContext())
             .replace('{history_context}', buildHistoryContext(state))
             .replace('{question}', state.message)
             .replace('{accumulated_data}', buildAccumulatedDataSummary(state))
             .replace('{tool_list}', getToolListForPrompt())
-            .replace('{period_options}', Tools.getAvailablePeriods());
+            .replace('{period_options}', Tools.getAvailablePeriods())
+            .replace('{needs_resolution_context}', needsResolutionContext);
 
         // Add thinking step
         upsertThinkingStep(state, 'reason_act', {

@@ -673,37 +673,23 @@ define(["N/query", "N/search", "N/log", "N/runtime", "./Lib_Core", "./Lib_Config
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // DATE HANDLING
+    // DATE HANDLING (uses unified period system from Lib_Core)
     // ═══════════════════════════════════════════════════════════════════════════
 
     function resolveDateRange(context, config) {
-        const today = new Date();
-        const fiscalCalendar = ConfigLib.getFiscalCalendar();
-        const fiscalYearStartMonth = fiscalCalendar.fiscalYearStartMonth || 0;
-
-        let end;
-        if (context.endDate) {
-            end = context.endDate;
+        // Priority: explicit dates > period parameter > default (ytd_closed)
+        if (context.startDate && context.endDate) {
+            // Explicit dates provided
+            return { start: context.startDate, end: context.endDate };
+        } else if (context.period) {
+            // Use unified period system from Lib_Core
+            const periodDates = Core.getPeriodDates(context.period, 'ytd_closed');
+            return { start: periodDates.start, end: periodDates.end };
         } else {
-            // Default to end of last closed month (6 weeks ago)
-            const sixWeeksAgo = new Date(today);
-            sixWeeksAgo.setDate(sixWeeksAgo.getDate() - 42);
-            const lastClosedEnd = new Date(sixWeeksAgo.getFullYear(), sixWeeksAgo.getMonth() + 1, 0);
-            end = Core.formatDateForQuery(lastClosedEnd);
+            // Default to ytd_closed for burden analysis (complete data only)
+            const periodDates = Core.getPeriodDates('ytd_closed', 'ytd_closed');
+            return { start: periodDates.start, end: periodDates.end };
         }
-
-        let start;
-        if (context.startDate) {
-            start = context.startDate;
-        } else {
-            // Default to fiscal year start
-            const endDate = new Date(end);
-            const fyYear = endDate.getMonth() < fiscalYearStartMonth ? endDate.getFullYear() - 1 : endDate.getFullYear();
-            const fyStart = new Date(fyYear, fiscalYearStartMonth, 1);
-            start = Core.formatDateForQuery(fyStart);
-        }
-
-        return { start, end };
     }
 
     // ═══════════════════════════════════════════════════════════════════════════

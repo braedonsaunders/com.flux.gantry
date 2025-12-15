@@ -51,29 +51,29 @@ define(["N/search", "N/query", "N/log", "./Lib_Core", "./Lib_Config"], function 
     
     function getData(context) {
         try {
-            const today = new Date();
-            
             // Load configuration
             const config = ConfigLib.getStoredConfiguration('health');
             const fiscalCalendar = ConfigLib.getFiscalCalendar();
             const fiscalYearStartMonth = fiscalCalendar.fiscalYearStartMonth;
 
-            // 1. Resolve Dates (using timezone-safe parsing)
+            // 1. Resolve Dates using unified period system
+            // Priority: explicit dates > period parameter > default (ytd_closed)
             let rangeEnd, rangeStart;
-            
-            if (context.endDate) {
-                rangeEnd = parseLocalDate(context.endDate);
-            } else {
-                const sixWeeksAgo = new Date(today);
-                sixWeeksAgo.setDate(sixWeeksAgo.getDate() - 42);
-                rangeEnd = new Date(sixWeeksAgo.getFullYear(), sixWeeksAgo.getMonth(), 0);
-            }
 
-            if (context.startDate) {
+            if (context.startDate && context.endDate) {
+                // Explicit dates provided
                 rangeStart = parseLocalDate(context.startDate);
+                rangeEnd = parseLocalDate(context.endDate);
+            } else if (context.period) {
+                // Use unified period system from Lib_Core
+                const periodDates = Core.getPeriodDates(context.period, 'ytd_closed');
+                rangeStart = parseLocalDate(periodDates.start);
+                rangeEnd = parseLocalDate(periodDates.end);
             } else {
-                const fyYear = rangeEnd.getMonth() < fiscalYearStartMonth ? rangeEnd.getFullYear() - 1 : rangeEnd.getFullYear();
-                rangeStart = new Date(fyYear, fiscalYearStartMonth, 1);
+                // Default to ytd_closed for financial health analysis
+                const periodDates = Core.getPeriodDates('ytd_closed', 'ytd_closed');
+                rangeStart = parseLocalDate(periodDates.start);
+                rangeEnd = parseLocalDate(periodDates.end);
             }
 
             // Fiscal Context

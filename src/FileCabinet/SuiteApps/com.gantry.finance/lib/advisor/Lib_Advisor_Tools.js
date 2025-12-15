@@ -30,6 +30,7 @@ define([
     './Lib_Advisor_Cache',
     '../Lib_Dashboard_Registry',
     '../Lib_Config',
+    '../Lib_Core',
     // Dashboard data modules - loaded as dependencies to avoid dynamic require() errors
     '../Lib_Cashflow_Data',
     '../Lib_Health_Data',
@@ -50,6 +51,7 @@ define([
     Cache,
     DashboardRegistry,
     ConfigLib,
+    Core,
     // Dashboard data modules
     CashflowData,
     HealthData,
@@ -330,288 +332,9 @@ define([
         };
     }
 
-    // ═══════════════════════════════════════════════════════════════════════════
-    // FIX 5: RELATIVE TIME EXPRESSION RESOLVER
-    // Pre-processes natural language time expressions into concrete parameter values
-    // Converts "last 2 years" → 24, "past quarter" → 3, etc.
-    // ═══════════════════════════════════════════════════════════════════════════
-
-    /**
-     * Resolve relative time expressions to concrete numeric values
-     * Handles common patterns LLMs produce when interpreting user time requests
-     *
-     * @param {*} value - The value to check (may be string or number)
-     * @param {string} paramType - The expected parameter type ('number', 'integer')
-     * @returns {Object} { resolved: *, wasResolved: boolean, original: *, error: string|null }
-     */
-    function resolveRelativeTimeExpression(value, paramType) {
-        // If already a valid number, return as-is
-        if (typeof value === 'number' && !isNaN(value)) {
-            return { resolved: value, wasResolved: false, original: value, error: null };
-        }
-
-        // If not a string, can't resolve
-        if (typeof value !== 'string') {
-            return { resolved: value, wasResolved: false, original: value, error: null };
-        }
-
-        const lowerValue = value.toLowerCase().trim();
-
-        // ═══════════════════════════════════════════════════════════════════════
-        // PATTERN MATCHING: Natural language time expressions → numeric values
-        // ═══════════════════════════════════════════════════════════════════════
-
-        // Pattern: "last_N_years" or "last N years" → N * 12 months
-        let match = lowerValue.match(/^last[_\s]?(\d+)[_\s]?years?$/i);
-        if (match) {
-            const years = parseInt(match[1], 10);
-            const months = years * 12;
-            log.audit('Resolved time expression', { original: value, resolved: months, unit: 'months' });
-            return { resolved: months, wasResolved: true, original: value, error: null };
-        }
-
-        // Pattern: "last_N_months" or "last N months" → N months
-        match = lowerValue.match(/^last[_\s]?(\d+)[_\s]?months?$/i);
-        if (match) {
-            const months = parseInt(match[1], 10);
-            log.audit('Resolved time expression', { original: value, resolved: months, unit: 'months' });
-            return { resolved: months, wasResolved: true, original: value, error: null };
-        }
-
-        // Pattern: "last_N_quarters" or "last N quarters" → N * 3 months
-        match = lowerValue.match(/^last[_\s]?(\d+)[_\s]?quarters?$/i);
-        if (match) {
-            const quarters = parseInt(match[1], 10);
-            const months = quarters * 3;
-            log.audit('Resolved time expression', { original: value, resolved: months, unit: 'months' });
-            return { resolved: months, wasResolved: true, original: value, error: null };
-        }
-
-        // Pattern: "past_N_years/months/quarters" (same as "last")
-        match = lowerValue.match(/^past[_\s]?(\d+)[_\s]?(years?|months?|quarters?)$/i);
-        if (match) {
-            const num = parseInt(match[1], 10);
-            const unit = match[2].toLowerCase();
-            let months;
-            if (unit.startsWith('year')) {
-                months = num * 12;
-            } else if (unit.startsWith('quarter')) {
-                months = num * 3;
-            } else {
-                months = num;
-            }
-            log.audit('Resolved time expression', { original: value, resolved: months, unit: 'months' });
-            return { resolved: months, wasResolved: true, original: value, error: null };
-        }
-
-        // Pattern: "ytd" or "year_to_date" → current month number
-        if (lowerValue === 'ytd' || lowerValue === 'year_to_date' || lowerValue === 'year-to-date') {
-            const currentMonth = new Date().getMonth() + 1; // 1-12
-            log.audit('Resolved time expression', { original: value, resolved: currentMonth, unit: 'months (YTD)' });
-            return { resolved: currentMonth, wasResolved: true, original: value, error: null };
-        }
-
-        // Pattern: "this_year" → 12 months
-        if (lowerValue === 'this_year' || lowerValue === 'this year' || lowerValue === 'current_year') {
-            log.audit('Resolved time expression', { original: value, resolved: 12, unit: 'months' });
-            return { resolved: 12, wasResolved: true, original: value, error: null };
-        }
-
-        // Pattern: "this_quarter" → 3 months
-        if (lowerValue === 'this_quarter' || lowerValue === 'this quarter' || lowerValue === 'current_quarter') {
-            log.audit('Resolved time expression', { original: value, resolved: 3, unit: 'months' });
-            return { resolved: 3, wasResolved: true, original: value, error: null };
-        }
-
-        // Pattern: "all" or "all_time" → 60 months (5 years default max)
-        if (lowerValue === 'all' || lowerValue === 'all_time' || lowerValue === 'all time') {
-            log.audit('Resolved time expression', { original: value, resolved: 60, unit: 'months (all time)' });
-            return { resolved: 60, wasResolved: true, original: value, error: null };
-        }
-
-        // If paramType expects a number but we have a string, that's an error
-        if (paramType === 'number' || paramType === 'integer') {
-            // Try to parse as a simple number string like "24"
-            const numericValue = parseInt(value, 10);
-            if (!isNaN(numericValue)) {
-                return { resolved: numericValue, wasResolved: true, original: value, error: null };
-            }
-
-            // Can't resolve - return error with helpful message
-            return {
-                resolved: null,
-                wasResolved: false,
-                original: value,
-                error: `Cannot convert "${value}" to a number. ` +
-                    `For time ranges use: a number (e.g., 24 for 24 months), ` +
-                    `or expressions like "last_2_years" → 24, "last_6_months" → 6, "this_quarter" → 3. ` +
-                    `The parameter expects a numeric value.`
-            };
-        }
-
-        // Not a numeric type, return unchanged
-        return { resolved: value, wasResolved: false, original: value, error: null };
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════════
-    // FIX 1: STRICT TYPE VALIDATION
-    // Validates parameter types against tool schema before execution
-    // Prevents type mismatches that cause downstream SQL errors
-    // ═══════════════════════════════════════════════════════════════════════════
-
-    /**
-     * Validate a single parameter value against its schema type
-     * @param {string} paramName - Name of the parameter
-     * @param {*} value - The value to validate
-     * @param {Object} paramDef - The parameter definition from schema
-     * @returns {Object} { valid: boolean, coerced: *, error: string|null, warning: string|null }
-     */
-    function validateParameterType(paramName, value, paramDef) {
-        const expectedType = paramDef.type;
-
-        // Null/undefined handling - only error if required (handled separately)
-        if (value === null || value === undefined) {
-            return { valid: true, coerced: value, error: null, warning: null };
-        }
-
-        switch (expectedType) {
-            case 'number':
-            case 'integer': {
-                // First try to resolve relative time expressions
-                const resolved = resolveRelativeTimeExpression(value, expectedType);
-                if (resolved.error) {
-                    return { valid: false, coerced: null, error: resolved.error, warning: null };
-                }
-                if (resolved.wasResolved) {
-                    const warning = `Resolved "${resolved.original}" to ${resolved.resolved}`;
-                    // Validate the resolved value is within bounds
-                    if (expectedType === 'integer' && !Number.isInteger(resolved.resolved)) {
-                        return {
-                            valid: false,
-                            coerced: null,
-                            error: `Parameter "${paramName}" requires an integer, got ${resolved.resolved}`,
-                            warning: null
-                        };
-                    }
-                    return { valid: true, coerced: resolved.resolved, error: null, warning: warning };
-                }
-
-                // Already a number, validate it
-                if (typeof resolved.resolved === 'number') {
-                    if (isNaN(resolved.resolved)) {
-                        return {
-                            valid: false,
-                            coerced: null,
-                            error: `Parameter "${paramName}" is NaN. Provide a valid number.`,
-                            warning: null
-                        };
-                    }
-                    if (expectedType === 'integer' && !Number.isInteger(resolved.resolved)) {
-                        // Coerce to integer with warning
-                        const coerced = Math.round(resolved.resolved);
-                        return {
-                            valid: true,
-                            coerced: coerced,
-                            error: null,
-                            warning: `Rounded "${paramName}" from ${resolved.resolved} to ${coerced}`
-                        };
-                    }
-                    return { valid: true, coerced: resolved.resolved, error: null, warning: null };
-                }
-
-                // String that looks like a number
-                if (typeof resolved.resolved === 'string') {
-                    const parsed = parseFloat(resolved.resolved);
-                    if (!isNaN(parsed)) {
-                        if (expectedType === 'integer') {
-                            const coerced = Math.round(parsed);
-                            return {
-                                valid: true,
-                                coerced: coerced,
-                                error: null,
-                                warning: `Converted string "${resolved.resolved}" to integer ${coerced}`
-                            };
-                        }
-                        return {
-                            valid: true,
-                            coerced: parsed,
-                            error: null,
-                            warning: `Converted string "${resolved.resolved}" to number ${parsed}`
-                        };
-                    }
-                }
-
-                return {
-                    valid: false,
-                    coerced: null,
-                    error: `Parameter "${paramName}" expects a ${expectedType}, got "${typeof value}" with value "${value}". ` +
-                        `Use a numeric value (e.g., 12, 24) or time expressions like "last_2_years".`,
-                    warning: null
-                };
-            }
-
-            case 'boolean': {
-                if (typeof value === 'boolean') {
-                    return { valid: true, coerced: value, error: null, warning: null };
-                }
-                // Coerce common boolean-like values
-                if (value === 'true' || value === 1 || value === '1') {
-                    return { valid: true, coerced: true, error: null, warning: `Coerced "${value}" to true` };
-                }
-                if (value === 'false' || value === 0 || value === '0') {
-                    return { valid: true, coerced: false, error: null, warning: `Coerced "${value}" to false` };
-                }
-                return {
-                    valid: false,
-                    coerced: null,
-                    error: `Parameter "${paramName}" expects a boolean, got "${typeof value}" with value "${value}". Use true or false.`,
-                    warning: null
-                };
-            }
-
-            case 'string': {
-                if (typeof value === 'string') {
-                    return { valid: true, coerced: value, error: null, warning: null };
-                }
-                // Coerce numbers and booleans to strings
-                if (typeof value === 'number' || typeof value === 'boolean') {
-                    const coerced = String(value);
-                    return { valid: true, coerced: coerced, error: null, warning: `Converted ${typeof value} to string "${coerced}"` };
-                }
-                return {
-                    valid: false,
-                    coerced: null,
-                    error: `Parameter "${paramName}" expects a string, got "${typeof value}"`,
-                    warning: null
-                };
-            }
-
-            case 'array': {
-                if (Array.isArray(value)) {
-                    return { valid: true, coerced: value, error: null, warning: null };
-                }
-                // Coerce single value to array
-                if (typeof value === 'string' || typeof value === 'number') {
-                    return { valid: true, coerced: [value], error: null, warning: `Wrapped single value in array` };
-                }
-                return {
-                    valid: false,
-                    coerced: null,
-                    error: `Parameter "${paramName}" expects an array, got "${typeof value}"`,
-                    warning: null
-                };
-            }
-
-            default:
-                // Unknown type - allow through with warning
-                return { valid: true, coerced: value, error: null, warning: null };
-        }
-    }
-
     /**
      * Validate and normalize tool arguments before execution
      * Validates enum values and normalizes common terms to NetSuite codes
-     * ENHANCED with strict type validation and relative time resolution
      *
      * @param {string} toolName - Name of the tool
      * @param {Object} args - Original arguments
@@ -669,26 +392,6 @@ define([
             }
         }
 
-        // ═══════════════════════════════════════════════════════════════════════
-        // FIX 1: STRICT TYPE VALIDATION - Validate all parameter types
-        // This catches type mismatches (string where number expected) BEFORE execution
-        // ═══════════════════════════════════════════════════════════════════════
-        for (const [paramName, paramDef] of Object.entries(props)) {
-            if (args[paramName] !== undefined && args[paramName] !== null) {
-                const typeResult = validateParameterType(paramName, args[paramName], paramDef);
-
-                if (!typeResult.valid) {
-                    errors.push(typeResult.error);
-                } else if (typeResult.coerced !== args[paramName]) {
-                    // Value was coerced - update normalized args
-                    normalizedArgs[paramName] = typeResult.coerced;
-                    if (typeResult.warning) {
-                        warnings.push(typeResult.warning);
-                    }
-                }
-            }
-        }
-
         // Validate transaction_type if present
         if (args.transaction_type && props.transaction_type) {
             const result = normalizeTransactionType(args.transaction_type);
@@ -704,8 +407,8 @@ define([
         for (const [paramName, paramDef] of Object.entries(props)) {
             if (paramName === 'transaction_type') continue; // Already handled above
 
-            if (paramDef.enum && normalizedArgs[paramName] !== undefined) {
-                const value = normalizedArgs[paramName];
+            if (paramDef.enum && args[paramName] !== undefined) {
+                const value = args[paramName];
                 if (!paramDef.enum.includes(value)) {
                     errors.push(
                         `Invalid ${paramName} "${value}". Valid values: ${paramDef.enum.join(', ')}`
@@ -878,399 +581,22 @@ define([
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // PERIOD DEFINITIONS - Single Source of Truth
-    // Add a period here ONCE - automatically available to LLM and SQL generation
-    // ═══════════════════════════════════════════════════════════════════════════
-    const PERIOD_DEFINITIONS = {
-        // === Daily ===
-        'today': {
-            desc: 'Current day only',
-            category: 'daily',
-            sql: (df) => `${df} = CURRENT_DATE`
-        },
-        'yesterday': {
-            desc: 'Previous day only',
-            category: 'daily',
-            sql: (df) => `${df} = CURRENT_DATE - 1`
-        },
-
-        // === Weekly ===
-        'this_week': {
-            desc: 'Current week (Monday to now)',
-            category: 'weekly',
-            sql: (df) => `${df} >= TRUNC(CURRENT_DATE, 'IW')`
-        },
-        'last_week': {
-            desc: 'Previous full week',
-            category: 'weekly',
-            sql: (df) => `${df} >= TRUNC(CURRENT_DATE, 'IW') - 7 AND ${df} < TRUNC(CURRENT_DATE, 'IW')`
-        },
-
-        // === Monthly ===
-        'this_month': {
-            desc: 'Current calendar month',
-            category: 'monthly',
-            sql: (df) => `${df} >= TRUNC(CURRENT_DATE, 'MM')`
-        },
-        'last_month': {
-            desc: 'Previous calendar month',
-            category: 'monthly',
-            sql: (df) => `${df} >= ADD_MONTHS(TRUNC(CURRENT_DATE, 'MM'), -1) AND ${df} < TRUNC(CURRENT_DATE, 'MM')`
-        },
-
-        // === Calendar Quarters ===
-        'this_quarter': {
-            desc: 'Current calendar quarter',
-            category: 'quarterly',
-            sql: (df) => `${df} >= TRUNC(CURRENT_DATE, 'Q')`
-        },
-        'last_quarter': {
-            desc: 'Previous calendar quarter',
-            category: 'quarterly',
-            sql: (df) => `${df} >= ADD_MONTHS(TRUNC(CURRENT_DATE, 'Q'), -3) AND ${df} < TRUNC(CURRENT_DATE, 'Q')`
-        },
-
-        // === Fiscal Year-to-Date ===
-        'ytd': {
-            desc: 'Fiscal year-to-date (FY start to now)',
-            category: 'fiscal_ytd',
-            sql: (df, ctx) => `${df} >= TO_DATE('${ctx.fyStartDate}', 'YYYY-MM-DD')`
-        },
-        'fytd': {
-            desc: 'Alias for ytd',
-            category: 'fiscal_ytd',
-            sql: (df, ctx) => `${df} >= TO_DATE('${ctx.fyStartDate}', 'YYYY-MM-DD')`
-        },
-        'ytd_closed': {
-            desc: 'Fiscal YTD to last closed period (complete data only)',
-            category: 'fiscal_ytd',
-            sql: (df, ctx) => `${df} >= TO_DATE('${ctx.fyStartDate}', 'YYYY-MM-DD') AND ${df} <= TO_DATE('${ctx.closedPeriodEnd}', 'YYYY-MM-DD')`
-        },
-        'fytd_closed': {
-            desc: 'Alias for ytd_closed',
-            category: 'fiscal_ytd',
-            sql: (df, ctx) => `${df} >= TO_DATE('${ctx.fyStartDate}', 'YYYY-MM-DD') AND ${df} <= TO_DATE('${ctx.closedPeriodEnd}', 'YYYY-MM-DD')`
-        },
-
-        // === Full Fiscal Years ===
-        'this_fiscal_year': {
-            desc: 'Current full fiscal year',
-            category: 'fiscal_year',
-            sql: (df, ctx) => `${df} >= TO_DATE('${ctx.fyStartDate}', 'YYYY-MM-DD') AND ${df} <= TO_DATE('${ctx.fyEndDate}', 'YYYY-MM-DD')`
-        },
-        'last_fiscal_year': {
-            desc: 'Previous full fiscal year',
-            category: 'fiscal_year',
-            sql: (df, ctx) => `${df} >= TO_DATE('${ctx.lastFyStart}', 'YYYY-MM-DD') AND ${df} <= TO_DATE('${ctx.lastFyEnd}', 'YYYY-MM-DD')`
-        },
-        '2_fiscal_years_ago': {
-            desc: 'Two fiscal years ago (full year)',
-            category: 'fiscal_year',
-            sql: (df, ctx) => `${df} >= TO_DATE('${ctx.twoFyStart}', 'YYYY-MM-DD') AND ${df} <= TO_DATE('${ctx.twoFyEnd}', 'YYYY-MM-DD')`
-        },
-        '3_fiscal_years_ago': {
-            desc: 'Three fiscal years ago (full year)',
-            category: 'fiscal_year',
-            sql: (df, ctx) => `${df} >= TO_DATE('${ctx.threeFyStart}', 'YYYY-MM-DD') AND ${df} <= TO_DATE('${ctx.threeFyEnd}', 'YYYY-MM-DD')`
-        },
-
-        // === YoY Comparison (CRITICAL for comparisons) ===
-        'prior_year_ytd': {
-            desc: 'Same point in LAST fiscal year - USE FOR YoY YTD COMPARISON',
-            category: 'comparison',
-            sql: (df, ctx) => `${df} >= TO_DATE('${ctx.lastFyStart}', 'YYYY-MM-DD') AND ${df} <= TO_DATE('${ctx.priorYtdEnd}', 'YYYY-MM-DD')`
-        },
-
-        // === Current Fiscal Year Quarters ===
-        'fiscal_q1': {
-            desc: 'Q1 of current fiscal year',
-            category: 'fiscal_quarter',
-            sql: (df, ctx) => `${df} >= TO_DATE('${ctx.fyQ1.start}', 'YYYY-MM-DD') AND ${df} <= TO_DATE('${ctx.fyQ1.end}', 'YYYY-MM-DD')`
-        },
-        'fiscal_q2': {
-            desc: 'Q2 of current fiscal year',
-            category: 'fiscal_quarter',
-            sql: (df, ctx) => `${df} >= TO_DATE('${ctx.fyQ2.start}', 'YYYY-MM-DD') AND ${df} <= TO_DATE('${ctx.fyQ2.end}', 'YYYY-MM-DD')`
-        },
-        'fiscal_q3': {
-            desc: 'Q3 of current fiscal year',
-            category: 'fiscal_quarter',
-            sql: (df, ctx) => `${df} >= TO_DATE('${ctx.fyQ3.start}', 'YYYY-MM-DD') AND ${df} <= TO_DATE('${ctx.fyQ3.end}', 'YYYY-MM-DD')`
-        },
-        'fiscal_q4': {
-            desc: 'Q4 of current fiscal year',
-            category: 'fiscal_quarter',
-            sql: (df, ctx) => `${df} >= TO_DATE('${ctx.fyQ4.start}', 'YYYY-MM-DD') AND ${df} <= TO_DATE('${ctx.fyQ4.end}', 'YYYY-MM-DD')`
-        },
-
-        // === Last Fiscal Year Quarters ===
-        'last_fiscal_q1': {
-            desc: 'Q1 of last fiscal year',
-            category: 'fiscal_quarter',
-            sql: (df, ctx) => `${df} >= TO_DATE('${ctx.lastFyQ1.start}', 'YYYY-MM-DD') AND ${df} <= TO_DATE('${ctx.lastFyQ1.end}', 'YYYY-MM-DD')`
-        },
-        'last_fiscal_q2': {
-            desc: 'Q2 of last fiscal year',
-            category: 'fiscal_quarter',
-            sql: (df, ctx) => `${df} >= TO_DATE('${ctx.lastFyQ2.start}', 'YYYY-MM-DD') AND ${df} <= TO_DATE('${ctx.lastFyQ2.end}', 'YYYY-MM-DD')`
-        },
-        'last_fiscal_q3': {
-            desc: 'Q3 of last fiscal year',
-            category: 'fiscal_quarter',
-            sql: (df, ctx) => `${df} >= TO_DATE('${ctx.lastFyQ3.start}', 'YYYY-MM-DD') AND ${df} <= TO_DATE('${ctx.lastFyQ3.end}', 'YYYY-MM-DD')`
-        },
-        'last_fiscal_q4': {
-            desc: 'Q4 of last fiscal year',
-            category: 'fiscal_quarter',
-            sql: (df, ctx) => `${df} >= TO_DATE('${ctx.lastFyQ4.start}', 'YYYY-MM-DD') AND ${df} <= TO_DATE('${ctx.lastFyQ4.end}', 'YYYY-MM-DD')`
-        },
-
-        // === Rolling Periods (calendar-based) ===
-        'last_30_days': {
-            desc: 'Last 30 calendar days',
-            category: 'rolling',
-            sql: (df) => `${df} >= CURRENT_DATE - 30`
-        },
-        'last_60_days': {
-            desc: 'Last 60 calendar days',
-            category: 'rolling',
-            sql: (df) => `${df} >= CURRENT_DATE - 60`
-        },
-        'last_90_days': {
-            desc: 'Last 90 calendar days',
-            category: 'rolling',
-            sql: (df) => `${df} >= CURRENT_DATE - 90`
-        },
-        'last_180_days': {
-            desc: 'Last 180 calendar days (6 months)',
-            category: 'rolling',
-            sql: (df) => `${df} >= CURRENT_DATE - 180`
-        },
-        'last_365_days': {
-            desc: 'Last 365 calendar days (1 year)',
-            category: 'rolling',
-            sql: (df) => `${df} >= CURRENT_DATE - 365`
-        },
-        'last_2_years': {
-            desc: 'Last 730 calendar days (2 years)',
-            category: 'rolling',
-            sql: (df) => `${df} >= CURRENT_DATE - 730`
-        },
-        'last_3_years': {
-            desc: 'Last 1095 calendar days (3 years)',
-            category: 'rolling',
-            sql: (df) => `${df} >= CURRENT_DATE - 1095`
-        },
-
-        // === Multi-Year Fiscal ===
-        'last_2_fiscal_years': {
-            desc: 'Last 2 fiscal years combined',
-            category: 'multi_year',
-            sql: (df, ctx) => `${df} >= TO_DATE('${ctx.lastFyStart}', 'YYYY-MM-DD')`
-        },
-        'last_3_fiscal_years': {
-            desc: 'Last 3 fiscal years combined',
-            category: 'multi_year',
-            sql: (df, ctx) => `${df} >= TO_DATE('${ctx.twoFyStart}', 'YYYY-MM-DD')`
-        },
-
-        // === All Time ===
-        'all': {
-            desc: 'All available data (no date filter)',
-            category: 'all',
-            sql: () => '1=1'
-        }
-    };
-
-    // ═══════════════════════════════════════════════════════════════════════════
-    // PERIOD COMPARISON MAPPING
-    // Maps current periods to their natural comparison periods for YoY, MoM, etc.
-    // Used by compare_metric_periods tool for auto-deriving prior_period
+    // PERIOD SYSTEM - Delegated to Lib_Core (Single Source of Truth)
+    // All period definitions, date calculations, and SQL generation are in Core
     // ═══════════════════════════════════════════════════════════════════════════
 
-    const PERIOD_COMPARISON_MAP = {
-        // YTD comparisons → same point in prior year
-        'ytd': 'prior_year_ytd',
-        'fytd': 'prior_year_ytd',
-        'ytd_closed': 'prior_year_ytd',
-        'fytd_closed': 'prior_year_ytd',
+    // Reference to Core's PERIOD_DEFINITIONS for backwards compatibility
+    const PERIOD_DEFINITIONS = Core.PERIOD_DEFINITIONS;
 
-        // Month comparisons
-        'this_month': 'last_month',
+    // Delegate to Core's unified period functions
+    const getAvailablePeriods = Core.getAvailablePeriods;
+    const buildPeriodFilter = Core.buildPeriodFilter;
+    const buildAccountingPeriodFilter = Core.buildAccountingPeriodFilter;
+    const getValidPeriods = Core.getValidPeriods;
+    const getPeriodDates = Core.getPeriodDates;
 
-        // Quarter comparisons
-        'this_quarter': 'last_quarter',
-
-        // Fiscal year comparisons
-        'this_fiscal_year': 'last_fiscal_year',
-        'last_fiscal_year': '2_fiscal_years_ago',
-        '2_fiscal_years_ago': '3_fiscal_years_ago',
-
-        // Current fiscal year quarters → same quarter last year
-        'fiscal_q1': 'last_fiscal_q1',
-        'fiscal_q2': 'last_fiscal_q2',
-        'fiscal_q3': 'last_fiscal_q3',
-        'fiscal_q4': 'last_fiscal_q4',
-
-        // Week comparisons
-        'this_week': 'last_week'
-    };
-
-    /**
-     * Get the natural comparison period for a given period
-     * @param {string} period - Current period key from PERIOD_DEFINITIONS
-     * @returns {string|null} Comparison period key or null if no standard comparison exists
-     */
-    function getComparisonPeriod(period) {
-        return PERIOD_COMPARISON_MAP[period] || null;
-    }
-
-    /**
-     * Build fiscal context with all computed dates
-     * Called once per buildPeriodFilter invocation
-     */
-    function buildFiscalContext() {
-        const fiscalCalendar = ConfigLib.getFiscalCalendar();
-        const now = new Date();
-        const fyStart = new Date(fiscalCalendar.fiscalYearStartDate);
-        const fyEnd = new Date(fiscalCalendar.fiscalYearEndDate);
-
-        // Helper to format date for SQL
-        const toSqlDate = (d) => {
-            const year = d.getFullYear();
-            const month = String(d.getMonth() + 1).padStart(2, '0');
-            const day = String(d.getDate()).padStart(2, '0');
-            return `${year}-${month}-${day}`;
-        };
-
-        // Calculate fiscal quarters
-        const getFiscalQuarterDates = (fyStartDate, quarterNum) => {
-            const fy = new Date(fyStartDate);
-            const qStart = new Date(fy);
-            qStart.setMonth(fy.getMonth() + (quarterNum - 1) * 3);
-            const qEnd = new Date(qStart);
-            qEnd.setMonth(qStart.getMonth() + 3);
-            qEnd.setDate(qEnd.getDate() - 1);
-            return { start: toSqlDate(qStart), end: toSqlDate(qEnd) };
-        };
-
-        // Last fiscal year
-        const lastFyStart = new Date(fyStart);
-        lastFyStart.setFullYear(lastFyStart.getFullYear() - 1);
-        const lastFyEnd = new Date(fyEnd);
-        lastFyEnd.setFullYear(lastFyEnd.getFullYear() - 1);
-
-        // 2 fiscal years ago
-        const twoFyStart = new Date(fyStart);
-        twoFyStart.setFullYear(twoFyStart.getFullYear() - 2);
-        const twoFyEnd = new Date(fyEnd);
-        twoFyEnd.setFullYear(twoFyEnd.getFullYear() - 2);
-
-        // 3 fiscal years ago
-        const threeFyStart = new Date(fyStart);
-        threeFyStart.setFullYear(threeFyStart.getFullYear() - 3);
-        const threeFyEnd = new Date(fyEnd);
-        threeFyEnd.setFullYear(threeFyEnd.getFullYear() - 3);
-
-        // YTD comparison point in prior year (same elapsed time)
-        const daysIntoFy = Math.floor((now - fyStart) / (1000 * 60 * 60 * 24));
-        const priorYtdEnd = new Date(lastFyStart);
-        priorYtdEnd.setDate(priorYtdEnd.getDate() + daysIntoFy);
-
-        return {
-            fyStartDate: fiscalCalendar.fiscalYearStartDate,
-            fyEndDate: fiscalCalendar.fiscalYearEndDate,
-            lastFyStart: toSqlDate(lastFyStart),
-            lastFyEnd: toSqlDate(lastFyEnd),
-            twoFyStart: toSqlDate(twoFyStart),
-            twoFyEnd: toSqlDate(twoFyEnd),
-            threeFyStart: toSqlDate(threeFyStart),
-            threeFyEnd: toSqlDate(threeFyEnd),
-            priorYtdEnd: toSqlDate(priorYtdEnd),
-            closedPeriodEnd: fiscalCalendar.latestClosedPeriod ?
-                fiscalCalendar.latestClosedPeriod.endDate : toSqlDate(now),
-            // Current FY quarters
-            fyQ1: getFiscalQuarterDates(fyStart, 1),
-            fyQ2: getFiscalQuarterDates(fyStart, 2),
-            fyQ3: getFiscalQuarterDates(fyStart, 3),
-            fyQ4: getFiscalQuarterDates(fyStart, 4),
-            // Last FY quarters
-            lastFyQ1: getFiscalQuarterDates(lastFyStart, 1),
-            lastFyQ2: getFiscalQuarterDates(lastFyStart, 2),
-            lastFyQ3: getFiscalQuarterDates(lastFyStart, 3),
-            lastFyQ4: getFiscalQuarterDates(lastFyStart, 4)
-        };
-    }
-
-    /**
-     * Get available period options for LLM prompts
-     * Dynamically generated from PERIOD_DEFINITIONS - add a period once, it appears here
-     * @returns {string} Formatted period options for injection into prompts
-     */
-    function getAvailablePeriods() {
-        const lines = ['VALID PERIOD VALUES (use exact strings for "period" parameter):'];
-        let lastCategory = '';
-
-        Object.entries(PERIOD_DEFINITIONS).forEach(([key, def]) => {
-            if (def.category !== lastCategory) {
-                lastCategory = def.category;
-            }
-            lines.push(`  "${key}": ${def.desc}`);
-        });
-
-        lines.push('');
-        lines.push('COMPARISON TIP: For YoY comparison, call same tool twice:');
-        lines.push('  - First with period="ytd" (current year-to-date)');
-        lines.push('  - Then with period="prior_year_ytd" (same point last year)');
-
-        return lines.join('\n');
-    }
-
-    /**
-     * Build date filter based on period string
-     * Uses PERIOD_DEFINITIONS as single source of truth
-     */
-    function buildPeriodFilter(period, dateField) {
-        dateField = dateField || 'transaction.trandate';
-
-        const def = PERIOD_DEFINITIONS[period];
-        if (!def) {
-            if (period && period !== 'all') {
-                log.audit('buildPeriodFilter', 'Unknown period "' + period + '", defaulting to all. Valid periods: ' + Object.keys(PERIOD_DEFINITIONS).join(', '));
-            }
-            return '1=1';
-        }
-
-        // Build fiscal context (computed dates for fiscal-aware periods)
-        const ctx = buildFiscalContext();
-
-        return def.sql(dateField, ctx);
-    }
-
-    /**
-     * Build period filter for queries using accounting period table (ap.startdate)
-     * Used by income statement, balance sheet, and other financial reports
-     * that join with accountingperiod table instead of filtering on transaction.trandate
-     *
-     * @param {string} period - Period string from PERIOD_DEFINITIONS
-     * @returns {string} SQL WHERE clause fragment for accounting period filtering
-     */
-    function buildAccountingPeriodFilter(period) {
-        const def = PERIOD_DEFINITIONS[period];
-        if (!def) {
-            if (period && period !== 'all') {
-                log.audit('buildAccountingPeriodFilter', 'Unknown period "' + period + '", defaulting to all. Valid periods: ' + Object.keys(PERIOD_DEFINITIONS).join(', '));
-            }
-            return '1=1';
-        }
-
-        // Build fiscal context
-        const ctx = buildFiscalContext();
-
-        // Use ap.startdate as the date field for accounting period filtering
-        // The PERIOD_DEFINITIONS sql functions will generate proper date comparisons
-        return def.sql('ap.startdate', ctx);
-    }
+    // Legacy compatibility - buildFiscalContext is internal to Core now
+    // If any code still calls this, it should be refactored to use Core functions
 
     /**
      * Format query result for LLM consumption
@@ -1884,372 +1210,6 @@ inventorybalance (stock levels), budget (budget data), ProjectFinancials (projec
             },
             displayName: function(args) {
                 return `Exploring ${args.table} schema...`;
-            }
-        },
-
-        // ═══════════════════════════════════════════════════════════════════════════
-        // SEARCH_TRANSACTION_TEXT - Universal text search across all transaction data
-        // ═══════════════════════════════════════════════════════════════════════════
-        search_transaction_text: {
-            name: 'search_transaction_text',
-            shortDescription: 'Search ALL transaction text fields (memos, vendors, items, accounts) for keywords',
-            category: 'discovery',
-            description: `Universal search across ALL text fields in transaction data.
-Use when user mentions a CONCEPT that could appear anywhere: memos, vendor names, item descriptions, account names, etc.
-
-WHEN TO USE THIS vs resolve_entity:
-- resolve_entity: User names a SPECIFIC entity ("Show transactions for Acme Corp")
-- search_transaction_text: User mentions a CONCEPT ("Show me hotel expenses", "variance in software")
-
-This tool searches:
-• GL Account names (e.g., "Travel and Overnight")
-• Vendor/Entity names on transactions (e.g., "Marriott", "Hilton")
-• Transaction header memos (e.g., "Hotel for client meeting")
-• Transaction LINE memos (e.g., "2 nights accommodation")
-• Item/Service descriptions (e.g., "Hotel Booking Service")
-
-Returns categorized results showing WHERE matches were found and amounts.
-Use the results to understand what data exists, then drill down with specific tools.
-
-Examples:
-- "hotels and accommodations" → keywords: ["hotel", "accommodation", "lodging"]
-- "software subscriptions" → keywords: ["software", "subscription", "saas"]
-- "conference expenses" → keywords: ["conference", "convention", "summit"]`,
-            parameters: {
-                type: 'object',
-                properties: {
-                    keywords: {
-                        type: 'array',
-                        items: { type: 'string' },
-                        description: 'Keywords to search for. Include synonyms and related terms based on your knowledge (e.g., for hotels: ["hotel", "accommodation", "lodging", "marriott", "hilton"])'
-                    },
-                    start_date: {
-                        type: 'string',
-                        description: 'Optional: Start date (YYYY-MM-DD). Defaults to last 365 days.'
-                    },
-                    end_date: {
-                        type: 'string',
-                        description: 'Optional: End date (YYYY-MM-DD). Defaults to today.'
-                    },
-                    transaction_types: {
-                        type: 'array',
-                        items: {
-                            type: 'string',
-                            enum: ['ExpRept', 'VendBill', 'VendCred', 'Check', 'CustInvc', 'CustCred', 'Journal']
-                        },
-                        description: 'Optional: Limit to specific transaction types. Defaults to expense types (ExpRept, VendBill, VendCred, Check).'
-                    },
-                    min_amount: {
-                        type: 'number',
-                        description: 'Optional: Minimum transaction amount to include. Helps filter noise.'
-                    }
-                },
-                required: ['keywords']
-            },
-            execute: function(args) {
-                // ═══════════════════════════════════════════════════════════════════════
-                // VALIDATE INPUT
-                // ═══════════════════════════════════════════════════════════════════════
-                if (!args.keywords || !Array.isArray(args.keywords) || args.keywords.length === 0) {
-                    return {
-                        success: false,
-                        error: 'Missing required "keywords" array. Provide search terms based on user\'s query.',
-                        tool: 'search_transaction_text'
-                    };
-                }
-
-                // Filter out empty keywords and limit to reasonable count
-                const keywords = args.keywords
-                    .filter(k => k && typeof k === 'string' && k.trim().length > 0)
-                    .slice(0, 10)  // Max 10 keywords to prevent query explosion
-                    .map(k => k.trim().toLowerCase());
-
-                if (keywords.length === 0) {
-                    return {
-                        success: false,
-                        error: 'No valid keywords provided after filtering.',
-                        tool: 'search_transaction_text'
-                    };
-                }
-
-                // ═══════════════════════════════════════════════════════════════════════
-                // BUILD SEARCH PATTERNS
-                // ═══════════════════════════════════════════════════════════════════════
-                // Create LIKE patterns for each keyword, properly escaped
-                const likePatterns = keywords.map(k => `'%${escapeSqlLike(k)}%'`);
-
-                // Date filters
-                const endDate = args.end_date || new Date().toISOString().split('T')[0];
-                const startDate = args.start_date || (() => {
-                    const d = new Date();
-                    d.setFullYear(d.getFullYear() - 1);
-                    return d.toISOString().split('T')[0];
-                })();
-
-                // Transaction type filter
-                const defaultTypes = ['ExpRept', 'VendBill', 'VendCred', 'Check'];
-                const txnTypes = args.transaction_types && args.transaction_types.length > 0
-                    ? args.transaction_types
-                    : defaultTypes;
-                const typeList = txnTypes.map(t => `'${escapeSql(t)}'`).join(',');
-
-                // Amount filter
-                const minAmount = args.min_amount && args.min_amount > 0 ? args.min_amount : 0;
-
-                // ═══════════════════════════════════════════════════════════════════════
-                // BUILD INDIVIDUAL DIMENSION QUERIES
-                // Each query searches one dimension and returns standardized columns
-                // ═══════════════════════════════════════════════════════════════════════
-
-                // Helper to create the LIKE condition for a specific field
-                const buildLikeCondition = (fieldName) => {
-                    return likePatterns.map(p => `LOWER(${fieldName}) LIKE ${p} ESCAPE '\\\\'`).join(' OR ');
-                };
-
-                // 1. ACCOUNT DIMENSION - Search GL account names
-                const accountQuery = `
-                    SELECT
-                        'ACCOUNT' AS match_type,
-                        acct.id AS match_id,
-                        acct.accountsearchdisplayname AS match_value,
-                        'account_name' AS hit_field,
-                        COUNT(DISTINCT t.id) AS txn_count,
-                        SUM(ABS(COALESCE(tal.debit, 0) - COALESCE(tal.credit, 0))) AS total_amount
-                    FROM account acct
-                    INNER JOIN transactionaccountingline tal ON tal.account = acct.id
-                    INNER JOIN transaction t ON tal.transaction = t.id
-                    WHERE t.posting = 'T'
-                        AND t.voided = 'F'
-                        AND t.type IN (${typeList})
-                        AND t.trandate >= TO_DATE('${escapeSql(startDate)}', 'YYYY-MM-DD')
-                        AND t.trandate <= TO_DATE('${escapeSql(endDate)}', 'YYYY-MM-DD')
-                        AND ABS(COALESCE(tal.debit, 0) - COALESCE(tal.credit, 0)) >= ${minAmount}
-                        AND (${buildLikeCondition('acct.accountsearchdisplayname')})
-                    GROUP BY acct.id, acct.accountsearchdisplayname
-                `;
-
-                // 2. VENDOR DIMENSION - Search vendor names on transactions
-                const vendorQuery = `
-                    SELECT
-                        'VENDOR' AS match_type,
-                        v.id AS match_id,
-                        v.companyname AS match_value,
-                        'vendor_name' AS hit_field,
-                        COUNT(DISTINCT t.id) AS txn_count,
-                        SUM(ABS(COALESCE(t.foreigntotal, 0))) AS total_amount
-                    FROM vendor v
-                    INNER JOIN transaction t ON t.entity = v.id
-                    WHERE t.posting = 'T'
-                        AND t.voided = 'F'
-                        AND t.type IN (${typeList})
-                        AND t.trandate >= TO_DATE('${escapeSql(startDate)}', 'YYYY-MM-DD')
-                        AND t.trandate <= TO_DATE('${escapeSql(endDate)}', 'YYYY-MM-DD')
-                        AND ABS(COALESCE(t.foreigntotal, 0)) >= ${minAmount}
-                        AND (${buildLikeCondition('v.companyname')})
-                    GROUP BY v.id, v.companyname
-                `;
-
-                // 3. HEADER_MEMO DIMENSION - Search transaction memos
-                const headerMemoQuery = `
-                    SELECT
-                        'HEADER_MEMO' AS match_type,
-                        t.id AS match_id,
-                        t.memo AS match_value,
-                        'transaction_memo' AS hit_field,
-                        1 AS txn_count,
-                        ABS(COALESCE(t.foreigntotal, 0)) AS total_amount
-                    FROM transaction t
-                    WHERE t.posting = 'T'
-                        AND t.voided = 'F'
-                        AND t.type IN (${typeList})
-                        AND t.trandate >= TO_DATE('${escapeSql(startDate)}', 'YYYY-MM-DD')
-                        AND t.trandate <= TO_DATE('${escapeSql(endDate)}', 'YYYY-MM-DD')
-                        AND ABS(COALESCE(t.foreigntotal, 0)) >= ${minAmount}
-                        AND t.memo IS NOT NULL
-                        AND (${buildLikeCondition('t.memo')})
-                `;
-
-                // 4. LINE_MEMO DIMENSION - Search transaction line memos
-                const lineMemoQuery = `
-                    SELECT
-                        'LINE_MEMO' AS match_type,
-                        tl.id AS match_id,
-                        tl.memo AS match_value,
-                        'line_memo' AS hit_field,
-                        COUNT(DISTINCT t.id) AS txn_count,
-                        SUM(ABS(COALESCE(tl.netamount, 0))) AS total_amount
-                    FROM transactionline tl
-                    INNER JOIN transaction t ON tl.transaction = t.id
-                    WHERE t.posting = 'T'
-                        AND t.voided = 'F'
-                        AND t.type IN (${typeList})
-                        AND t.trandate >= TO_DATE('${escapeSql(startDate)}', 'YYYY-MM-DD')
-                        AND t.trandate <= TO_DATE('${escapeSql(endDate)}', 'YYYY-MM-DD')
-                        AND ABS(COALESCE(tl.netamount, 0)) >= ${minAmount}
-                        AND tl.memo IS NOT NULL
-                        AND (${buildLikeCondition('tl.memo')})
-                    GROUP BY tl.id, tl.memo
-                `;
-
-                // 5. ITEM DIMENSION - Search item descriptions on lines
-                const itemQuery = `
-                    SELECT
-                        'ITEM' AS match_type,
-                        i.id AS match_id,
-                        i.itemid AS match_value,
-                        'item_name' AS hit_field,
-                        COUNT(DISTINCT t.id) AS txn_count,
-                        SUM(ABS(COALESCE(tl.netamount, 0))) AS total_amount
-                    FROM item i
-                    INNER JOIN transactionline tl ON tl.item = i.id
-                    INNER JOIN transaction t ON tl.transaction = t.id
-                    WHERE t.posting = 'T'
-                        AND t.voided = 'F'
-                        AND t.type IN (${typeList})
-                        AND t.trandate >= TO_DATE('${escapeSql(startDate)}', 'YYYY-MM-DD')
-                        AND t.trandate <= TO_DATE('${escapeSql(endDate)}', 'YYYY-MM-DD')
-                        AND ABS(COALESCE(tl.netamount, 0)) >= ${minAmount}
-                        AND (${buildLikeCondition('i.itemid')} OR ${buildLikeCondition('i.displayname')})
-                    GROUP BY i.id, i.itemid
-                `;
-
-                // ═══════════════════════════════════════════════════════════════════════
-                // EXECUTE QUERIES AND AGGREGATE RESULTS
-                // Run each dimension query separately to avoid UNION complexity issues
-                // ═══════════════════════════════════════════════════════════════════════
-                const results = {
-                    success: true,
-                    keywords_searched: keywords,
-                    date_range: { start: startDate, end: endDate },
-                    transaction_types: txnTypes,
-                    total_matches: 0,
-                    total_amount: 0,
-                    by_dimension: {},
-                    top_transactions: [],
-                    tool: 'search_transaction_text'
-                };
-
-                const dimensionQueries = [
-                    { name: 'ACCOUNT', query: accountQuery },
-                    { name: 'VENDOR', query: vendorQuery },
-                    { name: 'HEADER_MEMO', query: headerMemoQuery },
-                    { name: 'LINE_MEMO', query: lineMemoQuery },
-                    { name: 'ITEM', query: itemQuery }
-                ];
-
-                for (const dim of dimensionQueries) {
-                    try {
-                        // Wrap in SELECT * FROM (...) WHERE ROWNUM <= 25 to limit results
-                        const wrappedQuery = `SELECT * FROM (${dim.query}) WHERE ROWNUM <= 25`;
-                        const queryResult = QueryExecutor.executeQuery(wrappedQuery);
-
-                        if (queryResult.success && queryResult.rows && queryResult.rows.length > 0) {
-                            const matches = queryResult.rows.map(row => ({
-                                id: row.match_id,
-                                value: row.match_value,
-                                hit_field: row.hit_field,
-                                txn_count: parseInt(row.txn_count) || 1,
-                                amount: parseFloat(row.total_amount) || 0
-                            }));
-
-                            // Sort by amount descending within dimension
-                            matches.sort((a, b) => b.amount - a.amount);
-
-                            // Aggregate stats for this dimension
-                            const dimTxnCount = matches.reduce((sum, m) => sum + m.txn_count, 0);
-                            const dimAmount = matches.reduce((sum, m) => sum + m.amount, 0);
-
-                            results.by_dimension[dim.name] = {
-                                match_count: matches.length,
-                                total_txn_count: dimTxnCount,
-                                total_amount: dimAmount,
-                                matches: matches.slice(0, 10) // Top 10 per dimension
-                            };
-
-                            results.total_matches += matches.length;
-                            results.total_amount += dimAmount;
-                        }
-                    } catch (e) {
-                        log.debug('search_transaction_text dimension query failed', {
-                            dimension: dim.name,
-                            error: e.message
-                        });
-                        // Continue with other dimensions
-                    }
-                }
-
-                // ═══════════════════════════════════════════════════════════════════════
-                // GET TOP TRANSACTIONS FOR QUICK DRILL-DOWN
-                // Find the largest individual transactions matching keywords
-                // ═══════════════════════════════════════════════════════════════════════
-                try {
-                    const topTxnQuery = `
-                        SELECT * FROM (
-                            SELECT
-                                t.id,
-                                t.tranid AS document_number,
-                                t.type AS transaction_type,
-                                TO_CHAR(t.trandate, 'YYYY-MM-DD') AS transaction_date,
-                                t.memo,
-                                BUILTIN.DF(t.entity) AS entity_name,
-                                ABS(COALESCE(t.foreigntotal, 0)) AS amount
-                            FROM transaction t
-                            WHERE t.posting = 'T'
-                                AND t.voided = 'F'
-                                AND t.type IN (${typeList})
-                                AND t.trandate >= TO_DATE('${escapeSql(startDate)}', 'YYYY-MM-DD')
-                                AND t.trandate <= TO_DATE('${escapeSql(endDate)}', 'YYYY-MM-DD')
-                                AND ABS(COALESCE(t.foreigntotal, 0)) >= ${minAmount}
-                                AND (
-                                    ${buildLikeCondition('t.memo')}
-                                    OR ${buildLikeCondition('BUILTIN.DF(t.entity)')}
-                                )
-                            ORDER BY ABS(COALESCE(t.foreigntotal, 0)) DESC
-                        ) WHERE ROWNUM <= 10
-                    `;
-
-                    const topResult = QueryExecutor.executeQuery(topTxnQuery);
-                    if (topResult.success && topResult.rows) {
-                        results.top_transactions = topResult.rows.map(row => ({
-                            id: row.id,
-                            document_number: row.document_number,
-                            type: row.transaction_type,
-                            date: row.transaction_date,
-                            memo: row.memo,
-                            entity: row.entity_name,
-                            amount: parseFloat(row.amount) || 0
-                        }));
-                    }
-                } catch (e) {
-                    log.debug('search_transaction_text top transactions query failed', { error: e.message });
-                }
-
-                // ═══════════════════════════════════════════════════════════════════════
-                // BUILD SUMMARY MESSAGE
-                // ═══════════════════════════════════════════════════════════════════════
-                const dimensionCount = Object.keys(results.by_dimension).length;
-
-                if (dimensionCount === 0) {
-                    results.message = `No matches found for keywords: ${keywords.join(', ')}. Try different search terms or broaden the date range.`;
-                    results.suggestions = [
-                        'Try alternative keywords or synonyms',
-                        'Expand the date range',
-                        'Check if the data exists under a different name/category'
-                    ];
-                } else {
-                    const dimSummaries = [];
-                    for (const [dimName, dimData] of Object.entries(results.by_dimension)) {
-                        dimSummaries.push(`${dimName}: ${dimData.match_count} matches ($${Math.round(dimData.total_amount).toLocaleString()})`);
-                    }
-                    results.message = `Found matches in ${dimensionCount} dimension(s): ${dimSummaries.join(', ')}`;
-                }
-
-                results.rowCount = results.total_matches;
-                return results;
-            },
-            displayName: function(args) {
-                const keywords = args.keywords || [];
-                return `Searching transaction text for "${keywords.slice(0, 3).join('", "')}"...`;
             }
         }
     };
@@ -4163,270 +3123,6 @@ Example period formats (assuming current date is Dec 2025):
             },
             displayName: function(args) {
                 return `Comparing ${args.metric} between periods...`;
-            }
-        },
-
-        // ═══════════════════════════════════════════════════════════════════════════
-        // UNIVERSAL PERIOD COMPARISON TOOL
-        // Single tool for ALL period-over-period comparisons with pre-computed variance
-        // ═══════════════════════════════════════════════════════════════════════════
-
-        compare_metric_periods: {
-            name: 'compare_metric_periods',
-            shortDescription: 'Compare any metric between two periods with variance calculation',
-            category: 'data',
-            description: `Universal period comparison tool. Computes variance in SQL - no manual calculation needed.
-
-USE FOR: "YoY comparison", "fastest growing", "biggest change", "MoM variance", "period vs period", "growth analysis"
-
-Returns pre-computed columns:
-- name: The dimension value (account name, customer, vendor, etc.)
-- current_amount: Value in current period
-- prior_amount: Value in prior period
-- variance: current - prior (positive = growth)
-- variance_pct: Percentage change (positive = growth)
-
-If prior_period is omitted, auto-derives from current_period:
-- ytd → prior_year_ytd
-- this_month → last_month
-- this_quarter → last_quarter
-- this_fiscal_year → last_fiscal_year
-- fiscal_q1/q2/q3/q4 → last_fiscal_q1/q2/q3/q4`,
-
-            parameters: {
-                type: 'object',
-                properties: {
-                    metric: {
-                        type: 'string',
-                        enum: ['expense', 'revenue', 'income', 'vendor_spend', 'customer_revenue'],
-                        description: 'What to measure. expense=OpEx by account, revenue=total revenue by customer, vendor_spend=AP by vendor, customer_revenue=AR by customer, income=income accounts'
-                    },
-                    dimension: {
-                        type: 'string',
-                        enum: ['account', 'category', 'customer', 'vendor', 'department', 'class'],
-                        description: 'How to group/break down the data. Default: account for expense/revenue/income, customer for customer_revenue, vendor for vendor_spend'
-                    },
-                    current_period: {
-                        type: 'string',
-                        enum: [
-                            'ytd', 'fytd', 'ytd_closed',
-                            'this_month', 'this_quarter',
-                            'this_fiscal_year', 'last_fiscal_year',
-                            'fiscal_q1', 'fiscal_q2', 'fiscal_q3', 'fiscal_q4',
-                            'this_week'
-                        ],
-                        description: 'Current period to analyze (default: ytd)'
-                    },
-                    prior_period: {
-                        type: 'string',
-                        description: 'Comparison period. If omitted, auto-derived from current_period (e.g., ytd → prior_year_ytd)'
-                    },
-                    exclude_cogs: {
-                        type: 'boolean',
-                        description: 'For expense metric: exclude COGS accounts (default: false)'
-                    },
-                    limit: {
-                        type: 'number',
-                        description: 'Top N results to return (default: 10, max: 50)'
-                    },
-                    sort_by: {
-                        type: 'string',
-                        enum: ['variance_pct', 'variance', 'current_amount', 'prior_amount'],
-                        description: 'Sort order. Use variance_pct for "fastest growing", current_amount for "top by value" (default: variance_pct)'
-                    },
-                    sort_direction: {
-                        type: 'string',
-                        enum: ['desc', 'asc'],
-                        description: 'DESC for "fastest growing/largest", ASC for "biggest decline/smallest" (default: desc)'
-                    }
-                },
-                required: ['metric']
-            },
-            execute: function(args) {
-                const metric = args.metric;
-                const currentPeriod = args.current_period || 'ytd';
-                const priorPeriod = args.prior_period || getComparisonPeriod(currentPeriod);
-
-                if (!priorPeriod) {
-                    return {
-                        success: false,
-                        error: `No comparison period defined for "${currentPeriod}". Please specify prior_period explicitly.`,
-                        tool: 'compare_metric_periods'
-                    };
-                }
-
-                // Use existing buildAccountingPeriodFilter for both periods
-                const currentFilter = buildAccountingPeriodFilter(currentPeriod);
-                const priorFilter = buildAccountingPeriodFilter(priorPeriod);
-
-                if (currentFilter === '1=1' || priorFilter === '1=1') {
-                    return {
-                        success: false,
-                        error: `Invalid period specified. current_period="${currentPeriod}", prior_period="${priorPeriod}"`,
-                        tool: 'compare_metric_periods'
-                    };
-                }
-
-                const limit = Math.min(args.limit || 10, 50);
-                const sortBy = args.sort_by || 'variance_pct';
-                const sortDir = (args.sort_direction || 'desc').toUpperCase();
-                const excludeCogs = args.exclude_cogs ? `AND acct.accttype != 'COGS'` : '';
-
-                // Build metric-specific query parts
-                let selectExpr, fromClause, whereBase, groupExpr, dimensionExpr;
-
-                switch (metric) {
-                    case 'expense':
-                        dimensionExpr = 'acct.accountsearchdisplayname';
-                        selectExpr = 'SUM(COALESCE(tal.debit, 0) - COALESCE(tal.credit, 0))';
-                        fromClause = `transactionaccountingline tal
-                            INNER JOIN transaction t ON tal.transaction = t.id
-                            INNER JOIN accountingperiod ap ON t.postingperiod = ap.id
-                            INNER JOIN account acct ON tal.account = acct.id`;
-                        whereBase = `t.posting = 'T' AND t.voided = 'F'
-                            AND acct.accttype IN ('Expense', 'OthExpense') ${excludeCogs}
-                            AND ap.isyear = 'F' AND ap.isquarter = 'F'`;
-                        groupExpr = 'acct.accountsearchdisplayname';
-                        break;
-
-                    case 'income':
-                    case 'revenue':
-                        dimensionExpr = 'acct.accountsearchdisplayname';
-                        selectExpr = 'SUM(COALESCE(tal.credit, 0) - COALESCE(tal.debit, 0))';
-                        fromClause = `transactionaccountingline tal
-                            INNER JOIN transaction t ON tal.transaction = t.id
-                            INNER JOIN accountingperiod ap ON t.postingperiod = ap.id
-                            INNER JOIN account acct ON tal.account = acct.id`;
-                        whereBase = `t.posting = 'T' AND t.voided = 'F'
-                            AND acct.accttype IN ('Income', 'OthIncome')
-                            AND ap.isyear = 'F' AND ap.isquarter = 'F'`;
-                        groupExpr = 'acct.accountsearchdisplayname';
-                        break;
-
-                    case 'customer_revenue':
-                        dimensionExpr = 'BUILTIN.DF(t.entity)';
-                        selectExpr = 'SUM(t.foreigntotal)';
-                        fromClause = `transaction t
-                            INNER JOIN accountingperiod ap ON t.postingperiod = ap.id`;
-                        whereBase = `t.type = 'CustInvc' AND t.posting = 'T' AND t.voided = 'F'
-                            AND ap.isyear = 'F' AND ap.isquarter = 'F'`;
-                        groupExpr = 'BUILTIN.DF(t.entity)';
-                        break;
-
-                    case 'vendor_spend':
-                        dimensionExpr = 'BUILTIN.DF(t.entity)';
-                        selectExpr = 'SUM(ABS(t.foreigntotal))';
-                        fromClause = `transaction t
-                            INNER JOIN accountingperiod ap ON t.postingperiod = ap.id`;
-                        whereBase = `t.type = 'VendBill' AND t.posting = 'T' AND t.voided = 'F'
-                            AND ap.isyear = 'F' AND ap.isquarter = 'F'`;
-                        groupExpr = 'BUILTIN.DF(t.entity)';
-                        break;
-
-                    default:
-                        return {
-                            success: false,
-                            error: `Unknown metric: ${metric}. Valid: expense, income, revenue, customer_revenue, vendor_spend`,
-                            tool: 'compare_metric_periods'
-                        };
-                }
-
-                // Build sort expression with NULL handling
-                let sortExpr;
-                switch (sortBy) {
-                    case 'variance_pct':
-                        sortExpr = `variance_pct ${sortDir} NULLS LAST`;
-                        break;
-                    case 'variance':
-                        sortExpr = `variance ${sortDir}`;
-                        break;
-                    case 'current_amount':
-                        sortExpr = `current_amount ${sortDir}`;
-                        break;
-                    case 'prior_amount':
-                        sortExpr = `prior_amount ${sortDir}`;
-                        break;
-                    default:
-                        sortExpr = `variance_pct ${sortDir} NULLS LAST`;
-                }
-
-                // Build the comparison query with CTEs
-                const query = `
-                    WITH current_data AS (
-                        SELECT
-                            ${dimensionExpr} AS dimension_name,
-                            ${selectExpr} AS amount
-                        FROM ${fromClause}
-                        WHERE ${whereBase}
-                            AND ${currentFilter}
-                        GROUP BY ${groupExpr}
-                        HAVING ${selectExpr} != 0
-                    ),
-                    prior_data AS (
-                        SELECT
-                            ${dimensionExpr} AS dimension_name,
-                            ${selectExpr} AS amount
-                        FROM ${fromClause}
-                        WHERE ${whereBase}
-                            AND ${priorFilter}
-                        GROUP BY ${groupExpr}
-                        HAVING ${selectExpr} != 0
-                    )
-                    SELECT * FROM (
-                        SELECT
-                            COALESCE(c.dimension_name, p.dimension_name) AS name,
-                            COALESCE(c.amount, 0) AS current_amount,
-                            COALESCE(p.amount, 0) AS prior_amount,
-                            COALESCE(c.amount, 0) - COALESCE(p.amount, 0) AS variance,
-                            CASE
-                                WHEN COALESCE(p.amount, 0) != 0
-                                THEN ROUND((COALESCE(c.amount, 0) - p.amount) / ABS(p.amount) * 100, 1)
-                                ELSE NULL
-                            END AS variance_pct
-                        FROM current_data c
-                        FULL OUTER JOIN prior_data p ON c.dimension_name = p.dimension_name
-                        WHERE COALESCE(c.amount, 0) != 0 OR COALESCE(p.amount, 0) != 0
-                        ORDER BY ${sortExpr}
-                    )
-                    WHERE ROWNUM <= ${limit}
-                `;
-
-                const result = QueryExecutor.executeQuery(query);
-                const formatted = formatResult(result, 'compare_metric_periods', { limit: limit });
-
-                // Add metadata about the comparison
-                if (formatted.success) {
-                    formatted.comparison = {
-                        metric: metric,
-                        current_period: currentPeriod,
-                        prior_period: priorPeriod,
-                        sort_by: sortBy,
-                        sort_direction: sortDir.toLowerCase()
-                    };
-
-                    // Calculate summary stats
-                    if (formatted.rows && formatted.rows.length > 0) {
-                        const totalCurrent = formatted.rows.reduce((sum, r) => sum + (parseFloat(r.current_amount) || 0), 0);
-                        const totalPrior = formatted.rows.reduce((sum, r) => sum + (parseFloat(r.prior_amount) || 0), 0);
-                        const totalVariance = totalCurrent - totalPrior;
-                        const totalVariancePct = totalPrior !== 0 ? ((totalVariance / Math.abs(totalPrior)) * 100).toFixed(1) : null;
-
-                        formatted.summary = {
-                            total_current: totalCurrent,
-                            total_prior: totalPrior,
-                            total_variance: totalVariance,
-                            total_variance_pct: totalVariancePct ? parseFloat(totalVariancePct) : null,
-                            items_shown: formatted.rows.length
-                        };
-                    }
-                }
-
-                return formatted;
-            },
-            displayName: function(args) {
-                const metric = args.metric || 'metric';
-                const period = args.current_period || 'ytd';
-                return `Comparing ${metric} for ${period}...`;
             }
         },
 
@@ -6385,15 +5081,14 @@ PREFERRED for: "income statement", "P&L", "profit and loss", "financial health",
                     },
                     period: {
                         type: 'string',
-                        enum: ['ytd', 'this_quarter', 'this_month'],
-                        description: 'Period for analysis (default: ytd)'
+                        description: 'Period for analysis. Valid values: today, yesterday, this_week, last_week, this_month, last_month, mtd, this_quarter, last_quarter, qtd, ytd, fytd, ytd_closed, this_fiscal_year, last_fiscal_year, prior_year_ytd, fiscal_q1-q4, last_30_days, last_90_days, last_365_days, all. Default: ytd_closed'
                     }
                 },
                 required: []
             },
             execute: function(args) {
                 try {
-                    // Get raw data from dashboard module
+                    // Pass period to data module - it now uses Core.getPeriodDates()
                     const rawData = HealthData.getData(args);
 
                     // Process through intelligence layer - extracts key metrics, generates insights
@@ -6444,15 +5139,14 @@ Use for: "burden rate", "overhead", "labor burden", "cost recovery", "fringe rat
                     },
                     period: {
                         type: 'string',
-                        enum: ['ytd', 'this_quarter', 'this_month', 'last_quarter'],
-                        description: 'Period for analysis (default: ytd)'
+                        description: 'Period for analysis. Valid values: today, yesterday, this_week, last_week, this_month, last_month, mtd, this_quarter, last_quarter, qtd, ytd, fytd, ytd_closed, this_fiscal_year, last_fiscal_year, prior_year_ytd, fiscal_q1-q4, last_30_days, last_90_days, last_365_days, all. Default: ytd_closed'
                     }
                 },
                 required: []
             },
             execute: function(args) {
                 try {
-                    // Get raw data from dashboard module
+                    // Pass period to data module - it now uses Core.getPeriodDates()
                     const rawData = BurdenData.getData(args);
 
                     // Process through intelligence layer - extracts key metrics, generates insights
@@ -6508,15 +5202,14 @@ Use for: "utilization", "billable hours", "time tracking", "unbilled time", "emp
                     },
                     period: {
                         type: 'string',
-                        enum: ['this_week', 'this_month', 'last_month', 'this_quarter', 'ytd'],
-                        description: 'Period for analysis (default: this_month)'
+                        description: 'Period for analysis. Valid values: today, yesterday, this_week, last_week, this_month, last_month, mtd, this_quarter, last_quarter, qtd, ytd, fytd, ytd_closed, this_fiscal_year, last_fiscal_year, prior_year_ytd, fiscal_q1-q4, last_30_days, last_90_days, last_365_days, all. Default: this_month'
                     }
                 },
                 required: []
             },
             execute: function(args) {
                 try {
-                    // Get raw data from dashboard module
+                    // Pass period to data module - it now uses Core.getPeriodDates()
                     const rawData = TimeData.getData(args);
 
                     // Process through intelligence layer - extracts key metrics, generates insights
@@ -6563,15 +5256,14 @@ Use for: "fraud detection", "anomalies", "duplicates", "Benford's law", "suspici
                 properties: {
                     period: {
                         type: 'string',
-                        enum: ['last_30_days', 'last_90_days', 'ytd'],
-                        description: 'Period for analysis (default: last_90_days)'
+                        description: 'Period for analysis. Valid values: today, yesterday, this_week, last_week, this_month, last_month, mtd, this_quarter, last_quarter, qtd, ytd, fytd, ytd_closed, this_fiscal_year, last_fiscal_year, prior_year_ytd, fiscal_q1-q4, last_30_days, last_90_days, last_365_days, all. Default: last_30_days (capped at 30 days for performance)'
                     }
                 },
                 required: []
             },
             execute: function(args) {
                 try {
-                    // Get raw data from dashboard module
+                    // Pass period to data module - it now uses Core.getPeriodDates()
                     const rawData = IntegrityData.getData(args);
 
                     // Process through intelligence layer - extracts key metrics, generates insights
@@ -6623,15 +5315,14 @@ Use for: "vendor performance", "procurement", "vendor leverage", "payment terms"
                     },
                     period: {
                         type: 'string',
-                        enum: ['last_90_days', 'ytd', 'last_365_days'],
-                        description: 'Period for analysis (default: ytd)'
+                        description: 'Period for analysis. Valid values: today, yesterday, this_week, last_week, this_month, last_month, mtd, this_quarter, last_quarter, qtd, ytd, fytd, ytd_closed, this_fiscal_year, last_fiscal_year, prior_year_ytd, fiscal_q1-q4, last_30_days, last_90_days, last_365_days, all. Default: ytd'
                     }
                 },
                 required: []
             },
             execute: function(args) {
                 try {
-                    // Get raw data from dashboard module
+                    // Pass period to data module - it now uses Core.getPeriodDates()
                     const rawData = VendorPerformanceData.getData(args);
 
                     // Process through intelligence layer - extracts key metrics, generates insights
@@ -6683,15 +5374,14 @@ Use for: "customer value", "CLV", "lifetime value", "RFM", "churn risk", "custom
                     },
                     period: {
                         type: 'string',
-                        enum: ['last_365_days', 'ytd', 'all_time'],
-                        description: 'Period for analysis (default: last_365_days)'
+                        description: 'Period for analysis. Valid values: today, yesterday, this_week, last_week, this_month, last_month, mtd, this_quarter, last_quarter, qtd, ytd, fytd, ytd_closed, this_fiscal_year, last_fiscal_year, prior_year_ytd, fiscal_q1-q4, last_30_days, last_90_days, last_365_days, last_12_months, all. Default: last_12_months'
                     }
                 },
                 required: []
             },
             execute: function(args) {
                 try {
-                    // Get raw data from dashboard module
+                    // Pass period to data module - it now uses Core.getPeriodDates()
                     const rawData = CustomerValueData.getData(args);
 
                     // Process through intelligence layer - extracts key metrics, generates insights
@@ -6743,15 +5433,14 @@ Use for: "spend velocity", "subscription creep", "shadow IT", "commitment cliff"
                     },
                     period: {
                         type: 'string',
-                        enum: ['last_6_months', 'last_12_months', 'ytd'],
-                        description: 'Period for analysis (default: last_12_months)'
+                        description: 'Period for analysis. Valid values: today, yesterday, this_week, last_week, this_month, last_month, mtd, this_quarter, last_quarter, qtd, ytd, fytd, ytd_closed, this_fiscal_year, last_fiscal_year, prior_year_ytd, fiscal_q1-q4, last_30_days, last_90_days, last_365_days, last_6_months, last_12_months, all. Default: ytd'
                     }
                 },
                 required: []
             },
             execute: function(args) {
                 try {
-                    // Get raw data from dashboard module
+                    // Pass period to data module - it now uses Core.getPeriodDates()
                     const rawData = SpendVelocityData.getData(args);
 
                     // Process through intelligence layer - extracts key metrics, generates insights
