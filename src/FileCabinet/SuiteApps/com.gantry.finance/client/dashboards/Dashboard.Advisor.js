@@ -64,17 +64,17 @@
             baseOpacity: 0.06,           // Very subtle (5-15% opacity range)
             maxOpacity: 0.12,
 
-            // Animation timing
-            emergeDuration: 2000,        // 2s fade-in
-            noiseSpeed: 0.00008,         // Very slow undulation
+            // Animation timing - ultra slow, meditative pace
+            emergeDuration: 3000,        // 3s fade-in
+            noiseSpeed: 0.000015,        // Extremely slow undulation (~5x slower)
             noiseScale: 0.008,           // Scale of noise features
-            breatheAmplitude: 0.15,      // How much contours "breathe"
-            breatheSpeed: 0.0003,        // Breathing cycle speed
+            breatheAmplitude: 0.08,      // Subtle breathing
+            breatheSpeed: 0.00005,       // Very slow breathing cycle (~30s full cycle)
 
-            // Ripple configuration
-            rippleInterval: 8000,        // New ripple every 8 seconds
-            rippleDuration: 3000,        // Ripple lasts 3 seconds
-            rippleMaxRadius: 400,        // Max ripple spread
+            // Ripple configuration - infrequent and slow
+            rippleInterval: 18000,       // New ripple every 18 seconds
+            rippleDuration: 7000,        // Ripple lasts 7 seconds (slow expansion)
+            rippleMaxRadius: 550,        // Larger spread for slower motion
 
             // Color - single slate color at varying opacities
             color: { r: 148, g: 163, b: 184 }  // Slate-400
