@@ -29,7 +29,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 2  # Need 2 commits to detect changed files
+          fetch-depth: 0  # Full history to detect all deleted files across merged commits
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -53,10 +53,15 @@ jobs:
             --privatekeypath /tmp/private.pem
 
       - name: Deploy to NetSuite
+        env:
+          # Pass the previous branch state for accurate change detection
+          # This ensures all deletions are caught, even across multiple merged commits
+          BASE_SHA: ${{ github.event.before }}
         run: |
           # Use 'all' for manual triggers with that option, otherwise 'ci'
           MODE="${{ github.event.inputs.sync_mode || 'ci' }}"
           echo "Sync mode: $MODE"
+          echo "Base SHA: $BASE_SHA"
           node scripts/sync.js --$MODE
 
       - name: Cleanup

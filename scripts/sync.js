@@ -10,6 +10,11 @@
  *   node scripts/sync.js --all        # Force sync all files
  *   node scripts/sync.js --watch      # Watch for changes and auto-sync
  *   node scripts/sync.js --no-delete  # Skip deletion of removed files
+ *
+ * Environment variables:
+ *   BASE_SHA  - Base commit to compare against in CI mode. When set, detects all
+ *               changed/deleted files from BASE_SHA to HEAD. This properly handles
+ *               merged PRs with multiple commits. Falls back to HEAD~1 if not set.
  */
 
 const { execSync, spawn } = require('child_process');
@@ -106,10 +111,23 @@ function getGitChangedFiles() {
     }
 }
 
+function getBaseRef() {
+    // Use BASE_SHA environment variable if provided (from CI)
+    // This allows comparing against the full range of pushed commits
+    const baseSha = process.env.BASE_SHA;
+    if (baseSha && baseSha !== '0000000000000000000000000000000000000000') {
+        return baseSha;
+    }
+    // Fallback to HEAD~1 for local development or first push
+    return 'HEAD~1';
+}
+
 function getGitCommitChangedFiles() {
     try {
-        // Get files changed in the latest commit (for CI mode)
-        const output = execSync('git diff --name-only HEAD~1 HEAD 2>/dev/null', {
+        const baseRef = getBaseRef();
+        // Get files changed since the base ref (for CI mode)
+        log(`Comparing changes from ${baseRef} to HEAD...`);
+        const output = execSync(`git diff --name-only ${baseRef} HEAD 2>/dev/null`, {
             encoding: 'utf8'
         }).trim();
 
@@ -128,8 +146,10 @@ function getGitCommitChangedFiles() {
 
 function getGitCommitDeletedFiles() {
     try {
-        // Get files deleted in the latest commit using --diff-filter=D
-        const output = execSync('git diff --name-only --diff-filter=D HEAD~1 HEAD 2>/dev/null', {
+        const baseRef = getBaseRef();
+        // Get files deleted since the base ref using --diff-filter=D
+        log(`Detecting deleted files from ${baseRef} to HEAD...`);
+        const output = execSync(`git diff --name-only --diff-filter=D ${baseRef} HEAD 2>/dev/null`, {
             encoding: 'utf8'
         }).trim();
 
@@ -139,6 +159,7 @@ function getGitCommitDeletedFiles() {
             .filter(f => f.startsWith(FILE_CABINET_PATH))
             .filter(f => SYNCABLE_EXTENSIONS.includes(path.extname(f).toLowerCase()));
     } catch (e) {
+        log('Could not detect deleted files', 'warn');
         return [];
     }
 }
