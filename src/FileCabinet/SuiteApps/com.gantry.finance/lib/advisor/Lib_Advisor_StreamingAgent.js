@@ -178,6 +178,19 @@ define([
     const MAX_SYNTHESIZE_ITERATIONS = 3; // Max SQL generation/correction attempts
 
     // ═══════════════════════════════════════════════════════════════════════════
+    // FIX 8: ITERATION BUDGET ALLOCATION
+    // Limits attempts per unique tool to force diversification
+    // ═══════════════════════════════════════════════════════════════════════════
+    const MAX_ATTEMPTS_PER_TOOL = 3;  // Max attempts per unique tool before requiring different tool
+    const MIN_TOOLS_BEFORE_GIVEUP = 2; // Must try at least 2 different tools before giving up
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // FIX 6: PROGRESS-BASED CIRCUIT BREAKER
+    // Triggers escalation when no progress is made across iterations
+    // ═══════════════════════════════════════════════════════════════════════════
+    const NO_PROGRESS_THRESHOLD = 3;  // Escalate after 3 consecutive iterations with 0 rows
+
+    // ═══════════════════════════════════════════════════════════════════════════
     // FAILURE MODE CLASSIFICATION
     // Distinguishes between different types of "no data" results
     // ═══════════════════════════════════════════════════════════════════════════
@@ -191,6 +204,397 @@ define([
         PARTIAL_SUCCESS: 'partial_success',    // Some tools succeeded, some failed
         TOOL_ERROR: 'tool_error'               // Tool execution error
     };
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // FIX 2: ERROR SEMANTIC PARSER
+    // Parses error messages to extract actionable insights for the LLM
+    // Converts cryptic database errors into guidance for parameter correction
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Parse an error message and extract actionable insights
+     * @param {string} errorMessage - The raw error message
+     * @param {string} toolName - The tool that generated the error
+     * @param {Object} args - The arguments that were passed
+     * @returns {Object} { category, insight, suggestedAction, parameterHints }
+     */
+    function parseErrorSemantics(errorMessage, toolName, args) {
+        if (!errorMessage || typeof errorMessage !== 'string') {
+            return {
+                category: 'unknown',
+                insight: 'An unknown error occurred.',
+                suggestedAction: 'Try a different approach.',
+                parameterHints: {}
+            };
+        }
+
+        const lowerError = errorMessage.toLowerCase();
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // TYPE MISMATCH ERRORS - NaN, type conversion failures
+        // ═══════════════════════════════════════════════════════════════════════
+        if (lowerError.includes('nan') || lowerError.includes('not a number') ||
+            lowerError.includes('unknown identifier') && lowerError.includes('nan')) {
+            // Extract the parameter name if possible
+            const paramMatch = errorMessage.match(/parameter["\s]+(\w+)|(\w+)["\s]+expects/i);
+            const paramName = paramMatch ? (paramMatch[1] || paramMatch[2]) : 'unknown';
+
+            return {
+                category: 'type_mismatch',
+                insight: `A non-numeric value was passed where a number was expected. ` +
+                    `The value could not be converted to a number (resulted in NaN).`,
+                suggestedAction: `Use a numeric value instead of a string. ` +
+                    `For time ranges: "last 2 years" should be 24 (months), "last 6 months" should be 6.`,
+                parameterHints: {
+                    likelyParameter: paramName,
+                    expectedType: 'number',
+                    commonMistake: 'Passing "last_2_years" instead of 24'
+                }
+            };
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // UNKNOWN PARAMETER ERRORS
+        // ═══════════════════════════════════════════════════════════════════════
+        if (lowerError.includes('unknown parameter') || lowerError.includes('invalid parameter')) {
+            const paramMatch = errorMessage.match(/unknown parameter["\s:]+(\w+)/i);
+            const wrongParam = paramMatch ? paramMatch[1] : null;
+            const validMatch = errorMessage.match(/valid parameters[:\s]+([^.]+)/i);
+            const validParams = validMatch ? validMatch[1].trim() : 'Check tool documentation';
+
+            return {
+                category: 'invalid_parameter',
+                insight: `Parameter "${wrongParam || 'unknown'}" is not recognized by this tool.`,
+                suggestedAction: `Use one of the valid parameters: ${validParams}`,
+                parameterHints: {
+                    invalidParameter: wrongParam,
+                    validParameters: validParams
+                }
+            };
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // ENTITY NOT FOUND ERRORS
+        // ═══════════════════════════════════════════════════════════════════════
+        if (lowerError.includes('not found') || lowerError.includes('no match') ||
+            lowerError.includes('does not exist')) {
+            return {
+                category: 'entity_not_found',
+                insight: `The entity or record referenced does not exist in the system.`,
+                suggestedAction: `Verify the entity name spelling or try a broader search. ` +
+                    `Use resolve_vendor or resolve_customer to find valid entities.`,
+                parameterHints: {}
+            };
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // SQL/QUERY ERRORS
+        // ═══════════════════════════════════════════════════════════════════════
+        if (lowerError.includes('sql') || lowerError.includes('query') ||
+            lowerError.includes('search error') || lowerError.includes('syntax')) {
+            return {
+                category: 'query_error',
+                insight: `The database query failed due to invalid parameters or syntax.`,
+                suggestedAction: `Check parameter values match expected types. ` +
+                    `Numeric fields require numbers, not strings.`,
+                parameterHints: {
+                    checkTypes: true,
+                    usedArgs: args
+                }
+            };
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // PERMISSION/ACCESS ERRORS
+        // ═══════════════════════════════════════════════════════════════════════
+        if (lowerError.includes('permission') || lowerError.includes('access denied') ||
+            lowerError.includes('unauthorized')) {
+            return {
+                category: 'permission_error',
+                insight: `Access to the requested data is restricted.`,
+                suggestedAction: `Try accessing data from a different subsidiary or record type.`,
+                parameterHints: {}
+            };
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // TIMEOUT/PERFORMANCE ERRORS
+        // ═══════════════════════════════════════════════════════════════════════
+        if (lowerError.includes('timeout') || lowerError.includes('took too long') ||
+            lowerError.includes('exceeded')) {
+            return {
+                category: 'timeout_error',
+                insight: `The query took too long to execute.`,
+                suggestedAction: `Add more filters to reduce the data volume, ` +
+                    `or use a shorter time period.`,
+                parameterHints: {
+                    suggestShorterPeriod: true,
+                    suggestMoreFilters: true
+                }
+            };
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // VALIDATION ERRORS
+        // ═══════════════════════════════════════════════════════════════════════
+        if (lowerError.includes('validation') || lowerError.includes('invalid value') ||
+            lowerError.includes('required')) {
+            return {
+                category: 'validation_error',
+                insight: `One or more parameter values failed validation.`,
+                suggestedAction: `Check that all required parameters are provided ` +
+                    `and values match the expected format.`,
+                parameterHints: {}
+            };
+        }
+
+        // Default: unknown error category
+        return {
+            category: 'unknown',
+            insight: `Error occurred: ${errorMessage.substring(0, 100)}`,
+            suggestedAction: `Try a different tool or different parameter values.`,
+            parameterHints: {}
+        };
+    }
+
+    /**
+     * Format parsed error insights for inclusion in LLM prompts
+     * @param {Object} errorSemantics - Output from parseErrorSemantics
+     * @returns {string} Formatted string for LLM context
+     */
+    function formatErrorInsightsForPrompt(errorSemantics) {
+        const lines = [];
+        lines.push(`🔍 ERROR ANALYSIS:`);
+        lines.push(`   Category: ${errorSemantics.category}`);
+        lines.push(`   Insight: ${errorSemantics.insight}`);
+        lines.push(`   Suggested Action: ${errorSemantics.suggestedAction}`);
+
+        if (Object.keys(errorSemantics.parameterHints).length > 0) {
+            lines.push(`   Parameter Hints:`);
+            for (const [key, value] of Object.entries(errorSemantics.parameterHints)) {
+                lines.push(`     • ${key}: ${JSON.stringify(value)}`);
+            }
+        }
+
+        return lines.join('\n');
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // FIX 4: TOOL DIVERSIFICATION REQUIREMENT
+    // Forces the agent to try different tools after repeated failures
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Get alternative tools for a given tool based on context
+     * @param {string} failedTool - The tool that failed
+     * @param {Object} args - The arguments that were passed
+     * @param {Object} resolvedEntities - Any resolved entities in state
+     * @returns {Array} List of alternative tools to try
+     */
+    function getAlternativeToolsForDiversification(failedTool, args, resolvedEntities) {
+        const alternatives = [];
+
+        // Revenue-related tool alternatives
+        if (failedTool === 'get_revenue_by_month' || failedTool === 'get_customer_revenue') {
+            alternatives.push({
+                tool: 'income_statement',
+                reason: 'Get revenue from income statement',
+                args: { period: 'ytd' }
+            });
+            alternatives.push({
+                tool: 'get_dashboard',
+                reason: 'Get revenue metrics from health dashboard',
+                args: { dashboard_id: 'health' }
+            });
+        }
+
+        // Expense/spend-related alternatives
+        if (failedTool === 'get_vendor_spend' || failedTool === 'get_expense_by_category') {
+            alternatives.push({
+                tool: 'income_statement',
+                reason: 'Get expenses from income statement',
+                args: { period: 'ytd' }
+            });
+            alternatives.push({
+                tool: 'get_ap_aging',
+                reason: 'Get vendor-related data from AP aging',
+                args: {}
+            });
+        }
+
+        // Transaction search alternatives
+        if (failedTool === 'search_entity_transactions' || failedTool === 'get_transaction_details') {
+            alternatives.push({
+                tool: 'search_transaction_text',
+                reason: 'Search transactions by text',
+                args: { search_text: args.name || args.entity_id || '' }
+            });
+            alternatives.push({
+                tool: 'get_recent_transactions',
+                reason: 'Get recent transactions',
+                args: { limit: 20 }
+            });
+        }
+
+        // Entity resolution alternatives
+        if (failedTool === 'resolve_vendor') {
+            alternatives.push({
+                tool: 'resolve_customer',
+                reason: 'Try as customer instead',
+                args: { name: args.name }
+            });
+        }
+        if (failedTool === 'resolve_customer') {
+            alternatives.push({
+                tool: 'resolve_vendor',
+                reason: 'Try as vendor instead',
+                args: { name: args.name }
+            });
+        }
+
+        // Dashboard alternatives
+        if (failedTool === 'get_dashboard') {
+            const dashboards = ['health', 'cashflow', 'burden', 'time', 'integrity'];
+            const currentDashboard = args.dashboard_id;
+            for (const dash of dashboards) {
+                if (dash !== currentDashboard) {
+                    alternatives.push({
+                        tool: 'get_dashboard',
+                        reason: `Try ${dash} dashboard instead`,
+                        args: { dashboard_id: dash }
+                    });
+                    break; // Just suggest one alternative dashboard
+                }
+            }
+        }
+
+        // If we have a resolved entity, suggest entity-specific tools
+        if (Object.keys(resolvedEntities || {}).length > 0) {
+            const entity = Object.values(resolvedEntities)[0];
+            if (entity.type === 'vendor') {
+                alternatives.push({
+                    tool: 'get_vendor_details',
+                    reason: 'Get vendor details directly',
+                    args: { vendor_id: entity.id }
+                });
+            }
+            if (entity.type === 'customer') {
+                alternatives.push({
+                    tool: 'get_customer_details',
+                    reason: 'Get customer details directly',
+                    args: { customer_id: entity.id }
+                });
+            }
+        }
+
+        return alternatives.slice(0, 3); // Return max 3 alternatives
+    }
+
+    /**
+     * Check if tool diversification is required based on state
+     * @param {Object} state - Current agent state
+     * @returns {Object} { required: boolean, reason: string, suggestions: Array }
+     */
+    function checkToolDiversificationRequired(state) {
+        // Count attempts per unique tool
+        const toolAttempts = {};
+        const toolsWithSuccess = new Set();
+
+        for (const data of state.accumulatedData || []) {
+            const toolName = data.tool;
+            toolAttempts[toolName] = (toolAttempts[toolName] || 0) + 1;
+
+            if (data.success && data.rowCount > 0) {
+                toolsWithSuccess.add(toolName);
+            }
+        }
+
+        // Check if any tool has exceeded the attempt limit
+        for (const [tool, attempts] of Object.entries(toolAttempts)) {
+            if (attempts >= MAX_ATTEMPTS_PER_TOOL && !toolsWithSuccess.has(tool)) {
+                const alternatives = getAlternativeToolsForDiversification(
+                    tool,
+                    state.accumulatedData.find(d => d.tool === tool)?.args || {},
+                    state.resolvedEntities
+                );
+
+                return {
+                    required: true,
+                    reason: `Tool "${tool}" has been tried ${attempts} times without success. Must try a different tool.`,
+                    exhaustedTool: tool,
+                    suggestions: alternatives
+                };
+            }
+        }
+
+        // Check total unique tools tried
+        const uniqueToolsTried = new Set(Object.keys(toolAttempts));
+        if (uniqueToolsTried.size < MIN_TOOLS_BEFORE_GIVEUP &&
+            state.reasonActIterations >= MAX_REASON_ACT_ITERATIONS - 2) {
+            return {
+                required: true,
+                reason: `Only ${uniqueToolsTried.size} unique tool(s) tried. Must try at least ${MIN_TOOLS_BEFORE_GIVEUP} different tools before giving up.`,
+                suggestions: []
+            };
+        }
+
+        return { required: false, reason: null, suggestions: [] };
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // FIX 6: PROGRESS-BASED CIRCUIT BREAKER
+    // Detects when no progress is being made and triggers escalation
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Check if the circuit breaker should trigger based on progress
+     * @param {Object} state - Current agent state
+     * @returns {Object} { shouldTrigger: boolean, reason: string, escalationAction: string }
+     */
+    function checkCircuitBreaker(state) {
+        const accumulatedData = state.accumulatedData || [];
+
+        if (accumulatedData.length < NO_PROGRESS_THRESHOLD) {
+            return { shouldTrigger: false };
+        }
+
+        // Check the last N iterations for progress
+        const recentData = accumulatedData.slice(-NO_PROGRESS_THRESHOLD);
+        const totalRowsRecent = recentData.reduce((sum, d) => sum + (d.rowCount || 0), 0);
+        const allFailed = recentData.every(d => !d.success || d.rowCount === 0);
+
+        if (allFailed && totalRowsRecent === 0) {
+            // Determine escalation action based on context
+            let escalationAction = 'SYNTHESIZE'; // Default: try custom SQL
+
+            // If we've already tried synthesize, suggest clarification
+            if (state.synthesize?.iterations > 0) {
+                escalationAction = 'CLARIFY';
+            }
+
+            // If entity resolution failed, suggest different entity search
+            const hadEntityResolution = recentData.some(d =>
+                d.tool?.startsWith('resolve_') && !d.success
+            );
+            if (hadEntityResolution) {
+                escalationAction = 'CLARIFY';
+            }
+
+            return {
+                shouldTrigger: true,
+                reason: `No progress detected: ${NO_PROGRESS_THRESHOLD} consecutive attempts returned 0 rows.`,
+                consecutiveFailures: NO_PROGRESS_THRESHOLD,
+                escalationAction: escalationAction,
+                attemptsSummary: recentData.map(d => ({
+                    tool: d.tool,
+                    success: d.success,
+                    rowCount: d.rowCount
+                }))
+            };
+        }
+
+        return { shouldTrigger: false };
+    }
 
     // ═══════════════════════════════════════════════════════════════════════════
     // LIGHTWEIGHT PROMPTS
@@ -232,6 +636,12 @@ Analyze the SEMANTIC MEANING of the question. Extract:
 4. Semantic topics - determine what financial domains this question relates to based on meaning (e.g., receivables, payables, revenue, expenses, cash management, profitability)
 5. A brief user-friendly narration (max 10 words) describing what you're analyzing, specific to their question
 6. For entity_transactions: the transaction_context hint (what type: bills, invoices, payments, credits)
+7. OUTPUT CONSTRAINTS - extract any limits or presentation requirements from the question:
+   - limit: Number if user says "top 5", "top 10", "first 3", etc.
+   - sort_by: What to rank by ("fastest growing" → "growth", "largest" → "amount", "most overdue" → "days_overdue")
+   - sort_direction: "desc" for largest/fastest/most, "asc" for smallest/slowest/least
+   - highlight: What to emphasize in the answer (e.g., "fastest growing category", "largest expense")
+   - exclude: Items to exclude (e.g., "excluding COGS", "except marketing")
 
 NEEDS_RESOLUTION GUIDELINES - Set true ONLY when genuinely ambiguous:
 - TRUE: "Show me the stuff" (genuinely unclear what they want)
@@ -243,7 +653,7 @@ NEEDS_RESOLUTION GUIDELINES - Set true ONLY when genuinely ambiguous:
 - FALSE: "Show expenses" (clear request - use ytd default)
 Most reporting requests should be FALSE - use sensible period defaults instead of asking.
 
-Response format: {"intent": "category", "entities": ["named items"], "time_scope": "ytd|mtd|last_30|custom|none", "needs_resolution": true|false, "references_previous": true|false, "semantic_topics": ["topic1", "topic2"], "transaction_context": "bills|invoices|payments|credits|all", "userNarration": "Looking into your customer revenue..."}`;
+Response format: {"intent": "category", "entities": ["named items"], "time_scope": "ytd|mtd|last_30|custom|none", "needs_resolution": true|false, "references_previous": true|false, "semantic_topics": ["topic1", "topic2"], "transaction_context": "bills|invoices|payments|credits|all", "constraints": {"limit": null, "sort_by": null, "sort_direction": "desc", "highlight": null, "exclude": []}, "userNarration": "Looking into your customer revenue..."}`;
 
     const SELECT_PROMPT = `Select tools to answer this {intent} question. Respond with JSON only.
 {date_context}
@@ -386,7 +796,7 @@ WHEN TO USE SYNTHESIZE (Custom SQL):
 
 RESPOND WITH JSON:
 
-If you need MORE DATA:
+If you need MORE DATA (single tool):
 {{
   "thinking": "I have X, but I still need Y because...",
   "action": "GET_DATA",
@@ -394,6 +804,18 @@ If you need MORE DATA:
   "args": {{}},
   "userNarration": "Brief status (max 8 words)"
 }}
+
+If you need MULTIPLE INDEPENDENT data points at once (e.g., comparing two periods):
+{{
+  "thinking": "For this comparison I need both periods simultaneously...",
+  "action": "GET_DATA_BATCH",
+  "tools": [
+    {{ "tool": "tool_name_1", "args": {{}} }},
+    {{ "tool": "tool_name_2", "args": {{}} }}
+  ],
+  "userNarration": "Fetching multiple datasets"
+}}
+NOTE: Use GET_DATA_BATCH when tools are INDEPENDENT. For comparisons, prefer compare_metric_periods tool which does both periods in one call.
 
 If you have ENOUGH DATA to answer:
 {{
@@ -721,15 +1143,18 @@ Stats: {{{{data.stats.total:currency}}}}, {{{{data.stats.count}}}}, {{{{data.sta
 Column totals: {{{{data.stats.total_column_name:currency}}}}
 
 ═══════════════════════════════════════════════════════════════════════════════
+{constraints_section}
+═══════════════════════════════════════════════════════════════════════════════
 GUIDELINES:
 
 - Start with a brief overview of what the data shows
 - Interleave explanatory text between tables and charts
 - Use metrics for quick insights (place early)
 - Use tables for detailed breakdowns
-- Use charts for patterns/comparisons (bar: compare, line: trends, pie: composition)
+- Use charts for patterns/comparisons (bar: compare, line: trends, pie: composition, comparison: side-by-side period comparison)
 - End with key findings or recommendations
 - Write naturally - this is markdown, not JSON
+- STRICTLY follow any OUTPUT CONSTRAINTS specified above
 
 ═══════════════════════════════════════════════════════════════════════════════
 EXAMPLE RESPONSE:
@@ -1417,6 +1842,22 @@ Now write your analysis:`;
             toolRetryCount: {},       // Map of "tool:argsHash" -> retry count
 
             // ═══════════════════════════════════════════════════════════════════════
+            // FIX 3/4/6/8: Enhanced Tracking for Agentic Improvements
+            // ═══════════════════════════════════════════════════════════════════════
+            toolAttemptCount: {},      // FIX 8: Map of toolName -> attempt count
+            consecutiveNoProgress: 0,  // FIX 6: Counter for consecutive 0-row results
+            errorSemantics: [],        // FIX 2: Parsed error insights for LLM context
+            blockedTools: new Set(),   // FIX 3: Tools that are hard-blocked from retry
+            diversificationTriggered: false, // FIX 4: Whether diversification was required
+            circuitBreakerTriggered: false,  // FIX 6: Whether circuit breaker fired
+            diagnostics: {             // FIX 7: Diagnostic information for failure response
+                toolsAttempted: [],    // List of {tool, args, error, success, rowCount}
+                errorsEncountered: [], // List of error messages with context
+                suggestedActions: [],  // List of suggested next steps
+                timeSpent: 0           // Total time spent in iterations
+            },
+
+            // ═══════════════════════════════════════════════════════════════════════
             // ReAct Pattern State - Reflection and Reasoning
             // ═══════════════════════════════════════════════════════════════════════
             reflection: {
@@ -1498,6 +1939,54 @@ Now write your analysis:`;
         }
 
         return sections.length > 0 ? `\n${sections.join('\n\n')}\n` : '';
+    }
+
+    /**
+     * Build constraints section for MDA_RESPOND_PROMPT
+     * Extracts user's output constraints from INTENT phase and formats for response generation
+     * @param {Object} state - Current agent state
+     * @returns {string} Formatted constraints section or empty string
+     */
+    function buildConstraintsSection(state) {
+        const constraints = state.intent?.constraints;
+
+        // If no constraints extracted, return empty
+        if (!constraints) {
+            return '';
+        }
+
+        const lines = ['OUTPUT CONSTRAINTS (MUST FOLLOW):'];
+        let hasConstraints = false;
+
+        if (constraints.limit && typeof constraints.limit === 'number') {
+            lines.push(`- Show EXACTLY ${constraints.limit} items in tables and charts (not more, not less unless fewer exist)`);
+            hasConstraints = true;
+        }
+
+        if (constraints.sort_by) {
+            const direction = constraints.sort_direction === 'asc' ? 'ascending' : 'descending';
+            lines.push(`- Sort by ${constraints.sort_by} (${direction})`);
+            hasConstraints = true;
+        }
+
+        if (constraints.highlight) {
+            lines.push(`- HIGHLIGHT in your response: "${constraints.highlight}"`);
+            hasConstraints = true;
+        }
+
+        if (constraints.exclude && Array.isArray(constraints.exclude) && constraints.exclude.length > 0) {
+            lines.push(`- EXCLUDE from results: ${constraints.exclude.join(', ')}`);
+            hasConstraints = true;
+        }
+
+        if (!hasConstraints) {
+            return '';
+        }
+
+        lines.push('');
+        lines.push('⚠️ These constraints come directly from the user\'s question. Violating them will make the response incorrect.');
+
+        return lines.join('\n');
     }
 
     /**
@@ -1947,6 +2436,68 @@ Now write your analysis:`;
         }
 
         // ═══════════════════════════════════════════════════════════════════════
+        // FIX 2: ERROR SEMANTIC INSIGHTS - Show parsed error analysis
+        // Helps LLM understand WHY tools failed and HOW to fix
+        // ═══════════════════════════════════════════════════════════════════════
+        if (state.errorSemantics && state.errorSemantics.length > 0) {
+            // Show only the most recent unique error insights
+            const recentInsights = state.errorSemantics.slice(-3);
+            const uniqueCategories = [...new Set(recentInsights.map(e => e.insights.category))];
+
+            lines.push('\n🔍 ERROR ANALYSIS (learn from these to avoid repeating mistakes):');
+            uniqueCategories.forEach(category => {
+                const insight = recentInsights.find(e => e.insights.category === category);
+                if (insight) {
+                    lines.push(`  Category: ${category}`);
+                    lines.push(`    Insight: ${insight.insights.insight}`);
+                    lines.push(`    Fix: ${insight.insights.suggestedAction}`);
+                    if (insight.insights.parameterHints && Object.keys(insight.insights.parameterHints).length > 0) {
+                        lines.push(`    Hints: ${JSON.stringify(insight.insights.parameterHints)}`);
+                    }
+                }
+            });
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // FIX 3/8: BLOCKED TOOLS - Show which tools are completely blocked
+        // ═══════════════════════════════════════════════════════════════════════
+        if (state.blockedTools && state.blockedTools.size > 0) {
+            lines.push('\n⛔ BLOCKED TOOLS (exhausted iteration budget):');
+            lines.push(`  The following tools are BLOCKED: ${Array.from(state.blockedTools).join(', ')}`);
+            lines.push(`  You MUST use different tools to continue.`);
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // FIX 4: DIVERSIFICATION REQUIREMENT - Force trying different tools
+        // ═══════════════════════════════════════════════════════════════════════
+        if (state.forcedDiversification) {
+            lines.push('\n⚠️ DIVERSIFICATION REQUIRED:');
+            lines.push(`  Reason: ${state.forcedDiversification.reason}`);
+            if (state.forcedDiversification.suggestedAlternatives && state.forcedDiversification.suggestedAlternatives.length > 0) {
+                lines.push(`  SUGGESTED ALTERNATIVE TOOLS:`);
+                state.forcedDiversification.suggestedAlternatives.forEach(alt => {
+                    lines.push(`    • ${alt.tool}: ${alt.reason}`);
+                    lines.push(`      Suggested args: ${JSON.stringify(alt.args)}`);
+                });
+            }
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // FIX 8: TOOL ATTEMPT BUDGET - Show remaining budget per tool
+        // ═══════════════════════════════════════════════════════════════════════
+        if (state.toolAttemptCount && Object.keys(state.toolAttemptCount).length > 0) {
+            const toolsNearLimit = Object.entries(state.toolAttemptCount)
+                .filter(([tool, count]) => count >= MAX_ATTEMPTS_PER_TOOL - 1)
+                .map(([tool, count]) => `${tool}(${count}/${MAX_ATTEMPTS_PER_TOOL})`);
+
+            if (toolsNearLimit.length > 0) {
+                lines.push('\n📊 TOOL BUDGET WARNING:');
+                lines.push(`  Tools near/at limit: ${toolsNearLimit.join(', ')}`);
+                lines.push(`  Consider switching to alternative tools proactively.`);
+            }
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
         // SYNTHESIZE TRIGGER: Add hint if conditions are met for custom SQL
         // ═══════════════════════════════════════════════════════════════════════
         const synthesizeHint = detectSynthesizeTrigger(state);
@@ -2099,15 +2650,43 @@ Now write your analysis:`;
 
     /**
      * Check if this tool+args combination has already failed too many times
+     * FIX 3: HARD RETRY BLOCKING - Returns true to completely prevent the call
      */
     function shouldBlockRetry(state, toolName, args) {
         const key = getToolArgsKey(toolName, args);
         const retryCount = state.toolRetryCount[key] || 0;
-        return retryCount >= 2; // Block after 2 failures with same args
+
+        // Hard block after 2 failures with EXACT same args
+        if (retryCount >= 2) {
+            return { blocked: true, reason: 'exact_args_failed', count: retryCount };
+        }
+
+        // FIX 3: Also check if this tool is completely blocked due to repeated failures
+        if (state.blockedTools && state.blockedTools.has(toolName)) {
+            return { blocked: true, reason: 'tool_exhausted', count: state.toolAttemptCount[toolName] || 0 };
+        }
+
+        // FIX 8: Check iteration budget per tool
+        const toolAttempts = state.toolAttemptCount[toolName] || 0;
+        if (toolAttempts >= MAX_ATTEMPTS_PER_TOOL) {
+            // Check if any of those attempts succeeded
+            const hadSuccess = (state.accumulatedData || []).some(
+                d => d.tool === toolName && d.success && d.rowCount > 0
+            );
+            if (!hadSuccess) {
+                // Add to blocked tools set
+                if (!state.blockedTools) state.blockedTools = new Set();
+                state.blockedTools.add(toolName);
+                return { blocked: true, reason: 'budget_exhausted', count: toolAttempts };
+            }
+        }
+
+        return { blocked: false };
     }
 
     /**
      * Track a failed tool call
+     * ENHANCED with error semantic parsing (Fix 2) and diagnostics tracking (Fix 7)
      */
     function trackFailedToolCall(state, toolName, args, error) {
         const key = getToolArgsKey(toolName, args);
@@ -2127,39 +2706,136 @@ Now write your analysis:`;
                 count: 1
             });
         }
+
+        // FIX 2: Parse error semantics and store for LLM context
+        const errorInsights = parseErrorSemantics(error, toolName, args);
+        if (!state.errorSemantics) state.errorSemantics = [];
+        state.errorSemantics.push({
+            tool: toolName,
+            args: args,
+            error: error,
+            insights: errorInsights,
+            timestamp: Date.now()
+        });
+
+        // FIX 7: Add to diagnostics
+        if (!state.diagnostics) state.diagnostics = { toolsAttempted: [], errorsEncountered: [], suggestedActions: [] };
+        state.diagnostics.errorsEncountered.push({
+            tool: toolName,
+            error: error,
+            category: errorInsights.category,
+            suggestion: errorInsights.suggestedAction
+        });
+
+        // Add unique suggested actions
+        if (!state.diagnostics.suggestedActions.includes(errorInsights.suggestedAction)) {
+            state.diagnostics.suggestedActions.push(errorInsights.suggestedAction);
+        }
+    }
+
+    /**
+     * Track tool attempt for budget allocation (Fix 8)
+     */
+    function trackToolAttempt(state, toolName, success, rowCount) {
+        if (!state.toolAttemptCount) state.toolAttemptCount = {};
+        state.toolAttemptCount[toolName] = (state.toolAttemptCount[toolName] || 0) + 1;
+
+        // FIX 7: Track in diagnostics
+        if (!state.diagnostics) state.diagnostics = { toolsAttempted: [], errorsEncountered: [], suggestedActions: [] };
+        // Note: full details added in executeToolForReasonAct
+
+        // FIX 6: Update consecutive no-progress counter
+        if (success && rowCount > 0) {
+            state.consecutiveNoProgress = 0; // Reset on progress
+        } else {
+            state.consecutiveNoProgress = (state.consecutiveNoProgress || 0) + 1;
+        }
     }
 
     /**
      * Execute a single tool and return the result
+     * ENHANCED with Fix 3 (Hard Retry Blocking), Fix 7 (Diagnostics), Fix 8 (Budget Tracking)
      */
     function executeToolForReasonAct(state, toolName, args) {
         const tool = Tools.getTool(toolName);
 
         if (!tool) {
             log.error('REASON_ACT Unknown tool', { tool: toolName });
+            // FIX 7: Track in diagnostics
+            if (!state.diagnostics) state.diagnostics = { toolsAttempted: [], errorsEncountered: [], suggestedActions: [] };
+            state.diagnostics.toolsAttempted.push({ tool: toolName, args, success: false, error: 'Unknown tool', rowCount: 0 });
             return {
                 tool: toolName,
                 args: args,
                 success: false,
-                error: 'Unknown tool: ' + toolName,
+                error: 'Unknown tool: ' + toolName + '. Check tool name spelling.',
                 rowCount: 0
             };
         }
 
         // ═══════════════════════════════════════════════════════════════════════
-        // RETRY PREVENTION: Block if same tool+args already failed multiple times
+        // FIX 3: HARD RETRY BLOCKING - Completely prevent repeated failing calls
+        // Returns structured block info instead of boolean
         // ═══════════════════════════════════════════════════════════════════════
-        if (shouldBlockRetry(state, toolName, args)) {
+        const blockCheck = shouldBlockRetry(state, toolName, args);
+        if (blockCheck.blocked) {
             const key = getToolArgsKey(toolName, args);
             const failedCall = state.failedToolCalls.find(f => f.key === key);
-            log.debug('REASON_ACT blocking retry', { tool: toolName, args: args, previousFailures: failedCall?.count });
+
+            // Build context-aware error message based on block reason
+            let errorMessage;
+            let suggestion;
+
+            switch (blockCheck.reason) {
+                case 'exact_args_failed':
+                    errorMessage = `Tool '${toolName}' with these EXACT arguments has already failed ${blockCheck.count} times. ` +
+                        `Previous error: ${failedCall?.lastError || 'Unknown'}.`;
+                    suggestion = 'You MUST use different arguments or a different tool entirely.';
+                    break;
+
+                case 'tool_exhausted':
+                    errorMessage = `Tool '${toolName}' is BLOCKED - it has been tried ${blockCheck.count} times without success.`;
+                    suggestion = 'You MUST try a completely different tool. Consider: ' +
+                        getAlternativeToolsForDiversification(toolName, args, state.resolvedEntities)
+                            .map(a => a.tool).join(', ');
+                    break;
+
+                case 'budget_exhausted':
+                    errorMessage = `Tool '${toolName}' has exhausted its iteration budget (${MAX_ATTEMPTS_PER_TOOL} attempts).`;
+                    suggestion = 'Budget depleted. You MUST use a different tool to continue.';
+                    break;
+
+                default:
+                    errorMessage = `Tool '${toolName}' is blocked from retry.`;
+                    suggestion = 'Try a different approach.';
+            }
+
+            log.audit('REASON_ACT HARD BLOCK', {
+                tool: toolName,
+                args: args,
+                reason: blockCheck.reason,
+                count: blockCheck.count
+            });
+
+            // FIX 7: Track blocked attempt in diagnostics
+            if (!state.diagnostics) state.diagnostics = { toolsAttempted: [], errorsEncountered: [], suggestedActions: [] };
+            state.diagnostics.toolsAttempted.push({
+                tool: toolName,
+                args,
+                success: false,
+                error: errorMessage,
+                blocked: true,
+                blockReason: blockCheck.reason
+            });
+
             return {
                 tool: toolName,
                 args: args,
                 success: false,
-                error: `Tool '${toolName}' with these arguments has already failed ${failedCall?.count || 2} times. Previous error: ${failedCall?.error || 'Unknown'}. Try a different approach or different arguments.`,
+                error: errorMessage + ' ' + suggestion,
                 rowCount: 0,
-                blockedRetry: true
+                blockedRetry: true,
+                blockReason: blockCheck.reason
             };
         }
 
@@ -2299,6 +2975,25 @@ Now write your analysis:`;
             trackFailedToolCall(state, toolName, args, reason);
         }
 
+        // ═══════════════════════════════════════════════════════════════════════
+        // FIX 8: Track tool attempt for iteration budget
+        // FIX 6: Update consecutive no-progress counter
+        // FIX 7: Add to diagnostics for failure response
+        // ═══════════════════════════════════════════════════════════════════════
+        trackToolAttempt(state, toolName, dataEntry.success, dataEntry.rowCount);
+
+        // FIX 7: Add to diagnostics (detailed entry)
+        if (!state.diagnostics) state.diagnostics = { toolsAttempted: [], errorsEncountered: [], suggestedActions: [], timeSpent: 0 };
+        state.diagnostics.toolsAttempted.push({
+            tool: toolName,
+            args: args,
+            success: dataEntry.success,
+            rowCount: dataEntry.rowCount,
+            error: dataEntry.error || null,
+            duration: toolDuration
+        });
+        state.diagnostics.timeSpent += toolDuration;
+
         // Record tool invocation for compatibility
         state.toolInvocations.push({
             tool: toolName,
@@ -2343,6 +3038,82 @@ Now write your analysis:`;
 
             state.phase = PHASES.RESPOND;
             return { success: true, nextPhase: PHASES.RESPOND };
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // FIX 6: PROGRESS-BASED CIRCUIT BREAKER
+        // Check if we're making progress - if not, escalate early
+        // ═══════════════════════════════════════════════════════════════════════
+        const circuitBreaker = checkCircuitBreaker(state);
+        if (circuitBreaker.shouldTrigger) {
+            log.audit('REASON_ACT circuit breaker triggered', {
+                reason: circuitBreaker.reason,
+                consecutiveFailures: circuitBreaker.consecutiveFailures,
+                escalationAction: circuitBreaker.escalationAction
+            });
+
+            state.circuitBreakerTriggered = true;
+
+            // Escalate based on the suggested action
+            if (circuitBreaker.escalationAction === 'SYNTHESIZE' &&
+                state.synthesize?.enabled &&
+                (state.synthesize?.iterations || 0) < MAX_SYNTHESIZE_ITERATIONS) {
+
+                upsertThinkingStep(state, 'reason_act', {
+                    title: 'No progress - trying custom query',
+                    phase: 'reason_act',
+                    status: 'complete',
+                    duration: Date.now() - phaseStart,
+                    context: {
+                        circuitBreaker: true,
+                        escalation: 'SYNTHESIZE',
+                        reason: circuitBreaker.reason
+                    }
+                });
+
+                state.phase = PHASES.SYNTHESIZE;
+                return { success: true, nextPhase: PHASES.SYNTHESIZE };
+            } else {
+                // CLARIFY or give up - go to RESPOND with diagnostic info
+                upsertThinkingStep(state, 'reason_act', {
+                    title: 'Unable to find data',
+                    phase: 'reason_act',
+                    status: 'complete',
+                    duration: Date.now() - phaseStart,
+                    context: {
+                        circuitBreaker: true,
+                        escalation: 'RESPOND',
+                        reason: circuitBreaker.reason
+                    }
+                });
+
+                state.reflection.gaveUp = true;
+                state.reflection.giveUpExplanation = circuitBreaker.reason;
+                state.phase = PHASES.RESPOND;
+                return { success: true, nextPhase: PHASES.RESPOND };
+            }
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // FIX 4: TOOL DIVERSIFICATION REQUIREMENT
+        // Check if we need to force trying different tools
+        // ═══════════════════════════════════════════════════════════════════════
+        const diversification = checkToolDiversificationRequired(state);
+        if (diversification.required) {
+            log.audit('REASON_ACT tool diversification required', {
+                reason: diversification.reason,
+                exhaustedTool: diversification.exhaustedTool,
+                suggestions: diversification.suggestions.map(s => s.tool)
+            });
+
+            state.diversificationTriggered = true;
+
+            // Add diversification context to the state for prompt building
+            state.forcedDiversification = {
+                reason: diversification.reason,
+                blockedTools: Array.from(state.blockedTools || []),
+                suggestedAlternatives: diversification.suggestions
+            };
         }
 
         // Build the prompt with accumulated data
@@ -2460,6 +3231,89 @@ Now write your analysis:`;
                         debug: buildDebugInfo(prompt, response, state, {
                             reasonActDecision: parsed,
                             toolResult: toolResult
+                        })
+                    });
+
+                    // Loop back to REASON_ACT to evaluate if we have enough data
+                    state.phase = PHASES.REASON_ACT;
+                    return { success: true, nextPhase: PHASES.REASON_ACT };
+                }
+
+                case 'GET_DATA_BATCH': {
+                    // Execute multiple independent tools in one step
+                    if (!parsed.tools || !Array.isArray(parsed.tools) || parsed.tools.length === 0) {
+                        throw new Error('GET_DATA_BATCH action requires tools array');
+                    }
+
+                    log.debug('REASON_ACT executing batch tools', {
+                        count: parsed.tools.length,
+                        tools: parsed.tools.map(t => t.tool)
+                    });
+
+                    let totalDuration = 0;
+                    const batchResults = [];
+
+                    // Execute each tool in the batch
+                    for (const toolSpec of parsed.tools) {
+                        const toolName = toolSpec.tool;
+                        const args = toolSpec.args || {};
+
+                        if (!toolName) {
+                            log.audit('GET_DATA_BATCH skipping invalid tool spec', toolSpec);
+                            continue;
+                        }
+
+                        // Add tool call step for UI
+                        addToolCallStep(state, {
+                            title: Tools.getToolDisplayName(toolName, args),
+                            tool: toolName,
+                            status: 'active'
+                        });
+
+                        // Execute the tool
+                        const toolResult = executeToolForReasonAct(state, toolName, args);
+                        totalDuration += toolResult.duration || 0;
+
+                        // Add to accumulated data
+                        state.accumulatedData.push(toolResult);
+                        batchResults.push({
+                            tool: toolName,
+                            success: toolResult.success,
+                            rowCount: toolResult.rowCount
+                        });
+
+                        // Update tool call step
+                        updateToolCallStep(state, toolName, {
+                            status: 'complete',
+                            params: args,
+                            result: {
+                                success: toolResult.success,
+                                rowCount: toolResult.rowCount,
+                                columns: toolResult.columns,
+                                preview: toolResult.preview?.slice(0, 3)
+                            },
+                            duration: toolResult.duration,
+                            summary: toolResult.success
+                                ? `Found ${toolResult.rowCount} results`
+                                : toolResult.error
+                        });
+                    }
+
+                    // Update thinking step
+                    upsertThinkingStep(state, 'reason_act', {
+                        title: 'Gathering data (batch)',
+                        phase: 'reason_act',
+                        status: 'complete',
+                        duration: duration + totalDuration,
+                        context: {
+                            iteration: state.reasonActIterations,
+                            action: 'GET_DATA_BATCH',
+                            toolCount: parsed.tools.length,
+                            results: batchResults
+                        },
+                        debug: buildDebugInfo(prompt, response, state, {
+                            reasonActDecision: parsed,
+                            batchResults: batchResults
                         })
                     });
 
@@ -4463,10 +5317,15 @@ Now write your analysis:`;
         // LLM writes natural markdown with :::directives
         // Code parses directives and builds rich blocks - BLAZING FAST
         // ═══════════════════════════════════════════════════════════════════════
+
+        // Build constraints section from INTENT phase
+        const constraintsSection = buildConstraintsSection(state);
+
         const prompt = MDA_RESPOND_PROMPT
             .replace('{history_context}', buildHistoryContext(state))
             .replace('{question}', state.message)
-            .replace('{data_sections}', dataSections);
+            .replace('{data_sections}', dataSections)
+            .replace('{constraints_section}', constraintsSection);
 
         // Update thinking step
         upsertThinkingStep(state, 'respond', {
@@ -4822,7 +5681,7 @@ Now write your analysis:`;
         if (!text) return '';
 
         // Pattern: {{data.rows[N].column}} or {{data.rows[N].column:format}}
-        return text.replace(/\{\{([^}]+)\}\}/g, (match, expr) => {
+        let resolved = text.replace(/\{\{([^}]+)\}\}/g, (match, expr) => {
             try {
                 const trimmed = expr.trim();
 
@@ -4932,6 +5791,13 @@ Now write your analysis:`;
                 return match;
             }
         });
+
+        // FIX: Clean up double dollar signs from LLM writing ${{token:currency}}
+        // LLM sometimes writes "${{data.rows[0].amount:currency}}" which becomes "$$1,234.56"
+        resolved = resolved.replace(/\$\s*\$/g, '$');  // Handle "$ $" and "$$"
+        resolved = resolved.replace(/\$\$/g, '$');      // Handle remaining "$$"
+
+        return resolved;
     }
 
     /**
@@ -5294,6 +6160,7 @@ Now write your analysis:`;
 
     /**
      * Build an intelligent failure response based on the diagnosed failure mode
+     * FIX 7: ENHANCED with comprehensive diagnostics about what was tried
      */
     function buildFailureModeResponse(state) {
         const failureMode = state.reflection.failureMode;
@@ -5303,6 +6170,14 @@ Now write your analysis:`;
         let title = 'Unable to Find Data';
         let summary = "I couldn't find the data needed to answer your question.";
         let blocks = [];
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // FIX 7: Build diagnostic summary for the user
+        // ═══════════════════════════════════════════════════════════════════════
+        const diagnostics = state.diagnostics || { toolsAttempted: [], errorsEncountered: [], suggestedActions: [] };
+        const uniqueToolsTried = [...new Set(diagnostics.toolsAttempted.map(t => t.tool))];
+        const totalAttempts = diagnostics.toolsAttempted.length;
+        const failedAttempts = diagnostics.toolsAttempted.filter(t => !t.success || t.rowCount === 0).length;
 
         switch (failureMode) {
             case FAILURE_MODES.ENTITY_NOT_FOUND:
@@ -5378,6 +6253,70 @@ Now write your analysis:`;
                 type: 'list',
                 title: 'What I Tried',
                 items: journeySummary
+            });
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // FIX 7: Add diagnostic summary block
+        // ═══════════════════════════════════════════════════════════════════════
+        if (totalAttempts > 0) {
+            const diagnosticItems = [];
+
+            // Summary of attempts
+            diagnosticItems.push(`Tried ${uniqueToolsTried.length} different tool(s) with ${totalAttempts} total attempt(s)`);
+            diagnosticItems.push(`${failedAttempts} attempt(s) returned no usable data`);
+
+            // List tools tried
+            if (uniqueToolsTried.length > 0) {
+                diagnosticItems.push(`Tools tried: ${uniqueToolsTried.slice(0, 5).join(', ')}${uniqueToolsTried.length > 5 ? '...' : ''}`);
+            }
+
+            // Show specific errors encountered (deduplicated)
+            if (diagnostics.errorsEncountered && diagnostics.errorsEncountered.length > 0) {
+                const uniqueErrors = [...new Set(diagnostics.errorsEncountered.map(e => e.category))];
+                diagnosticItems.push(`Error categories: ${uniqueErrors.join(', ')}`);
+            }
+
+            // Show circuit breaker / diversification triggers
+            if (state.circuitBreakerTriggered) {
+                diagnosticItems.push('⚡ Circuit breaker triggered due to no progress');
+            }
+            if (state.diversificationTriggered) {
+                diagnosticItems.push('🔄 Tool diversification was required');
+            }
+
+            blocks.push({
+                type: 'list',
+                title: 'Diagnostic Summary',
+                items: diagnosticItems
+            });
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // FIX 7: Add suggested actions if we have them
+        // ═══════════════════════════════════════════════════════════════════════
+        if (diagnostics.suggestedActions && diagnostics.suggestedActions.length > 0) {
+            // Deduplicate and limit suggestions
+            const uniqueSuggestions = [...new Set(diagnostics.suggestedActions)].slice(0, 3);
+
+            blocks.push({
+                type: 'list',
+                title: 'Suggested Actions',
+                items: uniqueSuggestions
+            });
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // FIX 7: Add alternative query suggestions based on error analysis
+        // ═══════════════════════════════════════════════════════════════════════
+        const errorCategories = [...new Set((state.errorSemantics || []).map(e => e.insights.category))];
+        if (errorCategories.includes('type_mismatch')) {
+            blocks.push({
+                type: 'text',
+                content: '💡 **Tip**: For time ranges, try being more specific. For example:\n' +
+                    '• "Show revenue for the last 12 months"\n' +
+                    '• "Show revenue for 2024"\n' +
+                    '• "Show monthly revenue since January"'
             });
         }
 
