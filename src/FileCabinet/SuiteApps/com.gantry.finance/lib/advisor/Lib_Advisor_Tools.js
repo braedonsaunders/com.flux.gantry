@@ -5396,80 +5396,41 @@ Shows balances owed between subsidiaries for elimination and reconciliation.`,
             name: 'list_dashboards',
             shortDescription: 'List all available dashboards',
             category: 'dashboard',
-            description: `List all available financial dashboards and their purposes.
+            description: `Lists all available Gantry dashboards with their descriptions and capabilities.
 Use this when:
 - User asks "what dashboards are available?"
 - User asks "what can you show me?"
 - You need to recommend the right dashboard for a question`,
             parameters: {
                 type: 'object',
-                properties: {},
+                properties: {
+                    include_special: {
+                        type: 'boolean',
+                        description: 'Include special/system dashboards',
+                        default: false
+                    }
+                },
                 required: []
             },
             execute: function(args) {
-                const dashboards = [
-                    {
-                        id: 'dashboard_cashflow',
-                        name: 'Treasury / Cash Flow Dashboard',
-                        description: 'Cash position, projections, runway, AR/AP aging, burn rate analysis',
-                        use_cases: ['cash flow', 'runway', 'liquidity', 'working capital', 'will we run out of cash'],
-                        key_metrics: ['cash_position', 'cash_runway_days', 'burn_rate', 'ar_total', 'ap_total', 'projected_cash']
-                    },
-                    {
-                        id: 'dashboard_health',
-                        name: 'Profitability Pulse Dashboard',
-                        description: 'Financial health score, margins, profitability metrics, key ratios',
-                        use_cases: ['profitability', 'margins', 'financial health', 'how are we doing'],
-                        key_metrics: ['health_score', 'gross_margin', 'net_margin', 'current_ratio', 'quick_ratio']
-                    },
-                    {
-                        id: 'dashboard_burden',
-                        name: 'Rate Engine / Burden Dashboard',
-                        description: 'Overhead rates, burden calculations, cost allocation analysis',
-                        use_cases: ['overhead', 'burden rate', 'indirect costs', 'cost allocation'],
-                        key_metrics: ['burden_rate', 'overhead_ratio', 'indirect_costs', 'cost_per_hour']
-                    },
-                    {
-                        id: 'dashboard_time',
-                        name: 'Utilization Dashboard',
-                        description: 'Time tracking, billable hours, utilization rates, resource efficiency',
-                        use_cases: ['utilization', 'billable hours', 'time tracking', 'productivity'],
-                        key_metrics: ['utilization_rate', 'billable_hours', 'non_billable_hours', 'effective_rate']
-                    },
-                    {
-                        id: 'dashboard_integrity',
-                        name: 'Sentinel / Data Integrity Dashboard',
-                        description: 'Fraud detection, anomaly identification, data quality checks',
-                        use_cases: ['fraud', 'anomalies', 'data integrity', 'suspicious activity'],
-                        key_metrics: ['anomaly_count', 'risk_score', 'flagged_transactions', 'data_quality_score']
-                    },
-                    {
-                        id: 'dashboard_vendorperformance',
-                        name: 'Procurement / Vendor Performance Dashboard',
-                        description: 'Vendor analysis, payment terms, spend concentration, vendor risk',
-                        use_cases: ['vendor analysis', 'procurement', 'supplier performance', 'vendor spend'],
-                        key_metrics: ['top_vendors', 'avg_payment_days', 'spend_concentration', 'vendor_count']
-                    },
-                    {
-                        id: 'dashboard_customervalue',
-                        name: 'Revenue Intelligence / Customer Value Dashboard',
-                        description: 'Customer lifetime value, RFM analysis, revenue concentration, churn risk',
-                        use_cases: ['customer value', 'CLV', 'revenue analysis', 'customer concentration', 'churn'],
-                        key_metrics: ['top_customers', 'customer_clv', 'revenue_concentration', 'avg_order_value']
-                    },
-                    {
-                        id: 'dashboard_spendvelocity',
-                        name: 'Cost Dynamics / Spend Velocity Dashboard',
-                        description: 'Expense trends, cost analysis, spending velocity, budget variance',
-                        use_cases: ['expenses', 'cost trends', 'spending analysis', 'budget variance'],
-                        key_metrics: ['total_spend', 'spend_trend', 'top_expense_categories', 'yoy_change']
-                    }
-                ];
+                let dashboards = DashboardRegistry.getDataDashboards();
+
+                if (!args.include_special) {
+                    dashboards = dashboards.filter(d => !d.isSpecial);
+                }
+
+                const formattedDashboards = dashboards.map(d => ({
+                    id: 'dashboard_' + d.id,
+                    name: d.name,
+                    description: d.description,
+                    keywords: d.keywords || [],
+                    capabilities: d.capabilities || []
+                }));
 
                 return {
                     success: true,
-                    dashboards: dashboards,
-                    count: dashboards.length,
+                    dashboards: formattedDashboards,
+                    count: formattedDashboards.length,
                     usage: 'Call the dashboard tool directly, e.g., dashboard_cashflow() for cash flow analysis',
                     tool: 'list_dashboards'
                 };
