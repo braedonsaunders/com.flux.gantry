@@ -5450,14 +5450,16 @@ Use for: "spend velocity", "subscription creep", "shadow IT", "commitment cliff"
 After calling a dashboard tool, you receive a summary with key metrics and collection references.
 Use this tool to drill down into specific collections when the user asks for details.
 
+IMPORTANT: You MUST provide the refId from the dashboard response. Look for it in the collections info.
+
 Example flow:
 1. User asks "what's our cash position?" → call dashboard_cashflow
-2. Response includes: collections: { arAgingItems: { count: 47, refId: 'cash_abc123' } }
-3. User asks "show me the overdue invoices" → call load_collection(refId='cash_abc123', collection='arAgingItems', filter='overdue')
+2. Response includes: collections: [{ name: 'arAgingItems', count: 47, refId: 'ref_dash_cash_abc123' }]
+3. User asks "show me the overdue invoices" → call load_collection(refId='ref_dash_cash_abc123', collection='arAgingItems')
 
 Parameters:
-- refId: The cache reference ID from the dashboard response
-- collection: Name of the collection to load (e.g., 'arAgingItems', 'topVendors', 'departments')
+- refId: REQUIRED - The cache reference ID from the dashboard response (starts with 'ref_dash_')
+- collection: Name of the collection to load (e.g., 'arAgingItems', 'topVendors', 'customerHealth')
 - limit: Max items to return (default 20)
 - filter: Optional filter (varies by collection - 'overdue', 'top5', 'critical', etc.)
 - sort: Optional sort override (asc/desc)
@@ -5468,11 +5470,11 @@ Use this for: "show me details", "list the vendors", "which customers", "break i
                 properties: {
                     refId: {
                         type: 'string',
-                        description: 'Cache reference ID from dashboard response (e.g., "cashflow_abc123")'
+                        description: 'REQUIRED: Cache reference ID from dashboard response (e.g., "ref_dash_cust_abc123")'
                     },
                     collection: {
                         type: 'string',
-                        description: 'Name of collection to load (e.g., "arAgingItems", "topVendors", "departments")'
+                        description: 'Name of collection to load (e.g., "arAgingItems", "topVendors", "customerHealth")'
                     },
                     limit: {
                         type: 'number',
@@ -5492,6 +5494,45 @@ Use this for: "show me details", "list the vendors", "which customers", "break i
             },
             execute: function(args) {
                 try {
+                    // ═══════════════════════════════════════════════════════════════
+                    // PARAMETER VALIDATION - Provide helpful error messages
+                    // ═══════════════════════════════════════════════════════════════
+                    if (!args.refId) {
+                        // Check if they passed 'dashboard' instead of 'refId'
+                        if (args.dashboard) {
+                            return {
+                                success: false,
+                                error: `Missing 'refId' parameter. You passed 'dashboard: ${args.dashboard}' but this tool requires the refId from the dashboard response. Look for the refId in the collections info shown after calling dashboard_${args.dashboard}. Example: refId: "ref_dash_cust_abc123"`,
+                                hint: 'Call the dashboard tool first, then use the refId from the collections array in the response.',
+                                tool: 'load_collection'
+                            };
+                        }
+                        return {
+                            success: false,
+                            error: "Missing required 'refId' parameter. The refId comes from the dashboard response after calling a dashboard tool (e.g., dashboard_customervalue). Look for collections: [{ refId: '...' }] in the response.",
+                            hint: 'Call a dashboard tool first to get the refId, then use load_collection with that refId.',
+                            tool: 'load_collection'
+                        };
+                    }
+
+                    if (!args.collection) {
+                        return {
+                            success: false,
+                            error: "Missing required 'collection' parameter. Specify which collection to load (e.g., 'customerHealth', 'topCustomers', 'arAgingItems').",
+                            tool: 'load_collection'
+                        };
+                    }
+
+                    // Validate refId format
+                    if (!args.refId.startsWith('ref_dash_') && !args.refId.startsWith('dash_')) {
+                        return {
+                            success: false,
+                            error: `Invalid refId format: '${args.refId}'. The refId should start with 'ref_dash_' and comes from the dashboard response. Did you mean to pass the refId from the collections info?`,
+                            hint: 'Check the dashboard response for the correct refId in the collections array.',
+                            tool: 'load_collection'
+                        };
+                    }
+
                     const result = Cache.loadCollection(
                         args.refId,
                         args.collection,
@@ -5510,13 +5551,24 @@ Use this for: "show me details", "list the vendors", "which customers", "break i
                         };
                     }
 
+                    if (!result.success) {
+                        return {
+                            success: false,
+                            error: result.error || 'Failed to load collection',
+                            available: result.available,
+                            hint: result.hint,
+                            tool: 'load_collection'
+                        };
+                    }
+
                     return {
                         success: true,
                         collection: args.collection,
-                        data: result.items,
-                        count: result.count,
-                        totalAvailable: result.totalAvailable,
-                        appliedFilter: result.appliedFilter,
+                        rows: result.items,
+                        columns: result.columns,
+                        rowCount: result.returnedCount,
+                        totalAvailable: result.totalCount,
+                        aggregates: result.aggregates,
                         tool: 'load_collection'
                     };
                 } catch (e) {
