@@ -921,6 +921,13 @@ DECIDE YOUR ACTION:
 - GIVE_UP: Exhausted all options
 
 ═══════════════════════════════════════════════════════════════════════════════
+CHART AXIS RULES:
+- x = LABEL axis (categories, dates, names) - displayed on horizontal axis
+- y = VALUE axis (numeric amounts, counts) - displayed on vertical axis
+- Example: For "Invoice Amounts Over Time", use x="trandate", y="amount"
+- NEVER put numeric values on x-axis or dates on y-axis
+
+═══════════════════════════════════════════════════════════════════════════════
 RESPONSE FORMAT (JSON only):
 
 {{
@@ -948,7 +955,7 @@ RESPONSE FORMAT (JSON only):
       {{"type": "text", "content": "Analysis with {{{{data.rows[N].column}}}} tokens..."}},
       {{"type": "metrics", "items": [{{"label": "Label", "value": "{{{{token}}}}", "trend": "up|down|neutral"}}]}},
       {{"type": "table", "dataRef": "ref_xxx", "title": "Title"}},
-      {{"type": "chart", "chartType": "bar|line|pie", "dataRef": "ref_xxx", "x": "col", "y": "col"}},
+      {{"type": "chart", "chartType": "bar|line|pie", "dataRef": "ref_xxx", "x": "label_column", "y": "value_column"}},
       {{"type": "list", "title": "Findings", "items": ["item1", "item2"]}}
     ]
   }}
@@ -6342,6 +6349,38 @@ Now write your analysis:`;
     }
 
     /**
+     * Detect if a value looks like a date string (MM/DD/YYYY, YYYY-MM-DD, etc.)
+     */
+    function looksLikeDate(val) {
+        if (!val || typeof val !== 'string') return false;
+        // Match common date patterns
+        return /^\d{1,2}\/\d{1,2}\/\d{2,4}$/.test(val) ||  // MM/DD/YYYY
+               /^\d{4}-\d{2}-\d{2}/.test(val);             // YYYY-MM-DD
+    }
+
+    /**
+     * Detect if a value is numeric (number or numeric string without currency)
+     */
+    function isNumericValue(val) {
+        if (typeof val === 'number') return true;
+        if (typeof val !== 'string') return false;
+        // Remove currency symbols and commas for check
+        const cleaned = val.replace(/[$,]/g, '').trim();
+        return !isNaN(parseFloat(cleaned)) && !looksLikeDate(val);
+    }
+
+    /**
+     * Extract numeric value from various formats
+     */
+    function extractNumericValue(val) {
+        if (typeof val === 'number') return val;
+        if (typeof val !== 'string') return 0;
+        // Remove currency symbols and commas
+        const cleaned = val.replace(/[$,]/g, '').trim();
+        return parseFloat(cleaned) || 0;
+    }
+
+    /**
      * Build a chart block from a dataRef
      * @param {Object} block - Block with dataRef, chartType, x, y columns
      * @param {Object} state - Current state with dataReferences
@@ -6363,8 +6402,8 @@ Now write your analysis:`;
             }
 
             // Validate x and y columns exist
-            const xCol = block.x;
-            const yCol = block.y;
+            let xCol = block.x;
+            let yCol = block.y;
             if (!data.columns.includes(xCol) || !data.columns.includes(yCol)) {
                 log.debug('buildChartBlock: invalid columns', {
                     x: xCol,
@@ -6372,6 +6411,50 @@ Now write your analysis:`;
                     availableColumns: data.columns
                 });
                 return null;
+            }
+
+            // ═══════════════════════════════════════════════════════════════════════
+            // AUTO-DETECT AND FIX SWAPPED AXES
+            // x should be labels (dates, names), y should be numeric values
+            // If LLM got it backwards, auto-swap them
+            // ═══════════════════════════════════════════════════════════════════════
+            const sampleRow = data.rows[0];
+            const xVal = sampleRow[xCol];
+            const yVal = sampleRow[yCol];
+
+            const xIsNumeric = isNumericValue(xVal);
+            const yIsNumeric = isNumericValue(yVal);
+            const xIsDate = looksLikeDate(xVal);
+            const yIsDate = looksLikeDate(yVal);
+
+            // If x looks numeric/currency and y looks like date/string, swap them
+            if (xIsNumeric && !yIsNumeric) {
+                log.debug('buildChartBlock: auto-swapping axes (x was numeric, y was not)', {
+                    originalX: xCol,
+                    originalY: yCol
+                });
+                const temp = xCol;
+                xCol = yCol;
+                yCol = temp;
+            }
+            // If y looks like a date (not numeric), it's wrong - try to find a better y
+            else if (yIsDate && !yIsNumeric) {
+                // Look for a numeric column to use instead
+                const numericCols = data.columns.filter(col => {
+                    const val = sampleRow[col];
+                    return isNumericValue(val) && col !== xCol;
+                });
+                if (numericCols.length > 0) {
+                    // Prefer amount-like columns
+                    const amountCol = numericCols.find(c =>
+                        /amount|total|sum|count|value|balance|paid/i.test(c)
+                    ) || numericCols[0];
+                    log.debug('buildChartBlock: replacing date y-axis with numeric column', {
+                        originalY: yCol,
+                        newY: amountCol
+                    });
+                    yCol = amountCol;
+                }
             }
 
             // Validate chart type
@@ -6385,11 +6468,18 @@ Now write your analysis:`;
             // Build chart data structure (Plotly-compatible)
             const chartData = {
                 labels: chartRows.map(row => formatCellValue(row[xCol], xCol)),
-                values: chartRows.map(row => {
-                    const val = row[yCol];
-                    return typeof val === 'number' ? val : parseFloat(val) || 0;
-                })
+                values: chartRows.map(row => extractNumericValue(row[yCol]))
             };
+
+            // Validate we got actual numeric values (not all zeros)
+            const hasValidValues = chartData.values.some(v => v !== 0);
+            if (!hasValidValues) {
+                log.debug('buildChartBlock: all values are zero, chart skipped', {
+                    yCol: yCol,
+                    sampleValue: sampleRow[yCol]
+                });
+                return null;
+            }
 
             // Determine title
             const title = block.title || `${yCol} by ${xCol}`;
