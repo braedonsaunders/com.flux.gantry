@@ -2080,15 +2080,35 @@
       let labels = [];
 
       if (Array.isArray(data)) {
-        if (!xKey || !yKey) {
+        // Special handling for comparison charts (side-by-side period comparison)
+        if (chartType === "comparison") {
+          // Comparison charts expect data with: name, current_amount, prior_amount
+          // Renders as grouped bar chart
+          labels = data.map((item) => item.name || item[xKey] || "Unknown");
+          plotData = [
+            {
+              name: "Current Period",
+              x: labels,
+              y: data.map((item) => item.current_amount || item.current || 0),
+              type: "bar",
+              marker: { color: "#3b82f6" }, // Blue for current
+              hovertemplate: "%{x}<br>Current: %{y:$,.0f}<extra></extra>",
+            },
+            {
+              name: "Prior Period",
+              x: labels,
+              y: data.map((item) => item.prior_amount || item.prior || 0),
+              type: "bar",
+              marker: { color: "#94a3b8" }, // Gray for prior
+              hovertemplate: "%{x}<br>Prior: %{y:$,.0f}<extra></extra>",
+            },
+          ];
+        } else if (!xKey || !yKey) {
           console.warn(
             "[AdvisorRenderer] Chart data is array but xKey/yKey not provided"
           );
           return;
-        }
-
-        // Check if yKey is an array (multi-series) or if there's a seriesKey
-        if (Array.isArray(yKey)) {
+        } else if (Array.isArray(yKey)) {
           // Multi-series with multiple y columns
           labels = data.map((item) => item[xKey]);
           yKey.forEach((key, idx) => {
@@ -2273,6 +2293,21 @@
           x: 0.5,
           xanchor: "center",
           font: { size: 10 },
+        };
+      }
+
+      // Comparison chart specific adjustments (grouped bars)
+      if (chartType === "comparison") {
+        layout.barmode = "group";
+        layout.showlegend = true;
+        layout.yaxis.tickformat = "$,.0f";
+        layout.legend = {
+          orientation: "h",
+          yanchor: "bottom",
+          y: 1.02,
+          xanchor: "center",
+          x: 0.5,
+          font: { size: 11 },
         };
       }
 

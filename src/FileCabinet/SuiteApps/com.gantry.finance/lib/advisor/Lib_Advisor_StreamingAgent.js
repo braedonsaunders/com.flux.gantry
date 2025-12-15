@@ -232,8 +232,14 @@ Analyze the SEMANTIC MEANING of the question. Extract:
 4. Semantic topics - determine what financial domains this question relates to based on meaning (e.g., receivables, payables, revenue, expenses, cash management, profitability)
 5. A brief user-friendly narration (max 10 words) describing what you're analyzing, specific to their question
 6. For entity_transactions: the transaction_context hint (what type: bills, invoices, payments, credits)
+7. OUTPUT CONSTRAINTS - extract any limits or presentation requirements from the question:
+   - limit: Number if user says "top 5", "top 10", "first 3", etc.
+   - sort_by: What to rank by ("fastest growing" → "growth", "largest" → "amount", "most overdue" → "days_overdue")
+   - sort_direction: "desc" for largest/fastest/most, "asc" for smallest/slowest/least
+   - highlight: What to emphasize in the answer (e.g., "fastest growing category", "largest expense")
+   - exclude: Items to exclude (e.g., "excluding COGS", "except marketing")
 
-Response format: {"intent": "category", "entities": ["named items"], "time_scope": "ytd|mtd|last_30|custom|none", "needs_resolution": true|false, "references_previous": true|false, "semantic_topics": ["topic1", "topic2"], "transaction_context": "bills|invoices|payments|credits|all", "userNarration": "Looking into your customer revenue..."}`;
+Response format: {"intent": "category", "entities": ["named items"], "time_scope": "ytd|mtd|last_30|custom|none", "needs_resolution": true|false, "references_previous": true|false, "semantic_topics": ["topic1", "topic2"], "transaction_context": "bills|invoices|payments|credits|all", "constraints": {"limit": null, "sort_by": null, "sort_direction": "desc", "highlight": null, "exclude": []}, "userNarration": "Looking into your customer revenue..."}`;
 
     const SELECT_PROMPT = `Select tools to answer this {intent} question. Respond with JSON only.
 {date_context}
@@ -363,7 +369,7 @@ WHEN TO USE SYNTHESIZE (Custom SQL):
 
 RESPOND WITH JSON:
 
-If you need MORE DATA:
+If you need MORE DATA (single tool):
 {{
   "thinking": "I have X, but I still need Y because...",
   "action": "GET_DATA",
@@ -371,6 +377,18 @@ If you need MORE DATA:
   "args": {{}},
   "userNarration": "Brief status (max 8 words)"
 }}
+
+If you need MULTIPLE INDEPENDENT data points at once (e.g., comparing two periods):
+{{
+  "thinking": "For this comparison I need both periods simultaneously...",
+  "action": "GET_DATA_BATCH",
+  "tools": [
+    {{ "tool": "tool_name_1", "args": {{}} }},
+    {{ "tool": "tool_name_2", "args": {{}} }}
+  ],
+  "userNarration": "Fetching multiple datasets"
+}}
+NOTE: Use GET_DATA_BATCH when tools are INDEPENDENT. For comparisons, prefer compare_metric_periods tool which does both periods in one call.
 
 If you have ENOUGH DATA to answer:
 {{
@@ -698,15 +716,18 @@ Stats: {{{{data.stats.total:currency}}}}, {{{{data.stats.count}}}}, {{{{data.sta
 Column totals: {{{{data.stats.total_column_name:currency}}}}
 
 ═══════════════════════════════════════════════════════════════════════════════
+{constraints_section}
+═══════════════════════════════════════════════════════════════════════════════
 GUIDELINES:
 
 - Start with a brief overview of what the data shows
 - Interleave explanatory text between tables and charts
 - Use metrics for quick insights (place early)
 - Use tables for detailed breakdowns
-- Use charts for patterns/comparisons (bar: compare, line: trends, pie: composition)
+- Use charts for patterns/comparisons (bar: compare, line: trends, pie: composition, comparison: side-by-side period comparison)
 - End with key findings or recommendations
 - Write naturally - this is markdown, not JSON
+- STRICTLY follow any OUTPUT CONSTRAINTS specified above
 
 ═══════════════════════════════════════════════════════════════════════════════
 EXAMPLE RESPONSE:
@@ -1475,6 +1496,54 @@ Now write your analysis:`;
         }
 
         return sections.length > 0 ? `\n${sections.join('\n\n')}\n` : '';
+    }
+
+    /**
+     * Build constraints section for MDA_RESPOND_PROMPT
+     * Extracts user's output constraints from INTENT phase and formats for response generation
+     * @param {Object} state - Current agent state
+     * @returns {string} Formatted constraints section or empty string
+     */
+    function buildConstraintsSection(state) {
+        const constraints = state.intent?.constraints;
+
+        // If no constraints extracted, return empty
+        if (!constraints) {
+            return '';
+        }
+
+        const lines = ['OUTPUT CONSTRAINTS (MUST FOLLOW):'];
+        let hasConstraints = false;
+
+        if (constraints.limit && typeof constraints.limit === 'number') {
+            lines.push(`- Show EXACTLY ${constraints.limit} items in tables and charts (not more, not less unless fewer exist)`);
+            hasConstraints = true;
+        }
+
+        if (constraints.sort_by) {
+            const direction = constraints.sort_direction === 'asc' ? 'ascending' : 'descending';
+            lines.push(`- Sort by ${constraints.sort_by} (${direction})`);
+            hasConstraints = true;
+        }
+
+        if (constraints.highlight) {
+            lines.push(`- HIGHLIGHT in your response: "${constraints.highlight}"`);
+            hasConstraints = true;
+        }
+
+        if (constraints.exclude && Array.isArray(constraints.exclude) && constraints.exclude.length > 0) {
+            lines.push(`- EXCLUDE from results: ${constraints.exclude.join(', ')}`);
+            hasConstraints = true;
+        }
+
+        if (!hasConstraints) {
+            return '';
+        }
+
+        lines.push('');
+        lines.push('⚠️ These constraints come directly from the user\'s question. Violating them will make the response incorrect.');
+
+        return lines.join('\n');
     }
 
     /**
@@ -2429,6 +2498,89 @@ Now write your analysis:`;
                         debug: buildDebugInfo(prompt, response, state, {
                             reasonActDecision: parsed,
                             toolResult: toolResult
+                        })
+                    });
+
+                    // Loop back to REASON_ACT to evaluate if we have enough data
+                    state.phase = PHASES.REASON_ACT;
+                    return { success: true, nextPhase: PHASES.REASON_ACT };
+                }
+
+                case 'GET_DATA_BATCH': {
+                    // Execute multiple independent tools in one step
+                    if (!parsed.tools || !Array.isArray(parsed.tools) || parsed.tools.length === 0) {
+                        throw new Error('GET_DATA_BATCH action requires tools array');
+                    }
+
+                    log.debug('REASON_ACT executing batch tools', {
+                        count: parsed.tools.length,
+                        tools: parsed.tools.map(t => t.tool)
+                    });
+
+                    let totalDuration = 0;
+                    const batchResults = [];
+
+                    // Execute each tool in the batch
+                    for (const toolSpec of parsed.tools) {
+                        const toolName = toolSpec.tool;
+                        const args = toolSpec.args || {};
+
+                        if (!toolName) {
+                            log.audit('GET_DATA_BATCH skipping invalid tool spec', toolSpec);
+                            continue;
+                        }
+
+                        // Add tool call step for UI
+                        addToolCallStep(state, {
+                            title: Tools.getToolDisplayName(toolName, args),
+                            tool: toolName,
+                            status: 'active'
+                        });
+
+                        // Execute the tool
+                        const toolResult = executeToolForReasonAct(state, toolName, args);
+                        totalDuration += toolResult.duration || 0;
+
+                        // Add to accumulated data
+                        state.accumulatedData.push(toolResult);
+                        batchResults.push({
+                            tool: toolName,
+                            success: toolResult.success,
+                            rowCount: toolResult.rowCount
+                        });
+
+                        // Update tool call step
+                        updateToolCallStep(state, toolName, {
+                            status: 'complete',
+                            params: args,
+                            result: {
+                                success: toolResult.success,
+                                rowCount: toolResult.rowCount,
+                                columns: toolResult.columns,
+                                preview: toolResult.preview?.slice(0, 3)
+                            },
+                            duration: toolResult.duration,
+                            summary: toolResult.success
+                                ? `Found ${toolResult.rowCount} results`
+                                : toolResult.error
+                        });
+                    }
+
+                    // Update thinking step
+                    upsertThinkingStep(state, 'reason_act', {
+                        title: 'Gathering data (batch)',
+                        phase: 'reason_act',
+                        status: 'complete',
+                        duration: duration + totalDuration,
+                        context: {
+                            iteration: state.reasonActIterations,
+                            action: 'GET_DATA_BATCH',
+                            toolCount: parsed.tools.length,
+                            results: batchResults
+                        },
+                        debug: buildDebugInfo(prompt, response, state, {
+                            reasonActDecision: parsed,
+                            batchResults: batchResults
                         })
                     });
 
@@ -4432,10 +4584,15 @@ Now write your analysis:`;
         // LLM writes natural markdown with :::directives
         // Code parses directives and builds rich blocks - BLAZING FAST
         // ═══════════════════════════════════════════════════════════════════════
+
+        // Build constraints section from INTENT phase
+        const constraintsSection = buildConstraintsSection(state);
+
         const prompt = MDA_RESPOND_PROMPT
             .replace('{history_context}', buildHistoryContext(state))
             .replace('{question}', state.message)
-            .replace('{data_sections}', dataSections);
+            .replace('{data_sections}', dataSections)
+            .replace('{constraints_section}', constraintsSection);
 
         // Update thinking step
         upsertThinkingStep(state, 'respond', {
@@ -4791,7 +4948,7 @@ Now write your analysis:`;
         if (!text) return '';
 
         // Pattern: {{data.rows[N].column}} or {{data.rows[N].column:format}}
-        return text.replace(/\{\{([^}]+)\}\}/g, (match, expr) => {
+        let resolved = text.replace(/\{\{([^}]+)\}\}/g, (match, expr) => {
             try {
                 const trimmed = expr.trim();
 
@@ -4901,6 +5058,13 @@ Now write your analysis:`;
                 return match;
             }
         });
+
+        // FIX: Clean up double dollar signs from LLM writing ${{token:currency}}
+        // LLM sometimes writes "${{data.rows[0].amount:currency}}" which becomes "$$1,234.56"
+        resolved = resolved.replace(/\$\s*\$/g, '$');  // Handle "$ $" and "$$"
+        resolved = resolved.replace(/\$\$/g, '$');      // Handle remaining "$$"
+
+        return resolved;
     }
 
     /**
