@@ -4006,6 +4006,7 @@
                         if (ctx.intent) {
                             const intentIcons = {
                                 'entity_lookup': 'fa-search',
+                                'entity_transactions': 'fa-file-invoice-dollar',
                                 'top_list': 'fa-list-ol',
                                 'aging': 'fa-clock',
                                 'reporting': 'fa-chart-bar',
@@ -4016,6 +4017,7 @@
                             };
                             const intentColors = {
                                 'entity_lookup': '#6366f1',
+                                'entity_transactions': '#0ea5e9',
                                 'top_list': '#8b5cf6',
                                 'aging': '#f59e0b',
                                 'reporting': '#10b981',
@@ -4072,6 +4074,105 @@
                                 <div class="sca-inline-item sca-needs-resolution">
                                     <i class="fas fa-search-plus"></i>
                                     <span>Entity resolution required</span>
+                                </div>`;
+                        }
+                    }
+
+                    // ═══ REASON_ACT PHASE (Agentic Loop) ═══
+                    else if (ctx.phase === 'reason_act') {
+                        // Show the action being taken
+                        if (ctx.action) {
+                            const actionIcons = {
+                                'GET_DATA': 'fa-database',
+                                'ANSWER': 'fa-check-circle',
+                                'SYNTHESIZE': 'fa-code',
+                                'CLARIFY': 'fa-question-circle'
+                            };
+                            const actionColors = {
+                                'GET_DATA': '#3b82f6',
+                                'ANSWER': '#10b981',
+                                'SYNTHESIZE': '#8b5cf6',
+                                'CLARIFY': '#f59e0b'
+                            };
+                            const icon = actionIcons[ctx.action] || 'fa-cog';
+                            const color = actionColors[ctx.action] || '#6b7280';
+                            detailContent += `
+                                <div class="sca-action-card">
+                                    <div class="action-badge" style="background: ${color}20; border-left: 3px solid ${color};">
+                                        <i class="fas ${icon}" style="color: ${color};"></i>
+                                        <span class="action-label">Action</span>
+                                        <span class="action-value" style="color: ${color};">${this.escapeHtml(ctx.action.replace(/_/g, ' '))}</span>
+                                    </div>
+                                </div>`;
+                        }
+
+                        // Show tool being called (for GET_DATA action)
+                        if (ctx.tool) {
+                            const toolIcons = {
+                                'get_ar_aging': 'fa-clock', 'get_ap_aging': 'fa-clock',
+                                'get_recent_transactions': 'fa-list', 'resolve_entity': 'fa-search',
+                                'get_vendor_details': 'fa-truck', 'get_customer_details': 'fa-users',
+                                'run_custom_query': 'fa-code', 'get_top_customers': 'fa-users',
+                                'get_top_vendors': 'fa-truck', 'get_gl_activity': 'fa-book'
+                            };
+                            const toolIcon = toolIcons[ctx.tool] || 'fa-cog';
+                            detailContent += `
+                                <div class="sca-section">
+                                    <div class="sca-label"><i class="fas fa-wrench"></i> Tool Called</div>
+                                    <div class="sca-tool-card">
+                                        <i class="fas ${toolIcon}"></i>
+                                        <span>${this.escapeHtml(ctx.tool.replace(/^get_/, '').replace(/_/g, ' '))}</span>
+                                    </div>
+                                </div>`;
+                        }
+
+                        // Show result status
+                        if (ctx.success !== undefined) {
+                            const statusIcon = ctx.success ? 'fa-check-circle' : 'fa-times-circle';
+                            const statusColor = ctx.success ? '#10b981' : '#ef4444';
+                            const statusText = ctx.success
+                                ? `Found ${ctx.rowCount || 0} result${ctx.rowCount !== 1 ? 's' : ''}`
+                                : 'No data found';
+                            detailContent += `
+                                <div class="sca-inline-item" style="color: ${statusColor};">
+                                    <i class="fas ${statusIcon}"></i>
+                                    <span>${statusText}</span>
+                                </div>`;
+                        }
+
+                        // Show data collected count
+                        if (ctx.dataCollected !== undefined && ctx.dataCollected > 0) {
+                            detailContent += `
+                                <div class="sca-inline-item">
+                                    <i class="fas fa-database"></i>
+                                    <span>${ctx.dataCollected} data source${ctx.dataCollected !== 1 ? 's' : ''} collected</span>
+                                </div>`;
+                        }
+
+                        // Show iteration number
+                        if (ctx.iteration && ctx.iteration > 0) {
+                            detailContent += `
+                                <div class="sca-inline-item">
+                                    <i class="fas fa-redo"></i>
+                                    <span>Iteration ${ctx.iteration}</span>
+                                </div>`;
+                        }
+
+                        // Show AI reasoning if available
+                        if (ctx.reasoning) {
+                            detailContent += `
+                                <div class="sca-section">
+                                    <div class="sca-label"><i class="fas fa-lightbulb"></i> AI Reasoning</div>
+                                    <div class="sca-reasoning-text">${this.escapeHtml(ctx.reasoning)}</div>
+                                </div>`;
+                        }
+
+                        // Max iterations reached warning
+                        if (ctx.maxIterationsReached) {
+                            detailContent += `
+                                <div class="sca-warning-notice">
+                                    <i class="fas fa-exclamation-triangle"></i>
+                                    <span>Maximum iterations reached - proceeding with available data</span>
                                 </div>`;
                         }
                     }

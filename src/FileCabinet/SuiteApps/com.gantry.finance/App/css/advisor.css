@@ -4740,6 +4740,337 @@ body.dark-mode .strategy-backups code {
     line-height: 1.5;
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   SCA PHASE DETAILS - Streaming Context Architecture step expansion content
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.sca-phase-details {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+/* Intent/Action Cards */
+.sca-intent-card,
+.sca-action-card {
+    margin-bottom: 6px;
+}
+
+.intent-badge,
+.action-badge {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    border-radius: 6px;
+    font-size: 11px;
+}
+
+.intent-badge i,
+.action-badge i {
+    font-size: 12px;
+}
+
+.intent-label,
+.action-label {
+    color: #64748b;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.intent-value,
+.action-value {
+    font-weight: 600;
+    text-transform: capitalize;
+    margin-left: auto;
+}
+
+/* Sections (Tool Called, AI Reasoning, etc.) */
+.sca-section {
+    margin-bottom: 8px;
+}
+
+.sca-label {
+    font-size: 10px;
+    color: #64748b;
+    font-weight: 500;
+    margin-bottom: 4px;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.sca-label i {
+    font-size: 9px;
+    opacity: 0.7;
+}
+
+.sca-query-text {
+    font-style: italic;
+    color: #475569;
+    background: #f8fafc;
+    padding: 6px 10px;
+    border-radius: 6px;
+    font-size: 11px;
+    border-left: 2px solid #94a3b8;
+}
+
+.sca-reasoning-text {
+    color: #475569;
+    background: #f8fafc;
+    padding: 8px 10px;
+    border-radius: 6px;
+    font-size: 11px;
+    line-height: 1.5;
+    border-left: 2px solid #f59e0b;
+}
+
+/* Tool Cards (smaller than in SELECT phase) */
+.sca-tool-card {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: linear-gradient(135deg, #f1f5f9 0%, #e2e8f0 100%);
+    padding: 6px 10px;
+    border-radius: 6px;
+    font-size: 10px;
+    font-weight: 500;
+    color: #475569;
+    text-transform: capitalize;
+}
+
+.sca-tool-card i {
+    color: #3b82f6;
+    font-size: 10px;
+}
+
+/* Tools Grid (for SELECT phase) */
+.sca-tools-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+/* Entity Chips */
+.sca-entity-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+}
+
+.sca-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 8px;
+    border-radius: 12px;
+    font-size: 10px;
+    font-weight: 500;
+}
+
+.sca-chip.entity-chip {
+    background: #dbeafe;
+    color: #2563eb;
+}
+
+.sca-chip.entity-chip i {
+    font-size: 8px;
+}
+
+/* Inline Items (Time Scope, Iteration, Result Status) */
+.sca-inline-item {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 10px;
+    color: #64748b;
+    padding: 4px 0;
+}
+
+.sca-inline-item i {
+    font-size: 10px;
+    opacity: 0.7;
+}
+
+.sca-inline-item.sca-needs-resolution {
+    color: #f59e0b;
+}
+
+.sca-scope-badge {
+    background: #fef3c7;
+    color: #b45309;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-weight: 500;
+}
+
+/* Warning Notices */
+.sca-warning-notice {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 10px;
+    background: #fef3c7;
+    border: 1px solid #fcd34d;
+    border-radius: 6px;
+    font-size: 10px;
+    color: #92400e;
+}
+
+.sca-warning-notice i {
+    color: #f59e0b;
+}
+
+/* Circuit Breaker / Fallback */
+.sca-circuit-breaker {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 10px;
+    background: #e0e7ff;
+    border-radius: 6px;
+    font-size: 10px;
+    color: #4338ca;
+}
+
+.sca-fallback-notice {
+    padding: 8px 10px;
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    border-radius: 6px;
+    font-size: 10px;
+    color: #991b1b;
+}
+
+.sca-fallback-notice .fallback-error {
+    margin-top: 4px;
+    font-family: 'SF Mono', monospace;
+    font-size: 9px;
+    color: #dc2626;
+}
+
+/* Analysis Cards */
+.sca-analysis-card {
+    padding: 8px 10px;
+    background: #f8fafc;
+    border-radius: 6px;
+}
+
+.sca-analysis-card .analysis-status {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    font-weight: 500;
+}
+
+.sca-analysis-card .analysis-status.success {
+    color: #059669;
+}
+
+.sca-analysis-card .analysis-status.loading {
+    color: #3b82f6;
+}
+
+.sca-analysis-card .analysis-status.warning {
+    color: #d97706;
+}
+
+.sca-analysis-card .analysis-status.active {
+    color: #6366f1;
+}
+
+.sca-analysis-card .analysis-findings {
+    margin-top: 6px;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 10px;
+    color: #64748b;
+}
+
+/* Format Cards */
+.sca-format-card {
+    padding: 8px 10px;
+    background: #f8fafc;
+    border-radius: 6px;
+}
+
+.sca-format-card .format-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    font-weight: 500;
+    color: #475569;
+}
+
+.sca-format-card .format-header.active {
+    color: #6366f1;
+}
+
+.sca-format-card .format-blocks {
+    margin-top: 6px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+}
+
+.format-block-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 6px;
+    background: #e0e7ff;
+    color: #4338ca;
+    border-radius: 4px;
+    font-size: 9px;
+    font-weight: 500;
+}
+
+/* Dark Mode Support */
+body.dark-mode .sca-phase-details {
+    color: #e2e8f0;
+}
+
+body.dark-mode .sca-query-text,
+body.dark-mode .sca-reasoning-text {
+    background: #1e293b;
+    color: #cbd5e1;
+}
+
+body.dark-mode .sca-tool-card {
+    background: linear-gradient(135deg, #334155 0%, #1e293b 100%);
+    color: #e2e8f0;
+}
+
+body.dark-mode .sca-inline-item {
+    color: #94a3b8;
+}
+
+body.dark-mode .sca-chip.entity-chip {
+    background: #1e3a5f;
+    color: #60a5fa;
+}
+
+body.dark-mode .sca-analysis-card,
+body.dark-mode .sca-format-card {
+    background: #1e293b;
+}
+
+body.dark-mode .sca-warning-notice {
+    background: #422006;
+    border-color: #92400e;
+    color: #fcd34d;
+}
+
+body.dark-mode .sca-fallback-notice {
+    background: #450a0a;
+    border-color: #991b1b;
+    color: #fca5a5;
+}
+
 /* === THINKING NODE INDICATOR (initial loading state) === */
 .progressive-thinking {
     display: flex;
