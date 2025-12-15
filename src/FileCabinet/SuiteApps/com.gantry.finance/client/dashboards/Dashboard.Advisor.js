@@ -30,48 +30,142 @@
     let currentPollingId = null;  // Unique ID for current polling loop to detect stale loops
 
     /**
-     * Premium Financial Animation Controller
-     * Version: PREMIUM-2024-12-14-A
+     * Topographic Wealth Contours Animation Controller
+     * Version: TOPOGRAPHIC-2024-12-15-A
      *
-     * Elegant, subtle particle animation suitable for financial software.
-     * Phases: emerge → float → ambient (2.5s total)
+     * Elegant contour lines resembling topographic maps, subtly representing
+     * the "landscape" of financial data. Lines slowly shift as if terrain
+     * is gently breathing.
+     *
+     * Phases: emerge → ambient (continuous)
      */
     const GeometricAnimation = {
         canvas: null,
         ctx: null,
-        particles: [],
         animationId: null,
         phase: 'idle',
         isActive: false,
         globalTime: 0,
-        VERSION: 'PREMIUM-2024-12-14-A',
+        VERSION: 'TOPOGRAPHIC-2024-12-15-A',
+
+        // Noise field for organic contour generation
+        noiseGrid: null,
+        noiseOffset: { x: 0, y: 0, z: 0 },
+
+        // Ripple effects
+        ripples: [],
+        lastRippleTime: 0,
 
         config: {
-            // Reduced particle count for elegance and performance
-            particleCount: 100,
-            particleSize: { min: 1.5, max: 4 },
-            // Faster, more professional timing
-            emergeDuration: 1200,
-            floatDuration: 800,
-            // Sophisticated financial color palette
-            colors: [
-                { r: 71, g: 85, b: 105 },    // Slate-600 (primary)
-                { r: 100, g: 116, b: 139 },  // Slate-500
-                { r: 79, g: 70, b: 229 },    // Indigo-600 (accent)
-                { r: 148, g: 163, b: 184 }   // Slate-400
-            ]
+            // Contour configuration
+            gridResolution: 40,          // Lower = smoother, higher = more detail
+            contourLevels: 12,           // Number of contour lines
+            lineWidth: 0.6,              // Stroke width (0.5-1px)
+            baseOpacity: 0.06,           // Very subtle (5-15% opacity range)
+            maxOpacity: 0.12,
+
+            // Animation timing
+            emergeDuration: 2000,        // 2s fade-in
+            noiseSpeed: 0.00008,         // Very slow undulation
+            noiseScale: 0.008,           // Scale of noise features
+            breatheAmplitude: 0.15,      // How much contours "breathe"
+            breatheSpeed: 0.0003,        // Breathing cycle speed
+
+            // Ripple configuration
+            rippleInterval: 8000,        // New ripple every 8 seconds
+            rippleDuration: 3000,        // Ripple lasts 3 seconds
+            rippleMaxRadius: 400,        // Max ripple spread
+
+            // Color - single slate color at varying opacities
+            color: { r: 148, g: 163, b: 184 }  // Slate-400
+        },
+
+        // Simplex noise implementation for organic patterns
+        noise: {
+            // Permutation table
+            perm: null,
+
+            init: function() {
+                this.perm = new Uint8Array(512);
+                const p = new Uint8Array(256);
+                for (let i = 0; i < 256; i++) p[i] = i;
+                // Shuffle
+                for (let i = 255; i > 0; i--) {
+                    const j = Math.floor(Math.random() * (i + 1));
+                    [p[i], p[j]] = [p[j], p[i]];
+                }
+                for (let i = 0; i < 512; i++) this.perm[i] = p[i & 255];
+            },
+
+            // 3D Simplex noise
+            simplex3: function(x, y, z) {
+                const F3 = 1/3, G3 = 1/6;
+                let s = (x + y + z) * F3;
+                let i = Math.floor(x + s), j = Math.floor(y + s), k = Math.floor(z + s);
+                let t = (i + j + k) * G3;
+                let X0 = i - t, Y0 = j - t, Z0 = k - t;
+                let x0 = x - X0, y0 = y - Y0, z0 = z - Z0;
+
+                let i1, j1, k1, i2, j2, k2;
+                if (x0 >= y0) {
+                    if (y0 >= z0) { i1=1; j1=0; k1=0; i2=1; j2=1; k2=0; }
+                    else if (x0 >= z0) { i1=1; j1=0; k1=0; i2=1; j2=0; k2=1; }
+                    else { i1=0; j1=0; k1=1; i2=1; j2=0; k2=1; }
+                } else {
+                    if (y0 < z0) { i1=0; j1=0; k1=1; i2=0; j2=1; k2=1; }
+                    else if (x0 < z0) { i1=0; j1=1; k1=0; i2=0; j2=1; k2=1; }
+                    else { i1=0; j1=1; k1=0; i2=1; j2=1; k2=0; }
+                }
+
+                let x1 = x0 - i1 + G3, y1 = y0 - j1 + G3, z1 = z0 - k1 + G3;
+                let x2 = x0 - i2 + 2*G3, y2 = y0 - j2 + 2*G3, z2 = z0 - k2 + 2*G3;
+                let x3 = x0 - 1 + 3*G3, y3 = y0 - 1 + 3*G3, z3 = z0 - 1 + 3*G3;
+
+                let ii = i & 255, jj = j & 255, kk = k & 255;
+
+                const grad3 = [[1,1,0],[-1,1,0],[1,-1,0],[-1,-1,0],[1,0,1],[-1,0,1],[1,0,-1],[-1,0,-1],[0,1,1],[0,-1,1],[0,1,-1],[0,-1,-1]];
+                const dot3 = (g, x, y, z) => g[0]*x + g[1]*y + g[2]*z;
+
+                let n0 = 0, n1 = 0, n2 = 0, n3 = 0;
+                let t0 = 0.6 - x0*x0 - y0*y0 - z0*z0;
+                if (t0 >= 0) {
+                    let gi0 = this.perm[ii + this.perm[jj + this.perm[kk]]] % 12;
+                    t0 *= t0;
+                    n0 = t0 * t0 * dot3(grad3[gi0], x0, y0, z0);
+                }
+                let t1 = 0.6 - x1*x1 - y1*y1 - z1*z1;
+                if (t1 >= 0) {
+                    let gi1 = this.perm[ii + i1 + this.perm[jj + j1 + this.perm[kk + k1]]] % 12;
+                    t1 *= t1;
+                    n1 = t1 * t1 * dot3(grad3[gi1], x1, y1, z1);
+                }
+                let t2 = 0.6 - x2*x2 - y2*y2 - z2*z2;
+                if (t2 >= 0) {
+                    let gi2 = this.perm[ii + i2 + this.perm[jj + j2 + this.perm[kk + k2]]] % 12;
+                    t2 *= t2;
+                    n2 = t2 * t2 * dot3(grad3[gi2], x2, y2, z2);
+                }
+                let t3 = 0.6 - x3*x3 - y3*y3 - z3*z3;
+                if (t3 >= 0) {
+                    let gi3 = this.perm[ii + 1 + this.perm[jj + 1 + this.perm[kk + 1]]] % 12;
+                    t3 *= t3;
+                    n3 = t3 * t3 * dot3(grad3[gi3], x3, y3, z3);
+                }
+
+                return 32 * (n0 + n1 + n2 + n3);
+            }
         },
 
         init: function() {
-            // VERSION CHECK - verify deployment in console
-            console.log('%c[GeometricAnimation] ' + this.VERSION + ' initialized',
+            console.log('%c[TopographicAnimation] ' + this.VERSION + ' initialized',
                 'color: #6366f1; font-weight: bold; font-size: 14px;');
 
             this.cleanup();
+            this.noise.init();
 
             this.canvas = document.getElementById('geometric-canvas');
             if (!this.canvas) {
-                console.warn('[GeometricAnimation] Canvas not found');
+                console.warn('[TopographicAnimation] Canvas not found');
                 return;
             }
 
@@ -87,7 +181,10 @@
             this.isActive = true;
             this.phase = 'idle';
             this.globalTime = 0;
-            this.createParticles();
+            this.ripples = [];
+            this.lastRippleTime = 0;
+            this.noiseOffset = { x: Math.random() * 1000, y: Math.random() * 1000, z: 0 };
+
             this.startEmerge();
         },
 
@@ -97,67 +194,107 @@
             this.canvas.height = window.innerHeight;
         },
 
-        createParticles: function() {
-            this.particles = [];
-            const w = this.canvas.width;
-            const h = this.canvas.height;
+        /**
+         * Generate noise value at a point with current time offset
+         */
+        getNoiseAt: function(x, y) {
+            const scale = this.config.noiseScale;
+            const nx = (x + this.noiseOffset.x) * scale;
+            const ny = (y + this.noiseOffset.y) * scale;
+            const nz = this.noiseOffset.z;
 
-            for (let i = 0; i < this.config.particleCount; i++) {
-                const colorIndex = i % this.config.colors.length;
+            // Layer multiple octaves for more organic feel
+            let value = this.noise.simplex3(nx, ny, nz);
+            value += 0.5 * this.noise.simplex3(nx * 2, ny * 2, nz * 2);
+            value += 0.25 * this.noise.simplex3(nx * 4, ny * 4, nz * 4);
 
-                // Depth for parallax and size variation
-                const depth = 0.4 + Math.random() * 0.6;
-                const baseSize = (this.config.particleSize.min +
-                    Math.random() * (this.config.particleSize.max - this.config.particleSize.min)) * depth;
+            // Add breathing effect
+            const breathe = Math.sin(this.globalTime * this.config.breatheSpeed) * this.config.breatheAmplitude;
+            value += breathe;
 
-                // Subtle opacity - financial software should be understated
-                const targetOpacity = 0.15 + Math.random() * 0.25;
-
-                // Start position: edges of screen (calm emergence, not explosion)
-                const edge = Math.floor(Math.random() * 4);
-                let startX, startY;
-                switch (edge) {
-                    case 0: startX = Math.random() * w; startY = -50; break;           // Top
-                    case 1: startX = w + 50; startY = Math.random() * h; break;        // Right
-                    case 2: startX = Math.random() * w; startY = h + 50; break;        // Bottom
-                    case 3: startX = -50; startY = Math.random() * h; break;           // Left
-                }
-
-                // Final resting position: distributed across screen
-                const finalX = 80 + Math.random() * (w - 160);
-                const finalY = 80 + Math.random() * (h - 160);
-
-                this.particles.push({
-                    x: startX,
-                    y: startY,
-                    startX: startX,
-                    startY: startY,
-                    finalX: finalX,
-                    finalY: finalY,
-                    size: baseSize,
-                    baseSize: baseSize,
-                    opacity: 0,
-                    targetOpacity: targetOpacity,
-                    colorIndex: colorIndex,
-                    depth: depth,
-                    // Stagger emergence for wave effect
-                    delay: Math.random() * 0.4,
-                    // Ambient motion params
-                    vx: 0,
-                    vy: 0,
-                    driftAngle: Math.random() * Math.PI * 2,
-                    driftSpeed: 0.0003 + Math.random() * 0.0005
-                });
-            }
-        },
-
-        getParticleColor: function(particle, opacity) {
-            const color = this.config.colors[particle.colorIndex];
-            return `rgba(${color.r}, ${color.g}, ${color.b}, ${opacity})`;
+            return value;
         },
 
         /**
-         * Emerge: Particles drift in calmly from screen edges
+         * Marching squares algorithm for contour extraction
+         */
+        getContourPaths: function(threshold) {
+            const paths = [];
+            const w = this.canvas.width;
+            const h = this.canvas.height;
+            const res = this.config.gridResolution;
+            const cols = Math.ceil(w / res) + 1;
+            const rows = Math.ceil(h / res) + 1;
+
+            // Build grid of noise values
+            const grid = [];
+            for (let j = 0; j < rows; j++) {
+                grid[j] = [];
+                for (let i = 0; i < cols; i++) {
+                    grid[j][i] = this.getNoiseAt(i * res, j * res);
+                }
+            }
+
+            // Marching squares
+            const visited = new Set();
+
+            for (let j = 0; j < rows - 1; j++) {
+                for (let i = 0; i < cols - 1; i++) {
+                    const key = `${i},${j}`;
+                    if (visited.has(key)) continue;
+
+                    const tl = grid[j][i];
+                    const tr = grid[j][i + 1];
+                    const br = grid[j + 1][i + 1];
+                    const bl = grid[j + 1][i];
+
+                    // Determine case
+                    const c = (tl > threshold ? 8 : 0) +
+                              (tr > threshold ? 4 : 0) +
+                              (br > threshold ? 2 : 0) +
+                              (bl > threshold ? 1 : 0);
+
+                    if (c === 0 || c === 15) continue;
+
+                    // Interpolation helper
+                    const lerp = (a, b, t) => a + (b - a) * t;
+                    const interp = (v1, v2) => {
+                        if (Math.abs(v2 - v1) < 0.0001) return 0.5;
+                        return (threshold - v1) / (v2 - v1);
+                    };
+
+                    const x = i * res;
+                    const y = j * res;
+
+                    // Edge midpoints
+                    const top = { x: lerp(x, x + res, interp(tl, tr)), y: y };
+                    const right = { x: x + res, y: lerp(y, y + res, interp(tr, br)) };
+                    const bottom = { x: lerp(x, x + res, interp(bl, br)), y: y + res };
+                    const left = { x: x, y: lerp(y, y + res, interp(tl, bl)) };
+
+                    // Generate line segments based on case
+                    const segments = [];
+                    switch(c) {
+                        case 1: case 14: segments.push([left, bottom]); break;
+                        case 2: case 13: segments.push([bottom, right]); break;
+                        case 3: case 12: segments.push([left, right]); break;
+                        case 4: case 11: segments.push([top, right]); break;
+                        case 5: segments.push([left, top], [bottom, right]); break;
+                        case 6: case 9: segments.push([top, bottom]); break;
+                        case 7: case 8: segments.push([left, top]); break;
+                        case 10: segments.push([top, right], [left, bottom]); break;
+                    }
+
+                    segments.forEach(seg => paths.push(seg));
+                    visited.add(key);
+                }
+            }
+
+            return paths;
+        },
+
+        /**
+         * Emerge: Contours fade in elegantly
          */
         startEmerge: function() {
             this.phase = 'emerge';
@@ -171,6 +308,9 @@
                 const progress = Math.min(elapsed / this.config.emergeDuration, 1);
                 this.globalTime += 16;
 
+                // Slowly evolve noise
+                this.noiseOffset.z += this.config.noiseSpeed * 16;
+
                 // Show cards at 40% through emergence
                 if (!cardsShown && progress > 0.4) {
                     cardsShown = true;
@@ -178,64 +318,12 @@
                     if (scoreCategories) scoreCategories.classList.add('cards-visible');
                 }
 
-                this.particles.forEach(p => {
-                    // Staggered entrance
-                    const pProgress = Math.max(0, Math.min(1, (progress - p.delay) / (1 - p.delay)));
-                    const eased = this.easeOutQuart(pProgress);
-
-                    // Smooth drift from edge to final position
-                    p.x = p.startX + (p.finalX - p.startX) * eased;
-                    p.y = p.startY + (p.finalY - p.startY) * eased;
-
-                    // Fade in
-                    p.opacity = p.targetOpacity * this.easeOutCubic(pProgress);
-
-                    // Subtle size pulse during emergence
-                    p.size = p.baseSize * (0.8 + 0.2 * eased);
-                });
-
-                this.draw();
+                // Draw with opacity based on progress
+                this.draw(this.easeOutCubic(progress));
 
                 if (progress < 1) {
                     this.animationId = requestAnimationFrame(animate);
                 } else {
-                    this.startFloat();
-                }
-            };
-
-            this.animationId = requestAnimationFrame(animate);
-        },
-
-        /**
-         * Float: Brief settling motion before ambient
-         */
-        startFloat: function() {
-            this.phase = 'float';
-            const startTime = Date.now();
-
-            const animate = () => {
-                if (!this.isActive || this.phase !== 'float') return;
-
-                const elapsed = Date.now() - startTime;
-                const progress = Math.min(elapsed / this.config.floatDuration, 1);
-                this.globalTime += 16;
-
-                this.particles.forEach(p => {
-                    // Gentle settling drift
-                    const drift = Math.sin(this.globalTime * p.driftSpeed + p.driftAngle) * 3;
-                    p.x = p.finalX + drift * p.depth;
-                    p.y = p.finalY + Math.cos(this.globalTime * p.driftSpeed * 0.7) * 2 * p.depth;
-
-                    // Subtle opacity settling
-                    p.opacity = p.targetOpacity * (0.9 + 0.1 * Math.sin(this.globalTime * 0.001));
-                });
-
-                this.draw();
-
-                if (progress < 1) {
-                    this.animationId = requestAnimationFrame(animate);
-                } else {
-                    // Remove animation-active class from input
                     const chatInput = document.getElementById('advisor-input-full');
                     if (chatInput) chatInput.classList.remove('animation-active');
                     this.startAmbient();
@@ -246,53 +334,74 @@
         },
 
         /**
-         * Ambient: Very subtle continuous motion
+         * Ambient: Continuous gentle undulation
          */
         startAmbient: function() {
             this.phase = 'ambient';
+            this.lastRippleTime = Date.now();
 
-            // Ensure cards are visible
             const scoreCategories = document.getElementById('score-categories');
             if (scoreCategories) scoreCategories.classList.add('cards-visible');
-
-            // Initialize ambient velocities
-            this.particles.forEach(p => {
-                p.vx = (Math.random() - 0.5) * 0.08;
-                p.vy = (Math.random() - 0.5) * 0.08;
-                // Lower target opacity for ambient - very subtle
-                p.targetOpacity = 0.08 + Math.random() * 0.12;
-            });
 
             const animate = () => {
                 if (!this.isActive || this.phase !== 'ambient') return;
                 this.globalTime += 16;
 
-                this.particles.forEach(p => {
-                    // Gentle drift
-                    p.x += p.vx;
-                    p.y += p.vy;
+                // Evolve noise field for breathing effect
+                this.noiseOffset.z += this.config.noiseSpeed * 16;
 
-                    // Slowly fade to lower ambient opacity
-                    p.opacity += (p.targetOpacity - p.opacity) * 0.008;
+                // Trigger ripple periodically
+                const now = Date.now();
+                if (now - this.lastRippleTime > this.config.rippleInterval) {
+                    this.addRipple();
+                    this.lastRippleTime = now;
+                }
 
-                    // Soft boundary bounce
-                    if (p.x < 30 || p.x > this.canvas.width - 30) p.vx *= -0.8;
-                    if (p.y < 30 || p.y > this.canvas.height - 30) p.vy *= -0.8;
+                // Update ripples
+                this.updateRipples();
 
-                    // Subtle random drift
-                    p.vx += (Math.random() - 0.5) * 0.002;
-                    p.vy += (Math.random() - 0.5) * 0.002;
-
-                    // Speed limits - keep it slow and professional
-                    p.vx = Math.max(-0.1, Math.min(0.1, p.vx));
-                    p.vy = Math.max(-0.1, Math.min(0.1, p.vy));
-                });
-
-                this.draw();
+                this.draw(1);
                 this.animationId = requestAnimationFrame(animate);
             };
 
             this.animationId = requestAnimationFrame(animate);
+        },
+
+        /**
+         * Add a new ripple emanating from center
+         */
+        addRipple: function() {
+            const cx = this.canvas.width / 2;
+            const cy = this.canvas.height / 2;
+            // Slight randomness to center
+            const offsetX = (Math.random() - 0.5) * 200;
+            const offsetY = (Math.random() - 0.5) * 100;
+
+            this.ripples.push({
+                x: cx + offsetX,
+                y: cy + offsetY,
+                radius: 0,
+                startTime: Date.now(),
+                opacity: 1
+            });
+        },
+
+        /**
+         * Update ripple animations
+         */
+        updateRipples: function() {
+            const now = Date.now();
+            this.ripples = this.ripples.filter(r => {
+                const elapsed = now - r.startTime;
+                const progress = elapsed / this.config.rippleDuration;
+
+                if (progress >= 1) return false;
+
+                r.radius = this.easeOutCubic(progress) * this.config.rippleMaxRadius;
+                r.opacity = 1 - this.easeInQuad(progress);
+
+                return true;
+            });
         },
 
         startDeparture: function() {
@@ -308,11 +417,7 @@
                 const elapsed = Date.now() - startTime;
                 const progress = Math.min(elapsed / duration, 1);
 
-                this.particles.forEach(p => {
-                    p.opacity = p.targetOpacity * (1 - this.easeInQuad(progress));
-                });
-
-                this.draw();
+                this.draw(1 - this.easeInQuad(progress));
 
                 if (progress < 1) {
                     this.animationId = requestAnimationFrame(animate);
@@ -324,31 +429,60 @@
             this.animationId = requestAnimationFrame(animate);
         },
 
-        draw: function() {
+        draw: function(fadeMultiplier) {
             if (!this.ctx) return;
-            this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+            const ctx = this.ctx;
+            const w = this.canvas.width;
+            const h = this.canvas.height;
 
-            // Sort by depth for layering
-            const sorted = [...this.particles].sort((a, b) => a.depth - b.depth);
+            ctx.clearRect(0, 0, w, h);
 
-            sorted.forEach(p => {
-                // Subtle glow for larger/closer particles
-                if (p.depth > 0.6 && p.opacity > 0.1) {
-                    const glowSize = p.size * 3;
-                    const gradient = this.ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, glowSize);
-                    gradient.addColorStop(0, this.getParticleColor(p, p.opacity * 0.2));
-                    gradient.addColorStop(1, this.getParticleColor(p, 0));
-                    this.ctx.beginPath();
-                    this.ctx.arc(p.x, p.y, glowSize, 0, Math.PI * 2);
-                    this.ctx.fillStyle = gradient;
-                    this.ctx.fill();
+            const { r, g, b } = this.config.color;
+            const levels = this.config.contourLevels;
+
+            // Draw contour lines at multiple thresholds
+            for (let i = 0; i < levels; i++) {
+                const threshold = -1 + (2 * i / (levels - 1));
+                const paths = this.getContourPaths(threshold);
+
+                // Opacity varies by level - center levels more visible
+                const levelProgress = i / (levels - 1);
+                const centerDist = Math.abs(levelProgress - 0.5) * 2;
+                const levelOpacity = this.config.baseOpacity +
+                    (this.config.maxOpacity - this.config.baseOpacity) * (1 - centerDist * 0.5);
+
+                const opacity = levelOpacity * fadeMultiplier;
+
+                ctx.strokeStyle = `rgba(${r}, ${g}, ${b}, ${opacity})`;
+                ctx.lineWidth = this.config.lineWidth;
+                ctx.lineCap = 'round';
+                ctx.lineJoin = 'round';
+
+                ctx.beginPath();
+                paths.forEach(segment => {
+                    ctx.moveTo(segment[0].x, segment[0].y);
+                    ctx.lineTo(segment[1].x, segment[1].y);
+                });
+                ctx.stroke();
+            }
+
+            // Draw ripples
+            this.ripples.forEach(ripple => {
+                const rippleOpacity = ripple.opacity * 0.15 * fadeMultiplier;
+
+                // Draw multiple concentric rings for each ripple
+                for (let ring = 0; ring < 3; ring++) {
+                    const ringRadius = ripple.radius - ring * 20;
+                    if (ringRadius <= 0) continue;
+
+                    const ringOpacity = rippleOpacity * (1 - ring * 0.3);
+                    ctx.strokeStyle = `rgba(${r}, ${g}, ${b}, ${ringOpacity})`;
+                    ctx.lineWidth = 1 - ring * 0.2;
+
+                    ctx.beginPath();
+                    ctx.arc(ripple.x, ripple.y, ringRadius, 0, Math.PI * 2);
+                    ctx.stroke();
                 }
-
-                // Particle core
-                this.ctx.beginPath();
-                this.ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
-                this.ctx.fillStyle = this.getParticleColor(p, p.opacity);
-                this.ctx.fill();
             });
         },
 
@@ -369,7 +503,7 @@
                 window.removeEventListener('resize', this.boundResize);
             }
 
-            this.particles = [];
+            this.ripples = [];
 
             const heroOrb = document.querySelector('.hero-orb');
             if (heroOrb) heroOrb.classList.remove('orb-charging');

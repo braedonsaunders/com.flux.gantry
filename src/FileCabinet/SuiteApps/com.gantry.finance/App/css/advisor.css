@@ -6254,7 +6254,8 @@ body.dark-mode .animate-code {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   GEOMETRIC ANIMATION CANVAS
+   TOPOGRAPHIC WEALTH CONTOURS ANIMATION CANVAS
+   Elegant contour lines resembling topographic maps with gentle breathing motion
    ═══════════════════════════════════════════════════════════════════════════ */
 
 .geometric-canvas {
@@ -6266,7 +6267,13 @@ body.dark-mode .animate-code {
     pointer-events: none;
     z-index: 0;
     opacity: 1;
-    transition: opacity 0.8s ease;
+    transition: opacity 1s ease;
+    /* Subtle background gradient for depth */
+    background: radial-gradient(
+        ellipse at 50% 40%,
+        rgba(248, 250, 252, 0.5) 0%,
+        transparent 70%
+    );
 }
 
 .geometric-canvas.hidden {
