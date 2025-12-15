@@ -702,6 +702,49 @@ define([
         }
     };
 
+    // ═══════════════════════════════════════════════════════════════════════════
+    // PERIOD COMPARISON MAPPING
+    // Maps current periods to their natural comparison periods for YoY, MoM, etc.
+    // Used by compare_metric_periods tool for auto-deriving prior_period
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    const PERIOD_COMPARISON_MAP = {
+        // YTD comparisons → same point in prior year
+        'ytd': 'prior_year_ytd',
+        'fytd': 'prior_year_ytd',
+        'ytd_closed': 'prior_year_ytd',
+        'fytd_closed': 'prior_year_ytd',
+
+        // Month comparisons
+        'this_month': 'last_month',
+
+        // Quarter comparisons
+        'this_quarter': 'last_quarter',
+
+        // Fiscal year comparisons
+        'this_fiscal_year': 'last_fiscal_year',
+        'last_fiscal_year': '2_fiscal_years_ago',
+        '2_fiscal_years_ago': '3_fiscal_years_ago',
+
+        // Current fiscal year quarters → same quarter last year
+        'fiscal_q1': 'last_fiscal_q1',
+        'fiscal_q2': 'last_fiscal_q2',
+        'fiscal_q3': 'last_fiscal_q3',
+        'fiscal_q4': 'last_fiscal_q4',
+
+        // Week comparisons
+        'this_week': 'last_week'
+    };
+
+    /**
+     * Get the natural comparison period for a given period
+     * @param {string} period - Current period key from PERIOD_DEFINITIONS
+     * @returns {string|null} Comparison period key or null if no standard comparison exists
+     */
+    function getComparisonPeriod(period) {
+        return PERIOD_COMPARISON_MAP[period] || null;
+    }
+
     /**
      * Build fiscal context with all computed dates
      * Called once per buildPeriodFilter invocation
@@ -3370,6 +3413,270 @@ Example period formats (assuming current date is Dec 2025):
             },
             displayName: function(args) {
                 return `Comparing ${args.metric} between periods...`;
+            }
+        },
+
+        // ═══════════════════════════════════════════════════════════════════════════
+        // UNIVERSAL PERIOD COMPARISON TOOL
+        // Single tool for ALL period-over-period comparisons with pre-computed variance
+        // ═══════════════════════════════════════════════════════════════════════════
+
+        compare_metric_periods: {
+            name: 'compare_metric_periods',
+            shortDescription: 'Compare any metric between two periods with variance calculation',
+            category: 'data',
+            description: `Universal period comparison tool. Computes variance in SQL - no manual calculation needed.
+
+USE FOR: "YoY comparison", "fastest growing", "biggest change", "MoM variance", "period vs period", "growth analysis"
+
+Returns pre-computed columns:
+- name: The dimension value (account name, customer, vendor, etc.)
+- current_amount: Value in current period
+- prior_amount: Value in prior period
+- variance: current - prior (positive = growth)
+- variance_pct: Percentage change (positive = growth)
+
+If prior_period is omitted, auto-derives from current_period:
+- ytd → prior_year_ytd
+- this_month → last_month
+- this_quarter → last_quarter
+- this_fiscal_year → last_fiscal_year
+- fiscal_q1/q2/q3/q4 → last_fiscal_q1/q2/q3/q4`,
+
+            parameters: {
+                type: 'object',
+                properties: {
+                    metric: {
+                        type: 'string',
+                        enum: ['expense', 'revenue', 'income', 'vendor_spend', 'customer_revenue'],
+                        description: 'What to measure. expense=OpEx by account, revenue=total revenue by customer, vendor_spend=AP by vendor, customer_revenue=AR by customer, income=income accounts'
+                    },
+                    dimension: {
+                        type: 'string',
+                        enum: ['account', 'category', 'customer', 'vendor', 'department', 'class'],
+                        description: 'How to group/break down the data. Default: account for expense/revenue/income, customer for customer_revenue, vendor for vendor_spend'
+                    },
+                    current_period: {
+                        type: 'string',
+                        enum: [
+                            'ytd', 'fytd', 'ytd_closed',
+                            'this_month', 'this_quarter',
+                            'this_fiscal_year', 'last_fiscal_year',
+                            'fiscal_q1', 'fiscal_q2', 'fiscal_q3', 'fiscal_q4',
+                            'this_week'
+                        ],
+                        description: 'Current period to analyze (default: ytd)'
+                    },
+                    prior_period: {
+                        type: 'string',
+                        description: 'Comparison period. If omitted, auto-derived from current_period (e.g., ytd → prior_year_ytd)'
+                    },
+                    exclude_cogs: {
+                        type: 'boolean',
+                        description: 'For expense metric: exclude COGS accounts (default: false)'
+                    },
+                    limit: {
+                        type: 'number',
+                        description: 'Top N results to return (default: 10, max: 50)'
+                    },
+                    sort_by: {
+                        type: 'string',
+                        enum: ['variance_pct', 'variance', 'current_amount', 'prior_amount'],
+                        description: 'Sort order. Use variance_pct for "fastest growing", current_amount for "top by value" (default: variance_pct)'
+                    },
+                    sort_direction: {
+                        type: 'string',
+                        enum: ['desc', 'asc'],
+                        description: 'DESC for "fastest growing/largest", ASC for "biggest decline/smallest" (default: desc)'
+                    }
+                },
+                required: ['metric']
+            },
+            execute: function(args) {
+                const metric = args.metric;
+                const currentPeriod = args.current_period || 'ytd';
+                const priorPeriod = args.prior_period || getComparisonPeriod(currentPeriod);
+
+                if (!priorPeriod) {
+                    return {
+                        success: false,
+                        error: `No comparison period defined for "${currentPeriod}". Please specify prior_period explicitly.`,
+                        tool: 'compare_metric_periods'
+                    };
+                }
+
+                // Use existing buildAccountingPeriodFilter for both periods
+                const currentFilter = buildAccountingPeriodFilter(currentPeriod);
+                const priorFilter = buildAccountingPeriodFilter(priorPeriod);
+
+                if (currentFilter === '1=1' || priorFilter === '1=1') {
+                    return {
+                        success: false,
+                        error: `Invalid period specified. current_period="${currentPeriod}", prior_period="${priorPeriod}"`,
+                        tool: 'compare_metric_periods'
+                    };
+                }
+
+                const limit = Math.min(args.limit || 10, 50);
+                const sortBy = args.sort_by || 'variance_pct';
+                const sortDir = (args.sort_direction || 'desc').toUpperCase();
+                const excludeCogs = args.exclude_cogs ? `AND acct.accttype != 'COGS'` : '';
+
+                // Build metric-specific query parts
+                let selectExpr, fromClause, whereBase, groupExpr, dimensionExpr;
+
+                switch (metric) {
+                    case 'expense':
+                        dimensionExpr = 'acct.accountsearchdisplayname';
+                        selectExpr = 'SUM(COALESCE(tal.debit, 0) - COALESCE(tal.credit, 0))';
+                        fromClause = `transactionaccountingline tal
+                            INNER JOIN transaction t ON tal.transaction = t.id
+                            INNER JOIN accountingperiod ap ON t.postingperiod = ap.id
+                            INNER JOIN account acct ON tal.account = acct.id`;
+                        whereBase = `t.posting = 'T' AND t.voided = 'F'
+                            AND acct.accttype IN ('Expense', 'OthExpense') ${excludeCogs}
+                            AND ap.isyear = 'F' AND ap.isquarter = 'F'`;
+                        groupExpr = 'acct.accountsearchdisplayname';
+                        break;
+
+                    case 'income':
+                    case 'revenue':
+                        dimensionExpr = 'acct.accountsearchdisplayname';
+                        selectExpr = 'SUM(COALESCE(tal.credit, 0) - COALESCE(tal.debit, 0))';
+                        fromClause = `transactionaccountingline tal
+                            INNER JOIN transaction t ON tal.transaction = t.id
+                            INNER JOIN accountingperiod ap ON t.postingperiod = ap.id
+                            INNER JOIN account acct ON tal.account = acct.id`;
+                        whereBase = `t.posting = 'T' AND t.voided = 'F'
+                            AND acct.accttype IN ('Income', 'OthIncome')
+                            AND ap.isyear = 'F' AND ap.isquarter = 'F'`;
+                        groupExpr = 'acct.accountsearchdisplayname';
+                        break;
+
+                    case 'customer_revenue':
+                        dimensionExpr = 'BUILTIN.DF(t.entity)';
+                        selectExpr = 'SUM(t.foreigntotal)';
+                        fromClause = `transaction t
+                            INNER JOIN accountingperiod ap ON t.postingperiod = ap.id`;
+                        whereBase = `t.type = 'CustInvc' AND t.posting = 'T' AND t.voided = 'F'
+                            AND ap.isyear = 'F' AND ap.isquarter = 'F'`;
+                        groupExpr = 'BUILTIN.DF(t.entity)';
+                        break;
+
+                    case 'vendor_spend':
+                        dimensionExpr = 'BUILTIN.DF(t.entity)';
+                        selectExpr = 'SUM(ABS(t.foreigntotal))';
+                        fromClause = `transaction t
+                            INNER JOIN accountingperiod ap ON t.postingperiod = ap.id`;
+                        whereBase = `t.type = 'VendBill' AND t.posting = 'T' AND t.voided = 'F'
+                            AND ap.isyear = 'F' AND ap.isquarter = 'F'`;
+                        groupExpr = 'BUILTIN.DF(t.entity)';
+                        break;
+
+                    default:
+                        return {
+                            success: false,
+                            error: `Unknown metric: ${metric}. Valid: expense, income, revenue, customer_revenue, vendor_spend`,
+                            tool: 'compare_metric_periods'
+                        };
+                }
+
+                // Build sort expression with NULL handling
+                let sortExpr;
+                switch (sortBy) {
+                    case 'variance_pct':
+                        sortExpr = `variance_pct ${sortDir} NULLS LAST`;
+                        break;
+                    case 'variance':
+                        sortExpr = `variance ${sortDir}`;
+                        break;
+                    case 'current_amount':
+                        sortExpr = `current_amount ${sortDir}`;
+                        break;
+                    case 'prior_amount':
+                        sortExpr = `prior_amount ${sortDir}`;
+                        break;
+                    default:
+                        sortExpr = `variance_pct ${sortDir} NULLS LAST`;
+                }
+
+                // Build the comparison query with CTEs
+                const query = `
+                    WITH current_data AS (
+                        SELECT
+                            ${dimensionExpr} AS dimension_name,
+                            ${selectExpr} AS amount
+                        FROM ${fromClause}
+                        WHERE ${whereBase}
+                            AND ${currentFilter}
+                        GROUP BY ${groupExpr}
+                        HAVING ${selectExpr} != 0
+                    ),
+                    prior_data AS (
+                        SELECT
+                            ${dimensionExpr} AS dimension_name,
+                            ${selectExpr} AS amount
+                        FROM ${fromClause}
+                        WHERE ${whereBase}
+                            AND ${priorFilter}
+                        GROUP BY ${groupExpr}
+                        HAVING ${selectExpr} != 0
+                    )
+                    SELECT * FROM (
+                        SELECT
+                            COALESCE(c.dimension_name, p.dimension_name) AS name,
+                            COALESCE(c.amount, 0) AS current_amount,
+                            COALESCE(p.amount, 0) AS prior_amount,
+                            COALESCE(c.amount, 0) - COALESCE(p.amount, 0) AS variance,
+                            CASE
+                                WHEN COALESCE(p.amount, 0) != 0
+                                THEN ROUND((COALESCE(c.amount, 0) - p.amount) / ABS(p.amount) * 100, 1)
+                                ELSE NULL
+                            END AS variance_pct
+                        FROM current_data c
+                        FULL OUTER JOIN prior_data p ON c.dimension_name = p.dimension_name
+                        WHERE COALESCE(c.amount, 0) != 0 OR COALESCE(p.amount, 0) != 0
+                        ORDER BY ${sortExpr}
+                    )
+                    WHERE ROWNUM <= ${limit}
+                `;
+
+                const result = QueryExecutor.executeQuery(query);
+                const formatted = formatResult(result, 'compare_metric_periods', { limit: limit });
+
+                // Add metadata about the comparison
+                if (formatted.success) {
+                    formatted.comparison = {
+                        metric: metric,
+                        current_period: currentPeriod,
+                        prior_period: priorPeriod,
+                        sort_by: sortBy,
+                        sort_direction: sortDir.toLowerCase()
+                    };
+
+                    // Calculate summary stats
+                    if (formatted.rows && formatted.rows.length > 0) {
+                        const totalCurrent = formatted.rows.reduce((sum, r) => sum + (parseFloat(r.current_amount) || 0), 0);
+                        const totalPrior = formatted.rows.reduce((sum, r) => sum + (parseFloat(r.prior_amount) || 0), 0);
+                        const totalVariance = totalCurrent - totalPrior;
+                        const totalVariancePct = totalPrior !== 0 ? ((totalVariance / Math.abs(totalPrior)) * 100).toFixed(1) : null;
+
+                        formatted.summary = {
+                            total_current: totalCurrent,
+                            total_prior: totalPrior,
+                            total_variance: totalVariance,
+                            total_variance_pct: totalVariancePct ? parseFloat(totalVariancePct) : null,
+                            items_shown: formatted.rows.length
+                        };
+                    }
+                }
+
+                return formatted;
+            },
+            displayName: function(args) {
+                const metric = args.metric || 'metric';
+                const period = args.current_period || 'ytd';
+                return `Comparing ${metric} for ${period}...`;
             }
         },
 
