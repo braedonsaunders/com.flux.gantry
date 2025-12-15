@@ -330,9 +330,288 @@ define([
         };
     }
 
+    // ═══════════════════════════════════════════════════════════════════════════
+    // FIX 5: RELATIVE TIME EXPRESSION RESOLVER
+    // Pre-processes natural language time expressions into concrete parameter values
+    // Converts "last 2 years" → 24, "past quarter" → 3, etc.
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Resolve relative time expressions to concrete numeric values
+     * Handles common patterns LLMs produce when interpreting user time requests
+     *
+     * @param {*} value - The value to check (may be string or number)
+     * @param {string} paramType - The expected parameter type ('number', 'integer')
+     * @returns {Object} { resolved: *, wasResolved: boolean, original: *, error: string|null }
+     */
+    function resolveRelativeTimeExpression(value, paramType) {
+        // If already a valid number, return as-is
+        if (typeof value === 'number' && !isNaN(value)) {
+            return { resolved: value, wasResolved: false, original: value, error: null };
+        }
+
+        // If not a string, can't resolve
+        if (typeof value !== 'string') {
+            return { resolved: value, wasResolved: false, original: value, error: null };
+        }
+
+        const lowerValue = value.toLowerCase().trim();
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // PATTERN MATCHING: Natural language time expressions → numeric values
+        // ═══════════════════════════════════════════════════════════════════════
+
+        // Pattern: "last_N_years" or "last N years" → N * 12 months
+        let match = lowerValue.match(/^last[_\s]?(\d+)[_\s]?years?$/i);
+        if (match) {
+            const years = parseInt(match[1], 10);
+            const months = years * 12;
+            log.audit('Resolved time expression', { original: value, resolved: months, unit: 'months' });
+            return { resolved: months, wasResolved: true, original: value, error: null };
+        }
+
+        // Pattern: "last_N_months" or "last N months" → N months
+        match = lowerValue.match(/^last[_\s]?(\d+)[_\s]?months?$/i);
+        if (match) {
+            const months = parseInt(match[1], 10);
+            log.audit('Resolved time expression', { original: value, resolved: months, unit: 'months' });
+            return { resolved: months, wasResolved: true, original: value, error: null };
+        }
+
+        // Pattern: "last_N_quarters" or "last N quarters" → N * 3 months
+        match = lowerValue.match(/^last[_\s]?(\d+)[_\s]?quarters?$/i);
+        if (match) {
+            const quarters = parseInt(match[1], 10);
+            const months = quarters * 3;
+            log.audit('Resolved time expression', { original: value, resolved: months, unit: 'months' });
+            return { resolved: months, wasResolved: true, original: value, error: null };
+        }
+
+        // Pattern: "past_N_years/months/quarters" (same as "last")
+        match = lowerValue.match(/^past[_\s]?(\d+)[_\s]?(years?|months?|quarters?)$/i);
+        if (match) {
+            const num = parseInt(match[1], 10);
+            const unit = match[2].toLowerCase();
+            let months;
+            if (unit.startsWith('year')) {
+                months = num * 12;
+            } else if (unit.startsWith('quarter')) {
+                months = num * 3;
+            } else {
+                months = num;
+            }
+            log.audit('Resolved time expression', { original: value, resolved: months, unit: 'months' });
+            return { resolved: months, wasResolved: true, original: value, error: null };
+        }
+
+        // Pattern: "ytd" or "year_to_date" → current month number
+        if (lowerValue === 'ytd' || lowerValue === 'year_to_date' || lowerValue === 'year-to-date') {
+            const currentMonth = new Date().getMonth() + 1; // 1-12
+            log.audit('Resolved time expression', { original: value, resolved: currentMonth, unit: 'months (YTD)' });
+            return { resolved: currentMonth, wasResolved: true, original: value, error: null };
+        }
+
+        // Pattern: "this_year" → 12 months
+        if (lowerValue === 'this_year' || lowerValue === 'this year' || lowerValue === 'current_year') {
+            log.audit('Resolved time expression', { original: value, resolved: 12, unit: 'months' });
+            return { resolved: 12, wasResolved: true, original: value, error: null };
+        }
+
+        // Pattern: "this_quarter" → 3 months
+        if (lowerValue === 'this_quarter' || lowerValue === 'this quarter' || lowerValue === 'current_quarter') {
+            log.audit('Resolved time expression', { original: value, resolved: 3, unit: 'months' });
+            return { resolved: 3, wasResolved: true, original: value, error: null };
+        }
+
+        // Pattern: "all" or "all_time" → 60 months (5 years default max)
+        if (lowerValue === 'all' || lowerValue === 'all_time' || lowerValue === 'all time') {
+            log.audit('Resolved time expression', { original: value, resolved: 60, unit: 'months (all time)' });
+            return { resolved: 60, wasResolved: true, original: value, error: null };
+        }
+
+        // If paramType expects a number but we have a string, that's an error
+        if (paramType === 'number' || paramType === 'integer') {
+            // Try to parse as a simple number string like "24"
+            const numericValue = parseInt(value, 10);
+            if (!isNaN(numericValue)) {
+                return { resolved: numericValue, wasResolved: true, original: value, error: null };
+            }
+
+            // Can't resolve - return error with helpful message
+            return {
+                resolved: null,
+                wasResolved: false,
+                original: value,
+                error: `Cannot convert "${value}" to a number. ` +
+                    `For time ranges use: a number (e.g., 24 for 24 months), ` +
+                    `or expressions like "last_2_years" → 24, "last_6_months" → 6, "this_quarter" → 3. ` +
+                    `The parameter expects a numeric value.`
+            };
+        }
+
+        // Not a numeric type, return unchanged
+        return { resolved: value, wasResolved: false, original: value, error: null };
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // FIX 1: STRICT TYPE VALIDATION
+    // Validates parameter types against tool schema before execution
+    // Prevents type mismatches that cause downstream SQL errors
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Validate a single parameter value against its schema type
+     * @param {string} paramName - Name of the parameter
+     * @param {*} value - The value to validate
+     * @param {Object} paramDef - The parameter definition from schema
+     * @returns {Object} { valid: boolean, coerced: *, error: string|null, warning: string|null }
+     */
+    function validateParameterType(paramName, value, paramDef) {
+        const expectedType = paramDef.type;
+
+        // Null/undefined handling - only error if required (handled separately)
+        if (value === null || value === undefined) {
+            return { valid: true, coerced: value, error: null, warning: null };
+        }
+
+        switch (expectedType) {
+            case 'number':
+            case 'integer': {
+                // First try to resolve relative time expressions
+                const resolved = resolveRelativeTimeExpression(value, expectedType);
+                if (resolved.error) {
+                    return { valid: false, coerced: null, error: resolved.error, warning: null };
+                }
+                if (resolved.wasResolved) {
+                    const warning = `Resolved "${resolved.original}" to ${resolved.resolved}`;
+                    // Validate the resolved value is within bounds
+                    if (expectedType === 'integer' && !Number.isInteger(resolved.resolved)) {
+                        return {
+                            valid: false,
+                            coerced: null,
+                            error: `Parameter "${paramName}" requires an integer, got ${resolved.resolved}`,
+                            warning: null
+                        };
+                    }
+                    return { valid: true, coerced: resolved.resolved, error: null, warning: warning };
+                }
+
+                // Already a number, validate it
+                if (typeof resolved.resolved === 'number') {
+                    if (isNaN(resolved.resolved)) {
+                        return {
+                            valid: false,
+                            coerced: null,
+                            error: `Parameter "${paramName}" is NaN. Provide a valid number.`,
+                            warning: null
+                        };
+                    }
+                    if (expectedType === 'integer' && !Number.isInteger(resolved.resolved)) {
+                        // Coerce to integer with warning
+                        const coerced = Math.round(resolved.resolved);
+                        return {
+                            valid: true,
+                            coerced: coerced,
+                            error: null,
+                            warning: `Rounded "${paramName}" from ${resolved.resolved} to ${coerced}`
+                        };
+                    }
+                    return { valid: true, coerced: resolved.resolved, error: null, warning: null };
+                }
+
+                // String that looks like a number
+                if (typeof resolved.resolved === 'string') {
+                    const parsed = parseFloat(resolved.resolved);
+                    if (!isNaN(parsed)) {
+                        if (expectedType === 'integer') {
+                            const coerced = Math.round(parsed);
+                            return {
+                                valid: true,
+                                coerced: coerced,
+                                error: null,
+                                warning: `Converted string "${resolved.resolved}" to integer ${coerced}`
+                            };
+                        }
+                        return {
+                            valid: true,
+                            coerced: parsed,
+                            error: null,
+                            warning: `Converted string "${resolved.resolved}" to number ${parsed}`
+                        };
+                    }
+                }
+
+                return {
+                    valid: false,
+                    coerced: null,
+                    error: `Parameter "${paramName}" expects a ${expectedType}, got "${typeof value}" with value "${value}". ` +
+                        `Use a numeric value (e.g., 12, 24) or time expressions like "last_2_years".`,
+                    warning: null
+                };
+            }
+
+            case 'boolean': {
+                if (typeof value === 'boolean') {
+                    return { valid: true, coerced: value, error: null, warning: null };
+                }
+                // Coerce common boolean-like values
+                if (value === 'true' || value === 1 || value === '1') {
+                    return { valid: true, coerced: true, error: null, warning: `Coerced "${value}" to true` };
+                }
+                if (value === 'false' || value === 0 || value === '0') {
+                    return { valid: true, coerced: false, error: null, warning: `Coerced "${value}" to false` };
+                }
+                return {
+                    valid: false,
+                    coerced: null,
+                    error: `Parameter "${paramName}" expects a boolean, got "${typeof value}" with value "${value}". Use true or false.`,
+                    warning: null
+                };
+            }
+
+            case 'string': {
+                if (typeof value === 'string') {
+                    return { valid: true, coerced: value, error: null, warning: null };
+                }
+                // Coerce numbers and booleans to strings
+                if (typeof value === 'number' || typeof value === 'boolean') {
+                    const coerced = String(value);
+                    return { valid: true, coerced: coerced, error: null, warning: `Converted ${typeof value} to string "${coerced}"` };
+                }
+                return {
+                    valid: false,
+                    coerced: null,
+                    error: `Parameter "${paramName}" expects a string, got "${typeof value}"`,
+                    warning: null
+                };
+            }
+
+            case 'array': {
+                if (Array.isArray(value)) {
+                    return { valid: true, coerced: value, error: null, warning: null };
+                }
+                // Coerce single value to array
+                if (typeof value === 'string' || typeof value === 'number') {
+                    return { valid: true, coerced: [value], error: null, warning: `Wrapped single value in array` };
+                }
+                return {
+                    valid: false,
+                    coerced: null,
+                    error: `Parameter "${paramName}" expects an array, got "${typeof value}"`,
+                    warning: null
+                };
+            }
+
+            default:
+                // Unknown type - allow through with warning
+                return { valid: true, coerced: value, error: null, warning: null };
+        }
+    }
+
     /**
      * Validate and normalize tool arguments before execution
      * Validates enum values and normalizes common terms to NetSuite codes
+     * ENHANCED with strict type validation and relative time resolution
      *
      * @param {string} toolName - Name of the tool
      * @param {Object} args - Original arguments
@@ -390,6 +669,26 @@ define([
             }
         }
 
+        // ═══════════════════════════════════════════════════════════════════════
+        // FIX 1: STRICT TYPE VALIDATION - Validate all parameter types
+        // This catches type mismatches (string where number expected) BEFORE execution
+        // ═══════════════════════════════════════════════════════════════════════
+        for (const [paramName, paramDef] of Object.entries(props)) {
+            if (args[paramName] !== undefined && args[paramName] !== null) {
+                const typeResult = validateParameterType(paramName, args[paramName], paramDef);
+
+                if (!typeResult.valid) {
+                    errors.push(typeResult.error);
+                } else if (typeResult.coerced !== args[paramName]) {
+                    // Value was coerced - update normalized args
+                    normalizedArgs[paramName] = typeResult.coerced;
+                    if (typeResult.warning) {
+                        warnings.push(typeResult.warning);
+                    }
+                }
+            }
+        }
+
         // Validate transaction_type if present
         if (args.transaction_type && props.transaction_type) {
             const result = normalizeTransactionType(args.transaction_type);
@@ -405,8 +704,8 @@ define([
         for (const [paramName, paramDef] of Object.entries(props)) {
             if (paramName === 'transaction_type') continue; // Already handled above
 
-            if (paramDef.enum && args[paramName] !== undefined) {
-                const value = args[paramName];
+            if (paramDef.enum && normalizedArgs[paramName] !== undefined) {
+                const value = normalizedArgs[paramName];
                 if (!paramDef.enum.includes(value)) {
                     errors.push(
                         `Invalid ${paramName} "${value}". Valid values: ${paramDef.enum.join(', ')}`
