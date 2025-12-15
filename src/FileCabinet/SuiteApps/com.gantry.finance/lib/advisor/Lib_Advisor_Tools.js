@@ -1964,16 +1964,17 @@ Key metrics:
                     customerFilter = `AND inv.entity = ${args.customer_id}`;
                 }
 
-                const periodFilter = buildPeriodFilter(args.period || 'last_365_days', 'pmt.trandate');
+                // Use closedate filter - when invoices were paid/closed
+                const periodFilter = buildPeriodFilter(args.period || 'last_365_days', 'inv.closedate');
                 const minPayments = args.min_payments || 1;
                 const limit = args.limit || 50;
 
                 // Determine sort order
                 const sortMappings = {
                     'avg_days_to_pay': 'avg_days_to_pay',
-                    'dso': 'dso',
+                    'dso': 'avg_days_to_pay',  // DSO is same as avg_days_to_pay
                     'on_time_rate': 'on_time_rate',
-                    'payment_count': 'payment_count',
+                    'payment_count': 'invoice_count',
                     'total_paid': 'total_paid',
                     'customer_name': 'customer_name'
                 };
@@ -1982,44 +1983,48 @@ Key metrics:
                 // For payment speed, ascending means fastest first (lower days = faster)
                 const orderBy = `${sortCol} ${sortDir}`;
 
-                // Query: Match invoices to their payments via appliedtotransaction
-                // This links CustPymt records to the CustInvc they paid
+                // ═══════════════════════════════════════════════════════════════════════
+                // FIXED: Use closedate approach instead of appliedtotransaction
+                // closedate = date invoice was fully paid
+                // closedate - trandate = days to pay
+                // This is simpler and doesn't require linking payment transactions
+                // ═══════════════════════════════════════════════════════════════════════
                 const query = `
                     SELECT
                         c.id AS customer_id,
                         c.companyname AS customer_name,
-                        COUNT(DISTINCT pmt.id) AS payment_count,
-                        COUNT(DISTINCT inv.id) AS invoice_count,
-                        SUM(pmt.foreigntotal) AS total_paid,
-                        ROUND(AVG(pmt.trandate - inv.trandate), 1) AS avg_days_to_pay,
-                        ROUND(AVG(pmt.trandate - inv.trandate), 1) AS dso,
-                        MIN(pmt.trandate - inv.trandate) AS fastest_payment_days,
-                        MAX(pmt.trandate - inv.trandate) AS slowest_payment_days,
+                        COUNT(*) AS invoice_count,
+                        SUM(inv.foreigntotal) AS total_paid,
+                        ROUND(AVG(inv.closedate - inv.trandate), 1) AS avg_days_to_pay,
+                        MIN(inv.closedate - inv.trandate) AS fastest_payment_days,
+                        MAX(inv.closedate - inv.trandate) AS slowest_payment_days,
                         ROUND(
-                            100.0 * SUM(CASE WHEN pmt.trandate <= inv.duedate THEN 1 ELSE 0 END) /
+                            100.0 * SUM(CASE WHEN inv.closedate <= inv.duedate THEN 1 ELSE 0 END) /
                             NULLIF(COUNT(*), 0),
                             1
                         ) AS on_time_rate,
                         ROUND(
-                            100.0 * SUM(CASE WHEN pmt.trandate > inv.duedate THEN 1 ELSE 0 END) /
+                            100.0 * SUM(CASE WHEN inv.closedate > inv.duedate THEN 1 ELSE 0 END) /
                             NULLIF(COUNT(*), 0),
                             1
-                        ) AS late_rate
-                    FROM transaction pmt
-                    INNER JOIN transactionline pmtline ON pmtline.transaction = pmt.id
-                        AND pmtline.mainline = 'F'
-                    INNER JOIN transaction inv ON inv.id = ABS(pmtline.appliedtotransaction)
-                        AND inv.type = 'CustInvc'
+                        ) AS late_rate,
+                        ROUND(
+                            AVG(CASE WHEN inv.closedate > inv.duedate
+                                THEN inv.closedate - inv.duedate
+                                ELSE 0 END),
+                            1
+                        ) AS avg_days_late
+                    FROM transaction inv
                     INNER JOIN customer c ON c.id = inv.entity
-                    WHERE pmt.type = 'CustPymt'
-                        AND pmt.posting = 'T'
-                        AND pmt.voided = 'F'
+                    WHERE inv.type = 'CustInvc'
                         AND inv.posting = 'T'
                         AND inv.voided = 'F'
+                        AND inv.status = 'CustInvc:B'
+                        AND inv.closedate IS NOT NULL
                         AND ${periodFilter}
                         ${customerFilter}
                     GROUP BY c.id, c.companyname
-                    HAVING COUNT(DISTINCT pmt.id) >= ${minPayments}
+                    HAVING COUNT(*) >= ${minPayments}
                     ORDER BY ${orderBy}
                     FETCH FIRST ${limit} ROWS ONLY
                 `;
@@ -2103,16 +2108,17 @@ Key metrics:
                     vendorFilter = `AND bill.entity = ${args.vendor_id}`;
                 }
 
-                const periodFilter = buildPeriodFilter(args.period || 'last_365_days', 'pmt.trandate');
+                // Use closedate filter - when bills were paid/closed
+                const periodFilter = buildPeriodFilter(args.period || 'last_365_days', 'bill.closedate');
                 const minPayments = args.min_payments || 1;
                 const limit = args.limit || 50;
 
                 // Determine sort order
                 const sortMappings = {
                     'avg_days_to_pay': 'avg_days_to_pay',
-                    'dpo': 'dpo',
+                    'dpo': 'avg_days_to_pay',  // DPO is same as avg_days_to_pay
                     'on_time_rate': 'on_time_rate',
-                    'payment_count': 'payment_count',
+                    'payment_count': 'bill_count',
                     'total_paid': 'total_paid',
                     'vendor_name': 'vendor_name'
                 };
@@ -2120,49 +2126,53 @@ Key metrics:
                 const sortDir = args.sort_direction === 'desc' ? 'DESC' : 'ASC';
                 const orderBy = `${sortCol} ${sortDir}`;
 
-                // Query: Match bills to their payments via appliedtotransaction
-                // This links VendPymt records to the VendBill they paid
+                // ═══════════════════════════════════════════════════════════════════════
+                // FIXED: Use closedate approach instead of appliedtotransaction
+                // closedate = date bill was fully paid
+                // closedate - trandate = days to pay
+                // This is simpler and doesn't require linking payment transactions
+                // ═══════════════════════════════════════════════════════════════════════
                 const query = `
                     SELECT
                         v.id AS vendor_id,
                         v.companyname AS vendor_name,
-                        COUNT(DISTINCT pmt.id) AS payment_count,
-                        COUNT(DISTINCT bill.id) AS bill_count,
-                        SUM(ABS(pmt.foreigntotal)) AS total_paid,
-                        ROUND(AVG(pmt.trandate - bill.trandate), 1) AS avg_days_to_pay,
-                        ROUND(AVG(pmt.trandate - bill.trandate), 1) AS dpo,
-                        MIN(pmt.trandate - bill.trandate) AS fastest_payment_days,
-                        MAX(pmt.trandate - bill.trandate) AS slowest_payment_days,
+                        COUNT(*) AS bill_count,
+                        SUM(ABS(bill.foreigntotal)) AS total_paid,
+                        ROUND(AVG(bill.closedate - bill.trandate), 1) AS avg_days_to_pay,
+                        MIN(bill.closedate - bill.trandate) AS fastest_payment_days,
+                        MAX(bill.closedate - bill.trandate) AS slowest_payment_days,
                         ROUND(
-                            100.0 * SUM(CASE WHEN pmt.trandate <= bill.duedate THEN 1 ELSE 0 END) /
+                            100.0 * SUM(CASE WHEN bill.closedate <= bill.duedate THEN 1 ELSE 0 END) /
                             NULLIF(COUNT(*), 0),
                             1
                         ) AS on_time_rate,
                         ROUND(
-                            100.0 * SUM(CASE WHEN pmt.trandate < bill.duedate THEN 1 ELSE 0 END) /
+                            100.0 * SUM(CASE WHEN bill.closedate < bill.duedate THEN 1 ELSE 0 END) /
                             NULLIF(COUNT(*), 0),
                             1
                         ) AS early_rate,
                         ROUND(
-                            100.0 * SUM(CASE WHEN pmt.trandate > bill.duedate THEN 1 ELSE 0 END) /
+                            100.0 * SUM(CASE WHEN bill.closedate > bill.duedate THEN 1 ELSE 0 END) /
                             NULLIF(COUNT(*), 0),
                             1
-                        ) AS late_rate
-                    FROM transaction pmt
-                    INNER JOIN transactionline pmtline ON pmtline.transaction = pmt.id
-                        AND pmtline.mainline = 'F'
-                    INNER JOIN transaction bill ON bill.id = ABS(pmtline.appliedtotransaction)
-                        AND bill.type = 'VendBill'
+                        ) AS late_rate,
+                        ROUND(
+                            AVG(CASE WHEN bill.closedate > bill.duedate
+                                THEN bill.closedate - bill.duedate
+                                ELSE 0 END),
+                            1
+                        ) AS avg_days_late
+                    FROM transaction bill
                     INNER JOIN vendor v ON v.id = bill.entity
-                    WHERE pmt.type = 'VendPymt'
-                        AND pmt.posting = 'T'
-                        AND pmt.voided = 'F'
+                    WHERE bill.type = 'VendBill'
                         AND bill.posting = 'T'
                         AND bill.voided = 'F'
+                        AND bill.status = 'VendBill:B'
+                        AND bill.closedate IS NOT NULL
                         AND ${periodFilter}
                         ${vendorFilter}
                     GROUP BY v.id, v.companyname
-                    HAVING COUNT(DISTINCT pmt.id) >= ${minPayments}
+                    HAVING COUNT(*) >= ${minPayments}
                     ORDER BY ${orderBy}
                     FETCH FIRST ${limit} ROWS ONLY
                 `;

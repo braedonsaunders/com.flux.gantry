@@ -2529,6 +2529,23 @@ Now write your analysis:`;
         }
 
         // ═══════════════════════════════════════════════════════════════════════
+        // SCHEMA DISCOVERY NEEDED: Route LLM to discover valid fields
+        // Triggered when SYNTHESIZE hits "field not found" errors
+        // ═══════════════════════════════════════════════════════════════════════
+        if (state.synthesize?.schemaDiscoveryNeeded) {
+            const hint = state.synthesize.schemaDiscoveryNeeded;
+            lines.push('\n🔎 SCHEMA DISCOVERY REQUIRED:');
+            lines.push(`  ⚠️ A query failed because field "${hint.error.match(/field\s+['"]?(\w+)['"]?/i)?.[1] || 'unknown'}" does not exist.`);
+            lines.push(`  Table: ${hint.tableName}`);
+            lines.push(`  `);
+            lines.push(`  ACTION REQUIRED: Use get_record_schema to discover valid field names:`);
+            lines.push(`    get_record_schema({ record_type: "${hint.tableName}" })`);
+            lines.push(`  `);
+            lines.push(`  After discovering the schema, rewrite your query with the correct field names.`);
+            lines.push(`  This is better than guessing - the schema will show exactly what fields exist.`);
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
         // SYNTHESIZE TRIGGER: Add hint if conditions are met for custom SQL
         // ═══════════════════════════════════════════════════════════════════════
         const synthesizeHint = detectSynthesizeTrigger(state);
@@ -4825,7 +4842,46 @@ Now write your analysis:`;
                     duration: queryDuration
                 });
 
-                // Loop back to synthesize (self-correction)
+                // ═══════════════════════════════════════════════════════════════════════
+                // AGENTIC FIX: Detect schema errors and route to REASON_ACT for discovery
+                // Instead of blindly retrying, let the agent use get_record_schema
+                // ═══════════════════════════════════════════════════════════════════════
+                const isSchemaError = /field\s+['"]?(\w+)['"]?\s+(for record\s+['"]?(\w+)['"]?\s+)?was not found/i.test(errorMsg) ||
+                                      /column\s+['"]?(\w+)['"]?\s+not found/i.test(errorMsg) ||
+                                      /invalid.*column/i.test(errorMsg);
+
+                if (isSchemaError) {
+                    // Extract table name from error if possible
+                    const tableMatch = errorMsg.match(/for record\s+['"]?(\w+)['"]?/i) ||
+                                       errorMsg.match(/table\s+['"]?(\w+)['"]?/i);
+                    const tableName = tableMatch ? tableMatch[1].toLowerCase() : 'unknown';
+
+                    log.debug('SCA SYNTHESIZE - schema error detected, routing to REASON_ACT for discovery', {
+                        tableName: tableName,
+                        error: errorMsg
+                    });
+
+                    // Store hint for REASON_ACT to use schema discovery
+                    state.synthesize.schemaDiscoveryNeeded = {
+                        tableName: tableName,
+                        error: errorMsg,
+                        hint: `Schema error detected. Use get_record_schema({ record_type: "${tableName}" }) to discover valid field names for this table, then retry with correct fields.`
+                    };
+
+                    // Add to journey for visibility
+                    state.reflection.journey.push({
+                        action: 'schema_error_detected',
+                        tableName: tableName,
+                        error: errorMsg,
+                        recommendation: 'Use get_record_schema to discover valid fields'
+                    });
+
+                    // Route to REASON_ACT instead of blind retry
+                    state.phase = PHASES.REASON_ACT;
+                    return { success: true, nextPhase: PHASES.REASON_ACT };
+                }
+
+                // Loop back to synthesize (self-correction) for non-schema errors
                 state.phase = PHASES.SYNTHESIZE;
                 return { success: true, nextPhase: PHASES.SYNTHESIZE };
             }
