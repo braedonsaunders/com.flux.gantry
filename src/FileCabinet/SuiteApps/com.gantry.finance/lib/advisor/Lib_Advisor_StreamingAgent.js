@@ -2150,16 +2150,44 @@ accountingperiod
    - ADD_MONTHS(CURRENT_DATE, -12)
    - TRUNC(date, 'MM') for month start, 'Q' for quarter, 'IW' for week
 
-4. BOOLEANS: Use 'T' for true, 'F' for false
+   DATE/TIME EXTRACTION (Oracle TO_CHAR):
+   - TO_CHAR(date, 'D') → Day of week (1=Sunday, 7=Saturday)
+   - TO_CHAR(date, 'DY') → Day name abbrev (SUN, MON, TUE...)
+   - TO_CHAR(date, 'HH24') → Hour in 24h format (00-23)
+   - TO_CHAR(date, 'MI') → Minutes (00-59)
+   - TO_CHAR(date, 'YYYY') → Year
+   - TO_CHAR(date, 'MM') → Month number (01-12)
+   - TO_CHAR(date, 'DD') → Day of month (01-31)
+
+   WEEKEND/AFTER-HOURS EXAMPLE:
+   SELECT * FROM transaction t
+   WHERE t.type = 'Journal' AND t.posting = 'T' AND t.voided = 'F'
+   AND (
+     TO_CHAR(t.lastmodifieddate, 'D') IN ('1', '7')  -- Weekend (Sun=1, Sat=7)
+     OR TO_CHAR(t.lastmodifieddate, 'HH24') < '09'   -- Before 9am
+     OR TO_CHAR(t.lastmodifieddate, 'HH24') >= '17'  -- After 5pm
+   )
+   ⚠️ NOTE: trandate is DATE only (no time). Use lastmodifieddate for timestamp.
+
+4. ⚠️ TABLE NAME CLARIFICATIONS - AVOID COMMON MISTAKES:
+   ✗ journalentry → DOES NOT EXIST! Use: transaction WHERE type = 'Journal'
+   ✗ invoice → DOES NOT EXIST! Use: transaction WHERE type = 'CustInvc'
+   ✗ bill → DOES NOT EXIST! Use: transaction WHERE type = 'VendBill'
+   ✗ payment → DOES NOT EXIST! Use: transaction WHERE type = 'CustPymt' or 'VendPymt'
+   ✗ calendar → DOES NOT EXIST! Use TO_CHAR() for day/date calculations
+
+   ALL transactions are in the 'transaction' table, differentiated by 'type' field!
+
+5. BOOLEANS: Use 'T' for true, 'F' for false
    ✓ WHERE posting = 'T' AND voided = 'F'
 
-5. STRING COMPARISON: Use single quotes
+6. STRING COMPARISON: Use single quotes
    ✓ WHERE type = 'VendBill'
 
-6. CASE STATEMENTS for conditional aggregation:
+7. CASE STATEMENTS for conditional aggregation:
    SUM(CASE WHEN condition THEN value ELSE 0 END)
 
-7. CTEs (WITH clause): Supported! Rules for CTEs:
+8. CTEs (WITH clause): Supported! Rules for CTEs:
    - The main SELECT must reference a real table (not just CTEs)
    - Use CROSS JOIN to bring in CTE values
    - For row limits with ORDER BY, wrap entire CTE query: SELECT * FROM (WITH ... SELECT ... ORDER BY ...) WHERE ROWNUM <= N
@@ -6527,12 +6555,39 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
             if (/netamount.*not found/i.test(lastError)) {
                 fieldCorrections.push('- "netamount" is only on transactionline, not transaction');
             }
+            if (/datecreated.*not found/i.test(lastError)) {
+                fieldCorrections.push('- "datecreated" does NOT exist! Use "lastmodifieddate" for timestamps');
+            }
+            if (/subsidiary.*NOT_EXPOSED/i.test(lastError)) {
+                fieldCorrections.push('- "subsidiary" is NOT_EXPOSED in SuiteQL. Remove this field from queries.');
+            }
+
+            // Include table correction if available
+            if (state.synthesize.tableCorrection) {
+                const tc = state.synthesize.tableCorrection;
+                fieldCorrections.push(`- TABLE "${tc.badTable}" does NOT exist! ${tc.correction}`);
+            }
 
             const correctionHints = fieldCorrections.length > 0
-                ? `\n\nCRITICAL FIELD CORRECTIONS:\n${fieldCorrections.join('\n')}`
+                ? `\n\nCRITICAL CORRECTIONS:\n${fieldCorrections.join('\n')}`
                 : '';
 
-            errorContext = `PREVIOUS QUERY FAILED:\n\`\`\`sql\n${lastQuery}\n\`\`\`\n\nERROR: ${lastError}${correctionHints}\n\nFix the error and try again. Common fixes:\n- Use ROWNUM for row limits: SELECT * FROM (your_query ORDER BY ...) WHERE ROWNUM <= N\n- Check column names against the schema above\n- Use BUILTIN.DF() for display names\n- Verify table joins are correct`;
+            errorContext = `⚠️ PREVIOUS QUERY FAILED - DO NOT REPEAT THE SAME MISTAKES ⚠️
+
+FAILED QUERY:
+\`\`\`sql
+${lastQuery}
+\`\`\`
+
+ERROR MESSAGE: ${lastError}${correctionHints}
+
+FIX THE ERROR. Common fixes:
+- Use ROWNUM for row limits: SELECT * FROM (your_query ORDER BY ...) WHERE ROWNUM <= N
+- Check column names against the schema above
+- All transaction types are in 'transaction' table with 'type' field
+- Use BUILTIN.DF() for display names
+- Use lastmodifieddate for timestamps (not datecreated)
+- Use TO_CHAR() for date/time extraction, not HOUR() or DATEONLY()`;
         }
 
         const prompt = SYNTHESIZE_PROMPT
@@ -6626,25 +6681,91 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
                 // AGENTIC FIX: Detect schema errors and route to REASON_ACT for discovery
                 // Instead of blindly retrying, let the agent use get_record_schema
                 // ═══════════════════════════════════════════════════════════════════════
-                const isSchemaError = /field\s+['"]?(\w+)['"]?\s+(for record\s+['"]?(\w+)['"]?\s+)?was not found/i.test(errorMsg) ||
-                                      /column\s+['"]?(\w+)['"]?\s+not found/i.test(errorMsg) ||
-                                      /invalid.*column/i.test(errorMsg);
+                const isFieldError = /field\s+['"]?(\w+)['"]?\s+(for record\s+['"]?(\w+)['"]?\s+)?was not found/i.test(errorMsg) ||
+                                     /column\s+['"]?(\w+)['"]?\s+not found/i.test(errorMsg) ||
+                                     /invalid.*column/i.test(errorMsg);
 
-                if (isSchemaError) {
+                const isRecordNotFoundError = /record\s+['"]?(\w+)['"]?\s+was not found/i.test(errorMsg);
+
+                // Detect common table name mistakes and provide immediate correction
+                const tableCorrectionMap = {
+                    'journalentry': "Use: transaction WHERE type = 'Journal'",
+                    'invoice': "Use: transaction WHERE type = 'CustInvc'",
+                    'bill': "Use: transaction WHERE type = 'VendBill'",
+                    'payment': "Use: transaction WHERE type = 'CustPymt' or 'VendPymt'",
+                    'calendar': 'Calendar table does not exist. Use TO_CHAR(date, format) for date calculations.',
+                    'journal': "Use: transaction WHERE type = 'Journal'"
+                };
+
+                if (isRecordNotFoundError) {
+                    const recordMatch = errorMsg.match(/record\s+['"]?(\w+)['"]?\s+was not found/i);
+                    const badTableName = recordMatch ? recordMatch[1].toLowerCase() : 'unknown';
+
+                    log.debug('SCA SYNTHESIZE - record not found error', {
+                        badTableName: badTableName,
+                        error: errorMsg,
+                        failedQuery: generatedSql?.substring(0, 200)
+                    });
+
+                    // Check if we have a known correction
+                    const correction = tableCorrectionMap[badTableName];
+                    if (correction) {
+                        // Store correction hint for the retry
+                        state.synthesize.tableCorrection = {
+                            badTable: badTableName,
+                            correction: correction,
+                            failedQuery: generatedSql
+                        };
+
+                        // Add to error context for next iteration
+                        state.synthesize.lastError = `${errorMsg}\n\n⚠️ TABLE CORRECTION: "${badTableName}" does not exist! ${correction}`;
+
+                        log.audit('SCA SYNTHESIZE - providing table correction', {
+                            badTable: badTableName,
+                            correction: correction
+                        });
+
+                        // Loop back to synthesize with correction hint
+                        state.phase = PHASES.SYNTHESIZE;
+                        return { success: true, nextPhase: PHASES.SYNTHESIZE };
+                    }
+
+                    // Unknown table - route to schema discovery
+                    state.synthesize.schemaDiscoveryNeeded = {
+                        tableName: badTableName,
+                        error: errorMsg,
+                        failedQuery: generatedSql,
+                        hint: `Table "${badTableName}" does not exist. Use explore_schema to discover available tables.`
+                    };
+
+                    state.reflection.journey.push({
+                        action: 'record_not_found',
+                        tableName: badTableName,
+                        error: errorMsg,
+                        recommendation: 'Use explore_schema to discover available tables'
+                    });
+
+                    state.phase = PHASES.REASON_ACT;
+                    return { success: true, nextPhase: PHASES.REASON_ACT };
+                }
+
+                if (isFieldError) {
                     // Extract table name from error if possible
                     const tableMatch = errorMsg.match(/for record\s+['"]?(\w+)['"]?/i) ||
                                        errorMsg.match(/table\s+['"]?(\w+)['"]?/i);
-                    const tableName = tableMatch ? tableMatch[1].toLowerCase() : 'unknown';
+                    const tableName = tableMatch ? tableMatch[1].toLowerCase() : 'transaction';
 
-                    log.debug('SCA SYNTHESIZE - schema error detected, routing to REASON_ACT for discovery', {
+                    log.debug('SCA SYNTHESIZE - field error detected, routing to REASON_ACT for discovery', {
                         tableName: tableName,
-                        error: errorMsg
+                        error: errorMsg,
+                        failedQuery: generatedSql?.substring(0, 200)
                     });
 
                     // Store hint for REASON_ACT to use schema discovery
                     state.synthesize.schemaDiscoveryNeeded = {
                         tableName: tableName,
                         error: errorMsg,
+                        failedQuery: generatedSql,
                         hint: `Schema error detected. Use get_record_schema({ record_type: "${tableName}" }) to discover valid field names for this table, then retry with correct fields.`
                     };
 

@@ -5566,10 +5566,7 @@ Can filter by period, memo text, account, and amount.`,
                         type: 'string',
                         description: 'Filter by memo text (partial match)'
                     },
-                    subsidiary_id: {
-                        type: 'number',
-                        description: 'Filter by subsidiary'
-                    },
+                    // NOTE: subsidiary_id removed - field NOT_EXPOSED in SuiteQL
                     min_amount: {
                         type: 'number',
                         description: 'Minimum line amount'
@@ -5597,10 +5594,12 @@ Can filter by period, memo text, account, and amount.`,
                 const accountFilter = args.account_id ? `AND tal.account = ${args.account_id}` : '';
                 const memoFilter = args.memo_contains ?
                     `AND (LOWER(t.memo) LIKE LOWER('%${escapeSqlLike(args.memo_contains)}%') ESCAPE '\\' OR LOWER(tl.memo) LIKE LOWER('%${escapeSqlLike(args.memo_contains)}%') ESCAPE '\\')` : '';
-                const subsidiaryFilter = args.subsidiary_id ? `AND t.subsidiary = ${args.subsidiary_id}` : '';
+                // NOTE: subsidiary filter removed - field NOT_EXPOSED in SuiteQL
                 const minAmountFilter = args.min_amount ? `AND ABS(COALESCE(tal.debit, 0) - COALESCE(tal.credit, 0)) >= ${args.min_amount}` : '';
                 const createdByFilter = args.created_by ? `AND t.createdby = ${args.created_by}` : '';
 
+                // NOTE: 'subsidiary' field is NOT_EXPOSED in SuiteQL search channel
+                // NOTE: 'datecreated' doesn't exist on transaction - use lastmodifieddate if needed
                 let query;
                 if (args.include_lines) {
                     // Line-level detail
@@ -5620,7 +5619,8 @@ Can filter by period, memo text, account, and amount.`,
                             tl.class AS class_id,
                             BUILTIN.DF(tl.class) AS class_name,
                             t.createdby AS created_by_id,
-                            BUILTIN.DF(t.createdby) AS created_by_name
+                            BUILTIN.DF(t.createdby) AS created_by_name,
+                            t.lastmodifieddate AS last_modified
                         FROM transaction t
                         INNER JOIN transactionaccountingline tal ON tal.transaction = t.id
                         LEFT JOIN transactionline tl ON tl.transaction = t.id AND tl.id = tal.transactionline
@@ -5630,7 +5630,6 @@ Can filter by period, memo text, account, and amount.`,
                             AND ${periodFilter}
                             ${accountFilter}
                             ${memoFilter}
-                            ${subsidiaryFilter}
                             ${minAmountFilter}
                             ${createdByFilter}
                         ORDER BY t.trandate DESC, t.id, tal.id
@@ -5638,20 +5637,19 @@ Can filter by period, memo text, account, and amount.`,
                     `;
                 } else {
                     // Header summary
+                    // FIX: Removed 'subsidiary' (NOT_EXPOSED) and 'datecreated' (doesn't exist)
                     query = `
                         SELECT
                             t.id AS je_id,
                             t.tranid AS je_number,
                             t.trandate AS je_date,
                             t.memo,
-                            t.subsidiary AS subsidiary_id,
-                            BUILTIN.DF(t.subsidiary) AS subsidiary_name,
                             SUM(COALESCE(tal.debit, 0)) AS total_debit,
                             SUM(COALESCE(tal.credit, 0)) AS total_credit,
                             COUNT(DISTINCT tal.account) AS account_count,
                             t.createdby AS created_by_id,
                             BUILTIN.DF(t.createdby) AS created_by_name,
-                            t.datecreated AS created_date
+                            t.lastmodifieddate AS last_modified
                         FROM transaction t
                         INNER JOIN transactionaccountingline tal ON tal.transaction = t.id
                         LEFT JOIN transactionline tl ON tl.transaction = t.id AND tl.id = tal.transactionline
@@ -5661,10 +5659,9 @@ Can filter by period, memo text, account, and amount.`,
                             AND ${periodFilter}
                             ${accountFilter}
                             ${memoFilter}
-                            ${subsidiaryFilter}
                             ${createdByFilter}
-                        GROUP BY t.id, t.tranid, t.trandate, t.memo, t.subsidiary, BUILTIN.DF(t.subsidiary),
-                                 t.createdby, BUILTIN.DF(t.createdby), t.datecreated
+                        GROUP BY t.id, t.tranid, t.trandate, t.memo,
+                                 t.createdby, BUILTIN.DF(t.createdby), t.lastmodifieddate
                         ${args.min_amount ? `HAVING SUM(COALESCE(tal.debit, 0)) >= ${args.min_amount}` : ''}
                         ORDER BY t.trandate DESC
                         FETCH FIRST ${limit} ROWS ONLY
