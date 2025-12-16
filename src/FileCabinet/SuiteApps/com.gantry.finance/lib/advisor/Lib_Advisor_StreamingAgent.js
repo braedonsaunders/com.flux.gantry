@@ -772,6 +772,65 @@ Reply JSON only:
         return { shouldTrigger: false };
     }
 
+    /**
+     * Generate a user-friendly explanation when circuit breaker triggers
+     * Instead of technical "No progress detected", explains what was searched and not found
+     * @param {Object} state - Current agent state with resolved entities and intent
+     * @param {Object} circuitBreaker - The circuit breaker result
+     * @returns {string} A user-friendly explanation
+     */
+    function generateNoDataExplanation(state, circuitBreaker) {
+        const resolvedEntities = state.resolvedEntities || {};
+        const intent = state.intent || {};
+        const transactionContext = intent.transaction_context || intent.transactionContext;
+
+        // Get entity names
+        const entityNames = Object.values(resolvedEntities)
+            .filter(e => e && e.name)
+            .map(e => e.name);
+
+        // Build context-aware message
+        const parts = [];
+
+        // What were we looking for?
+        let searchTarget = 'the requested data';
+        if (transactionContext) {
+            const contextNames = {
+                'bills': 'bills',
+                'bill': 'bills',
+                'VendBill': 'vendor bills',
+                'CustInvc': 'customer invoices',
+                'invoices': 'invoices',
+                'invoice': 'invoices',
+                'payments': 'payments',
+                'VendPymt': 'vendor payments',
+                'CustPymt': 'customer payments'
+            };
+            searchTarget = contextNames[transactionContext] || transactionContext;
+        } else if (intent.intent === 'entity_transactions') {
+            searchTarget = 'transactions';
+        } else if (intent.semantic_topics?.includes('payables')) {
+            searchTarget = 'payables data';
+        } else if (intent.semantic_topics?.includes('receivables')) {
+            searchTarget = 'receivables data';
+        }
+
+        // Who were we looking for?
+        if (entityNames.length > 0) {
+            const entityList = entityNames.join(', ');
+            parts.push(`I couldn't find any ${searchTarget} for ${entityList}.`);
+            parts.push(`This entity may not have any ${searchTarget} recorded in the system, or they may be under a different entity name.`);
+        } else {
+            parts.push(`I wasn't able to find ${searchTarget} matching your query.`);
+            parts.push('The data may not exist in the system, or you may need to refine your search criteria.');
+        }
+
+        // Add suggestion
+        parts.push('Try asking about a different time period or check if the entity name is correct.');
+
+        return parts.join(' ');
+    }
+
     // ═══════════════════════════════════════════════════════════════════════════
     // LIGHTWEIGHT PROMPTS
     // ═══════════════════════════════════════════════════════════════════════════
@@ -1195,8 +1254,8 @@ NETSUITE SUITEQL SCHEMA:
 transaction (Header-level transactions)
   - id, tranid, trandate, type, entity, subsidiary, status
   - foreigntotal (USE THIS for amounts - 'amount' is NOT exposed!)
-  - foreignamountunpaid, amountremaining, duedate
-  - posting ('T'/'F'), voided ('T'/'F'), memo
+  - foreignamountunpaid (USE THIS for unpaid/remaining amounts - NOT 'amountremaining'!)
+  - duedate, posting ('T'/'F'), voided ('T'/'F'), memo
   - ALWAYS filter: posting = 'T' AND voided = 'F'
   - Types: CustInvc, CustPymt, VendBill, VendPymt, CashSale, Check, Journal, ExpRept
 
@@ -3489,7 +3548,8 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
                 });
 
                 state.reflection.gaveUp = true;
-                state.reflection.giveUpExplanation = circuitBreaker.reason;
+                // Generate user-friendly message instead of raw technical error
+                state.reflection.giveUpExplanation = generateNoDataExplanation(state, circuitBreaker);
                 state.phase = PHASES.RESPOND;
                 return { success: true, nextPhase: PHASES.RESPOND };
             }
@@ -5250,9 +5310,29 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
         const previousContext = buildSynthesizeContext(state);
 
         // Build error context if this is a retry
-        const errorContext = state.synthesize.lastError ?
-            `PREVIOUS QUERY FAILED:\n\`\`\`sql\n${state.synthesize.queries[state.synthesize.queries.length - 1]?.sql || 'N/A'}\n\`\`\`\n\nERROR: ${state.synthesize.lastError}\n\nFix the error and try again. Common fixes:\n- Use ROWNUM for row limits: SELECT * FROM (your_query ORDER BY ...) WHERE ROWNUM <= N\n- Check column names against the schema\n- Use BUILTIN.DF() for display names\n- Verify table joins are correct` :
-            '';
+        let errorContext = '';
+        if (state.synthesize.lastError) {
+            const lastError = state.synthesize.lastError;
+            const lastQuery = state.synthesize.queries[state.synthesize.queries.length - 1]?.sql || 'N/A';
+
+            // Build field correction hints for common mistakes
+            const fieldCorrections = [];
+            if (/amountremaining/i.test(lastError) || /amountremaining/i.test(lastQuery)) {
+                fieldCorrections.push('- "amountremaining" does NOT exist! Use "foreignamountunpaid" for unpaid amounts');
+            }
+            if (/\bamount\b(?!unpaid|remaining)/i.test(lastError)) {
+                fieldCorrections.push('- "amount" is NOT exposed on transaction! Use "foreigntotal" for amounts');
+            }
+            if (/netamount.*not found/i.test(lastError)) {
+                fieldCorrections.push('- "netamount" is only on transactionline, not transaction');
+            }
+
+            const correctionHints = fieldCorrections.length > 0
+                ? `\n\nCRITICAL FIELD CORRECTIONS:\n${fieldCorrections.join('\n')}`
+                : '';
+
+            errorContext = `PREVIOUS QUERY FAILED:\n\`\`\`sql\n${lastQuery}\n\`\`\`\n\nERROR: ${lastError}${correctionHints}\n\nFix the error and try again. Common fixes:\n- Use ROWNUM for row limits: SELECT * FROM (your_query ORDER BY ...) WHERE ROWNUM <= N\n- Check column names against the schema above\n- Use BUILTIN.DF() for display names\n- Verify table joins are correct`;
+        }
 
         const prompt = SYNTHESIZE_PROMPT
             .replace('{history_context}', buildHistoryContext(state))
