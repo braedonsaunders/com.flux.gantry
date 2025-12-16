@@ -1044,7 +1044,134 @@ Reply JSON only:
             };
         }
 
+        // ═══════════════════════════════════════════════════════════════════════
+        // SCHEMA GAP DETECTION - Data returned but wrong columns for the question
+        // This catches cases where rows are returned but can't answer the question
+        // (e.g., "who does the most" but data lacks created_by field)
+        // ═══════════════════════════════════════════════════════════════════════
+        if (totalRowsRecent > 0 && accumulatedData.length >= 3) {
+            const schemaGap = detectSchemaGap(state);
+            if (schemaGap.detected) {
+                log.audit('Schema gap circuit breaker triggered', {
+                    gap: schemaGap.gap,
+                    suggestion: schemaGap.suggestion,
+                    iterations: accumulatedData.length
+                });
+
+                // Store the hint for the LLM
+                state.schemaGapHint = schemaGap;
+
+                return {
+                    shouldTrigger: true,
+                    reason: `Schema gap detected: ${schemaGap.gap}. Data returned (${totalRowsRecent} rows) but lacks required fields to answer the question.`,
+                    escalationAction: 'RETRY_WITH_SCHEMA_HINT',
+                    schemaGap: schemaGap,
+                    attemptsSummary: recentData.map(d => ({
+                        tool: d.tool,
+                        args: d.args,
+                        success: d.success,
+                        rowCount: d.rowCount,
+                        columns: d.columns?.slice(0, 5) // Include column sample
+                    }))
+                };
+            }
+        }
+
         return { shouldTrigger: false };
+    }
+
+    /**
+     * Detect schema gaps - when data is returned but lacks required fields to answer the question
+     * This catches scenarios where the circuit breaker wouldn't trigger (rows returned)
+     * but the data can't actually answer the user's question.
+     *
+     * @param {Object} state - Current agent state with question and accumulated data
+     * @returns {Object} { detected: boolean, gap: string, suggestion: string }
+     */
+    function detectSchemaGap(state) {
+        const question = (state.question || '').toLowerCase();
+        const recentData = (state.accumulatedData || []).slice(-3);
+
+        // Skip if we don't have enough data to analyze
+        if (recentData.length < 2) {
+            return { detected: false };
+        }
+
+        // Only check successful results with actual rows
+        const successfulResults = recentData.filter(d => d.success && d.rowCount > 0);
+        if (successfulResults.length === 0) {
+            return { detected: false };
+        }
+
+        // Collect all columns from recent successful results
+        const allColumns = new Set();
+        successfulResults.forEach(d => {
+            const cols = d.columns || [];
+            cols.forEach(c => allColumns.add(c.toLowerCase()));
+        });
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // SCHEMA GAP PATTERNS - What fields are needed for what questions?
+        // ═══════════════════════════════════════════════════════════════════════
+        const schemaGapPatterns = [
+            {
+                // "who does the most", "who created", "which user", "by employee"
+                questionPattern: /\bwho\b|\bwhich user\b|\bcreator\b|\bcreated by\b|\bby employee\b|\bmost.*entries\b/i,
+                requiredFields: ['created_by_name', 'created_by_id', 'user_name', 'employee_name', 'createdby'],
+                gap: 'MISSING_CREATOR_FIELD',
+                suggestion: 'Data lacks creator/user information. For journal entries, use get_journal_entries with group_by: "created_by". For other transactions, the created_by_name field should now be available.'
+            },
+            {
+                // "by department", "which department"
+                questionPattern: /\bby department\b|\bwhich department\b|\bdepartment breakdown\b/i,
+                requiredFields: ['department_name', 'department_id', 'department'],
+                gap: 'MISSING_DEPARTMENT_FIELD',
+                suggestion: 'Data lacks department information. Try using include_lines: true or a tool that returns department details.'
+            },
+            {
+                // "by class", "which class"
+                questionPattern: /\bby class\b|\bwhich class\b|\bclass breakdown\b/i,
+                requiredFields: ['class_name', 'class_id', 'class'],
+                gap: 'MISSING_CLASS_FIELD',
+                suggestion: 'Data lacks class information. Try using include_lines: true or a tool that returns class details.'
+            },
+            {
+                // "count by", "group by", "breakdown"
+                questionPattern: /\bcount\s+by\b|\bgroup\s*by\b|\bbreakdown\b|\baggregate\b/i,
+                requiredFields: ['count', 'entry_count', 'total_count'],
+                gap: 'MISSING_AGGREGATION',
+                suggestion: 'Consider using a tool with group_by parameter or run_custom_query with GROUP BY clause.'
+            }
+        ];
+
+        // Check each pattern
+        for (const pattern of schemaGapPatterns) {
+            if (pattern.questionPattern.test(question)) {
+                // Check if any required field exists in the data
+                const hasRequiredField = pattern.requiredFields.some(field =>
+                    allColumns.has(field.toLowerCase())
+                );
+
+                if (!hasRequiredField) {
+                    log.debug('Schema gap detected', {
+                        gap: pattern.gap,
+                        question: question.substring(0, 100),
+                        availableColumns: Array.from(allColumns).slice(0, 10),
+                        requiredFields: pattern.requiredFields
+                    });
+
+                    return {
+                        detected: true,
+                        gap: pattern.gap,
+                        suggestion: pattern.suggestion,
+                        requiredFields: pattern.requiredFields,
+                        availableColumns: Array.from(allColumns)
+                    };
+                }
+            }
+        }
+
+        return { detected: false };
     }
 
     /**
