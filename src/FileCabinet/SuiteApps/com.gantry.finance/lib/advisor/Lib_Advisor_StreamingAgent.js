@@ -723,6 +723,38 @@ Reply JSON only:
             };
         }
 
+        // ═══════════════════════════════════════════════════════════════════════
+        // DETECT UNRESOLVED ENTITY CODES
+        // If a tool was called with an ID parameter that looks like a code (not an internal ID),
+        // the LLM likely skipped entity resolution
+        // ═══════════════════════════════════════════════════════════════════════
+        const entityIdParams = ['project_id', 'customer_id', 'vendor_id', 'employee_id', 'entity_id'];
+        for (const result of emptyResults) {
+            if (!result.args) continue;
+            for (const param of entityIdParams) {
+                const value = result.args[param];
+                if (value !== undefined && value !== null) {
+                    const strValue = String(value);
+                    // Detect codes: contains non-numeric chars, or leading zeros, or is a short numeric string
+                    const looksLikeCode = /[^0-9]/.test(strValue) ||
+                                         (strValue.length > 1 && strValue.startsWith('0')) ||
+                                         (strValue.length <= 4 && /^\d+$/.test(strValue));
+                    if (looksLikeCode) {
+                        const entityType = param.replace('_id', '');
+                        return {
+                            mode: 'UNRESOLVED_ENTITY_CODE',
+                            remediation: `The ${param} "${strValue}" looks like a code/number, not an internal ID. ` +
+                                        `Call resolve_entity(name="${strValue}", type="${entityType}") first to get the internal ID.`,
+                            shouldTrySynthesizeFirst: false,
+                            suggestedAction: 'RESOLVE_ENTITY_FIRST',
+                            suggestedTool: 'resolve_entity',
+                            suggestedArgs: { name: strValue, type: entityType }
+                        };
+                    }
+                }
+            }
+        }
+
         if (onlyBoundedPeriods && entityResolved) {
             return {
                 mode: 'DATE_FILTER_MISS',
@@ -2074,6 +2106,12 @@ For "who owes us", "AR aging", "overdue invoices", "outstanding receivables":
 For "[vendor/customer] summary", "spending with [vendor]", "revenue from [customer]":
   → Use get_vendor_spend or get_customer_revenue (aggregate analysis)
 
+For "project [code] profitability", "how did project X do", "project performance":
+  → FIRST: resolve_entity(name="[code]", type="project") to get internal ID
+  → THEN: get_project_profitability(project_id=<resolved_id>)
+  → NEVER pass user-provided project codes/numbers directly to project_id parameter!
+  → Project codes like "0915", "PRJ-001", "Phase 1" must be resolved first
+
 CRITICAL: Match the tool to what the user SEMANTICALLY wants, not just keywords.
 ═══════════════════════════════════════════════════════════════════════════════
 
@@ -2093,9 +2131,15 @@ CRITICAL RULES:
 {comparison_hint}
 - Don't guess or assume - if you need data, GET IT
 - After getting data, think: "Does this ACTUALLY answer the question?"
-- ENTITY IDs: When you resolve an entity (customer/vendor), look for "RESOLVED ENTITIES"
-  in the data summary. Use the ACTUAL numeric entity_id (e.g., 416), NOT placeholders.
+- ENTITY IDs: When working with entities (customer, vendor, employee, item, PROJECT):
+  1. ALWAYS call resolve_entity FIRST to convert names/codes to internal IDs
+  2. Project codes (like "0915", "PRJ-001") are NOT internal IDs - resolve them first!
+  3. Look for "RESOLVED ENTITIES" in data summary for the actual numeric ID
+  4. Use the ACTUAL numeric entity_id (e.g., 416), NOT placeholders or codes
+
+  WRONG: project_id: "0915"  ← This is a code, not an ID!
   WRONG: vendor_id: "{{resolve_entity result}}"
+  RIGHT: resolve_entity(name="0915", type="project") → then use returned ID
   RIGHT: vendor_id: 416
 
 SENSIBLE DEFAULTS - AVOID UNNECESSARY CLARIFICATION:
@@ -3541,6 +3585,21 @@ Which 2 tools could provide similar data? Reply JSON only:
                 if (activeConstraints.length > 0) {
                     lines.push(`User Constraints: ${activeConstraints.join(', ')}`);
                 }
+            }
+
+            // ═══════════════════════════════════════════════════════════════════════
+            // ENTITY RESOLUTION GUIDANCE
+            // When entities are detected, remind the LLM to resolve them first
+            // ═══════════════════════════════════════════════════════════════════════
+            if (intent.entities && intent.entities.length > 0) {
+                lines.push('');
+                lines.push('🔍 ENTITIES DETECTED - RESOLUTION REQUIRED:');
+                intent.entities.forEach(function(entity) {
+                    lines.push(`   • "${entity}" → call resolve_entity FIRST to get internal ID`);
+                });
+                lines.push('   → NEVER pass entity names/codes directly to data tools');
+                lines.push('   → Tools need INTERNAL IDs (numeric), not names/codes');
+                lines.push('   → Example: resolve_entity(name="0915", type="project") → use returned id');
             }
         }
 
