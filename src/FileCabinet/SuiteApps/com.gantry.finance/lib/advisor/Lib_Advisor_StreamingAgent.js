@@ -727,6 +727,8 @@ Reply JSON only:
         // DETECT UNRESOLVED ENTITY CODES
         // If a tool was called with an ID parameter that looks like a code (not an internal ID),
         // the LLM likely skipped entity resolution
+        // NOTE: Only flag obvious codes (leading zeros, non-numeric) - don't flag
+        // valid internal IDs like "6034" just because they're short numbers
         // ═══════════════════════════════════════════════════════════════════════
         const entityIdParams = ['project_id', 'customer_id', 'vendor_id', 'employee_id', 'entity_id'];
         for (const result of emptyResults) {
@@ -735,10 +737,12 @@ Reply JSON only:
                 const value = result.args[param];
                 if (value !== undefined && value !== null) {
                     const strValue = String(value);
-                    // Detect codes: contains non-numeric chars, or leading zeros, or is a short numeric string
-                    const looksLikeCode = /[^0-9]/.test(strValue) ||
-                                         (strValue.length > 1 && strValue.startsWith('0')) ||
-                                         (strValue.length <= 4 && /^\d+$/.test(strValue));
+                    // Detect if it looks like a code:
+                    // 1. Contains non-numeric characters (e.g., "PRJ-001", "Acme Corp")
+                    // 2. Has leading zeros (e.g., "0915", "007") - internal IDs never have leading zeros
+                    const hasNonNumeric = /[^0-9]/.test(strValue);
+                    const hasLeadingZero = strValue.length > 1 && strValue.startsWith('0');
+                    const looksLikeCode = hasNonNumeric || hasLeadingZero;
                     if (looksLikeCode) {
                         const entityType = param.replace('_id', '');
                         return {
