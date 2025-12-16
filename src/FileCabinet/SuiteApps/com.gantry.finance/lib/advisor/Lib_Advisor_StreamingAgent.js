@@ -700,6 +700,33 @@ Reply JSON only:
 
         // Check the last N iterations for progress
         const recentData = accumulatedData.slice(-NO_PROGRESS_THRESHOLD);
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // CRITICAL FIX: Distinguish VALIDATION_ERROR from NO_DATA
+        // Validation errors mean the tool was never properly executed - don't count
+        // as "no progress" since we never actually queried the data.
+        // Only count iterations where the tool actually ran (success or 0 rows).
+        // ═══════════════════════════════════════════════════════════════════════
+        const validationFailures = recentData.filter(d =>
+            !d.success && d.validationErrors && d.validationErrors.length > 0
+        );
+        const actualExecutions = recentData.filter(d =>
+            d.success || (d.validationErrors?.length === 0 || !d.validationErrors)
+        );
+
+        // If most recent attempts were validation errors, don't trigger circuit breaker
+        // The LLM needs a chance to fix its parameter usage
+        if (validationFailures.length >= Math.floor(NO_PROGRESS_THRESHOLD / 2)) {
+            log.debug('Circuit breaker skipped: validation errors detected', {
+                validationFailures: validationFailures.length,
+                actualExecutions: actualExecutions.length
+            });
+            return {
+                shouldTrigger: false,
+                reason: 'Validation errors detected - allowing LLM to correct parameters'
+            };
+        }
+
         const totalRowsRecent = recentData.reduce((sum, d) => sum + (d.rowCount || 0), 0);
         const allFailed = recentData.every(d => !d.success || d.rowCount === 0);
 
@@ -720,15 +747,24 @@ Reply JSON only:
                 escalationAction = 'CLARIFY';
             }
 
+            // Include validation vs data failure breakdown in reason
+            const dataFailures = actualExecutions.filter(d => d.rowCount === 0).length;
+            const reasonDetail = validationFailures.length > 0
+                ? ` (${validationFailures.length} validation errors, ${dataFailures} empty results)`
+                : '';
+
             return {
                 shouldTrigger: true,
-                reason: `No progress detected: ${NO_PROGRESS_THRESHOLD} consecutive attempts returned 0 rows.`,
+                reason: `No progress detected: ${NO_PROGRESS_THRESHOLD} consecutive attempts returned 0 rows${reasonDetail}.`,
                 consecutiveFailures: NO_PROGRESS_THRESHOLD,
                 escalationAction: escalationAction,
+                validationFailureCount: validationFailures.length,
+                dataFailureCount: dataFailures,
                 attemptsSummary: recentData.map(d => ({
                     tool: d.tool,
                     success: d.success,
-                    rowCount: d.rowCount
+                    rowCount: d.rowCount,
+                    isValidationError: d.validationErrors?.length > 0
                 }))
             };
         }
@@ -3152,11 +3188,62 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
         const toolStart = Date.now();
         let result = Cache.getCachedToolResult(toolName, args);
         let fromCache = false;
+        let autoRetried = false;
 
         if (result) {
             fromCache = true;
         } else {
             result = Tools.executeTool(toolName, args);
+
+            // ═══════════════════════════════════════════════════════════════════════
+            // AUTO-RETRY ON VALIDATION ERRORS WITH SUGGESTIONS
+            // When validation fails with "Did you mean X?", auto-correct and retry
+            // This fixes cases where LLM uses vendor_id instead of entity_id, etc.
+            // ═══════════════════════════════════════════════════════════════════════
+            if (!result.success && result.validationErrors && result.validationErrors.length > 0) {
+                const correctedArgs = { ...args };
+                let hasCorrectable = false;
+
+                for (const error of result.validationErrors) {
+                    // Parse "Did you mean X?" suggestions
+                    const match = error.match(/Unknown parameter "([^"]+)".*Did you mean "([^"]+)"\?/);
+                    if (match) {
+                        const wrongParam = match[1];
+                        const correctParam = match[2];
+
+                        // Only auto-correct if the correct param isn't already set
+                        if (correctedArgs[wrongParam] !== undefined && correctedArgs[correctParam] === undefined) {
+                            correctedArgs[correctParam] = correctedArgs[wrongParam];
+                            delete correctedArgs[wrongParam];
+                            hasCorrectable = true;
+                            log.audit('AUTO-RETRY: Corrected parameter', {
+                                tool: toolName,
+                                wrongParam: wrongParam,
+                                correctParam: correctParam,
+                                value: correctedArgs[correctParam]
+                            });
+                        }
+                    }
+                }
+
+                // Retry with corrected args if we found correctable errors
+                if (hasCorrectable) {
+                    log.audit('AUTO-RETRY: Executing with corrected args', {
+                        tool: toolName,
+                        originalArgs: args,
+                        correctedArgs: correctedArgs
+                    });
+                    result = Tools.executeTool(toolName, correctedArgs);
+                    autoRetried = true;
+                    args = correctedArgs; // Update args for accumulated data entry
+
+                    // Add normalization warning about the auto-correction
+                    if (!result.normalizationWarnings) result.normalizationWarnings = [];
+                    result.normalizationWarnings.push('Auto-corrected parameter names based on validation suggestions');
+                }
+            }
+
+            // Cache the result (using potentially corrected args)
             Cache.cacheToolResult(toolName, args, result);
         }
         const toolDuration = Date.now() - toolStart;
