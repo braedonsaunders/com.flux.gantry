@@ -793,7 +793,7 @@ If no reasonable match, reply: {"param": null, "confidence": 0}`;
         }
 
         // ═══════════════════════════════════════════════════════════════════════
-        // WRONG TABLE NAMES
+        // WRONG TABLE NAMES - Auto-correct where possible
         // ═══════════════════════════════════════════════════════════════════════
         const wrongTables = [
             { pattern: /\bFROM\s+transactions\b/gi, wrong: 'transactions', fix: 'transaction (singular)' },
@@ -805,6 +805,85 @@ If no reasonable match, reply: {"param": null, "confidence": 0}`;
                 // Auto-correct plural → singular
                 correctedSql = correctedSql.replace(/\btransactions\b/gi, 'transaction');
                 corrections.push('Auto-fixed: transactions → transaction');
+            }
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // NON-EXISTENT TABLE ALIASES - Provide helpful guidance
+        // These cannot be auto-corrected (need WHERE clause) but we can guide the LLM
+        // ═══════════════════════════════════════════════════════════════════════
+        const tableAliasHints = [
+            {
+                pattern: /\bFROM\s+journal_entries\b/gi,
+                wrong: 'journal_entries',
+                hint: "Table 'journal_entries' does not exist. Use: FROM transaction WHERE type = 'Journal'"
+            },
+            {
+                pattern: /\bFROM\s+invoices\b/gi,
+                wrong: 'invoices',
+                hint: "Table 'invoices' does not exist. Use: FROM transaction WHERE type = 'CustInvc'"
+            },
+            {
+                pattern: /\bFROM\s+bills\b/gi,
+                wrong: 'bills',
+                hint: "Table 'bills' does not exist. Use: FROM transaction WHERE type = 'VendBill'"
+            },
+            {
+                pattern: /\bFROM\s+payments\b/gi,
+                wrong: 'payments',
+                hint: "Table 'payments' does not exist. Use: FROM transaction WHERE type IN ('CustPymt', 'VendPymt')"
+            },
+            {
+                pattern: /\bFROM\s+checks\b/gi,
+                wrong: 'checks',
+                hint: "Table 'checks' does not exist. Use: FROM transaction WHERE type = 'Check'"
+            },
+            {
+                pattern: /\bFROM\s+deposits\b/gi,
+                wrong: 'deposits',
+                hint: "Table 'deposits' does not exist. Use: FROM transaction WHERE type = 'Deposit'"
+            },
+            {
+                pattern: /\bFROM\s+expense_reports?\b/gi,
+                wrong: 'expense_report(s)',
+                hint: "Table 'expense_reports' does not exist. Use: FROM transaction WHERE type = 'ExpRept'"
+            },
+            {
+                pattern: /\bFROM\s+purchase_orders?\b/gi,
+                wrong: 'purchase_order(s)',
+                hint: "Table 'purchase_orders' does not exist. Use: FROM transaction WHERE type = 'PurchOrd'"
+            },
+            {
+                pattern: /\bFROM\s+sales_orders?\b/gi,
+                wrong: 'sales_order(s)',
+                hint: "Table 'sales_orders' does not exist. Use: FROM transaction WHERE type = 'SalesOrd'"
+            },
+            {
+                pattern: /\bFROM\s+customers\b/gi,
+                wrong: 'customers',
+                hint: "Table 'customers' does not exist. Use: FROM customer (singular)"
+            },
+            {
+                pattern: /\bFROM\s+vendors\b/gi,
+                wrong: 'vendors',
+                hint: "Table 'vendors' does not exist. Use: FROM vendor (singular)"
+            },
+            {
+                pattern: /\bFROM\s+employees\b/gi,
+                wrong: 'employees',
+                hint: "Table 'employees' does not exist. Use: FROM employee (singular)"
+            },
+            {
+                pattern: /\bFROM\s+accounts\b/gi,
+                wrong: 'accounts',
+                hint: "Table 'accounts' does not exist. Use: FROM account (singular)"
+            }
+        ];
+
+        for (const alias of tableAliasHints) {
+            if (alias.pattern.test(sql)) {
+                errors.push(`Invalid table: '${alias.wrong}'`);
+                suggestions.push(alias.hint);
             }
         }
 
@@ -4116,7 +4195,9 @@ IMPORTANT: You MUST use exact NetSuite type codes from the enum:
                         transaction.foreigntotal AS amount,
                         transaction.foreignamountunpaid AS amount_remaining,
                         transaction.status,
-                        transaction.memo
+                        transaction.memo,
+                        transaction.createdby AS created_by_id,
+                        BUILTIN.DF(transaction.createdby) AS created_by_name
                     FROM transaction
                     ${lineJoin}
                     WHERE transaction.posting = 'T'
@@ -5798,20 +5879,26 @@ Can filter by location, item type, and low stock alerts.`,
             category: 'data',
             description: `Get journal entry analysis for adjustments, accruals, and manual entries.
 Use for: "journal entries", "adjusting entries", "accruals", "manual entries", "JE analysis"
+Also use for: "who creates the most journal entries", "JE activity by user", "journal entry count by creator"
 
 Shows journal entries with line details, amounts, and classifications.
-Can filter by period, memo text, account, and amount.`,
+Can filter by period, memo text, account, and amount.
+
+GROUP BY OPTIONS:
+- group_by: "created_by" → Who creates the most journal entries (entry_count by user)
+- group_by: "account" → Which accounts have the most JE activity
+- group_by: "period" → JE volume over time (monthly)`,
             parameters: {
                 type: 'object',
                 properties: {
                     period: {
                         type: 'string',
                         enum: [
-                            'this_month', 'last_month', 'this_quarter', 'last_quarter',
+                            'all', 'this_month', 'last_month', 'this_quarter', 'last_quarter',
                             'ytd', 'fytd', 'this_fiscal_year', 'last_fiscal_year',
-                            'last_30_days', 'last_90_days'
+                            'last_30_days', 'last_90_days', 'last_365_days', 'last_year', 'last_2_years'
                         ],
-                        description: 'Time period (default: this_month)'
+                        description: 'Time period (default: this_month). Use "all" for all-time data.'
                     },
                     account_id: {
                         type: 'number',
@@ -5833,6 +5920,11 @@ Can filter by period, memo text, account, and amount.`,
                     include_lines: {
                         type: 'boolean',
                         description: 'Include line-level detail (default: false, shows header summary)'
+                    },
+                    group_by: {
+                        type: 'string',
+                        enum: ['none', 'created_by', 'account', 'period'],
+                        description: 'Group results for aggregation. Use "created_by" to see who creates the most journal entries. (default: none)'
                     },
                     limit: {
                         type: 'number',
@@ -5856,6 +5948,88 @@ Can filter by period, memo text, account, and amount.`,
                 // NOTE: 'subsidiary' field is NOT_EXPOSED in SuiteQL search channel
                 // NOTE: 'datecreated' doesn't exist on transaction - use lastmodifieddate if needed
                 let query;
+
+                // ═══════════════════════════════════════════════════════════════════════
+                // GROUP BY MODE: Aggregate journal entries by creator, account, or period
+                // Use for "who does the most journal entries" type questions
+                // ═══════════════════════════════════════════════════════════════════════
+                if (args.group_by && args.group_by !== 'none') {
+                    if (args.group_by === 'created_by') {
+                        query = `
+                            SELECT
+                                t.createdby AS created_by_id,
+                                BUILTIN.DF(t.createdby) AS created_by_name,
+                                COUNT(DISTINCT t.id) AS entry_count,
+                                SUM(COALESCE(tal.debit, 0)) AS total_debits,
+                                SUM(COALESCE(tal.credit, 0)) AS total_credits,
+                                MIN(t.trandate) AS first_entry_date,
+                                MAX(t.trandate) AS last_entry_date
+                            FROM transaction t
+                            INNER JOIN transactionaccountingline tal ON tal.transaction = t.id
+                            WHERE t.type = 'Journal'
+                                AND t.posting = 'T'
+                                AND t.voided = 'F'
+                                AND ${periodFilter}
+                                ${accountFilter}
+                                ${createdByFilter}
+                            GROUP BY t.createdby, BUILTIN.DF(t.createdby)
+                            ORDER BY entry_count DESC
+                            FETCH FIRST ${limit} ROWS ONLY
+                        `;
+                    } else if (args.group_by === 'account') {
+                        query = `
+                            SELECT
+                                tal.account AS account_id,
+                                BUILTIN.DF(tal.account) AS account_name,
+                                COUNT(DISTINCT t.id) AS entry_count,
+                                SUM(COALESCE(tal.debit, 0)) AS total_debits,
+                                SUM(COALESCE(tal.credit, 0)) AS total_credits
+                            FROM transaction t
+                            INNER JOIN transactionaccountingline tal ON tal.transaction = t.id
+                            WHERE t.type = 'Journal'
+                                AND t.posting = 'T'
+                                AND t.voided = 'F'
+                                AND ${periodFilter}
+                                ${accountFilter}
+                                ${createdByFilter}
+                            GROUP BY tal.account, BUILTIN.DF(tal.account)
+                            ORDER BY entry_count DESC
+                            FETCH FIRST ${limit} ROWS ONLY
+                        `;
+                    } else if (args.group_by === 'period') {
+                        query = `
+                            SELECT
+                                TO_CHAR(t.trandate, 'YYYY-MM') AS period,
+                                COUNT(DISTINCT t.id) AS entry_count,
+                                SUM(COALESCE(tal.debit, 0)) AS total_debits,
+                                SUM(COALESCE(tal.credit, 0)) AS total_credits,
+                                COUNT(DISTINCT t.createdby) AS unique_creators
+                            FROM transaction t
+                            INNER JOIN transactionaccountingline tal ON tal.transaction = t.id
+                            WHERE t.type = 'Journal'
+                                AND t.posting = 'T'
+                                AND t.voided = 'F'
+                                AND ${periodFilter}
+                                ${accountFilter}
+                                ${createdByFilter}
+                            GROUP BY TO_CHAR(t.trandate, 'YYYY-MM')
+                            ORDER BY period DESC
+                            FETCH FIRST ${limit} ROWS ONLY
+                        `;
+                    }
+
+                    const result = QueryExecutor.executeQuery(query);
+                    const formatted = formatResult(result, 'get_journal_entries', { limit: limit });
+
+                    // Add aggregation context
+                    if (formatted.success) {
+                        formatted.groupedBy = args.group_by;
+                        formatted.note = `Results grouped by ${args.group_by}. Use without group_by to see individual entries.`;
+                    }
+
+                    return formatted;
+                }
+
                 if (args.include_lines) {
                     // Line-level detail
                     query = `
@@ -5946,6 +6120,9 @@ Can filter by period, memo text, account, and amount.`,
                 return formatted;
             },
             displayName: function(args) {
+                if (args.group_by && args.group_by !== 'none') {
+                    return `Analyzing journal entries by ${args.group_by}...`;
+                }
                 return `Getting journal entries (${args.period || 'this_month'})...`;
             }
         },
