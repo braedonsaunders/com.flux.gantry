@@ -2480,62 +2480,67 @@ Returns: customer_name, period1_avg_days, period2_avg_days, change_pct, change_d
                     changeFilter = `AND ABS(change_pct) >= ${minChangePct}`;
                 }
 
+                // Query structure: Wrap change_pct filter in outer SELECT since
+                // Oracle/SuiteQL doesn't allow referencing column aliases in WHERE of same SELECT
                 const query = `
                     SELECT * FROM (
-                        SELECT
-                            customer_id,
-                            customer_name,
-                            period1_avg_days,
-                            period1_payment_count,
-                            period2_avg_days,
-                            period2_payment_count,
-                            ROUND(period2_avg_days - period1_avg_days, 1) AS change_days,
-                            CASE
-                                WHEN period1_avg_days = 0 THEN NULL
-                                ELSE ROUND(((period2_avg_days - period1_avg_days) / period1_avg_days) * 100, 1)
-                            END AS change_pct
-                        FROM (
+                        SELECT * FROM (
                             SELECT
-                                p1.customer_id,
-                                p1.customer_name,
-                                p1.avg_days AS period1_avg_days,
-                                p1.payment_count AS period1_payment_count,
-                                p2.avg_days AS period2_avg_days,
-                                p2.payment_count AS period2_payment_count
+                                customer_id,
+                                customer_name,
+                                period1_avg_days,
+                                period1_payment_count,
+                                period2_avg_days,
+                                period2_payment_count,
+                                ROUND(period2_avg_days - period1_avg_days, 1) AS change_days,
+                                CASE
+                                    WHEN period1_avg_days = 0 THEN NULL
+                                    ELSE ROUND(((period2_avg_days - period1_avg_days) / period1_avg_days) * 100, 1)
+                                END AS change_pct
                             FROM (
                                 SELECT
-                                    c.id AS customer_id,
-                                    c.companyname AS customer_name,
-                                    ROUND(AVG(inv1.closedate - inv1.trandate), 1) AS avg_days,
-                                    COUNT(*) AS payment_count
-                                FROM transaction inv1
-                                JOIN customer c ON inv1.entity = c.id
-                                WHERE inv1.type = 'CustInvc'
-                                    AND inv1.posting = 'T'
-                                    AND inv1.voided = 'F'
-                                    AND inv1.closedate IS NOT NULL
-                                    AND ${period1Filter}
-                                GROUP BY c.id, c.companyname
-                                HAVING COUNT(*) >= ${minPayments}
-                            ) p1
-                            JOIN (
-                                SELECT
-                                    c.id AS customer_id,
-                                    ROUND(AVG(inv2.closedate - inv2.trandate), 1) AS avg_days,
-                                    COUNT(*) AS payment_count
-                                FROM transaction inv2
-                                JOIN customer c ON inv2.entity = c.id
-                                WHERE inv2.type = 'CustInvc'
-                                    AND inv2.posting = 'T'
-                                    AND inv2.voided = 'F'
-                                    AND inv2.closedate IS NOT NULL
-                                    AND ${period2Filter}
-                                GROUP BY c.id
-                                HAVING COUNT(*) >= ${minPayments}
-                            ) p2 ON p1.customer_id = p2.customer_id
+                                    p1.customer_id,
+                                    p1.customer_name,
+                                    p1.avg_days AS period1_avg_days,
+                                    p1.payment_count AS period1_payment_count,
+                                    p2.avg_days AS period2_avg_days,
+                                    p2.payment_count AS period2_payment_count
+                                FROM (
+                                    SELECT
+                                        c.id AS customer_id,
+                                        c.companyname AS customer_name,
+                                        ROUND(AVG(inv1.closedate - inv1.trandate), 1) AS avg_days,
+                                        COUNT(*) AS payment_count
+                                    FROM transaction inv1
+                                    JOIN customer c ON inv1.entity = c.id
+                                    WHERE inv1.type = 'CustInvc'
+                                        AND inv1.posting = 'T'
+                                        AND inv1.voided = 'F'
+                                        AND inv1.closedate IS NOT NULL
+                                        AND ${period1Filter}
+                                    GROUP BY c.id, c.companyname
+                                    HAVING COUNT(*) >= ${minPayments}
+                                ) p1
+                                JOIN (
+                                    SELECT
+                                        c.id AS customer_id,
+                                        ROUND(AVG(inv2.closedate - inv2.trandate), 1) AS avg_days,
+                                        COUNT(*) AS payment_count
+                                    FROM transaction inv2
+                                    JOIN customer c ON inv2.entity = c.id
+                                    WHERE inv2.type = 'CustInvc'
+                                        AND inv2.posting = 'T'
+                                        AND inv2.voided = 'F'
+                                        AND inv2.closedate IS NOT NULL
+                                        AND ${period2Filter}
+                                    GROUP BY c.id
+                                    HAVING COUNT(*) >= ${minPayments}
+                                ) p2 ON p1.customer_id = p2.customer_id
+                            )
+                            WHERE 1=1
+                            ${directionFilter}
                         )
                         WHERE 1=1
-                        ${directionFilter}
                         ${changeFilter}
                         ORDER BY ABS(change_pct) DESC NULLS LAST
                     ) WHERE ROWNUM <= ${limit}

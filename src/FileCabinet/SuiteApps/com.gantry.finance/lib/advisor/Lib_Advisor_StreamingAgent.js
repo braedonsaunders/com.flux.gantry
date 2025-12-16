@@ -947,6 +947,683 @@ Reply JSON only:
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
+    // AGENTIC INTELLIGENCE LAYER
+    // All-LLM solutions for robust error handling, tool selection, and recovery
+    // No hardcoded lists, regex, or pattern matching - pure semantic understanding
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * PRE-FLIGHT TOOL CAPABILITY ASSESSMENT
+     * Before entering REASON_ACT, use LLM to assess whether available tools can answer the question.
+     * This prevents wasted iterations on fundamentally unsupported queries.
+     *
+     * @param {string} question - The user's question
+     * @param {Object} intent - Parsed intent from INTENT phase
+     * @param {Object} toolManifest - Available tools
+     * @returns {Object} { canAnswer: boolean, bestTools: Array, gaps: Array, recommendation: string }
+     */
+    function assessToolCapability(question, intent, toolManifest) {
+        const toolList = Object.entries(toolManifest)
+            .map(([name, desc]) => `• ${name}: ${desc}`)
+            .join('\n');
+
+        const prompt = `Assess whether the available tools can answer this question.
+
+QUESTION: "${question}"
+
+INTENT ANALYSIS:
+- Intent: ${intent?.intent || 'unknown'}
+- Semantic topics: ${(intent?.semantic_topics || []).join(', ') || 'none'}
+- Time scope: ${intent?.time_scope || intent?.timeScope || 'not specified'}
+- Constraints: ${JSON.stringify(intent?.constraints || {})}
+
+AVAILABLE TOOLS:
+${toolList}
+
+ANALYSIS REQUIRED:
+1. What capabilities does this question require? (e.g., period comparison, percentage calculation, entity filtering, aggregation)
+2. Which tools could provide data relevant to this question?
+3. Are there any capability GAPS - things the question needs that no tool provides?
+4. What's your recommendation?
+
+Respond with JSON only:
+{
+  "required_capabilities": ["list", "of", "capabilities", "needed"],
+  "matching_tools": [
+    {"tool": "tool_name", "fit_score": 0.0-1.0, "reason": "why this tool fits"}
+  ],
+  "capability_gaps": ["gaps", "that", "no", "tool", "covers"],
+  "can_answer_with_tools": true|false,
+  "recommendation": "PROCEED|SYNTHESIZE_EARLY|DECOMPOSE",
+  "decomposition_strategy": "if DECOMPOSE, explain how to break down the query"
+}`;
+
+        try {
+            const response = AIProviders.callAI(prompt, {
+                tier: TIERS.FAST,
+                temperature: 0,
+                jsonMode: true,
+                maxTokens: 500,
+                purpose: 'SCA:capability_assessment'
+            });
+
+            const parsed = parseJsonResponse(response?.text);
+
+            if (parsed) {
+                log.debug('Tool capability assessment', {
+                    canAnswer: parsed.can_answer_with_tools,
+                    recommendation: parsed.recommendation,
+                    matchingTools: parsed.matching_tools?.length || 0,
+                    gaps: parsed.capability_gaps?.length || 0
+                });
+
+                return {
+                    canAnswer: parsed.can_answer_with_tools !== false,
+                    bestTools: (parsed.matching_tools || [])
+                        .filter(t => t.fit_score >= 0.6)
+                        .sort((a, b) => b.fit_score - a.fit_score),
+                    gaps: parsed.capability_gaps || [],
+                    recommendation: parsed.recommendation || 'PROCEED',
+                    decompositionStrategy: parsed.decomposition_strategy,
+                    requiredCapabilities: parsed.required_capabilities || []
+                };
+            }
+        } catch (e) {
+            log.debug('Tool capability assessment failed', { error: e.message });
+        }
+
+        // Fallback: proceed optimistically
+        return {
+            canAnswer: true,
+            bestTools: [],
+            gaps: [],
+            recommendation: 'PROCEED',
+            requiredCapabilities: []
+        };
+    }
+
+    /**
+     * AGENTIC PARAMETER AUTO-CORRECTION
+     * When tool validation fails, use LLM to intelligently correct parameters
+     * instead of relying on simple string matching.
+     *
+     * @param {string} toolName - The tool that was called
+     * @param {Object} originalArgs - The arguments that failed validation
+     * @param {Array} validationErrors - Errors from validateAndNormalizeArgs
+     * @param {Object} toolSchema - The tool's parameter schema
+     * @returns {Object} { corrected: boolean, args: Object, explanation: string }
+     */
+    function correctParametersAgentically(toolName, originalArgs, validationErrors, toolSchema) {
+        if (!validationErrors || validationErrors.length === 0) {
+            return { corrected: false, args: originalArgs, explanation: 'No errors to correct' };
+        }
+
+        // Build schema description
+        const schemaDesc = Object.entries(toolSchema?.properties || {})
+            .map(([name, def]) => {
+                const req = (toolSchema.required || []).includes(name) ? ' (REQUIRED)' : '';
+                const enumVals = def.enum ? ` Valid values: ${def.enum.join(', ')}` : '';
+                return `• ${name}: ${def.type}${req} - ${def.description || ''}${enumVals}`;
+            })
+            .join('\n');
+
+        const prompt = `Fix these parameter errors for tool "${toolName}".
+
+ORIGINAL ARGS PROVIDED:
+${JSON.stringify(originalArgs, null, 2)}
+
+VALIDATION ERRORS:
+${validationErrors.map(e => `• ${e}`).join('\n')}
+
+TOOL PARAMETER SCHEMA:
+${schemaDesc}
+
+Your task: Correct the arguments to match the schema.
+- Fix typos in parameter names (e.g., "compare_to" → "period2")
+- Use valid enum values
+- Add missing required parameters with sensible defaults based on context
+- Remove unknown parameters
+
+Respond with JSON only:
+{
+  "corrected_args": { ... },
+  "corrections_made": ["description of each correction"],
+  "confidence": 0.0-1.0
+}`;
+
+        try {
+            const response = AIProviders.callAI(prompt, {
+                tier: TIERS.FAST,
+                temperature: 0,
+                jsonMode: true,
+                maxTokens: 300,
+                purpose: 'SCA:param_correction'
+            });
+
+            const parsed = parseJsonResponse(response?.text);
+
+            if (parsed?.corrected_args && parsed.confidence >= 0.7) {
+                log.debug('Agentic parameter correction', {
+                    tool: toolName,
+                    corrections: parsed.corrections_made,
+                    confidence: parsed.confidence
+                });
+
+                return {
+                    corrected: true,
+                    args: parsed.corrected_args,
+                    explanation: (parsed.corrections_made || []).join('; '),
+                    confidence: parsed.confidence
+                };
+            }
+        } catch (e) {
+            log.debug('Agentic parameter correction failed', { error: e.message });
+        }
+
+        return { corrected: false, args: originalArgs, explanation: 'Could not auto-correct' };
+    }
+
+    /**
+     * AGENTIC TOOL HEALTH CLASSIFICATION
+     * Distinguish between parameter errors, tool implementation bugs, and actual data issues.
+     * This enables smart fallback decisions.
+     *
+     * @param {Object} toolResult - The result from tool execution
+     * @param {string} toolName - Name of the tool
+     * @param {Object} args - Arguments that were passed
+     * @returns {Object} { errorType, recoverable, suggestedAction, shouldAlert }
+     */
+    function classifyToolHealth(toolResult, toolName, args) {
+        if (toolResult.success) {
+            return {
+                errorType: 'NONE',
+                recoverable: true,
+                suggestedAction: 'CONTINUE',
+                shouldAlert: false
+            };
+        }
+
+        const errorMessage = toolResult.error || '';
+
+        const prompt = `Classify this tool execution error.
+
+TOOL: ${toolName}
+ARGS: ${JSON.stringify(args)}
+ERROR: ${errorMessage.substring(0, 500)}
+
+Error Categories:
+1. PARAMETER_ERROR - User/LLM provided wrong parameters (fixable by changing args)
+2. TOOL_BUG - Internal bug in tool implementation (SQL error, undefined column, code error)
+3. DATA_NOT_FOUND - Query executed correctly but no matching data exists
+4. PERMISSION_ERROR - Access/role restrictions
+5. TIMEOUT - Query took too long
+6. RATE_LIMIT - Governance/concurrency limit
+7. NETWORK - Connection/infrastructure issue
+
+Respond with JSON only:
+{
+  "error_type": "CATEGORY",
+  "confidence": 0.0-1.0,
+  "is_tool_bug": true|false,
+  "recoverable_by_retry": true|false,
+  "recoverable_by_different_args": true|false,
+  "suggested_action": "RETRY|FIX_PARAMS|SKIP_TO_SYNTHESIZE|ALERT_DEVELOPER|TRY_ALTERNATIVE_TOOL",
+  "explanation": "brief explanation"
+}`;
+
+        try {
+            const response = AIProviders.callAI(prompt, {
+                tier: TIERS.FAST,
+                temperature: 0,
+                jsonMode: true,
+                maxTokens: 200,
+                purpose: 'SCA:tool_health'
+            });
+
+            const parsed = parseJsonResponse(response?.text);
+
+            if (parsed) {
+                log.debug('Tool health classification', {
+                    tool: toolName,
+                    errorType: parsed.error_type,
+                    isToolBug: parsed.is_tool_bug,
+                    suggestedAction: parsed.suggested_action
+                });
+
+                return {
+                    errorType: parsed.error_type || 'UNKNOWN',
+                    recoverable: parsed.recoverable_by_retry || parsed.recoverable_by_different_args,
+                    suggestedAction: parsed.suggested_action || 'TRY_ALTERNATIVE_TOOL',
+                    shouldAlert: parsed.is_tool_bug === true,
+                    explanation: parsed.explanation,
+                    confidence: parsed.confidence
+                };
+            }
+        } catch (e) {
+            log.debug('Tool health classification failed', { error: e.message });
+        }
+
+        // Fallback: assume recoverable by trying different approach
+        return {
+            errorType: 'UNKNOWN',
+            recoverable: true,
+            suggestedAction: 'TRY_ALTERNATIVE_TOOL',
+            shouldAlert: false
+        };
+    }
+
+    /**
+     * AGENTIC QUERY DECOMPOSITION
+     * Break complex queries into simpler sub-queries that are more likely to succeed.
+     *
+     * @param {string} question - The user's question
+     * @param {Object} intent - Parsed intent
+     * @param {Object} toolManifest - Available tools
+     * @returns {Object} { shouldDecompose: boolean, subQueries: Array, strategy: string }
+     */
+    function decomposeQuery(question, intent, toolManifest) {
+        const toolList = Object.keys(toolManifest).join(', ');
+
+        const prompt = `Analyze if this complex question should be broken into simpler sub-queries.
+
+QUESTION: "${question}"
+
+INTENT: ${intent?.intent || 'unknown'}
+SEMANTIC TOPICS: ${(intent?.semantic_topics || []).join(', ')}
+
+AVAILABLE TOOLS: ${toolList}
+
+Complex queries that benefit from decomposition:
+- Period comparisons: Get data for each period separately, then compare
+- Cross-entity analysis: Get data for each entity, then combine
+- Multi-step calculations: Get raw data, then calculate metrics
+- Filtered aggregations: Get broader data, then filter/aggregate
+
+Simple queries that don't need decomposition:
+- Single entity lookup
+- Single period report
+- Dashboard metrics
+- Direct aggregations
+
+Respond with JSON only:
+{
+  "should_decompose": true|false,
+  "complexity_reason": "why this query is/isn't complex",
+  "sub_queries": [
+    {
+      "description": "what this sub-query gets",
+      "tool": "suggested_tool",
+      "args": {},
+      "purpose": "how this contributes to final answer"
+    }
+  ],
+  "combination_strategy": "how to combine sub-query results for final answer"
+}`;
+
+        try {
+            const response = AIProviders.callAI(prompt, {
+                tier: TIERS.FAST,
+                temperature: 0.1,
+                jsonMode: true,
+                maxTokens: 500,
+                purpose: 'SCA:query_decomposition'
+            });
+
+            const parsed = parseJsonResponse(response?.text);
+
+            if (parsed && parsed.should_decompose && parsed.sub_queries?.length > 0) {
+                log.debug('Query decomposition', {
+                    shouldDecompose: parsed.should_decompose,
+                    subQueryCount: parsed.sub_queries.length,
+                    strategy: parsed.combination_strategy
+                });
+
+                return {
+                    shouldDecompose: true,
+                    subQueries: parsed.sub_queries,
+                    strategy: parsed.combination_strategy,
+                    reason: parsed.complexity_reason
+                };
+            }
+        } catch (e) {
+            log.debug('Query decomposition failed', { error: e.message });
+        }
+
+        return {
+            shouldDecompose: false,
+            subQueries: [],
+            strategy: null
+        };
+    }
+
+    /**
+     * AGENTIC PERIOD VALIDATION
+     * Validate that period comparisons make semantic sense.
+     *
+     * @param {string} period1 - First period
+     * @param {string} period2 - Second period
+     * @param {string} comparisonType - Type of comparison (e.g., 'trend', 'yoy', 'improvement')
+     * @returns {Object} { valid: boolean, issue: string, suggestion: string }
+     */
+    function validatePeriodComparison(period1, period2, comparisonType) {
+        const prompt = `Validate this period comparison for a financial analysis.
+
+PERIOD 1 (baseline/earlier): ${period1}
+PERIOD 2 (current/later): ${period2}
+COMPARISON TYPE: ${comparisonType || 'general comparison'}
+
+Today's date context for reference: Use current date to understand what "this_quarter", "last_quarter" etc. mean.
+
+Validation checks:
+1. Does period1 come BEFORE period2 chronologically?
+2. Are the periods non-overlapping?
+3. Are they comparable (similar duration/type)?
+4. Does this combination make sense for the comparison type?
+
+Respond with JSON only:
+{
+  "is_valid": true|false,
+  "chronologically_correct": true|false,
+  "periods_overlap": true|false,
+  "are_comparable": true|false,
+  "issue": "description of any problem",
+  "suggestion": "how to fix if invalid",
+  "recommended_periods": {
+    "period1": "suggested_period1_if_different",
+    "period2": "suggested_period2_if_different"
+  }
+}`;
+
+        try {
+            const response = AIProviders.callAI(prompt, {
+                tier: TIERS.FAST,
+                temperature: 0,
+                jsonMode: true,
+                maxTokens: 200,
+                purpose: 'SCA:period_validation'
+            });
+
+            const parsed = parseJsonResponse(response?.text);
+
+            if (parsed) {
+                return {
+                    valid: parsed.is_valid !== false,
+                    chronologicallyCorrect: parsed.chronologically_correct,
+                    periodsOverlap: parsed.periods_overlap,
+                    areComparable: parsed.are_comparable,
+                    issue: parsed.issue,
+                    suggestion: parsed.suggestion,
+                    recommendedPeriods: parsed.recommended_periods
+                };
+            }
+        } catch (e) {
+            log.debug('Period validation failed', { error: e.message });
+        }
+
+        // Fallback: assume valid
+        return { valid: true, issue: null, suggestion: null };
+    }
+
+    /**
+     * AGENTIC TOOL-QUERY FIT ASSESSMENT
+     * Before calling a tool, verify its output will match what the query needs.
+     *
+     * @param {string} question - The user's question
+     * @param {string} toolName - Tool being considered
+     * @param {string} toolDescription - Full tool description
+     * @param {string} expectedOutputs - What the tool returns
+     * @returns {Object} { fits: boolean, missingColumns: Array, fitScore: number }
+     */
+    function assessToolQueryFit(question, toolName, toolDescription, expectedOutputs) {
+        const prompt = `Does this tool's output match what the question needs?
+
+QUESTION: "${question}"
+
+TOOL: ${toolName}
+DESCRIPTION: ${toolDescription}
+OUTPUT COLUMNS: ${expectedOutputs || 'Not specified'}
+
+Analysis required:
+1. What columns/data does the question need?
+2. Does this tool provide those columns?
+3. Are there any gaps between what's needed and what's provided?
+
+Respond with JSON only:
+{
+  "question_needs": ["list", "of", "data", "elements", "needed"],
+  "tool_provides": ["list", "of", "what", "tool", "returns"],
+  "fit_score": 0.0-1.0,
+  "fits_well": true|false,
+  "missing_elements": ["what", "question", "needs", "but", "tool", "lacks"],
+  "recommendation": "USE_TOOL|TRY_DIFFERENT_TOOL|USE_WITH_SYNTHESIZE"
+}`;
+
+        try {
+            const response = AIProviders.callAI(prompt, {
+                tier: TIERS.FAST,
+                temperature: 0,
+                jsonMode: true,
+                maxTokens: 300,
+                purpose: 'SCA:tool_fit'
+            });
+
+            const parsed = parseJsonResponse(response?.text);
+
+            if (parsed) {
+                return {
+                    fits: parsed.fits_well !== false && parsed.fit_score >= 0.6,
+                    fitScore: parsed.fit_score || 0.5,
+                    questionNeeds: parsed.question_needs || [],
+                    toolProvides: parsed.tool_provides || [],
+                    missingElements: parsed.missing_elements || [],
+                    recommendation: parsed.recommendation || 'USE_TOOL'
+                };
+            }
+        } catch (e) {
+            log.debug('Tool-query fit assessment failed', { error: e.message });
+        }
+
+        // Fallback: assume it fits
+        return { fits: true, fitScore: 0.5, missingElements: [], recommendation: 'USE_TOOL' };
+    }
+
+    /**
+     * BUILD ENHANCED ERROR CONTEXT FOR PROMPTS
+     * Format previous failures prominently so the LLM can learn from them.
+     *
+     * @param {Array} accumulatedData - Previous tool attempts
+     * @param {number} maxErrors - Maximum errors to show
+     * @returns {string} Formatted error context for prompt injection
+     */
+    function buildErrorContextForPrompt(accumulatedData, maxErrors) {
+        maxErrors = maxErrors || 5;
+        const failures = (accumulatedData || [])
+            .filter(d => !d.success || d.rowCount === 0)
+            .slice(-maxErrors);
+
+        if (failures.length === 0) {
+            return '';
+        }
+
+        const lines = [
+            '',
+            '⚠️⚠️⚠️ PREVIOUS ATTEMPTS THAT FAILED - LEARN FROM THESE ⚠️⚠️⚠️',
+            ''
+        ];
+
+        failures.forEach((f, i) => {
+            lines.push(`ATTEMPT ${i + 1} FAILED:`);
+            lines.push(`  Tool: ${f.tool}`);
+            lines.push(`  Args: ${JSON.stringify(f.args)}`);
+            if (f.error) {
+                lines.push(`  Error: ${f.error.substring(0, 200)}`);
+            }
+            if (f.validationErrors?.length > 0) {
+                lines.push(`  Validation Errors:`);
+                f.validationErrors.forEach(ve => lines.push(`    • ${ve}`));
+            }
+            if (f.rowCount === 0 && f.success) {
+                lines.push(`  Result: Query succeeded but returned 0 rows`);
+            }
+            lines.push('');
+        });
+
+        lines.push('DO NOT REPEAT THESE MISTAKES. Check tool schemas carefully.');
+        lines.push('');
+
+        return lines.join('\n');
+    }
+
+    /**
+     * GET ADAPTIVE MODEL TIER BASED ON FAILURE HISTORY
+     * Upgrade model quality after repeated failures.
+     *
+     * @param {string} basePhase - The phase being executed
+     * @param {Object} state - Current state with failure history
+     * @returns {number} The tier to use (1=FAST, 2=BALANCED, 3=PREMIUM)
+     */
+    function getAdaptiveModelTier(basePhase, state) {
+        const baseTier = getTierForPhase(basePhase, state);
+
+        // Count recent failures
+        const recentData = (state.accumulatedData || []).slice(-5);
+        const failureCount = recentData.filter(d => !d.success || d.rowCount === 0).length;
+        const validationErrorCount = recentData.filter(d => d.validationErrors?.length > 0).length;
+
+        // Upgrade tier based on failure patterns
+        if (validationErrorCount >= 2) {
+            // Multiple validation errors - upgrade for better tool understanding
+            log.debug('Adaptive tier upgrade: validation errors', {
+                baseTier,
+                validationErrorCount,
+                upgradeTo: Math.min(baseTier + 1, TIERS.PREMIUM)
+            });
+            return Math.min(baseTier + 1, TIERS.PREMIUM);
+        }
+
+        if (failureCount >= 3) {
+            // Multiple failures - upgrade for better reasoning
+            log.debug('Adaptive tier upgrade: repeated failures', {
+                baseTier,
+                failureCount,
+                upgradeTo: Math.min(baseTier + 1, TIERS.PREMIUM)
+            });
+            return Math.min(baseTier + 1, TIERS.PREMIUM);
+        }
+
+        return baseTier;
+    }
+
+    /**
+     * ENHANCED TOOL LIST WITH FULL SCHEMAS
+     * Generate detailed tool documentation including parameter schemas for prompts.
+     *
+     * @param {Array} toolNames - Optional filter to specific tools
+     * @returns {string} Formatted tool list with schemas
+     */
+    function getEnhancedToolListForPrompt(toolNames) {
+        const manifest = Tools.getToolManifest();
+        const lines = [];
+
+        const toolsToShow = toolNames
+            ? Object.keys(manifest).filter(t => toolNames.includes(t))
+            : Object.keys(manifest);
+
+        for (const toolName of toolsToShow) {
+            const tool = Tools.getTool ? Tools.getTool(toolName) : Tools.ALL_TOOLS?.[toolName];
+            if (!tool) continue;
+
+            const desc = tool.shortDescription ||
+                (tool.description ? tool.description.split('\n')[0].trim() : toolName);
+
+            lines.push(`═══ ${toolName} ═══`);
+            lines.push(desc);
+
+            // Add parameter schema
+            if (tool.parameters?.properties) {
+                lines.push('PARAMETERS:');
+                const required = tool.parameters.required || [];
+
+                for (const [param, def] of Object.entries(tool.parameters.properties)) {
+                    const req = required.includes(param) ? ' (REQUIRED)' : '';
+                    let typeInfo = def.type;
+
+                    if (def.enum) {
+                        const enumStr = def.enum.slice(0, 6).join(', ');
+                        typeInfo = `[${enumStr}${def.enum.length > 6 ? ', ...' : ''}]`;
+                    }
+
+                    lines.push(`  • ${param}: ${typeInfo}${req}`);
+                }
+            }
+            lines.push('');
+        }
+
+        return lines.join('\n');
+    }
+
+    /**
+     * CHECK IF EARLY SYNTHESIZE ESCALATION IS WARRANTED
+     * Based on failure patterns, decide if we should skip to SYNTHESIZE.
+     *
+     * @param {Object} state - Current state
+     * @returns {Object} { shouldEscalate: boolean, reason: string }
+     */
+    function checkEarlySynthesizeEscalation(state) {
+        const accumulatedData = state.accumulatedData || [];
+        if (accumulatedData.length < 2) {
+            return { shouldEscalate: false };
+        }
+
+        // Check for tool implementation bugs (not parameter errors)
+        const toolBugs = accumulatedData.filter(d => {
+            if (d.success) return false;
+            const error = (d.error || '').toLowerCase();
+            // These indicate internal tool bugs, not user errors
+            return error.includes('unknown identifier') ||
+                   error.includes('column does not exist') ||
+                   error.includes('undefined is not') ||
+                   error.includes('cannot read property') ||
+                   error.includes('internal error');
+        });
+
+        if (toolBugs.length >= 1) {
+            return {
+                shouldEscalate: true,
+                reason: `Tool implementation error detected: ${toolBugs[0].error?.substring(0, 100)}. Escalating to SYNTHESIZE.`
+            };
+        }
+
+        // Check for repeated failures with same tool (even after corrections)
+        const toolAttempts = {};
+        for (const d of accumulatedData) {
+            toolAttempts[d.tool] = (toolAttempts[d.tool] || 0) + 1;
+        }
+
+        for (const [tool, count] of Object.entries(toolAttempts)) {
+            if (count >= 3) {
+                const toolFailures = accumulatedData.filter(d => d.tool === tool && !d.success);
+                if (toolFailures.length >= 2) {
+                    return {
+                        shouldEscalate: true,
+                        reason: `Tool "${tool}" failed ${toolFailures.length} times. Escalating to custom SQL.`
+                    };
+                }
+            }
+        }
+
+        // Check capability assessment result if available
+        if (state.capabilityAssessment?.recommendation === 'SYNTHESIZE_EARLY') {
+            return {
+                shouldEscalate: true,
+                reason: 'Pre-flight assessment indicated tools cannot fully answer this query.'
+            };
+        }
+
+        return { shouldEscalate: false };
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
     // LIGHTWEIGHT PROMPTS
     // ═══════════════════════════════════════════════════════════════════════════
 
@@ -2834,6 +3511,40 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
                     return { success: true, nextPhase: PHASES.RESPOND };
                 }
 
+                // ═══════════════════════════════════════════════════════════════════════
+                // AGENTIC PRE-FLIGHT CAPABILITY ASSESSMENT
+                // Before entering REASON_ACT, assess if tools can answer this question
+                // This prevents wasted iterations on fundamentally unsupported queries
+                // ═══════════════════════════════════════════════════════════════════════
+                const toolManifest = Tools.getToolManifest();
+                const capabilityAssessment = assessToolCapability(
+                    state.message,
+                    parsed,
+                    toolManifest
+                );
+
+                // Store assessment for use in REASON_ACT
+                state.capabilityAssessment = capabilityAssessment;
+
+                log.debug('Pre-flight capability assessment', {
+                    canAnswer: capabilityAssessment.canAnswer,
+                    recommendation: capabilityAssessment.recommendation,
+                    bestToolCount: capabilityAssessment.bestTools?.length || 0,
+                    gapCount: capabilityAssessment.gaps?.length || 0
+                });
+
+                // If recommendation is DECOMPOSE, store decomposition strategy
+                if (capabilityAssessment.recommendation === 'DECOMPOSE') {
+                    const decomposition = decomposeQuery(state.message, parsed, toolManifest);
+                    if (decomposition.shouldDecompose) {
+                        state.queryDecomposition = decomposition;
+                        log.debug('Query decomposition planned', {
+                            subQueryCount: decomposition.subQueries?.length || 0,
+                            strategy: decomposition.strategy
+                        });
+                    }
+                }
+
                 // NEW: Route to REASON_ACT for agentic data gathering
                 state.phase = PHASES.REASON_ACT;
 
@@ -3185,6 +3896,44 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
             lines.push(synthesizeHint);
         }
 
+        // ═══════════════════════════════════════════════════════════════════════
+        // AGENTIC ERROR CONTEXT AMPLIFICATION
+        // Prominently display previous failures to help LLM learn from mistakes
+        // ═══════════════════════════════════════════════════════════════════════
+        const errorContext = buildErrorContextForPrompt(state.accumulatedData, 5);
+        if (errorContext) {
+            lines.push(errorContext);
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // AGENTIC EARLY SYNTHESIZE CHECK
+        // If tool health suggests synthesize, or capability gaps detected, flag it
+        // ═══════════════════════════════════════════════════════════════════════
+        const earlyEscalation = checkEarlySynthesizeEscalation(state);
+        if (earlyEscalation.shouldEscalate) {
+            lines.push('\n🔴 AGENTIC RECOMMENDATION: SKIP TO SYNTHESIZE');
+            lines.push(`  Reason: ${earlyEscalation.reason}`);
+            lines.push('  Consider using action: "SYNTHESIZE" to write custom SQL.');
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // CAPABILITY ASSESSMENT RESULT (if available)
+        // Show pre-flight assessment to guide tool selection
+        // ═══════════════════════════════════════════════════════════════════════
+        if (state.capabilityAssessment) {
+            const ca = state.capabilityAssessment;
+            if (ca.gaps && ca.gaps.length > 0) {
+                lines.push('\n📋 CAPABILITY GAPS (from pre-flight assessment):');
+                ca.gaps.forEach(gap => lines.push(`  • ${gap}`));
+            }
+            if (ca.bestTools && ca.bestTools.length > 0) {
+                lines.push('\n🎯 BEST-FIT TOOLS (from pre-flight assessment):');
+                ca.bestTools.slice(0, 3).forEach(t => {
+                    lines.push(`  • ${t.tool} (${Math.round(t.fit_score * 100)}% fit): ${t.reason}`);
+                });
+            }
+        }
+
         return lines.join('\n');
     }
 
@@ -3520,50 +4269,102 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
             result = Tools.executeTool(toolName, args);
 
             // ═══════════════════════════════════════════════════════════════════════
-            // AUTO-RETRY ON VALIDATION ERRORS WITH SUGGESTIONS
-            // When validation fails with "Did you mean X?", auto-correct and retry
-            // This fixes cases where LLM uses vendor_id instead of entity_id, etc.
+            // AGENTIC AUTO-RETRY ON VALIDATION ERRORS
+            // Uses LLM to intelligently correct parameters when validation fails
+            // Upgrades from simple regex matching to semantic understanding
             // ═══════════════════════════════════════════════════════════════════════
             if (!result.success && result.validationErrors && result.validationErrors.length > 0) {
-                const correctedArgs = { ...args };
-                let hasCorrectable = false;
+                // First try agentic correction using LLM
+                const agenticCorrection = correctParametersAgentically(
+                    toolName,
+                    args,
+                    result.validationErrors,
+                    tool.parameters
+                );
 
-                for (const error of result.validationErrors) {
-                    // Parse "Did you mean X?" suggestions
-                    const match = error.match(/Unknown parameter "([^"]+)".*Did you mean "([^"]+)"\?/);
-                    if (match) {
-                        const wrongParam = match[1];
-                        const correctParam = match[2];
-
-                        // Only auto-correct if the correct param isn't already set
-                        if (correctedArgs[wrongParam] !== undefined && correctedArgs[correctParam] === undefined) {
-                            correctedArgs[correctParam] = correctedArgs[wrongParam];
-                            delete correctedArgs[wrongParam];
-                            hasCorrectable = true;
-                            log.audit('AUTO-RETRY: Corrected parameter', {
-                                tool: toolName,
-                                wrongParam: wrongParam,
-                                correctParam: correctParam,
-                                value: correctedArgs[correctParam]
-                            });
-                        }
-                    }
-                }
-
-                // Retry with corrected args if we found correctable errors
-                if (hasCorrectable) {
-                    log.audit('AUTO-RETRY: Executing with corrected args', {
+                if (agenticCorrection.corrected && agenticCorrection.confidence >= 0.7) {
+                    log.audit('AGENTIC AUTO-CORRECTION: Using LLM-corrected args', {
                         tool: toolName,
                         originalArgs: args,
-                        correctedArgs: correctedArgs
+                        correctedArgs: agenticCorrection.args,
+                        explanation: agenticCorrection.explanation,
+                        confidence: agenticCorrection.confidence
                     });
-                    result = Tools.executeTool(toolName, correctedArgs);
-                    autoRetried = true;
-                    args = correctedArgs; // Update args for accumulated data entry
 
-                    // Add normalization warning about the auto-correction
+                    result = Tools.executeTool(toolName, agenticCorrection.args);
+                    autoRetried = true;
+                    args = agenticCorrection.args;
+
                     if (!result.normalizationWarnings) result.normalizationWarnings = [];
-                    result.normalizationWarnings.push('Auto-corrected parameter names based on validation suggestions');
+                    result.normalizationWarnings.push(
+                        'Agentic auto-correction: ' + agenticCorrection.explanation
+                    );
+                } else {
+                    // Fallback: Simple pattern-based correction for obvious cases
+                    const correctedArgs = { ...args };
+                    let hasCorrectable = false;
+
+                    for (const error of result.validationErrors) {
+                        // Parse "Did you mean X?" suggestions from validation
+                        const jsonMatch = error.match(/\{[\s\S]*\}/);
+                        if (jsonMatch) {
+                            // Skip JSON error formats
+                            continue;
+                        }
+
+                        // Simple string pattern matching as fallback
+                        const simpleMatch = error.match(/Unknown parameter "([^"]+)".*Did you mean "([^"]+)"\?/);
+                        if (simpleMatch) {
+                            const wrongParam = simpleMatch[1];
+                            const correctParam = simpleMatch[2];
+
+                            if (correctedArgs[wrongParam] !== undefined && correctedArgs[correctParam] === undefined) {
+                                correctedArgs[correctParam] = correctedArgs[wrongParam];
+                                delete correctedArgs[wrongParam];
+                                hasCorrectable = true;
+                            }
+                        }
+                    }
+
+                    if (hasCorrectable) {
+                        log.audit('FALLBACK AUTO-CORRECTION: Using pattern-matched args', {
+                            tool: toolName,
+                            originalArgs: args,
+                            correctedArgs: correctedArgs
+                        });
+                        result = Tools.executeTool(toolName, correctedArgs);
+                        autoRetried = true;
+                        args = correctedArgs;
+
+                        if (!result.normalizationWarnings) result.normalizationWarnings = [];
+                        result.normalizationWarnings.push('Auto-corrected parameter names based on validation suggestions');
+                    }
+                }
+            }
+
+            // ═══════════════════════════════════════════════════════════════════════
+            // AGENTIC TOOL HEALTH CLASSIFICATION
+            // After execution, classify the error type to enable smart recovery
+            // ═══════════════════════════════════════════════════════════════════════
+            if (!result.success && result.error) {
+                const healthClassification = classifyToolHealth(result, toolName, args);
+
+                // Store classification for circuit breaker and escalation decisions
+                result.healthClassification = healthClassification;
+
+                // If it's a tool bug, mark for potential alerting
+                if (healthClassification.shouldAlert) {
+                    log.audit('TOOL BUG DETECTED', {
+                        tool: toolName,
+                        errorType: healthClassification.errorType,
+                        error: result.error?.substring(0, 200),
+                        suggestedAction: healthClassification.suggestedAction
+                    });
+                }
+
+                // If suggested action is SKIP_TO_SYNTHESIZE, flag it for the state
+                if (healthClassification.suggestedAction === 'SKIP_TO_SYNTHESIZE') {
+                    state.toolHealthSuggestsSynthesize = true;
                 }
             }
 
@@ -3900,12 +4701,36 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
         // Build intent guidance with recommended period from INTENT phase
         const intentGuidance = buildIntentGuidance(state);
 
+        // ═══════════════════════════════════════════════════════════════════════
+        // AGENTIC ENHANCED TOOL SCHEMA INJECTION
+        // If there have been validation errors, include full parameter schemas
+        // to help the LLM use correct parameters on subsequent attempts
+        // ═══════════════════════════════════════════════════════════════════════
+        const hasValidationErrors = (state.accumulatedData || []).some(
+            d => d.validationErrors && d.validationErrors.length > 0
+        );
+
+        let toolListForPrompt;
+        if (hasValidationErrors || state.reasonActIterations >= 2) {
+            // Use enhanced tool list with full schemas after validation errors
+            // or after 2+ iterations to help LLM understand tool parameters better
+            const relevantTools = state.capabilityAssessment?.bestTools
+                ?.map(t => t.tool) || null;
+            toolListForPrompt = getEnhancedToolListForPrompt(relevantTools);
+            log.debug('Using enhanced tool list for prompt', {
+                reason: hasValidationErrors ? 'validation_errors' : 'multiple_iterations',
+                relevantTools: relevantTools?.length || 'all'
+            });
+        } else {
+            toolListForPrompt = Tools.getToolListForPrompt();
+        }
+
         const prompt = REASON_ACT_PROMPT
             .replace('{date_context}', getDateContext())
             .replace('{history_context}', buildHistoryContext(state))
             .replace('{question}', state.message)
             .replace('{accumulated_data}', buildAccumulatedDataSummary(state))
-            .replace('{tool_list}', Tools.getToolListForPrompt())
+            .replace('{tool_list}', toolListForPrompt)
             .replace('{period_options}', Tools.getAvailablePeriods())
             .replace('{needs_resolution_context}', needsResolutionContext)
             .replace('{comparison_hint}', comparisonHint)
@@ -3923,8 +4748,19 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
         });
 
         try {
+            // ═══════════════════════════════════════════════════════════════════════
+            // AGENTIC ADAPTIVE MODEL TIER
+            // Upgrade model quality based on failure history for better recovery
+            // ═══════════════════════════════════════════════════════════════════════
+            const adaptiveTier = getAdaptiveModelTier('reason_act', state);
+            log.debug('REASON_ACT adaptive tier', {
+                baseTier: getTierForPhase('reason_act', state),
+                adaptiveTier: adaptiveTier,
+                iteration: state.reasonActIterations
+            });
+
             const response = AIProviders.callAI(prompt, {
-                tier: getTierForPhase('reason_act', state),
+                tier: adaptiveTier,
                 temperature: 0.2,
                 jsonMode: true,
                 maxTokens: 800,
@@ -3961,7 +4797,72 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
                     }
 
                     const toolName = parsed.tool;
-                    const args = parsed.args || {};
+                    let args = parsed.args || {};
+
+                    // ═══════════════════════════════════════════════════════════════════════
+                    // AGENTIC PERIOD VALIDATION
+                    // For tools that compare periods, validate the comparison makes sense
+                    // ═══════════════════════════════════════════════════════════════════════
+                    if (args.period1 && args.period2) {
+                        const periodValidation = validatePeriodComparison(
+                            args.period1,
+                            args.period2,
+                            state.intent?.intent || 'comparison'
+                        );
+
+                        if (!periodValidation.valid) {
+                            log.audit('Period validation failed', {
+                                tool: toolName,
+                                period1: args.period1,
+                                period2: args.period2,
+                                issue: periodValidation.issue,
+                                suggestion: periodValidation.suggestion
+                            });
+
+                            // If we have recommended periods, auto-correct
+                            if (periodValidation.recommendedPeriods) {
+                                const recommended = periodValidation.recommendedPeriods;
+                                if (recommended.period1 && recommended.period1 !== args.period1) {
+                                    args = { ...args, period1: recommended.period1 };
+                                }
+                                if (recommended.period2 && recommended.period2 !== args.period2) {
+                                    args = { ...args, period2: recommended.period2 };
+                                }
+                                log.audit('Period auto-corrected', {
+                                    original: { period1: parsed.args.period1, period2: parsed.args.period2 },
+                                    corrected: { period1: args.period1, period2: args.period2 }
+                                });
+                            }
+                        }
+                    }
+
+                    // ═══════════════════════════════════════════════════════════════════════
+                    // AGENTIC TOOL-QUERY FIT ASSESSMENT
+                    // Verify the tool's output will match what the question needs
+                    // ═══════════════════════════════════════════════════════════════════════
+                    const tool = Tools.getTool ? Tools.getTool(toolName) : Tools.ALL_TOOLS?.[toolName];
+                    if (tool && !state.toolFitAssessed?.[toolName]) {
+                        const fitAssessment = assessToolQueryFit(
+                            state.message,
+                            toolName,
+                            tool.description || tool.shortDescription || '',
+                            tool.outputColumns || ''
+                        );
+
+                        // Store assessment to avoid re-assessing
+                        if (!state.toolFitAssessed) state.toolFitAssessed = {};
+                        state.toolFitAssessed[toolName] = fitAssessment;
+
+                        // Log if fit is poor
+                        if (!fitAssessment.fits && fitAssessment.fitScore < 0.5) {
+                            log.debug('Tool-query fit assessment: poor fit', {
+                                tool: toolName,
+                                fitScore: fitAssessment.fitScore,
+                                missingElements: fitAssessment.missingElements,
+                                recommendation: fitAssessment.recommendation
+                            });
+                        }
+                    }
 
                     // Add tool call step for UI
                     addToolCallStep(state, {
