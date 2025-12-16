@@ -3243,6 +3243,8 @@ Returns Revenue, COGS, Gross Profit, Operating Expenses, and Net Income with pro
 ALWAYS use this for: "income statement", "P&L", "profit and loss", "show me P&L", "how much profit", "net income"
 Supports ALL period values including ytd, prior_year_ytd, last_fiscal_year, fiscal quarters, etc.
 
+Uses ONLY posted/actual transactions (t.posting = 'T'). Excludes sales orders, purchase orders, and other non-posting transactions.
+
 FOR COMPARISONS: Use compare_to parameter to get pre-computed period-over-period comparison with deltas.
 Example: period="ytd", compare_to="prior_year_ytd" returns current vs prior year with change amounts and percentages.`,
             parameters: {
@@ -3255,6 +3257,10 @@ Example: period="ytd", compare_to="prior_year_ytd" returns current vs prior year
                     compare_to: {
                         type: 'string',
                         description: 'Optional comparison period. When provided, returns a comparison view with both periods and computed deltas (change, pct_change). Use for YoY: compare_to="prior_year_ytd". Use for MoM: compare_to="last_month".'
+                    },
+                    project_id: {
+                        type: 'number',
+                        description: 'Optional: filter by project ID. NOTE: For project profitability/P&L, prefer get_project_profitability which uses the authoritative ProjectFinancials table.'
                     },
                     department_id: {
                         type: 'number',
@@ -3270,6 +3276,8 @@ Example: period="ytd", compare_to="prior_year_ytd" returns current vs prior year
             execute: function(args) {
                 const period = args.period || 'ytd';
                 const compareTo = args.compare_to;
+                const projectFilter = args.project_id ?
+                    `AND t.job = ${args.project_id}` : '';
                 const deptFilter = args.department_id ?
                     `AND tl.department = ${args.department_id}` : '';
                 const classFilter = args.class_id ?
@@ -3311,6 +3319,7 @@ Example: period="ytd", compare_to="prior_year_ytd" returns current vs prior year
                                 AND acct.accttype IN ('Income', 'OthIncome', 'COGS', 'Expense', 'OthExpense')
                                 AND ap.isyear = 'F' AND ap.isquarter = 'F'
                                 ${currentDateFilter}
+                                ${projectFilter}
                                 ${deptFilter}
                                 ${classFilter}
                             GROUP BY
@@ -3349,6 +3358,7 @@ Example: period="ytd", compare_to="prior_year_ytd" returns current vs prior year
                                 AND acct.accttype IN ('Income', 'OthIncome', 'COGS', 'Expense', 'OthExpense')
                                 AND ap.isyear = 'F' AND ap.isquarter = 'F'
                                 ${priorDateFilter}
+                                ${projectFilter}
                                 ${deptFilter}
                                 ${classFilter}
                             GROUP BY
@@ -3484,6 +3494,7 @@ Example: period="ytd", compare_to="prior_year_ytd" returns current vs prior year
                         AND acct.accttype IN ('Income', 'OthIncome', 'COGS', 'Expense', 'OthExpense')
                         AND ap.isyear = 'F' AND ap.isquarter = 'F'
                         ${dateFilter}
+                        ${projectFilter}
                         ${deptFilter}
                         ${classFilter}
                     GROUP BY
@@ -4961,13 +4972,17 @@ Can filter by account type, department, class, and specific accounts.`,
 
         get_project_profitability: {
             name: 'get_project_profitability',
-            shortDescription: 'Project P&L and margin analysis',
+            shortDescription: 'Project P&L and margin analysis (actuals only)',
             category: 'profitability',
             description: `Get project profitability analysis showing revenue, costs, and margin by project.
-Use for: "project profitability", "project P&L", "project margin", "project performance", "which projects are profitable"
+Use for: "project profitability", "project P&L", "project margin", "project performance", "how did project X do"
 
-Uses ProjectFinancials data to show actuals by project with revenue/cost breakdown.
-Can filter by subsidiary, specific project, or transaction type.
+AUTHORITATIVE SOURCE: Uses ProjectFinancials table with actual = 'T' filter.
+- Only includes ACTUAL/POSTED costs and revenue
+- Excludes: Sales Orders, Purchase Orders, Estimates, and other non-posting transactions
+- This is the recommended tool for project financial analysis
+
+Can filter by subsidiary or specific project.
 
 ⚠️ IMPORTANT: If filtering by a specific project, you MUST use resolve_entity first!
 User says "project 0915" → call resolve_entity(name="0915", type="project") → use returned ID here.`,

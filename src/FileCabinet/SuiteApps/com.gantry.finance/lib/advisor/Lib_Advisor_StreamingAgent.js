@@ -2110,10 +2110,11 @@ For "who owes us", "AR aging", "overdue invoices", "outstanding receivables":
 For "[vendor/customer] summary", "spending with [vendor]", "revenue from [customer]":
   → Use get_vendor_spend or get_customer_revenue (aggregate analysis)
 
-For "project [code] profitability", "how did project X do", "project performance":
+For "project [code] profitability", "how did project X do", "project performance", "project P&L":
   → FIRST: resolve_entity(name="[code]", type="project") to get internal ID
   → THEN: get_project_profitability(project_id=<resolved_id>)
-  → NEVER pass user-provided project codes/numbers directly to project_id parameter!
+  → Uses ProjectFinancials table with ACTUAL costs only (excludes SOs, POs, estimates)
+  → DO NOT use get_income_statement for project P&L - use get_project_profitability!
   → Project codes like "0915", "PRJ-001", "Phase 1" must be resolved first
 
 CRITICAL: Match the tool to what the user SEMANTICALLY wants, not just keywords.
