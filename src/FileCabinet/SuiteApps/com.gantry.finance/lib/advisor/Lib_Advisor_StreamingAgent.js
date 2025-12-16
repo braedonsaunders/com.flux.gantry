@@ -1572,17 +1572,12 @@ WRITE YOUR RESPONSE IN MARKDOWN with these special directives:
    Optional Title Here
    :::
 
-   FILTER tables using the SLUG shown in CATEGORY BREAKDOWN:
-   :::table ref_xxx filter:category=revenue
-   Revenue Details
+   FILTER tables by category using the FILTER SYNTAX shown in data section:
+   :::table ref_xxx filter:column_name=slug_value
+   Filtered Results
    :::
-   :::table ref_xxx filter:category=cost_of_goods_sold
-   COGS Details
-   :::
-   :::table ref_xxx filter:category=operating_expenses
-   Operating Expenses Details
-   :::
-   ⚠️ Use the exact slug from [slug: xxx] in CATEGORY BREAKDOWN
+   ⚠️ IMPORTANT: Use the exact column name and slug from the CATEGORY BREAKDOWN
+   ⚠️ Only filter if there IS a CATEGORY BREAKDOWN shown - otherwise show all data
 
 2. CHARTS - Visualize data:
    :::chart bar ref_xxx
@@ -6695,6 +6690,12 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
                         const slug = toSlug(item.value);
                         section += `    • ${item.value} [slug: ${slug}]: ${sumStr} (${item.count} rows)\n`;
                     });
+
+                    // Add dynamic filter examples using actual column name and first slug
+                    const firstSlug = toSlug(catCol.distribution[0]?.value || '');
+                    if (firstSlug) {
+                        section += `  FILTER SYNTAX: :::table ${ref.refId} filter:${catCol.column}=${firstSlug}\n`;
+                    }
                 });
                 section += '\n';
             }
@@ -7570,31 +7571,51 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
 
             // ═══════════════════════════════════════════════════════════════════════
             // FILTER SUPPORT: LLM uses slug to filter rows
-            // Example: filter:category=cost_of_goods_sold matches "Cost of Goods Sold"
+            // Example: filter:department_name=mechanical matches "Mechanical"
             // Both filter value and row value are slugified for comparison
+            // If filter column doesn't exist, skip filtering (return all rows)
             // ═══════════════════════════════════════════════════════════════════════
             let filteredRows = data.rows;
             let filterApplied = null;
+            let filterSkipped = null;
             if (block.filter && typeof block.filter === 'object') {
-                filterApplied = block.filter;
-                filteredRows = data.rows.filter(row => {
-                    for (const [col, expectedValue] of Object.entries(block.filter)) {
-                        const rowValue = row[col];
-                        // Compare slugified versions - clean, deterministic matching
-                        const rowSlug = toSlug(rowValue);
-                        const expectedSlug = toSlug(expectedValue);
+                // Validate filter columns exist in data
+                const validFilterCols = Object.keys(block.filter).filter(col => data.columns.includes(col));
+                const invalidFilterCols = Object.keys(block.filter).filter(col => !data.columns.includes(col));
 
-                        if (rowSlug !== expectedSlug) {
-                            return false;
+                if (invalidFilterCols.length > 0) {
+                    log.debug('buildTableBlockFromRef: filter column(s) not found, skipping filter', {
+                        invalidCols: invalidFilterCols,
+                        availableCols: data.columns
+                    });
+                    filterSkipped = { columns: invalidFilterCols, reason: 'column_not_found' };
+                }
+
+                if (validFilterCols.length > 0) {
+                    // Build valid filter object
+                    const validFilter = {};
+                    validFilterCols.forEach(col => { validFilter[col] = block.filter[col]; });
+                    filterApplied = validFilter;
+
+                    filteredRows = data.rows.filter(row => {
+                        for (const [col, expectedValue] of Object.entries(validFilter)) {
+                            const rowValue = row[col];
+                            // Compare slugified versions - clean, deterministic matching
+                            const rowSlug = toSlug(rowValue);
+                            const expectedSlug = toSlug(expectedValue);
+
+                            if (rowSlug !== expectedSlug) {
+                                return false;
+                            }
                         }
-                    }
-                    return true;
-                });
-                log.debug('buildTableBlockFromRef: filter applied', {
-                    filter: block.filter,
-                    originalRows: data.rows.length,
-                    filteredRows: filteredRows.length
-                });
+                        return true;
+                    });
+                    log.debug('buildTableBlockFromRef: filter applied', {
+                        filter: validFilter,
+                        originalRows: data.rows.length,
+                        filteredRows: filteredRows.length
+                    });
+                }
             }
 
             const summary = dataRef.summary || {};
@@ -7615,7 +7636,8 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
                     rowCount: filteredRows.length,
                     columns: data.columns.length,
                     aggregates: summary.aggregates,
-                    filterApplied: filterApplied
+                    filterApplied: filterApplied,
+                    filterSkipped: filterSkipped
                 },
                 // Pagination config for frontend
                 pagination: {
