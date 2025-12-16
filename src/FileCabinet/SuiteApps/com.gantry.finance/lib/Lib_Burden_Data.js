@@ -3656,7 +3656,7 @@ define(["N/query", "N/search", "N/log", "N/runtime", "./Lib_Core", "./Lib_Config
 
     /**
      * Calculate confidence level for forecast based on trend strength and distance
-     * @param {Object} trend - Trend data from calculateTrend
+     * @param {Object} trend - Trend data from calculateLinearRegression
      * @param {number} periodsAhead - How many periods into future
      * @returns {number} Confidence level 0-1
      */
@@ -5741,7 +5741,7 @@ define(["N/query", "N/search", "N/log", "N/runtime", "./Lib_Core", "./Lib_Config
         getAllocationBaseValue,
         // Forecasting functions
         forecastRates,
-        calculateTrend,
+        calculateLinearRegression,
         calculateConfidence
     };
 });
