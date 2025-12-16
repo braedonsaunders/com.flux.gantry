@@ -147,7 +147,7 @@ define(['N/log'], function(log) {
      * Patterns that indicate dangerous operations
      * These are NEVER allowed
      */
-    const BLOCKED_PATTERNS = [
+    const DANGEROUS_OPERATION_PATTERNS = [
         { pattern: /\bDELETE\b/i, reason: 'DELETE operations are not allowed' },
         { pattern: /\bUPDATE\b/i, reason: 'UPDATE operations are not allowed' },
         { pattern: /\bINSERT\b/i, reason: 'INSERT operations are not allowed' },
@@ -193,11 +193,11 @@ define(['N/log'], function(log) {
             };
         }
 
-        // Check for blocked patterns
-        for (const blocked of BLOCKED_PATTERNS) {
+        // Check for dangerous operation patterns
+        for (const blocked of DANGEROUS_OPERATION_PATTERNS) {
             if (blocked.pattern.test(normalizedSql)) {
-                return { 
-                    valid: false, 
+                return {
+                    valid: false,
                     reason: blocked.reason,
                     suggestion: 'Remove the dangerous operation and use only SELECT queries'
                 };
@@ -544,6 +544,7 @@ define(['N/log'], function(log) {
         // STANDARD_TABLES removed - use dynamic discovery via Utils.discoverTableSchema()
         BLOCKED_TABLES: BLOCKED_TABLES,
         BLOCKED_PATTERNS: BLOCKED_PATTERNS,
+        DANGEROUS_OPERATION_PATTERNS: DANGEROUS_OPERATION_PATTERNS,
         MAX_ROWS: MAX_ROWS
     };
 });
