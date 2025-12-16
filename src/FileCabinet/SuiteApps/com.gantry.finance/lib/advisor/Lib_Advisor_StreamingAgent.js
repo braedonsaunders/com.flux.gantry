@@ -6729,6 +6729,23 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
                 }
             }
 
+            // ═══════════════════════════════════════════════════════════════════════
+            // CATEGORY-LEVEL TOKENS
+            // List tokens for accessing category totals (e.g., Revenue, COGS, Operating Expenses)
+            // ═══════════════════════════════════════════════════════════════════════
+            if (summary.categoricalColumns && summary.categoricalColumns.length > 0) {
+                section += `\n  📊 CATEGORY TOTALS (use these for metrics referencing categories):\n`;
+                summary.categoricalColumns.forEach(catCol => {
+                    catCol.distribution.forEach(item => {
+                        // Convert category value to token-safe format (spaces → underscores)
+                        const tokenName = item.value.replace(/\s+/g, '_');
+                        const sumStr = item.sumFormatted || formatStatValue(item.sum, 'currency');
+                        section += `     {{data.stats.total_${tokenName}:currency}} → ${sumStr}\n`;
+                        section += `     {{data.stats.count_${tokenName}}} → ${item.count} rows\n`;
+                    });
+                });
+            }
+
             section += `\n  ⚠️ DO NOT invent tokens. Use ONLY the tokens listed above.\n`;
             section += `  For table/chart blocks: use dataRef "${ref.refId}"\n`;
 
@@ -7055,9 +7072,62 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
                             }
                         }
                     }
+
+                    // ═══════════════════════════════════════════════════════════════════════
+                    // CATEGORY-LEVEL TOKEN RESOLUTION
+                    // Handles tokens like {{data.stats.total_Cost_of_Goods_Sold}} or {{data.stats.sum_Revenue}}
+                    // by looking up category values in categoricalColumns distribution
+                    // ═══════════════════════════════════════════════════════════════════════
+                    if (summary.categoricalColumns && summary.categoricalColumns.length > 0) {
+                        // Try to match category-based stat patterns
+                        // Pattern: total_CategoryValue, sum_CategoryValue, count_CategoryValue
+                        const categoryStatMatch = statName.match(/^(total|sum|count)_(.+)$/i);
+                        if (categoryStatMatch) {
+                            const statType = categoryStatMatch[1].toLowerCase();
+                            const categoryValue = categoryStatMatch[2].replace(/_/g, ' '); // Restore spaces
+
+                            // Search through all categorical columns for a matching value
+                            for (const catCol of summary.categoricalColumns) {
+                                const matchingDist = catCol.distribution.find(d =>
+                                    d.value && d.value.replace(/\s+/g, '_').toLowerCase() === categoryStatMatch[2].toLowerCase()
+                                );
+                                if (matchingDist) {
+                                    if (statType === 'count') {
+                                        return matchingDist.count.toString();
+                                    } else {
+                                        // total or sum
+                                        return formatResolvedValue(matchingDist.sum, format || 'currency', categoryValue);
+                                    }
+                                }
+                            }
+                        }
+
+                        // Also try direct category.VALUE.stat pattern
+                        // Pattern: data.category.CategoryValue.sum or data.category.CategoryValue.count
+                        const categoryPathMatch = adjustedPath.match(/data\.category\.([^.]+)\.(sum|count)/i);
+                        if (categoryPathMatch) {
+                            const categoryValue = categoryPathMatch[1].replace(/_/g, ' ');
+                            const statType = categoryPathMatch[2].toLowerCase();
+
+                            for (const catCol of summary.categoricalColumns) {
+                                const matchingDist = catCol.distribution.find(d =>
+                                    d.value && d.value.replace(/\s+/g, '_').toLowerCase() === categoryPathMatch[1].toLowerCase()
+                                );
+                                if (matchingDist) {
+                                    if (statType === 'count') {
+                                        return matchingDist.count.toString();
+                                    } else {
+                                        return formatResolvedValue(matchingDist.sum, format || 'currency', categoryValue);
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
 
-                return match; // Keep original if not resolved
+                // Token could not be resolved - mark for potential cleanup
+                log.debug('Token resolution: unresolved token', { expr: expr, path: adjustedPath });
+                return '{{UNRESOLVED:' + expr + '}}';
             } catch (e) {
                 log.debug('Token resolution error', { expr: expr, error: e.message });
                 return match;
@@ -7068,6 +7138,12 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
         // LLM sometimes writes "${{data.rows[0].amount:currency}}" which becomes "$$1,234.56"
         resolved = resolved.replace(/\$\s*\$/g, '$');  // Handle "$ $" and "$$"
         resolved = resolved.replace(/\$\$/g, '$');      // Handle remaining "$$"
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // UNRESOLVED TOKEN CLEANUP
+        // Replace marked unresolved tokens with user-friendly fallback
+        // ═══════════════════════════════════════════════════════════════════════
+        resolved = resolved.replace(/\{\{UNRESOLVED:[^}]+\}\}/g, '[N/A]');
 
         return resolved;
     }
@@ -7164,11 +7240,19 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
                                 value: resolveTokensInText(String(m.value || ''), state),
                                 trend: ['up', 'down', 'neutral'].includes(m.trend) ? m.trend : 'neutral'
                             }));
-                            if (resolvedItems.length > 0) {
+
+                            // Filter out items with unresolved tokens (showing [N/A])
+                            const validItems = resolvedItems.filter(item =>
+                                item.value && item.value !== '[N/A]' && !item.value.includes('[N/A]')
+                            );
+
+                            if (validItems.length > 0) {
                                 resolvedBlocks.push({
                                     type: 'metrics',
-                                    items: resolvedItems
+                                    items: validItems
                                 });
+                            } else {
+                                log.debug('resolveBlockSequence: all metrics items had unresolved tokens, skipping block');
                             }
                         }
                         break;
@@ -7319,6 +7403,8 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
 
     /**
      * Build a chart block from a dataRef
+     * Enhanced with SMART CATEGORICAL AGGREGATION - detects when x-column is categorical
+     * and aggregates y-values by category instead of using raw rows
      * @param {Object} block - Block with dataRef, chartType, x, y columns
      * @param {Object} state - Current state with dataReferences
      * @returns {Object|null} Chart block or null if invalid
@@ -7354,18 +7440,48 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
             const validChartTypes = ['bar', 'line', 'pie'];
             const chartType = validChartTypes.includes(block.chartType) ? block.chartType : 'bar';
 
-            // Limit data points for chart readability
-            const maxDataPoints = chartType === 'pie' ? 10 : 20;
-            const chartRows = data.rows.slice(0, maxDataPoints);
+            // ═══════════════════════════════════════════════════════════════════════
+            // SMART CATEGORICAL AGGREGATION
+            // If x-column is categorical, aggregate y-values by unique x-values
+            // This prevents pie charts with repeated labels like "Revenue, Revenue, Revenue..."
+            // ═══════════════════════════════════════════════════════════════════════
+            const summary = dataRef.summary || {};
+            const categoricalColumn = summary.categoricalColumns?.find(c => c.column === xCol);
 
-            // Build chart data structure (Plotly-compatible)
-            const chartData = {
-                labels: chartRows.map(row => formatCellValue(row[xCol], xCol)),
-                values: chartRows.map(row => {
-                    const val = row[yCol];
-                    return typeof val === 'number' ? val : parseFloat(val) || 0;
-                })
-            };
+            let chartData;
+
+            if (categoricalColumn && categoricalColumn.distribution) {
+                // X-column is categorical - use pre-computed distribution for aggregated values
+                log.debug('buildChartBlock: using categorical aggregation', {
+                    xCol: xCol,
+                    categoryCount: categoricalColumn.distribution.length
+                });
+
+                // Sort by sum descending for better visualization
+                const sortedDist = [...categoricalColumn.distribution]
+                    .sort((a, b) => Math.abs(b.sum) - Math.abs(a.sum));
+
+                // Limit data points
+                const maxDataPoints = chartType === 'pie' ? 10 : 20;
+                const limitedDist = sortedDist.slice(0, maxDataPoints);
+
+                chartData = {
+                    labels: limitedDist.map(d => d.value),
+                    values: limitedDist.map(d => d.sum)
+                };
+            } else {
+                // Standard row-based chart data
+                const maxDataPoints = chartType === 'pie' ? 10 : 20;
+                const chartRows = data.rows.slice(0, maxDataPoints);
+
+                chartData = {
+                    labels: chartRows.map(row => formatCellValue(row[xCol], xCol)),
+                    values: chartRows.map(row => {
+                        const val = row[yCol];
+                        return typeof val === 'number' ? val : parseFloat(val) || 0;
+                    })
+                };
+            }
 
             // Determine title
             const title = block.title || `${yCol} by ${xCol}`;
