@@ -490,6 +490,39 @@ define([
         const required = tool.parameters.required || [];
 
         // ═══════════════════════════════════════════════════════════════════════
+        // ENTITY_ID NORMALIZATION - Map entity_id to vendor_id/customer_id
+        // This fixes the parameter inconsistency where resolve_entity returns
+        // an entity_id but tools like get_ap_aging expect vendor_id.
+        // Auto-map entity_id to the correct parameter BEFORE validation.
+        // ═══════════════════════════════════════════════════════════════════════
+        if (args.entity_id !== undefined && !props.entity_id) {
+            // Tool doesn't accept entity_id, check if it accepts vendor_id or customer_id
+            if (props.vendor_id && !args.vendor_id) {
+                normalizedArgs.vendor_id = args.entity_id;
+                delete normalizedArgs.entity_id;
+                warnings.push(`Mapped entity_id → vendor_id: ${args.entity_id}`);
+            } else if (props.customer_id && !args.customer_id) {
+                normalizedArgs.customer_id = args.entity_id;
+                delete normalizedArgs.entity_id;
+                warnings.push(`Mapped entity_id → customer_id: ${args.entity_id}`);
+            }
+        }
+
+        // Also map vendor_id to entity_id if tool expects entity_id but not vendor_id
+        if (args.vendor_id !== undefined && !props.vendor_id && props.entity_id && !args.entity_id) {
+            normalizedArgs.entity_id = args.vendor_id;
+            delete normalizedArgs.vendor_id;
+            warnings.push(`Mapped vendor_id → entity_id: ${args.vendor_id}`);
+        }
+
+        // Also map customer_id to entity_id if tool expects entity_id but not customer_id
+        if (args.customer_id !== undefined && !props.customer_id && props.entity_id && !args.entity_id) {
+            normalizedArgs.entity_id = args.customer_id;
+            delete normalizedArgs.customer_id;
+            warnings.push(`Mapped customer_id → entity_id: ${args.customer_id}`);
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
         // VALIDATE REQUIRED PARAMETERS
         // Ensure all required params are provided with non-empty values
         // ═══════════════════════════════════════════════════════════════════════
@@ -8461,14 +8494,46 @@ EXAMPLES:
     }
 
     /**
-     * Get formatted tool list for LLM prompt (names + descriptions as text)
+     * Get formatted tool list for LLM prompt (names + descriptions + key params)
+     * Includes key parameter names to help LLM use correct params
      * @returns {string} Formatted tool list for prompt injection
      */
     function getToolListForPrompt() {
-        const manifest = getToolManifest();
-        return Object.entries(manifest)
-            .map(([name, desc]) => `• ${name}: ${desc}`)
-            .join('\n');
+        const lines = [];
+
+        for (const toolName in ALL_TOOLS) {
+            const tool = ALL_TOOLS[toolName];
+
+            // Skip internal/unexposed tools
+            if (tool.exposed === false) continue;
+
+            const desc = tool.shortDescription ||
+                (tool.description ? tool.description.split('\n')[0].trim() : toolName);
+
+            // Extract key parameters to show
+            const keyParams = [];
+            if (tool.parameters?.properties) {
+                const props = tool.parameters.properties;
+                // Priority order for key params
+                const priorityParams = [
+                    'entity_id', 'vendor_id', 'customer_id', 'employee_id',
+                    'transaction_type', 'period', 'name', 'type', 'term',
+                    'account_id', 'limit'
+                ];
+
+                for (const param of priorityParams) {
+                    if (props[param]) {
+                        keyParams.push(param);
+                        if (keyParams.length >= 3) break; // Max 3 key params
+                    }
+                }
+            }
+
+            const paramsStr = keyParams.length > 0 ? ` [${keyParams.join(', ')}]` : '';
+            lines.push(`• ${toolName}${paramsStr}: ${desc}`);
+        }
+
+        return lines.join('\n');
     }
 
     /**
