@@ -13,7 +13,7 @@
  *
  * Uses N/cache with different key prefixes for each domain.
  */
-define(['N/cache', 'N/log', '../Lib_Dashboard_Registry'], function(cache, log, DashboardRegistry) {
+define(['N/cache', 'N/log', '../Lib_Dashboard_Registry', './Lib_Advisor_Utils'], function(cache, log, DashboardRegistry, Utils) {
     'use strict';
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -544,17 +544,6 @@ define(['N/cache', 'N/log', '../Lib_Dashboard_Registry'], function(cache, log, D
         return Object.entries(counts).sort((a, b) => b[1] - a[1])[0][0];
     }
 
-    function formatNumber(num) {
-        if (num === null || num === undefined) return 'N/A';
-        const isNegative = num < 0;
-        const absNum = Math.abs(num);
-        const sign = isNegative ? '-' : '';
-
-        if (absNum >= 1000000) return sign + '$' + (absNum / 1000000).toFixed(2) + 'M';
-        if (absNum >= 1000) return sign + '$' + (absNum / 1000).toFixed(1) + 'K';
-        return sign + '$' + absNum.toFixed(2);
-    }
-
     // ═══════════════════════════════════════════════════════════════════════════
     // AGENTIC STRUCTURAL DATA AWARENESS
     // Auto-detect categorical columns, compute distributions, stratified sampling
@@ -650,7 +639,7 @@ define(['N/cache', 'N/log', '../Lib_Dashboard_Registry'], function(cache, log, D
                         value,
                         count: stats.count,
                         sum: stats.sum,
-                        sumFormatted: mainNumericCol ? formatNumber(stats.sum) : null
+                        sumFormatted: mainNumericCol ? Utils.formatCurrency(stats.sum) : null
                     }))
                     .sort((a, b) => b.count - a.count);
 
@@ -674,9 +663,9 @@ define(['N/cache', 'N/log', '../Lib_Dashboard_Registry'], function(cache, log, D
         if (numericColumns.length > 0 && mainNumericCol) {
             const stats = summary.schema[mainNumericCol].stats;
             if (stats) {
-                summary.insights.push(`Total ${mainNumericCol}: ${formatNumber(stats.sum)}`);
-                summary.insights.push(`Average: ${formatNumber(stats.avg)}`);
-                summary.insights.push(`Range: ${formatNumber(stats.min)} - ${formatNumber(stats.max)}`);
+                summary.insights.push(`Total ${mainNumericCol}: ${Utils.formatCurrency(stats.sum)}`);
+                summary.insights.push(`Average: ${Utils.formatCurrency(stats.avg)}`);
+                summary.insights.push(`Range: ${Utils.formatCurrency(stats.min)} - ${Utils.formatCurrency(stats.max)}`);
 
                 if (rows.length > 0 && Math.abs(stats.sum) > 0) {
                     const topValue = Math.max(...rows.map(r => Math.abs(r[mainNumericCol] || 0)));
@@ -1058,7 +1047,7 @@ define(['N/cache', 'N/log', '../Lib_Dashboard_Registry'], function(cache, log, D
         if (s.preview && s.preview.length > 0) {
             lines.push('', 'TOP 5 PREVIEW:');
             s.preview.forEach(p => {
-                const val = p.value !== undefined ? ` (${formatNumber(p.value)})` : '';
+                const val = p.value !== undefined ? ` (${Utils.formatCurrency(p.value)})` : '';
                 lines.push(`  ${p.rank}. ${p.name || 'Row ' + p.rank}${val}`);
             });
         }
@@ -1135,30 +1124,16 @@ define(['N/cache', 'N/log', '../Lib_Dashboard_Registry'], function(cache, log, D
         return path.split('.').reduce((o, p) => (o && o[p] !== undefined) ? o[p] : undefined, obj);
     }
 
-    function formatCurrency(value) {
-        if (value === null || value === undefined || isNaN(value)) return 'N/A';
-        const absVal = Math.abs(value);
-        const sign = value < 0 ? '-' : '';
-        if (absVal >= 1000000) return sign + '$' + (absVal / 1000000).toFixed(2) + 'M';
-        if (absVal >= 1000) return sign + '$' + (absVal / 1000).toFixed(0) + 'K';
-        return sign + '$' + Math.round(absVal).toLocaleString();
-    }
-
-    function formatPercent(value) {
-        if (value === null || value === undefined || isNaN(value)) return 'N/A';
-        return value.toFixed(1) + '%';
-    }
-
     function formatDashboardNumber(value) {
         if (value === null || value === undefined || isNaN(value)) return 'N/A';
         if (value === 999) return 'Sustainable';
         return Math.round(value).toLocaleString();
     }
 
-    function formatValue(value, type) {
+    function formatDashboardValue(value, type) {
         switch (type) {
-            case 'currency': return formatCurrency(value);
-            case 'percent': return formatPercent(value);
+            case 'currency': return Utils.formatCurrency(value);
+            case 'percent': return Utils.formatPercent(value);
             case 'number': return formatDashboardNumber(value);
             case 'score': return value !== null ? value + '/100' : 'N/A';
             default: return value !== null && value !== undefined ? String(value) : 'N/A';
@@ -1290,7 +1265,7 @@ define(['N/cache', 'N/log', '../Lib_Dashboard_Registry'], function(cache, log, D
 
             const metric = {
                 value: value,
-                formatted: formatValue(value, fieldDef.type),
+                formatted: formatDashboardValue(value, fieldDef.type),
                 type: fieldDef.type,
                 desc: fieldDef.desc,
                 priority: fieldDef.priority || 2
@@ -1319,7 +1294,7 @@ define(['N/cache', 'N/log', '../Lib_Dashboard_Registry'], function(cache, log, D
             const value = evaluateFormula(fieldDef.computed, allMetrics);
             allMetrics[fieldName] = {
                 value: value,
-                formatted: formatValue(value, fieldDef.type),
+                formatted: formatDashboardValue(value, fieldDef.type),
                 type: fieldDef.type,
                 desc: fieldDef.desc,
                 priority: fieldDef.priority || 2,
@@ -1364,7 +1339,7 @@ define(['N/cache', 'N/log', '../Lib_Dashboard_Registry'], function(cache, log, D
                 const label = fieldDef.labelField ? getPath(item, fieldDef.labelField) : 'Item';
                 const value = fieldDef.valueField ? getPath(item, fieldDef.valueField) : null;
                 if (value !== null && typeof value === 'number') {
-                    return `${label} (${formatCurrency(value)})`;
+                    return `${label} (${Utils.formatCurrency(value)})`;
                 }
                 return String(label);
             });
@@ -1514,8 +1489,8 @@ define(['N/cache', 'N/log', '../Lib_Dashboard_Registry'], function(cache, log, D
                     max: Math.max(...values),
                     count: values.length,
                     formatted: {
-                        sum: formatCurrency(values.reduce((a, b) => a + b, 0)),
-                        avg: formatCurrency(values.reduce((a, b) => a + b, 0) / values.length)
+                        sum: Utils.formatCurrency(values.reduce((a, b) => a + b, 0)),
+                        avg: Utils.formatCurrency(values.reduce((a, b) => a + b, 0) / values.length)
                     }
                 };
             }
@@ -1552,7 +1527,7 @@ define(['N/cache', 'N/log', '../Lib_Dashboard_Registry'], function(cache, log, D
             default: return { success: false, error: `Unknown operation: ${operation}` };
         }
 
-        return { success: true, collection: collectionName, field, operation, result: value, formatted: formatCurrency(value), sampleSize: values.length };
+        return { success: true, collection: collectionName, field, operation, result: value, formatted: Utils.formatCurrency(value), sampleSize: values.length };
     }
 
     function dashboardGetMetric(refId, metricName) {
@@ -1637,10 +1612,10 @@ define(['N/cache', 'N/log', '../Lib_Dashboard_Registry'], function(cache, log, D
         getMetric: dashboardGetMetric,
         clearMemoryCache: dashboardClearMemoryCache,
 
-        // Utility exports
-        formatCurrency: formatCurrency,
-        formatPercent: formatPercent,
-        formatValue: formatValue,
+        // Utility exports (re-exported from Utils for backward compatibility)
+        formatCurrency: Utils.formatCurrency,
+        formatPercent: Utils.formatPercent,
+        formatValue: Utils.formatValue,
         getPath: getPath
     };
 });
