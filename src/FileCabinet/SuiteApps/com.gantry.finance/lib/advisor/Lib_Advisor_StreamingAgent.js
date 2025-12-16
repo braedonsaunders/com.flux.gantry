@@ -615,7 +615,7 @@ Reply JSON only:
      */
     function getAlternativeToolsForDiversification(failedTool, args, resolvedEntities, state) {
         // Get tool manifest for descriptions
-        const toolManifest = getToolManifest();
+        const toolManifest = Tools.getToolManifest();
         const failedToolDesc = toolManifest[failedTool] || 'Unknown tool';
 
         // Build list of available tools (excluding failed one and already tried)
@@ -1676,27 +1676,6 @@ Now write your analysis:`;
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // TOOL MANIFEST - Now delegated to Tools.js (single source of truth)
-    // The manifest is dynamically generated from tool definitions.
-    // Internal tools (exposed: false) are automatically excluded.
-    // ═══════════════════════════════════════════════════════════════════════════
-
-    /**
-     * Get tool manifest - delegates to Tools.getToolManifest()
-     * Dynamically generated from ALL_TOOLS with shortDescription metadata
-     */
-    function getToolManifest() {
-        return Tools.getToolManifest();
-    }
-
-    /**
-     * Get formatted tool list for LLM prompts - delegates to Tools.getToolListForPrompt()
-     */
-    function getToolListForPrompt() {
-        return Tools.getToolListForPrompt();
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════════
     // RECOMMENDATION 6: PROACTIVE ERROR RECOVERY
     // Maps tools to alternative tools that can provide similar data when failures occur
     // ═══════════════════════════════════════════════════════════════════════════
@@ -1724,7 +1703,7 @@ Which 2 tools could provide similar data? Reply JSON only:
      */
     function getAlternativeTools(toolName, state) {
         // Get tool manifest for descriptions
-        const toolManifest = getToolManifest();
+        const toolManifest = Tools.getToolManifest();
         const toolDesc = toolManifest[toolName] || 'Unknown tool';
 
         // Build list of available tools (excluding failed one)
@@ -2676,7 +2655,7 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
                     lines.push(`    Sample data:`);
                     item.preview.slice(0, 3).forEach(row => {
                         const rowStr = Object.entries(row)
-                            .map(([k, v]) => `${k}: ${typeof v === 'number' ? formatNumber(v) : v}`)
+                            .map(([k, v]) => `${k}: ${typeof v === 'number' ? Utils.formatCurrency(v) : v}`)
                             .join(', ');
                         lines.push(`      - ${rowStr}`);
                     });
@@ -2919,7 +2898,7 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
                     const amtRatio = maxAmt / Math.max(minAmt, 1);
 
                     if (amtRatio >= 5 && minAmt > 0) {
-                        warnings.push(`${toolName}: Large total variance (${formatNumber(minAmt)} vs ${formatNumber(maxAmt)}, ${amtRatio.toFixed(1)}x difference). This may indicate different time periods.`);
+                        warnings.push(`${toolName}: Large total variance (${Utils.formatCurrency(minAmt)} vs ${Utils.formatCurrency(maxAmt)}, ${amtRatio.toFixed(1)}x difference). This may indicate different time periods.`);
                     }
                 }
             }
@@ -2987,20 +2966,6 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
         }
 
         return null;
-    }
-
-    /**
-     * Format number with appropriate precision and commas
-     */
-    function formatNumber(num) {
-        if (typeof num !== 'number') return num;
-        if (Math.abs(num) >= 1000000) {
-            return '$' + (num / 1000000).toFixed(2) + 'M';
-        } else if (Math.abs(num) >= 1000) {
-            return '$' + (num / 1000).toFixed(1) + 'K';
-        } else {
-            return num.toFixed(2);
-        }
     }
 
     /**
@@ -3261,7 +3226,7 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
                 if (numericCols.length > 0) {
                     const col = numericCols[0];
                     const sum = result.rows.reduce((s, r) => s + (r[col] || 0), 0);
-                    dataEntry.summary = `Total ${col}: ${formatNumber(sum)}`;
+                    dataEntry.summary = `Total ${col}: ${Utils.formatCurrency(sum)}`;
                 }
             }
         } else if (isDashboardResult(result)) {
@@ -3500,7 +3465,7 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
             .replace('{history_context}', buildHistoryContext(state))
             .replace('{question}', state.message)
             .replace('{accumulated_data}', buildAccumulatedDataSummary(state))
-            .replace('{tool_list}', getToolListForPrompt())
+            .replace('{tool_list}', Tools.getToolListForPrompt())
             .replace('{period_options}', Tools.getAvailablePeriods())
             .replace('{needs_resolution_context}', needsResolutionContext);
 
@@ -4005,7 +3970,7 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
 
         const prompt = SELECT_PROMPT
             .replace('{intent}', state.intent.intent)
-            .replace('{tool_list}', getToolListForPrompt())
+            .replace('{tool_list}', Tools.getToolListForPrompt())
             .replace('{question}', state.message)
             .replace('{entity_context}', entityContext)
             .replace('{date_context}', getDateContext())
@@ -4018,7 +3983,7 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
             status: 'active',
             context: {
                 intent: state.intent.intent,
-                availableTools: Object.keys(getToolManifest()).length
+                availableTools: Object.keys(Tools.getToolManifest()).length
             }
         });
 
@@ -5769,7 +5734,7 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
             .replace('{question}', state.message)
             .replace('{failed_tool}', toolName)
             .replace('{error}', error)
-            .replace('{tool_list}', getToolListForPrompt())
+            .replace('{tool_list}', Tools.getToolListForPrompt())
             .replace('{already_tried}', alreadyTried);
 
         try {
@@ -7416,7 +7381,7 @@ Reply JSON only: {"tools": ["tool1", "tool2"], "reasoning": "brief explanation"}
 
         // Try semantic selection for other intents
         try {
-            const toolManifest = getToolManifest();
+            const toolManifest = Tools.getToolManifest();
             const availableTools = Object.entries(toolManifest)
                 .map(([name, desc]) => `- ${name}: ${desc}`)
                 .join('\n');
@@ -7917,8 +7882,8 @@ Reply JSON only: {"tools": ["tool1", "tool2"], "reasoning": "brief explanation"}
         // Phase constants
         PHASES: PHASES,
 
-        // Utilities
-        getToolManifest: getToolManifest,
-        getToolListForPrompt: getToolListForPrompt
+        // Utilities (re-exported from Tools for backward compatibility)
+        getToolManifest: Tools.getToolManifest,
+        getToolListForPrompt: Tools.getToolListForPrompt
     };
 });

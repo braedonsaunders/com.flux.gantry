@@ -15,8 +15,9 @@ define([
     'N/log',
     'N/query',
     './Lib_Advisor_QueryValidator',
-    './Lib_Advisor_AIProviders'
-], function(log, query, QueryValidator, AIProviders) {
+    './Lib_Advisor_AIProviders',
+    './Lib_Advisor_Utils'
+], function(log, query, QueryValidator, AIProviders, Utils) {
     'use strict';
 
     const DEFAULT_ROW_LIMIT = 1000;
@@ -396,13 +397,13 @@ Respond with JSON only: {"category":"...","recoverable":true/false,"suggestion":
                 if (value === null || value === undefined) {
                     formatted[key] = '—';
                 } else if (format === 'currency') {
-                    formatted[key] = formatCurrency(value);
+                    formatted[key] = Utils.formatCurrency(value);
                 } else if (format === 'percent') {
-                    formatted[key] = formatPercent(value);
+                    formatted[key] = Utils.formatPercent(value);
                 } else if (format === 'date') {
-                    formatted[key] = formatDate(value);
+                    formatted[key] = Utils.formatDate(value);
                 } else if (format === 'number') {
-                    formatted[key] = formatNumber(value);
+                    formatted[key] = Utils.formatNumber(value);
                 } else {
                     formatted[key] = value;
                 }
@@ -414,57 +415,6 @@ Respond with JSON only: {"category":"...","recoverable":true/false,"suggestion":
             ...results,
             rows: formattedRows
         };
-    }
-
-    /**
-     * Format as currency
-     */
-    function formatCurrency(value) {
-        const num = Number(value);
-        if (isNaN(num)) return value;
-        
-        if (Math.abs(num) >= 1000000) {
-            return '$' + (num / 1000000).toFixed(1) + 'M';
-        } else if (Math.abs(num) >= 1000) {
-            return '$' + (num / 1000).toFixed(1) + 'K';
-        }
-        return '$' + num.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
-    }
-
-    /**
-     * Format as percent
-     */
-    function formatPercent(value) {
-        const num = Number(value);
-        if (isNaN(num)) return value;
-        return num.toFixed(1) + '%';
-    }
-
-    /**
-     * Format as date
-     */
-    function formatDate(value) {
-        if (!value) return '—';
-        
-        try {
-            const date = new Date(value);
-            return date.toLocaleDateString('en-US', {
-                month: 'short',
-                day: 'numeric',
-                year: 'numeric'
-            });
-        } catch (e) {
-            return value;
-        }
-    }
-
-    /**
-     * Format as number
-     */
-    function formatNumber(value) {
-        const num = Number(value);
-        if (isNaN(num)) return value;
-        return num.toLocaleString('en-US');
     }
 
     return {
