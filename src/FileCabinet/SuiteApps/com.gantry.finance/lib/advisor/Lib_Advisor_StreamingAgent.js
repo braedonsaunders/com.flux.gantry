@@ -947,6 +947,141 @@ Reply JSON only:
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
+    // SQL SYNTAX VALIDATION
+    // Catch SQL Server syntax BEFORE hitting the database
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Validate and auto-correct SQL syntax before execution
+     *
+     * SuiteQL is Oracle-based. Common mistakes include:
+     * - SQL Server date functions (DATEADD, GETDATE, DATEPART)
+     * - Wrong table names (transactions vs transaction)
+     * - Non-existent fields (transtime, created_by_id)
+     *
+     * @param {string} sql - The SQL query to validate
+     * @returns {Object} { hasCriticalErrors, errors, suggestions, correctedSql, corrections }
+     */
+    function validateAndCorrectSql(sql) {
+        const errors = [];
+        const suggestions = [];
+        const corrections = [];
+        let correctedSql = sql;
+
+        const sqlUpper = sql.toUpperCase();
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // SQL SERVER FUNCTION DETECTION (CRITICAL - will always fail)
+        // ═══════════════════════════════════════════════════════════════════════
+        const sqlServerFunctions = [
+            { pattern: /\bDATEADD\s*\(/gi, name: 'DATEADD()', fix: 'Use ADD_MONTHS() or date arithmetic (date + 30)' },
+            { pattern: /\bGETDATE\s*\(\s*\)/gi, name: 'GETDATE()', fix: 'Use CURRENT_DATE or SYSDATE' },
+            { pattern: /\bDATEPART\s*\(/gi, name: 'DATEPART()', fix: 'Use TO_CHAR(date, format)' },
+            { pattern: /\bDATEDIFF\s*\(/gi, name: 'DATEDIFF()', fix: 'Use (date1 - date2) for days difference' },
+            { pattern: /\bISNULL\s*\(/gi, name: 'ISNULL()', fix: 'Use NVL() or COALESCE()' },
+            { pattern: /\bGETUTCDATE\s*\(\s*\)/gi, name: 'GETUTCDATE()', fix: 'Use CURRENT_DATE' },
+            { pattern: /\bCONVERT\s*\(\s*\w+\s*,/gi, name: 'CONVERT()', fix: 'Use TO_CHAR(), TO_DATE(), or CAST()' },
+            { pattern: /\bTOP\s+\d+\b/gi, name: 'TOP N', fix: 'Use ROWNUM <= N in WHERE clause' },
+            { pattern: /\bLEN\s*\(/gi, name: 'LEN()', fix: 'Use LENGTH()' },
+            { pattern: /\bCHARINDEX\s*\(/gi, name: 'CHARINDEX()', fix: 'Use INSTR()' }
+        ];
+
+        for (const func of sqlServerFunctions) {
+            if (func.pattern.test(sql)) {
+                errors.push(`SQL Server function "${func.name}" not supported in SuiteQL`);
+                suggestions.push(func.fix);
+            }
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // WRONG TABLE NAMES (CRITICAL - will fail with "record not found")
+        // ═══════════════════════════════════════════════════════════════════════
+        const wrongTables = [
+            { pattern: /\bFROM\s+transactions\b/gi, wrong: 'transactions', fix: 'transaction (singular)' },
+            { pattern: /\bJOIN\s+transactions\b/gi, wrong: 'transactions', fix: 'transaction (singular)' },
+            { pattern: /\bFROM\s+journalentry\b/gi, wrong: 'journalentry', fix: "transaction WHERE type = 'Journal'" },
+            { pattern: /\bFROM\s+journal_entry\b/gi, wrong: 'journal_entry', fix: "transaction WHERE type = 'Journal'" },
+            { pattern: /\bFROM\s+invoices\b/gi, wrong: 'invoices', fix: "transaction WHERE type = 'CustInvc'" },
+            { pattern: /\bFROM\s+bills\b/gi, wrong: 'bills', fix: "transaction WHERE type = 'VendBill'" }
+        ];
+
+        for (const table of wrongTables) {
+            if (table.pattern.test(sql)) {
+                errors.push(`Table "${table.wrong}" does not exist`);
+                suggestions.push(`Use: ${table.fix}`);
+
+                // Auto-correct simple plural → singular
+                if (table.wrong === 'transactions') {
+                    correctedSql = correctedSql.replace(/\btransactions\b/gi, 'transaction');
+                    corrections.push('Fixed: transactions → transaction');
+                }
+            }
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // NON-EXISTENT FIELDS (will fail with "field not found")
+        // ═══════════════════════════════════════════════════════════════════════
+        const badFields = [
+            { pattern: /\btranstime\b/gi, wrong: 'transtime', fix: 'Field does not exist. Use lastmodifieddate for timestamp' },
+            { pattern: /\bcreated_by_id\b/gi, wrong: 'created_by_id', fix: 'Field does not exist' },
+            { pattern: /\bcreatedby\b/gi, wrong: 'createdby', fix: 'Field may not be exposed in SuiteQL' },
+            { pattern: /\bdate\s*(?:>=|<=|=|>|<|BETWEEN)/gi, wrong: 'date', fix: 'Use trandate for transaction date, not "date"' }
+        ];
+
+        for (const field of badFields) {
+            if (field.pattern.test(sql)) {
+                errors.push(`Field "${field.wrong}" will cause errors`);
+                suggestions.push(field.fix);
+            }
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // WRONG TYPE VALUES (minor - may return 0 rows)
+        // ═══════════════════════════════════════════════════════════════════════
+        const wrongTypes = [
+            { pattern: /type\s*=\s*'Journal Entry'/gi, wrong: "'Journal Entry'", fix: "'Journal'" },
+            { pattern: /type\s*=\s*'Invoice'/gi, wrong: "'Invoice'", fix: "'CustInvc'" },
+            { pattern: /type\s*=\s*'Bill'/gi, wrong: "'Bill'", fix: "'VendBill'" },
+            { pattern: /type\s*=\s*'Payment'/gi, wrong: "'Payment'", fix: "'CustPymt' or 'VendPymt'" }
+        ];
+
+        for (const typeVal of wrongTypes) {
+            if (typeVal.pattern.test(sql)) {
+                // Auto-correct type values
+                if (typeVal.wrong === "'Journal Entry'") {
+                    correctedSql = correctedSql.replace(/type\s*=\s*'Journal Entry'/gi, "type = 'Journal'");
+                    corrections.push("Fixed: 'Journal Entry' → 'Journal'");
+                } else if (typeVal.wrong === "'Invoice'") {
+                    correctedSql = correctedSql.replace(/type\s*=\s*'Invoice'/gi, "type = 'CustInvc'");
+                    corrections.push("Fixed: 'Invoice' → 'CustInvc'");
+                } else if (typeVal.wrong === "'Bill'") {
+                    correctedSql = correctedSql.replace(/type\s*=\s*'Bill'/gi, "type = 'VendBill'");
+                    corrections.push("Fixed: 'Bill' → 'VendBill'");
+                }
+            }
+        }
+
+        // Determine if we have critical errors (SQL Server functions = always fails)
+        const hasCriticalErrors = sqlServerFunctions.some(func => func.pattern.test(sql));
+
+        // Build error message
+        let errorMessage = '';
+        if (errors.length > 0) {
+            errorMessage = 'SQL SYNTAX ERRORS DETECTED:\n' +
+                errors.map((e, i) => `• ${e}\n  → Fix: ${suggestions[i] || 'See SuiteQL documentation'}`).join('\n');
+        }
+
+        return {
+            hasCriticalErrors: hasCriticalErrors,
+            errors: errors,
+            suggestions: suggestions,
+            corrections: corrections,
+            correctedSql: corrections.length > 0 ? correctedSql : null,
+            errorMessage: errorMessage
+        };
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
     // AGENTIC INTELLIGENCE LAYER
     // All-LLM solutions for robust error handling, tool selection, and recovery
     // No hardcoded lists, regex, or pattern matching - pure semantic understanding
@@ -2088,6 +2223,28 @@ Use {{data.rows[N].column}} tokens for actual values - they will be resolved.`;
 
     const SYNTHESIZE_PROMPT = `You are an expert NetSuite SuiteQL developer. Write a custom query to answer the user's question.
 
+⚠️⚠️⚠️ CRITICAL: SUITEQL IS ORACLE-BASED, NOT SQL SERVER! ⚠️⚠️⚠️
+
+❌ NEVER USE THESE SQL SERVER FUNCTIONS (will FAIL):
+   - DATEADD() → USE: ADD_MONTHS() or simple arithmetic (date + 30)
+   - GETDATE() → USE: CURRENT_DATE or SYSDATE
+   - DATEPART() → USE: TO_CHAR()
+   - DATEDIFF() → USE: (date1 - date2) for days
+   - ISNULL() → USE: NVL() or COALESCE()
+   - GETUTCDATE() → USE: CURRENT_DATE
+   - WEEKDAY() → USE: TO_CHAR(date, 'D')
+
+❌ NEVER USE THESE TABLE NAMES (don't exist):
+   - transactions → USE: transaction (singular!)
+   - journalentry → USE: transaction WHERE type = 'Journal'
+   - invoices → USE: transaction WHERE type = 'CustInvc'
+
+❌ NEVER USE THESE FIELD NAMES:
+   - transtime → DOES NOT EXIST
+   - created_by_id → DOES NOT EXIST
+   - date → USE: trandate (for transaction date)
+   - amount → USE: foreigntotal (on transaction table)
+
 {history_context}
 CURRENT QUESTION: "{question}"
 
@@ -2105,6 +2262,7 @@ transaction (Header-level transactions)
   - foreigntotal (USE THIS for amounts - 'amount' is NOT exposed!)
   - foreignamountunpaid (USE THIS for unpaid/remaining amounts - NOT 'amountremaining'!)
   - duedate, posting ('T'/'F'), voided ('T'/'F'), memo
+  - lastmodifieddate (TIMESTAMP with time - use for time-of-day analysis!)
   - ALWAYS filter: posting = 'T' AND voided = 'F'
   - Types: CustInvc, CustPymt, VendBill, VendPymt, CashSale, Check, Journal, ExpRept
 
@@ -6639,7 +6797,7 @@ FIX THE ERROR. Common fixes:
                 throw new Error('Invalid synthesize response - missing query');
             }
 
-            const generatedSql = parsed.query;
+            let generatedSql = parsed.query;
             const purpose = parsed.purpose || 'Custom query';
 
             log.debug('SCA SYNTHESIZE - generated SQL', {
@@ -6647,6 +6805,64 @@ FIX THE ERROR. Common fixes:
                 purpose: purpose,
                 reasoning: parsed.reasoning?.substring(0, 200)
             });
+
+            // ═══════════════════════════════════════════════════════════════════════
+            // PRE-FLIGHT SQL VALIDATION: Detect and fix SQL Server syntax errors
+            // This catches common mistakes BEFORE hitting the database
+            // ═══════════════════════════════════════════════════════════════════════
+            const sqlValidation = validateAndCorrectSql(generatedSql);
+
+            if (sqlValidation.hasCriticalErrors) {
+                // SQL Server syntax detected - don't even try to execute, force retry
+                state.synthesize.lastError = sqlValidation.errorMessage;
+                state.synthesize.queries.push({
+                    sql: generatedSql,
+                    purpose: purpose,
+                    reasoning: parsed.reasoning,
+                    timestamp: Date.now(),
+                    error: sqlValidation.errorMessage,
+                    preFlightRejected: true
+                });
+
+                log.debug('SCA SYNTHESIZE - pre-flight SQL validation failed', {
+                    errors: sqlValidation.errors,
+                    suggestions: sqlValidation.suggestions
+                });
+
+                // Add error to context for next iteration
+                if (!state.synthesize.errorContext) state.synthesize.errorContext = [];
+                state.synthesize.errorContext.push({
+                    phase: 'pre-flight-validation',
+                    error: sqlValidation.errorMessage,
+                    suggestions: sqlValidation.suggestions
+                });
+
+                // Update thinking step
+                upsertThinkingStep(state, 'synthesize', {
+                    title: 'SQL syntax error detected',
+                    phase: 'synthesize',
+                    status: 'active',
+                    context: {
+                        phase: 'synthesize',
+                        iteration: state.synthesize.iterations,
+                        validationErrors: sqlValidation.errors.slice(0, 3)
+                    }
+                });
+
+                // Loop back to synthesize with error context
+                state.phase = PHASES.SYNTHESIZE;
+                return { success: true, nextPhase: PHASES.SYNTHESIZE };
+            }
+
+            // Apply auto-corrections if any
+            if (sqlValidation.correctedSql) {
+                log.debug('SCA SYNTHESIZE - auto-corrected SQL', {
+                    original: generatedSql.substring(0, 100),
+                    corrected: sqlValidation.correctedSql.substring(0, 100),
+                    corrections: sqlValidation.corrections
+                });
+                generatedSql = sqlValidation.correctedSql;
+            }
 
             // Record the query attempt
             state.synthesize.queries.push({

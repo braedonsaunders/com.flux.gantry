@@ -751,6 +751,99 @@ If no reasonable match, reply: {"param": null, "confidence": 0}`;
     // Legacy compatibility - buildFiscalContext is internal to Core now
     // If any code still calls this, it should be refactored to use Core functions
 
+    // ═══════════════════════════════════════════════════════════════════════════
+    // SQL VALIDATION FOR CUSTOM QUERIES
+    // Catch SQL Server syntax and common mistakes before execution
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Validate and auto-correct custom SQL before execution
+     *
+     * @param {string} sql - The SQL query to validate
+     * @returns {Object} { hasCriticalErrors, errors, suggestions, correctedSql, corrections, errorMessage }
+     */
+    function validateCustomQuerySql(sql) {
+        const errors = [];
+        const suggestions = [];
+        const corrections = [];
+        let correctedSql = sql;
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // SQL SERVER FUNCTION DETECTION (CRITICAL - will always fail)
+        // ═══════════════════════════════════════════════════════════════════════
+        const sqlServerFunctions = [
+            { pattern: /\bDATEADD\s*\(/gi, name: 'DATEADD()', fix: 'Use ADD_MONTHS() or date arithmetic (date + 30)' },
+            { pattern: /\bGETDATE\s*\(\s*\)/gi, name: 'GETDATE()', fix: 'Use CURRENT_DATE or SYSDATE' },
+            { pattern: /\bDATEPART\s*\(/gi, name: 'DATEPART()', fix: 'Use TO_CHAR(date, format). For day of week: TO_CHAR(date, \'D\')' },
+            { pattern: /\bDATEDIFF\s*\(/gi, name: 'DATEDIFF()', fix: 'Use (date1 - date2) for days difference' },
+            { pattern: /\bISNULL\s*\(/gi, name: 'ISNULL()', fix: 'Use NVL() or COALESCE()' },
+            { pattern: /\bGETUTCDATE\s*\(\s*\)/gi, name: 'GETUTCDATE()', fix: 'Use CURRENT_DATE' },
+            { pattern: /\bCONVERT\s*\(\s*\w+\s*,/gi, name: 'CONVERT()', fix: 'Use TO_CHAR(), TO_DATE(), or CAST()' },
+            { pattern: /\bTOP\s+\d+\b/gi, name: 'TOP N', fix: 'Use ROWNUM <= N in WHERE clause' },
+            { pattern: /\bLEN\s*\(/gi, name: 'LEN()', fix: 'Use LENGTH()' },
+            { pattern: /\bCHARINDEX\s*\(/gi, name: 'CHARINDEX()', fix: 'Use INSTR()' },
+            { pattern: /\bWEEKDAY\s*\(/gi, name: 'WEEKDAY()', fix: 'Use TO_CHAR(date, \'D\') for day of week (1=Sunday)' }
+        ];
+
+        for (const func of sqlServerFunctions) {
+            if (func.pattern.test(sql)) {
+                errors.push(`SQL Server function "${func.name}" not supported in SuiteQL`);
+                suggestions.push(func.fix);
+            }
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // WRONG TABLE NAMES
+        // ═══════════════════════════════════════════════════════════════════════
+        const wrongTables = [
+            { pattern: /\bFROM\s+transactions\b/gi, wrong: 'transactions', fix: 'transaction (singular)' },
+            { pattern: /\bJOIN\s+transactions\b/gi, wrong: 'transactions', fix: 'transaction (singular)' }
+        ];
+
+        for (const table of wrongTables) {
+            if (table.pattern.test(sql)) {
+                // Auto-correct plural → singular
+                correctedSql = correctedSql.replace(/\btransactions\b/gi, 'transaction');
+                corrections.push('Auto-fixed: transactions → transaction');
+            }
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // WRONG TYPE VALUES - Auto-correct
+        // ═══════════════════════════════════════════════════════════════════════
+        if (/type\s*=\s*'Journal Entry'/gi.test(sql)) {
+            correctedSql = correctedSql.replace(/type\s*=\s*'Journal Entry'/gi, "type = 'Journal'");
+            corrections.push("Auto-fixed: 'Journal Entry' → 'Journal'");
+        }
+        if (/type\s*=\s*'Invoice'/gi.test(sql)) {
+            correctedSql = correctedSql.replace(/type\s*=\s*'Invoice'/gi, "type = 'CustInvc'");
+            corrections.push("Auto-fixed: 'Invoice' → 'CustInvc'");
+        }
+        if (/type\s*=\s*'Bill'/gi.test(sql)) {
+            correctedSql = correctedSql.replace(/type\s*=\s*'Bill'/gi, "type = 'VendBill'");
+            corrections.push("Auto-fixed: 'Bill' → 'VendBill'");
+        }
+
+        // Determine if we have critical errors (SQL Server functions = always fails)
+        const hasCriticalErrors = sqlServerFunctions.some(func => func.pattern.test(sql));
+
+        // Build error message
+        let errorMessage = '';
+        if (errors.length > 0) {
+            errorMessage = 'Invalid SQL syntax (SQL Server functions not supported in SuiteQL):\n' +
+                errors.map((e, i) => `• ${e}\n  → ${suggestions[i] || 'See SuiteQL documentation'}`).join('\n');
+        }
+
+        return {
+            hasCriticalErrors: hasCriticalErrors,
+            errors: errors,
+            suggestions: suggestions,
+            corrections: corrections,
+            correctedSql: corrections.length > 0 ? correctedSql : null,
+            errorMessage: errorMessage
+        };
+    }
+
     /**
      * Format query result for LLM consumption
      *
@@ -7161,24 +7254,31 @@ AGGREGATE OPERATIONS: sum, avg, min, max, count`,
             category: 'utility',
             description: `Execute a custom SuiteQL query when no other tool provides the needed data.
 USE SPARINGLY - prefer specific data tools when available.
-Only use for complex queries that combine multiple data sources.
 
-CRITICAL SuiteQL SYNTAX (NOT standard SQL!):
-- Row limits: Use ROWNUM in subquery wrapper (NOT "LIMIT" or "FETCH FIRST")
-  Example: SELECT * FROM (SELECT * FROM customer ORDER BY id) WHERE ROWNUM <= 100
-- String comparison: Use single quotes ('value'), NOT double quotes
-- Boolean fields: Use 'T' for true, 'F' for false (e.g., posting = 'T')
-- Date comparison: Use TO_DATE('2024-01-01', 'YYYY-MM-DD')
+⚠️⚠️⚠️ SUITEQL IS ORACLE-BASED, NOT SQL SERVER! ⚠️⚠️⚠️
 
-IMPORTANT field notes:
-- Use transaction.foreigntotal, NOT transaction.amount (not exposed)
-- Use transaction.foreignamountunpaid for unpaid amounts
-- Use transactionaccountingline for GL-level debit/credit data
-- Always include posting = 'T' AND voided = 'F' filters on transaction table
-- Use BUILTIN.DF() to get display names for foreign key fields
+❌ THESE SQL SERVER FUNCTIONS WILL FAIL:
+   DATEADD() → Use: ADD_MONTHS() or date + 30
+   GETDATE() → Use: CURRENT_DATE
+   DATEPART() → Use: TO_CHAR(date, 'D') for day of week
+   DATEDIFF() → Use: (date1 - date2)
 
-TABLE vs TYPE: VendBill, CustInvc etc are TYPE values in 'transaction' table, NOT table names.
-Query vendor bills: SELECT * FROM transaction WHERE type = 'VendBill'`,
+✓ CORRECT SuiteQL DATE EXAMPLES:
+   Last month: trandate >= ADD_MONTHS(CURRENT_DATE, -1)
+   Weekend check: TO_CHAR(lastmodifieddate, 'D') IN ('1', '7')
+   After 5pm: TO_CHAR(lastmodifieddate, 'HH24') >= '17'
+
+CRITICAL SYNTAX RULES:
+- Table name is 'transaction' (singular), NOT 'transactions'
+- Row limits: SELECT * FROM (...) WHERE ROWNUM <= 100
+- Booleans: 'T' for true, 'F' for false
+- Type values: 'Journal' (not 'Journal Entry'), 'CustInvc' (not 'Invoice')
+- Use lastmodifieddate for timestamps (trandate has no time component)
+
+IMPORTANT FIELDS:
+- Use transaction.foreigntotal, NOT transaction.amount
+- Use transactionaccountingline for GL-level debit/credit
+- Always filter: posting = 'T' AND voided = 'F'`,
             parameters: {
                 type: 'object',
                 properties: {
@@ -7196,9 +7296,40 @@ Query vendor bills: SELECT * FROM transaction WHERE type = 'VendBill'`,
             execute: function(args) {
                 log.debug('run_custom_query', { purpose: args.purpose, sqlPreview: args.sql.substring(0, 200) });
 
-                const result = QueryExecutor.executeQuery(args.sql);
+                // ═══════════════════════════════════════════════════════════════════════
+                // PRE-FLIGHT SQL VALIDATION: Catch SQL Server syntax before execution
+                // ═══════════════════════════════════════════════════════════════════════
+                let sql = args.sql;
+                const validationResult = validateCustomQuerySql(sql);
+
+                if (validationResult.hasCriticalErrors) {
+                    log.debug('run_custom_query - SQL validation failed', {
+                        errors: validationResult.errors
+                    });
+                    return {
+                        success: false,
+                        error: validationResult.errorMessage,
+                        suggestions: validationResult.suggestions,
+                        validationFailed: true
+                    };
+                }
+
+                // Apply auto-corrections if any
+                if (validationResult.correctedSql) {
+                    log.debug('run_custom_query - auto-corrected SQL', {
+                        corrections: validationResult.corrections
+                    });
+                    sql = validationResult.correctedSql;
+                }
+
+                const result = QueryExecutor.executeQuery(sql);
                 const formatted = formatResult(result, 'run_custom_query');
                 formatted.purpose = args.purpose;
+
+                // Include correction info in result
+                if (validationResult.corrections && validationResult.corrections.length > 0) {
+                    formatted.autoCorrections = validationResult.corrections;
+                }
 
                 return formatted;
             },
