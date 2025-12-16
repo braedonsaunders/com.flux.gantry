@@ -6831,8 +6831,8 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
             // ═══════════════════════════════════════════════════════════════════════
             // FINANCIAL STATEMENT METRICS (for income statements)
             // These are PROPERLY computed - use these instead of {{data.stats.total}}
+            // computedStats already computed earlier in this function
             // ═══════════════════════════════════════════════════════════════════════
-            const computedStats = computeAggregateStats(summary);
             if (computedStats && computedStats.isIncomeStatement) {
                 section += `\n  💰 FINANCIAL METRICS (use these for P&L metrics - properly computed):\n`;
                 section += `     {{data.stats.revenue:currency}} → ${formatStatValue(computedStats.revenue, 'currency')}\n`;
