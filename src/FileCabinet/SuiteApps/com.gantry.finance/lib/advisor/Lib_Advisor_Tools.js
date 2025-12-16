@@ -2686,18 +2686,25 @@ Use for: "trial balance", "account balances", "GL balances", "income statement",
 
         get_income_statement: {
             name: 'get_income_statement',
-            shortDescription: 'Income statement / P&L report',
+            shortDescription: 'Income statement / P&L report with optional YoY comparison',
             category: 'data',
             description: `Get a complete Income Statement / P&L (Profit and Loss) for a period.
 Returns Revenue, COGS, Gross Profit, Operating Expenses, and Net Income with proper calculations.
 ALWAYS use this for: "income statement", "P&L", "profit and loss", "show me P&L", "how much profit", "net income"
-Supports ALL period values including ytd, prior_year_ytd, last_fiscal_year, fiscal quarters, etc.`,
+Supports ALL period values including ytd, prior_year_ytd, last_fiscal_year, fiscal quarters, etc.
+
+FOR COMPARISONS: Use compare_to parameter to get pre-computed period-over-period comparison with deltas.
+Example: period="ytd", compare_to="prior_year_ytd" returns current vs prior year with change amounts and percentages.`,
             parameters: {
                 type: 'object',
                 properties: {
                     period: {
                         type: 'string',
                         description: 'Period for the income statement. Use any valid period: ytd, prior_year_ytd, this_month, last_month, this_quarter, last_quarter, last_fiscal_year, fiscal_q1-q4, etc. Default: ytd'
+                    },
+                    compare_to: {
+                        type: 'string',
+                        description: 'Optional comparison period. When provided, returns a comparison view with both periods and computed deltas (change, pct_change). Use for YoY: compare_to="prior_year_ytd". Use for MoM: compare_to="last_month".'
                     },
                     department_id: {
                         type: 'number',
@@ -2712,13 +2719,193 @@ Supports ALL period values including ytd, prior_year_ytd, last_fiscal_year, fisc
             },
             execute: function(args) {
                 const period = args.period || 'ytd';
+                const compareTo = args.compare_to;
                 const deptFilter = args.department_id ?
                     `AND tl.department = ${args.department_id}` : '';
                 const classFilter = args.class_id ?
                     `AND tl.class = ${args.class_id}` : '';
 
-                // Use unified period filter from PERIOD_DEFINITIONS
-                // Supports ALL 38+ periods including prior_year_ytd for YoY comparisons
+                // ═══════════════════════════════════════════════════════════════════════
+                // COMPARISON MODE: Use CTEs to join periods and compute deltas
+                // Returns pre-computed comparison with change and pct_change columns
+                // ═══════════════════════════════════════════════════════════════════════
+                if (compareTo) {
+                    const currentPeriodFilter = buildAccountingPeriodFilter(period);
+                    const priorPeriodFilter = buildAccountingPeriodFilter(compareTo);
+                    const currentDateFilter = currentPeriodFilter !== '1=1' ? `AND ${currentPeriodFilter}` : '';
+                    const priorDateFilter = priorPeriodFilter !== '1=1' ? `AND ${priorPeriodFilter}` : '';
+
+                    const comparisonQuery = `
+                        WITH current_period AS (
+                            SELECT
+                                CASE
+                                    WHEN acct.accttype IN ('Income', 'OthIncome') THEN 'Revenue'
+                                    WHEN acct.accttype = 'COGS' THEN 'Cost of Goods Sold'
+                                    WHEN acct.accttype IN ('Expense', 'OthExpense') THEN 'Operating Expenses'
+                                    ELSE 'Other'
+                                END AS category,
+                                acct.accttype AS account_type,
+                                acct.acctnumber AS account_number,
+                                acct.accountsearchdisplayname AS account_name,
+                                SUM(CASE
+                                    WHEN acct.accttype IN ('Income', 'OthIncome') THEN -tal.amount
+                                    ELSE tal.amount
+                                END) AS current_amount
+                            FROM transactionaccountingline tal
+                            INNER JOIN transaction t ON tal.transaction = t.id
+                            INNER JOIN accountingperiod ap ON t.postingperiod = ap.id
+                            INNER JOIN account acct ON tal.account = acct.id
+                            LEFT JOIN transactionline tl ON tl.transaction = tal.transaction AND tl.id = tal.transactionline
+                            WHERE t.posting = 'T'
+                                AND t.voided = 'F'
+                                AND acct.accttype IN ('Income', 'OthIncome', 'COGS', 'Expense', 'OthExpense')
+                                AND ap.isyear = 'F' AND ap.isquarter = 'F'
+                                ${currentDateFilter}
+                                ${deptFilter}
+                                ${classFilter}
+                            GROUP BY
+                                CASE
+                                    WHEN acct.accttype IN ('Income', 'OthIncome') THEN 'Revenue'
+                                    WHEN acct.accttype = 'COGS' THEN 'Cost of Goods Sold'
+                                    WHEN acct.accttype IN ('Expense', 'OthExpense') THEN 'Operating Expenses'
+                                    ELSE 'Other'
+                                END,
+                                acct.accttype,
+                                acct.acctnumber,
+                                acct.accountsearchdisplayname
+                        ),
+                        prior_period AS (
+                            SELECT
+                                CASE
+                                    WHEN acct.accttype IN ('Income', 'OthIncome') THEN 'Revenue'
+                                    WHEN acct.accttype = 'COGS' THEN 'Cost of Goods Sold'
+                                    WHEN acct.accttype IN ('Expense', 'OthExpense') THEN 'Operating Expenses'
+                                    ELSE 'Other'
+                                END AS category,
+                                acct.accttype AS account_type,
+                                acct.acctnumber AS account_number,
+                                acct.accountsearchdisplayname AS account_name,
+                                SUM(CASE
+                                    WHEN acct.accttype IN ('Income', 'OthIncome') THEN -tal.amount
+                                    ELSE tal.amount
+                                END) AS prior_amount
+                            FROM transactionaccountingline tal
+                            INNER JOIN transaction t ON tal.transaction = t.id
+                            INNER JOIN accountingperiod ap ON t.postingperiod = ap.id
+                            INNER JOIN account acct ON tal.account = acct.id
+                            LEFT JOIN transactionline tl ON tl.transaction = tal.transaction AND tl.id = tal.transactionline
+                            WHERE t.posting = 'T'
+                                AND t.voided = 'F'
+                                AND acct.accttype IN ('Income', 'OthIncome', 'COGS', 'Expense', 'OthExpense')
+                                AND ap.isyear = 'F' AND ap.isquarter = 'F'
+                                ${priorDateFilter}
+                                ${deptFilter}
+                                ${classFilter}
+                            GROUP BY
+                                CASE
+                                    WHEN acct.accttype IN ('Income', 'OthIncome') THEN 'Revenue'
+                                    WHEN acct.accttype = 'COGS' THEN 'Cost of Goods Sold'
+                                    WHEN acct.accttype IN ('Expense', 'OthExpense') THEN 'Operating Expenses'
+                                    ELSE 'Other'
+                                END,
+                                acct.accttype,
+                                acct.acctnumber,
+                                acct.accountsearchdisplayname
+                        )
+                        SELECT
+                            COALESCE(c.category, p.category) AS category,
+                            COALESCE(c.account_type, p.account_type) AS account_type,
+                            COALESCE(c.account_number, p.account_number) AS account_number,
+                            COALESCE(c.account_name, p.account_name) AS account_name,
+                            COALESCE(c.current_amount, 0) AS current_amount,
+                            COALESCE(p.prior_amount, 0) AS prior_amount,
+                            COALESCE(c.current_amount, 0) - COALESCE(p.prior_amount, 0) AS change,
+                            CASE
+                                WHEN COALESCE(p.prior_amount, 0) != 0
+                                THEN ROUND(((COALESCE(c.current_amount, 0) - COALESCE(p.prior_amount, 0)) / ABS(p.prior_amount)) * 100, 1)
+                                ELSE NULL
+                            END AS pct_change
+                        FROM current_period c
+                        FULL OUTER JOIN prior_period p
+                            ON c.account_number = p.account_number
+                        ORDER BY
+                            CASE
+                                WHEN COALESCE(c.category, p.category) = 'Revenue' THEN 1
+                                WHEN COALESCE(c.category, p.category) = 'Cost of Goods Sold' THEN 2
+                                WHEN COALESCE(c.category, p.category) = 'Operating Expenses' THEN 3
+                                ELSE 4
+                            END,
+                            ABS(COALESCE(c.current_amount, 0) - COALESCE(p.prior_amount, 0)) DESC
+                    `;
+
+                    const result = QueryExecutor.executeQuery(comparisonQuery);
+                    const formatted = formatResult(result, 'get_income_statement');
+
+                    // Calculate comparison totals
+                    if (formatted.success && formatted.rows) {
+                        let currentRevenue = 0, priorRevenue = 0;
+                        let currentCOGS = 0, priorCOGS = 0;
+                        let currentExpenses = 0, priorExpenses = 0;
+
+                        formatted.rows.forEach(row => {
+                            const currAmt = parseFloat(row.current_amount) || 0;
+                            const priorAmt = parseFloat(row.prior_amount) || 0;
+                            if (row.category === 'Revenue') {
+                                currentRevenue += currAmt;
+                                priorRevenue += priorAmt;
+                            } else if (row.category === 'Cost of Goods Sold') {
+                                currentCOGS += currAmt;
+                                priorCOGS += priorAmt;
+                            } else if (row.category === 'Operating Expenses') {
+                                currentExpenses += currAmt;
+                                priorExpenses += priorAmt;
+                            }
+                        });
+
+                        const currentNetIncome = currentRevenue - currentCOGS - currentExpenses;
+                        const priorNetIncome = priorRevenue - priorCOGS - priorExpenses;
+
+                        formatted.summary = {
+                            comparison: { current: period, prior: compareTo },
+                            revenue: {
+                                current: currentRevenue,
+                                prior: priorRevenue,
+                                change: currentRevenue - priorRevenue,
+                                pctChange: priorRevenue !== 0 ? ((currentRevenue - priorRevenue) / Math.abs(priorRevenue) * 100).toFixed(1) + '%' : 'N/A'
+                            },
+                            cogs: {
+                                current: currentCOGS,
+                                prior: priorCOGS,
+                                change: currentCOGS - priorCOGS,
+                                pctChange: priorCOGS !== 0 ? ((currentCOGS - priorCOGS) / Math.abs(priorCOGS) * 100).toFixed(1) + '%' : 'N/A'
+                            },
+                            grossProfit: {
+                                current: currentRevenue - currentCOGS,
+                                prior: priorRevenue - priorCOGS,
+                                change: (currentRevenue - currentCOGS) - (priorRevenue - priorCOGS)
+                            },
+                            operatingExpenses: {
+                                current: currentExpenses,
+                                prior: priorExpenses,
+                                change: currentExpenses - priorExpenses,
+                                pctChange: priorExpenses !== 0 ? ((currentExpenses - priorExpenses) / Math.abs(priorExpenses) * 100).toFixed(1) + '%' : 'N/A'
+                            },
+                            netIncome: {
+                                current: currentNetIncome,
+                                prior: priorNetIncome,
+                                change: currentNetIncome - priorNetIncome,
+                                pctChange: priorNetIncome !== 0 ? ((currentNetIncome - priorNetIncome) / Math.abs(priorNetIncome) * 100).toFixed(1) + '%' : 'N/A'
+                            }
+                        };
+                        formatted.isComparison = true;
+                    }
+
+                    return formatted;
+                }
+
+                // ═══════════════════════════════════════════════════════════════════════
+                // STANDARD MODE: Single period income statement
+                // ═══════════════════════════════════════════════════════════════════════
                 const periodFilter = buildAccountingPeriodFilter(period);
                 const dateFilter = periodFilter !== '1=1' ? `AND ${periodFilter}` : '';
 
@@ -2800,6 +2987,9 @@ Supports ALL period values including ytd, prior_year_ytd, last_fiscal_year, fisc
             },
             displayName: function(args) {
                 const period = args.period || 'ytd';
+                if (args.compare_to) {
+                    return `Comparing income statement (${period} vs ${args.compare_to})...`;
+                }
                 return `Building income statement (${period})...`;
             }
         },
