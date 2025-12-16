@@ -2279,11 +2279,15 @@ Key metrics:
                     period: {
                         type: 'string',
                         enum: [
-                            'last_30_days', 'last_60_days', 'last_90_days', 'last_180_days', 'last_365_days',
+                            'today', 'yesterday', 'this_week', 'last_week',
+                            'this_month', 'last_month', 'this_quarter', 'last_quarter',
                             'ytd', 'fytd', 'this_fiscal_year', 'last_fiscal_year',
+                            'fiscal_q1', 'fiscal_q2', 'fiscal_q3', 'fiscal_q4',
+                            'last_fiscal_q1', 'last_fiscal_q2', 'last_fiscal_q3', 'last_fiscal_q4',
+                            'last_30_days', 'last_60_days', 'last_90_days', 'last_180_days', 'last_365_days',
                             'last_2_years', 'last_3_years', 'all'
                         ],
-                        description: 'Time period for payment analysis (default: last_365_days)'
+                        description: 'Time period for payment analysis. Supports quarters: this_quarter, last_quarter, fiscal_q1-q4, last_fiscal_q1-q4. (default: last_365_days)'
                     },
                     min_payments: {
                         type: 'number',
@@ -2391,6 +2395,164 @@ Key metrics:
             }
         },
 
+        get_customer_payment_trend: {
+            name: 'get_customer_payment_trend',
+            shortDescription: 'Compare customer payment speed between two periods',
+            category: 'data',
+            description: `Compare customer payment behavior between two periods to find changes.
+Use for: "customers paying slower", "payment speed change", "days-to-pay increase", "DSO trend", "payment behavior changes"
+
+This tool compares average days-to-pay between two periods and calculates the percentage change.
+Perfect for identifying customers whose payment behavior has deteriorated or improved.
+
+Example questions this answers:
+- "Identify customers whose average days-to-pay has increased by more than 20% over the last quarter"
+- "Which customers are paying slower this quarter vs last quarter?"
+- "Show customers with worsening payment behavior"
+
+Returns: customer_name, period1_avg_days, period2_avg_days, change_pct, change_days`,
+            parameters: {
+                type: 'object',
+                properties: {
+                    period1: {
+                        type: 'string',
+                        enum: [
+                            'this_quarter', 'last_quarter',
+                            'this_month', 'last_month',
+                            'fiscal_q1', 'fiscal_q2', 'fiscal_q3', 'fiscal_q4',
+                            'last_fiscal_q1', 'last_fiscal_q2', 'last_fiscal_q3', 'last_fiscal_q4',
+                            'last_30_days', 'last_60_days', 'last_90_days',
+                            'ytd', 'last_fiscal_year'
+                        ],
+                        description: 'Earlier/baseline period to compare FROM (e.g., last_quarter)'
+                    },
+                    period2: {
+                        type: 'string',
+                        enum: [
+                            'this_quarter', 'last_quarter',
+                            'this_month', 'last_month',
+                            'fiscal_q1', 'fiscal_q2', 'fiscal_q3', 'fiscal_q4',
+                            'last_fiscal_q1', 'last_fiscal_q2', 'last_fiscal_q3', 'last_fiscal_q4',
+                            'last_30_days', 'last_60_days', 'last_90_days',
+                            'ytd', 'this_fiscal_year'
+                        ],
+                        description: 'Later/current period to compare TO (e.g., this_quarter)'
+                    },
+                    min_change_pct: {
+                        type: 'number',
+                        description: 'Minimum percentage change to include (default: 0 for all, use 20 for >20% increase)'
+                    },
+                    direction: {
+                        type: 'string',
+                        enum: ['increase', 'decrease', 'both'],
+                        description: 'Filter by direction of change: increase (slower paying), decrease (faster paying), or both (default: both)'
+                    },
+                    min_payments: {
+                        type: 'number',
+                        description: 'Minimum payments in each period to include customer (default: 2)'
+                    },
+                    limit: {
+                        type: 'number',
+                        description: 'Maximum customers to return (default: 50)'
+                    }
+                },
+                required: ['period1', 'period2']
+            },
+            execute: function(args) {
+                const period1Filter = Core.buildPeriodFilter(args.period1, 'inv1.closedate');
+                const period2Filter = Core.buildPeriodFilter(args.period2, 'inv2.closedate');
+                const minPayments = args.min_payments || 2;
+                const minChangePct = args.min_change_pct || 0;
+                const direction = args.direction || 'both';
+                const limit = args.limit || 50;
+
+                // Build direction filter
+                let directionFilter = '';
+                if (direction === 'increase') {
+                    directionFilter = 'AND period2_avg_days > period1_avg_days';
+                } else if (direction === 'decrease') {
+                    directionFilter = 'AND period2_avg_days < period1_avg_days';
+                }
+
+                // Build min change filter
+                let changeFilter = '';
+                if (minChangePct > 0) {
+                    changeFilter = `AND ABS(change_pct) >= ${minChangePct}`;
+                }
+
+                const query = `
+                    SELECT * FROM (
+                        SELECT
+                            customer_id,
+                            customer_name,
+                            period1_avg_days,
+                            period1_payment_count,
+                            period2_avg_days,
+                            period2_payment_count,
+                            ROUND(period2_avg_days - period1_avg_days, 1) AS change_days,
+                            CASE
+                                WHEN period1_avg_days = 0 THEN NULL
+                                ELSE ROUND(((period2_avg_days - period1_avg_days) / period1_avg_days) * 100, 1)
+                            END AS change_pct
+                        FROM (
+                            SELECT
+                                p1.customer_id,
+                                p1.customer_name,
+                                p1.avg_days AS period1_avg_days,
+                                p1.payment_count AS period1_payment_count,
+                                p2.avg_days AS period2_avg_days,
+                                p2.payment_count AS period2_payment_count
+                            FROM (
+                                SELECT
+                                    c.id AS customer_id,
+                                    c.companyname AS customer_name,
+                                    ROUND(AVG(inv1.closedate - inv1.trandate), 1) AS avg_days,
+                                    COUNT(*) AS payment_count
+                                FROM transaction inv1
+                                JOIN customer c ON inv1.entity = c.id
+                                WHERE inv1.type = 'CustInvc'
+                                    AND inv1.posting = 'T'
+                                    AND inv1.voided = 'F'
+                                    AND inv1.closedate IS NOT NULL
+                                    AND ${period1Filter}
+                                GROUP BY c.id, c.companyname
+                                HAVING COUNT(*) >= ${minPayments}
+                            ) p1
+                            JOIN (
+                                SELECT
+                                    c.id AS customer_id,
+                                    ROUND(AVG(inv2.closedate - inv2.trandate), 1) AS avg_days,
+                                    COUNT(*) AS payment_count
+                                FROM transaction inv2
+                                JOIN customer c ON inv2.entity = c.id
+                                WHERE inv2.type = 'CustInvc'
+                                    AND inv2.posting = 'T'
+                                    AND inv2.voided = 'F'
+                                    AND inv2.closedate IS NOT NULL
+                                    AND ${period2Filter}
+                                GROUP BY c.id
+                                HAVING COUNT(*) >= ${minPayments}
+                            ) p2 ON p1.customer_id = p2.customer_id
+                        )
+                        WHERE 1=1
+                        ${directionFilter}
+                        ${changeFilter}
+                        ORDER BY ABS(change_pct) DESC NULLS LAST
+                    ) WHERE ROWNUM <= ${limit}
+                `;
+
+                const result = QueryExecutor.executeQuery(query);
+                return formatResult(result, 'get_customer_payment_trend', {
+                    period1: args.period1,
+                    period2: args.period2,
+                    limit: limit
+                });
+            },
+            displayName: function(args) {
+                return `Comparing customer payment trends (${args.period1} vs ${args.period2})...`;
+            }
+        },
+
         get_vendor_payment_speed: {
             name: 'get_vendor_payment_speed',
             shortDescription: 'Analyze how fast we pay our vendors',
@@ -2423,11 +2585,15 @@ Key metrics:
                     period: {
                         type: 'string',
                         enum: [
-                            'last_30_days', 'last_60_days', 'last_90_days', 'last_180_days', 'last_365_days',
+                            'today', 'yesterday', 'this_week', 'last_week',
+                            'this_month', 'last_month', 'this_quarter', 'last_quarter',
                             'ytd', 'fytd', 'this_fiscal_year', 'last_fiscal_year',
+                            'fiscal_q1', 'fiscal_q2', 'fiscal_q3', 'fiscal_q4',
+                            'last_fiscal_q1', 'last_fiscal_q2', 'last_fiscal_q3', 'last_fiscal_q4',
+                            'last_30_days', 'last_60_days', 'last_90_days', 'last_180_days', 'last_365_days',
                             'last_2_years', 'last_3_years', 'all'
                         ],
-                        description: 'Time period for payment analysis (default: last_365_days)'
+                        description: 'Time period for payment analysis. Supports quarters: this_quarter, last_quarter, fiscal_q1-q4, last_fiscal_q1-q4. (default: last_365_days)'
                     },
                     min_payments: {
                         type: 'number',
