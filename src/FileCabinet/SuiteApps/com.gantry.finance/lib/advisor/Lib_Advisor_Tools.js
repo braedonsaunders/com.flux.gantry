@@ -5001,13 +5001,17 @@ User says "project 0915" → call resolve_entity(name="0915", type="project") �
                 // ═══════════════════════════════════════════════════════════════════════
                 // VALIDATION: Detect likely unresolved project codes
                 // Project codes like "0915", "PRJ-001" should be resolved first
+                // NOTE: Only flag obvious codes (leading zeros, non-numeric) - don't flag
+                // valid internal IDs like "6034" just because they're short numbers
                 // ═══════════════════════════════════════════════════════════════════════
                 if (args.project_id !== undefined && args.project_id !== null) {
                     const pid = String(args.project_id);
-                    // Detect if it looks like a code: contains non-numeric chars, or has leading zeros, or is a short string
-                    const looksLikeCode = /[^0-9]/.test(pid) ||
-                                         (pid.length > 1 && pid.startsWith('0')) ||
-                                         (pid.length <= 4 && /^\d+$/.test(pid));
+                    // Detect if it looks like a code:
+                    // 1. Contains non-numeric characters (e.g., "PRJ-001", "Phase 1")
+                    // 2. Has leading zeros (e.g., "0915", "007") - internal IDs never have leading zeros
+                    const hasNonNumeric = /[^0-9]/.test(pid);
+                    const hasLeadingZero = pid.length > 1 && pid.startsWith('0');
+                    const looksLikeCode = hasNonNumeric || hasLeadingZero;
 
                     if (looksLikeCode) {
                         return {
