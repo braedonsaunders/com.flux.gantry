@@ -7553,6 +7553,7 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
             // ═══════════════════════════════════════════════════════════════════════
             // FILTER SUPPORT: LLM can specify filter to show only matching rows
             // Example: { "type": "table", "dataRef": "ref_xyz", "filter": {"category": "Revenue"} }
+            // Supports: exact match, substring match (case-insensitive), and startsWith
             // ═══════════════════════════════════════════════════════════════════════
             let filteredRows = data.rows;
             let filterApplied = null;
@@ -7561,8 +7562,18 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
                 filteredRows = data.rows.filter(row => {
                     for (const [col, expectedValue] of Object.entries(block.filter)) {
                         const rowValue = row[col];
-                        // Support simple equality
-                        if (rowValue !== expectedValue && String(rowValue) !== String(expectedValue)) {
+                        const rowStr = String(rowValue || '').toLowerCase();
+                        const expectedStr = String(expectedValue || '').toLowerCase();
+
+                        // Try multiple matching strategies:
+                        // 1. Exact match (case-insensitive)
+                        // 2. Row value starts with expected value (e.g., "Cost" matches "Cost of Goods Sold")
+                        // 3. Row value contains expected value as a word
+                        const exactMatch = rowStr === expectedStr;
+                        const startsWithMatch = rowStr.startsWith(expectedStr);
+                        const containsMatch = rowStr.includes(expectedStr);
+
+                        if (!exactMatch && !startsWithMatch && !containsMatch) {
                             return false;
                         }
                     }
