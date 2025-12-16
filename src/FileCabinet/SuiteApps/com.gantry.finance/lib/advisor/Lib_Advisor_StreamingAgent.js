@@ -7363,8 +7363,8 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
         }
 
         try {
-            // Load data from cache
-            const data = Cache.loadRows(dataRef.requestId || state.requestId, dataRef.refId, 0, 49);
+            // Load MORE data from cache to enable stratified sampling
+            const data = Cache.loadRows(dataRef.requestId || state.requestId, dataRef.refId, 0, 99);
             if (!data || !data.rows || data.rows.length === 0) {
                 log.debug('buildTableBlockFromRef: no data for ref', { refId: block.dataRef });
                 return null;
@@ -7372,16 +7372,79 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
 
             const summary = dataRef.summary || {};
             const toolDisplayName = block.title || getToolDisplayName(summary.tool) || 'Results';
-
-            // Build table block with REAL data (same structure as progressive tables)
             const displayColumns = data.columns.slice(0, 8);
+            const maxDisplayRows = 30;
+
+            // ═══════════════════════════════════════════════════════════════════════
+            // STRATIFIED TABLE SAMPLING
+            // Ensures all categories are represented in the table display
+            // Prevents issues like "Operating Expenses never shown because they're
+            // beyond the first 25 rows"
+            // ═══════════════════════════════════════════════════════════════════════
+            let displayRows;
+            const primaryCatCol = summary.categoricalColumns?.[0];
+
+            if (primaryCatCol && primaryCatCol.distribution && primaryCatCol.distribution.length > 1) {
+                // Use stratified sampling - proportional representation per category
+                const catColumn = primaryCatCol.column;
+                const totalCategories = primaryCatCol.distribution.length;
+
+                // Calculate rows per category (proportional to count, minimum 2 per category)
+                const rowsPerCategory = {};
+                const totalCount = primaryCatCol.distribution.reduce((sum, d) => sum + d.count, 0);
+                let allocated = 0;
+
+                primaryCatCol.distribution.forEach(d => {
+                    // Proportional allocation with minimum of 2 rows per category
+                    const proportion = d.count / totalCount;
+                    const idealRows = Math.round(proportion * maxDisplayRows);
+                    const minRows = Math.min(2, d.count); // At least 2 (or all if fewer)
+                    rowsPerCategory[d.value] = Math.max(minRows, idealRows);
+                    allocated += rowsPerCategory[d.value];
+                });
+
+                // Adjust if over-allocated
+                if (allocated > maxDisplayRows) {
+                    const scale = maxDisplayRows / allocated;
+                    Object.keys(rowsPerCategory).forEach(k => {
+                        rowsPerCategory[k] = Math.max(2, Math.floor(rowsPerCategory[k] * scale));
+                    });
+                }
+
+                // Group rows by category
+                const rowsByCategory = {};
+                data.rows.forEach(row => {
+                    const cat = row[catColumn];
+                    if (!rowsByCategory[cat]) rowsByCategory[cat] = [];
+                    rowsByCategory[cat].push(row);
+                });
+
+                // Sample from each category
+                displayRows = [];
+                primaryCatCol.distribution.forEach(d => {
+                    const catRows = rowsByCategory[d.value] || [];
+                    const takeCount = Math.min(rowsPerCategory[d.value] || 2, catRows.length);
+                    displayRows.push(...catRows.slice(0, takeCount));
+                });
+
+                log.debug('buildTableBlockFromRef: using stratified sampling', {
+                    categories: totalCategories,
+                    rowsPerCategory: rowsPerCategory,
+                    totalDisplayRows: displayRows.length
+                });
+            } else {
+                // No categorical structure - use simple slicing
+                displayRows = data.rows.slice(0, maxDisplayRows);
+            }
+
+            // Build table block with stratified data
             return {
                 type: 'table',
                 title: toolDisplayName,
                 dataRef: dataRef.refId,
                 totalRows: data.totalRows || data.rows.length,
                 headers: displayColumns,
-                rows: data.rows.slice(0, 25).map(row => {
+                rows: displayRows.map(row => {
                     return displayColumns.map(col => formatCellValue(row[col], col));
                 }),
                 summary: {
