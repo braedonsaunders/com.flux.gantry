@@ -2512,11 +2512,8 @@
         }
     };
     
-    // Utility function for HTML escaping
-    function escapeHtml(str) {
-        if (!str) return '';
-        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-    }
+    // escapeHtml is now provided globally by Gantry.Core.js (window.escapeHtml)
+    // Removed local duplicate - use the global version which includes single-quote escaping
 
     // Register route with the Router
     Router.register('customervalue', function() {

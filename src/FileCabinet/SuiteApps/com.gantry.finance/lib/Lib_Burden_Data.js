@@ -28,35 +28,13 @@ define(["N/query", "N/search", "N/log", "N/runtime", "./Lib_Core", "./Lib_Config
     'use strict';
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // DEBUG LOGGING HELPERS
+    // DEBUG LOGGING HELPERS (consolidated from Lib_Advisor_Utils)
     // ═══════════════════════════════════════════════════════════════════════════
-    
-    // Cache debug mode to avoid repeated config lookups
-    let _debugModeCache = null;
-    let _debugModeCacheTime = 0;
-    const DEBUG_CACHE_TTL = 60000; // 1 minute cache
-    
-    function isDebugMode() {
-        const now = Date.now();
-        if (_debugModeCache === null || (now - _debugModeCacheTime) > DEBUG_CACHE_TTL) {
-            _debugModeCache = Utils.isDebugMode();
-            _debugModeCacheTime = now;
-        }
-        return _debugModeCache;
-    }
-    
-    // Conditional logging - only logs if debug mode is enabled
-    function debugLog(title, details) {
-        if (isDebugMode()) {
-            log.debug(title, details);
-        }
-    }
-    
-    function auditLog(title, details) {
-        if (isDebugMode()) {
-            log.audit(title, details);
-        }
-    }
+
+    // Use shared logging functions from Utils to avoid duplication
+    const isDebugMode = Utils.isDebugMode;
+    const debugLog = Utils.debugLog;
+    const auditLog = Utils.auditLog;
 
     // ═══════════════════════════════════════════════════════════════════════════
     // CONSTANTS
@@ -3622,10 +3600,11 @@ define(["N/query", "N/search", "N/log", "N/runtime", "./Lib_Core", "./Lib_Config
 
     /**
      * Calculate linear regression trend from historical data points
+     * (Renamed from calculateTrend for clarity - this does full regression analysis)
      * @param {Array} dataPoints - Array of { x: period, y: value } or just values
-     * @returns {Object} { slope, intercept, r2, trend: 'up'|'down'|'stable' }
+     * @returns {Object} { slope, intercept, r2, trend: 'up'|'down'|'stable', slopePercent }
      */
-    function calculateTrend(dataPoints) {
+    function calculateLinearRegression(dataPoints) {
         if (!dataPoints || dataPoints.length < 2) {
             return { slope: 0, intercept: 0, r2: 0, trend: 'stable' };
         }
@@ -3730,8 +3709,8 @@ define(["N/query", "N/search", "N/log", "N/runtime", "./Lib_Core", "./Lib_Config
             categoryAnalysis[catId] = {
                 label: catHistory.label,
                 color: catHistory.color,
-                rateTrend: calculateTrend(rateHistory),
-                expenseTrend: calculateTrend(expenseHistory),
+                rateTrend: calculateLinearRegression(rateHistory),
+                expenseTrend: calculateLinearRegression(expenseHistory),
                 currentRate: periods.length > 0 ? periods[periods.length - 1].rate : 0,
                 currentExpense: periods.length > 0 ? periods[periods.length - 1].expense : 0
             };
@@ -3739,7 +3718,7 @@ define(["N/query", "N/search", "N/log", "N/runtime", "./Lib_Core", "./Lib_Config
 
         // Calculate composite trend from history
         const compositeHistory = historyPeriods.map((p, i) => ({ x: i, y: p.totalRate || 0 }));
-        const compositeTrend = calculateTrend(compositeHistory);
+        const compositeTrend = calculateLinearRegression(compositeHistory);
 
         // Generate forecasts for future periods
         const forecasts = [];

@@ -205,8 +205,8 @@ define(["N/search", "N/query", "N/log", "./Lib_Core", "./Lib_Config"], function 
             // 9. Monthly Trend (for forecasting)
             const monthlyTrend = getMonthlyTrend(rangeEnd, 12, context.subsidiary);
 
-            // 10. Anomaly Detection
-            const anomalies = detectAnomalies(monthlyTrend, companyAccountsCurrent, config);
+            // 10. Anomaly Detection (Financial Health)
+            const anomalies = detectFinancialAnomalies(monthlyTrend, companyAccountsCurrent, config);
 
             // 11. Operating Metrics
             const operatingMetrics = calculateOperatingMetrics(compRange, companyMetrics, monthsInRange, context.subsidiary, config);
@@ -851,10 +851,14 @@ define(["N/search", "N/query", "N/log", "./Lib_Core", "./Lib_Config"], function 
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // ANOMALY DETECTION
+    // ANOMALY DETECTION (Financial Health)
     // ═══════════════════════════════════════════════════════════════════════════
-    
-    function detectAnomalies(monthlyTrend, currentAccounts, config) {
+
+    /**
+     * Detect financial anomalies in margin trends and account concentrations
+     * (Renamed from detectAnomalies for clarity - this is financial health-specific)
+     */
+    function detectFinancialAnomalies(monthlyTrend, currentAccounts, config) {
         const anomalies = [];
         const threshold = config.anomalyThreshold || 2.0;
         

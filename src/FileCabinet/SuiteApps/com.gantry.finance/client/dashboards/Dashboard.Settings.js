@@ -1107,8 +1107,11 @@
         },
         
         /**
-         * Get curated OpenRouter models as fallback
+         * Get curated OpenRouter models as fallback (client-side)
          * Only includes models that support tool calling
+         * NOTE: This mirrors Lib_Model_Registry.getCuratedOpenRouterModels() on the server.
+         * Kept as client-side copy because client code cannot import server-side modules.
+         * If you modify this list, update Lib_Model_Registry.js:610 as well.
          */
         getCuratedOpenRouterModels() {
             return [
@@ -1784,6 +1787,12 @@
             }
         },
 
+        /**
+         * Get default permissions configuration (client-side fallback)
+         * NOTE: This mirrors Lib_Permissions.getDefaultPermissions() on the server.
+         * Kept as client-side copy because client code cannot import server-side modules.
+         * If you modify this, update Lib_Permissions.js:46 as well.
+         */
         getDefaultPermissions() {
             return {
                 enabled: false,

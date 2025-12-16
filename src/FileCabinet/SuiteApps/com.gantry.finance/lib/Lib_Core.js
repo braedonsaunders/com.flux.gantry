@@ -935,11 +935,76 @@ function(query, search, runtime, format, log, ConfigLib) {
     function variance(actual, baseline) {
         const absolute = toNumber(actual) - toNumber(baseline);
         const percent = baseline !== 0 ? (absolute / Math.abs(baseline)) : 0;
-        
+
         return {
             absolute: absolute,
             percent: percent
         };
+    }
+
+    /**
+     * Calculate the arithmetic mean of an array of values
+     * @param {number[]} values - Array of numeric values
+     * @returns {number} The mean, or 0 if array is empty
+     */
+    function calculateMean(values) {
+        if (!values || !Array.isArray(values) || values.length === 0) return 0;
+        return values.reduce((a, b) => a + b, 0) / values.length;
+    }
+
+    /**
+     * Calculate standard deviation of an array of values
+     * @param {number[]} values - Array of numeric values
+     * @returns {number} The standard deviation, or 0 if array is empty/single element
+     */
+    function calculateStdDev(values) {
+        if (!values || !Array.isArray(values) || values.length < 2) return 0;
+        const mean = calculateMean(values);
+        const squaredDiffs = values.map(v => Math.pow(v - mean, 2));
+        return Math.sqrt(calculateMean(squaredDiffs));
+    }
+
+    /**
+     * Get today's date as an ISO string (YYYY-MM-DD)
+     * Shared utility for default end dates across modules
+     * @returns {string} Today's date in YYYY-MM-DD format
+     */
+    function getDefaultEndDate() {
+        return new Date().toISOString().split('T')[0];
+    }
+
+    /**
+     * Calculate the Herfindahl-Hirschman Index (HHI) for concentration analysis
+     * @param {number[]} values - Array of values (e.g., revenue per customer)
+     * @param {number} [total] - Optional pre-calculated total; if not provided, sum of values is used
+     * @returns {number} HHI score (0-10000 scale where 10000 = complete concentration)
+     */
+    function calculateHerfindahlIndex(values, total) {
+        if (!values || !Array.isArray(values) || values.length === 0) return 0;
+
+        const sum = total || values.reduce((a, b) => a + b, 0);
+        if (sum === 0) return 0;
+
+        return values.reduce((hhi, value) => {
+            const share = value / sum;
+            return hhi + (share * share);
+        }, 0) * 10000; // Scale to standard HHI range (0-10000)
+    }
+
+    /**
+     * Classify concentration risk based on HHI thresholds
+     * @param {number} hhi - Herfindahl-Hirschman Index value
+     * @param {number} [lowThreshold=1500] - HHI below this is low concentration
+     * @param {number} [highThreshold=2500] - HHI above this is high concentration
+     * @returns {string} 'low', 'moderate', or 'high'
+     */
+    function classifyConcentrationRisk(hhi, lowThreshold, highThreshold) {
+        lowThreshold = lowThreshold || 1500;
+        highThreshold = highThreshold || 2500;
+
+        if (hhi >= highThreshold) return 'high';
+        if (hhi >= lowThreshold) return 'moderate';
+        return 'low';
     }
 
     // ==========================================
@@ -1098,6 +1163,15 @@ function(query, search, runtime, format, log, ConfigLib) {
         percentage: percentage,
         ratio: ratio,
         variance: variance,
+        calculateMean: calculateMean,
+        calculateStdDev: calculateStdDev,
+
+        // Date utilities (consolidated)
+        getDefaultEndDate: getDefaultEndDate,
+
+        // Concentration/HHI utilities
+        calculateHerfindahlIndex: calculateHerfindahlIndex,
+        classifyConcentrationRisk: classifyConcentrationRisk,
 
         // Account/Subsidiary helpers
         getSubsidiaries: getSubsidiaries,

@@ -851,19 +851,25 @@ function(query, record, search, runtime, format, log, Core, Utils) {
         if (!vendorSpend || vendorSpend.length === 0) {
             return { vendors: [], herfindahlIndex: 0, riskLevel: 'low' };
         }
-        
+
         // HHI thresholds from config (expressed as 0-10000 scale)
         const hhiWarning = cfg(config, 'hhiWarningThreshold');
         const hhiCritical = cfg(config, 'hhiCriticalThreshold');
         // Convert to decimal for share comparison (e.g., 15% = 0.15)
         const shareWarning = 0.15;  // 15% share is concerning
         const shareCritical = 0.25; // 25% share is critical
-        
+
         const totalSpend = vendorSpend.reduce((sum, v) => sum + v.totalSpend, 0);
-        let hhi = 0;
+
+        // Calculate HHI using Core utility (consolidated from duplicate implementations)
+        const hhiScaled = Core.calculateHerfindahlIndex(
+            vendorSpend.map(v => v.totalSpend),
+            totalSpend
+        );
+
+        // Per-vendor risk classification (domain-specific logic preserved)
         const vendors = vendorSpend.map(v => {
             const share = totalSpend > 0 ? (v.totalSpend / totalSpend) : 0;
-            hhi += share * share;
             let riskLevel = 'low';
             if (share >= shareCritical) riskLevel = 'critical';
             else if (share >= shareWarning) riskLevel = 'warning';
@@ -875,13 +881,10 @@ function(query, record, search, runtime, format, log, Core, Utils) {
                 riskLevel
             };
         });
-        
-        // Convert HHI to 0-10000 scale and compare to config thresholds
-        const hhiScaled = Math.round(hhi * 10000);
-        let overallRisk = 'low';
-        if (hhiScaled >= hhiCritical) overallRisk = 'high';
-        else if (hhiScaled >= hhiWarning) overallRisk = 'moderate';
-        
+
+        // Classify overall risk using Core utility
+        const overallRisk = Core.classifyConcentrationRisk(hhiScaled, hhiWarning, hhiCritical);
+
         return {
             vendors,
             herfindahlIndex: hhiScaled,
@@ -1169,9 +1172,7 @@ function(query, record, search, runtime, format, log, Core, Utils) {
         d.setMonth(d.getMonth() - 3);
         return d.toISOString().split('T')[0];
     }
-    function getDefaultEndDate() {
-        return new Date().toISOString().split('T')[0];
-    }
+    // getDefaultEndDate() removed - use Core.getDefaultEndDate() if needed
     function calculatePercentile(values, percentile) {
         if (!values || values.length === 0) return 0;
         const sorted = [...values].sort((a, b) => a - b);

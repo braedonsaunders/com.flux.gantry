@@ -2456,10 +2456,8 @@ function(query, record, search, runtime, format, Core, Utils) {
         return d.toISOString().split('T')[0];
     }
     
-    function getDefaultEndDate() {
-        return new Date().toISOString().split('T')[0];
-    }
-    
+    // Core.getDefaultEndDate() removed - use Core.Core.getDefaultEndDate()
+
     function daysBetween(start, end) {
         return Math.ceil((new Date(end) - new Date(start)) / (1000 * 60 * 60 * 24));
     }
@@ -2645,7 +2643,7 @@ function(query, record, search, runtime, format, Core, Utils) {
             LEFT JOIN TransactionLine TL ON T.id = TL.transaction AND TL.mainline = 'F'
             WHERE TL.entity = ${vendorId}
                 AND T.trandate >= TO_DATE('${startDate || getDefaultStartDate()}', 'YYYY-MM-DD')
-                AND T.trandate <= TO_DATE('${endDate || getDefaultEndDate()}', 'YYYY-MM-DD')
+                AND T.trandate <= TO_DATE('${endDate || Core.getDefaultEndDate()}', 'YYYY-MM-DD')
                 AND T.type IN (${VENDOR_TRAN_TYPES})
                 ${subFilter}
             ORDER BY T.trandate DESC
@@ -2685,7 +2683,7 @@ function(query, record, search, runtime, format, Core, Utils) {
             LEFT JOIN TransactionLine TL ON T.id = TL.transaction AND TL.mainline = 'T'
             WHERE T.createdby = ${userId}
                 AND T.trandate >= TO_DATE('${startDate || getDefaultStartDate()}', 'YYYY-MM-DD')
-                AND T.trandate <= TO_DATE('${endDate || getDefaultEndDate()}', 'YYYY-MM-DD')
+                AND T.trandate <= TO_DATE('${endDate || Core.getDefaultEndDate()}', 'YYYY-MM-DD')
                 ${subFilter}
             ORDER BY T.trandate DESC
             FETCH FIRST 100 ROWS ONLY
@@ -2725,7 +2723,7 @@ function(query, record, search, runtime, format, Core, Utils) {
             LEFT JOIN TransactionLine TL ON T.id = TL.transaction AND TL.mainline = 'T'
             WHERE T.createdby = ${userId}
                 AND T.trandate >= TO_DATE('${startDate || getDefaultStartDate()}', 'YYYY-MM-DD')
-                AND T.trandate <= TO_DATE('${endDate || getDefaultEndDate()}', 'YYYY-MM-DD')
+                AND T.trandate <= TO_DATE('${endDate || Core.getDefaultEndDate()}', 'YYYY-MM-DD')
                 AND (UPPER(TRIM(TO_CHAR(T.trandate, 'DY'))) IN ('SAT', 'SUN')
                      OR UPPER(TRIM(TO_CHAR(T.trandate, 'DAY'))) IN ('SATURDAY', 'SUNDAY'))
                 ${subFilter}
@@ -2777,7 +2775,7 @@ function(query, record, search, runtime, format, Core, Utils) {
             LEFT JOIN TransactionLine TL ON T.id = TL.transaction AND TL.mainline = 'T'
             WHERE T.type IN ('VendBill', 'Bill', 'vendorbill')
                 AND T.trandate >= TO_DATE('${startDate || getDefaultStartDate()}', 'YYYY-MM-DD')
-                AND T.trandate <= TO_DATE('${endDate || getDefaultEndDate()}', 'YYYY-MM-DD')
+                AND T.trandate <= TO_DATE('${endDate || Core.getDefaultEndDate()}', 'YYYY-MM-DD')
                 ${subFilter}
             ORDER BY T.tranid
         `;

@@ -122,6 +122,19 @@ define(['N/log', 'N/runtime', 'N/record', 'N/query', '../Lib_Config'], function(
         }
     }
 
+    /**
+     * Gated audit logging - only logs when debug mode is enabled
+     * Use this for audit-level logs that should only appear in debug mode
+     *
+     * @param {string} title - Log title
+     * @param {Object} [details] - Optional log details object
+     */
+    function auditLog(title, details) {
+        if (isDebugMode()) {
+            log.audit(title, details);
+        }
+    }
+
     // ═══════════════════════════════════════════════════════════════
     // SQL ESCAPING (Single Source of Truth)
     // Used by EntityResolver, Tools, and any module building SuiteQL
@@ -1004,6 +1017,7 @@ define(['N/log', 'N/runtime', 'N/record', 'N/query', '../Lib_Config'], function(
         isDebugMode: isDebugMode,
         resetDebugModeCache: resetDebugModeCache,
         setForceDebugMode: setForceDebugMode,
-        debugLog: debugLog
+        debugLog: debugLog,
+        auditLog: auditLog
     };
 });

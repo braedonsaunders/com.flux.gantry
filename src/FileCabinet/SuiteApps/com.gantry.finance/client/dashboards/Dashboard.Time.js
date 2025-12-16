@@ -627,9 +627,9 @@
             setTimeout(() => this.renderForecastChart(forecasts), 100);
         },
         
-        // === ANOMALIES SUB-TAB ===
+        // === ANOMALIES SUB-TAB (Employee Utilization Anomalies) ===
         renderAnomaliesSubTab(container, employees, depts, thresholds) {
-            const anomalies = this.detectAnomalies(employees, depts, thresholds);
+            const anomalies = this.detectEmployeeAnomalies(employees, depts, thresholds);
             
             container.innerHTML = `
                 <!-- Anomaly KPIs -->
@@ -1157,8 +1157,11 @@
             };
         },
 
-        // === ANOMALY DETECTION (respects department settings) ===
-        detectAnomalies(employees, depts, thresholds) {
+        /**
+         * Detect employee utilization anomalies (billable %, overtime, title drift)
+         * (Renamed from detectAnomalies for clarity - this is employee time-specific)
+         */
+        detectEmployeeAnomalies(employees, depts, thresholds) {
             const target = thresholds.targetBillablePercent || 70;
             const minHours = thresholds.minimumHoursForAnalysis || 10;
             

@@ -1245,27 +1245,31 @@ define(['N/query', 'N/log', './Lib_Core'], function(query, log, Core) {
     // ==========================================
     function analyzeConcentrationRisk(accountVelocity) {
         var totalSpend = accountVelocity.reduce(function(sum, a) { return sum + a.totalSpend; }, 0);
-        
+
         var concentrationData = accountVelocity.map(function(acct) {
             return Object.assign({}, acct, {
                 spendShare: totalSpend > 0 ? (acct.totalSpend / totalSpend) * 100 : 0
             });
         });
-        
-        var hhi = concentrationData.reduce(function(sum, acct) {
-            return sum + Math.pow(acct.spendShare, 2);
-        }, 0);
-        
-        var hhiStatus = hhi < 1500 ? 'low' : hhi < 2500 ? 'moderate' : 'high';
-        
+
+        // Calculate HHI using Core utility (consolidated from duplicate implementations)
+        // Uses raw spend values for correct HHI calculation
+        var hhi = Core.calculateHerfindahlIndex(
+            accountVelocity.map(function(a) { return a.totalSpend; }),
+            totalSpend
+        );
+
+        // Classify risk using Core utility
+        var hhiStatus = Core.classifyConcentrationRisk(hhi);
+
         var top1Share = concentrationData.length > 0 ? concentrationData[0].spendShare : 0;
         var top5Share = concentrationData.slice(0, 5).reduce(function(sum, a) { return sum + a.spendShare; }, 0);
         var top10Share = concentrationData.slice(0, 10).reduce(function(sum, a) { return sum + a.spendShare; }, 0);
-        
+
         var riskAccounts = concentrationData.filter(function(acct) {
             return acct.spendShare > 5 && (acct.trend === 'accelerating' || acct.trend === 'high');
         });
-        
+
         return {
             summary: {
                 hhi: Math.round(hhi),

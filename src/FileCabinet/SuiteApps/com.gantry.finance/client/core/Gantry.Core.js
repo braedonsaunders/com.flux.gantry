@@ -41,6 +41,23 @@
         return `<span class="${color}"><i class="fas ${icon} small mr-1"></i>${Math.abs(val).toFixed(1)}</span>`;
     };
 
+    /**
+     * Escape HTML special characters to prevent XSS
+     * This is the canonical client-side implementation - use this instead of local copies.
+     * Includes single-quote escape for comprehensive protection.
+     * @param {string} str - String to escape
+     * @returns {string} HTML-escaped string
+     */
+    const escapeHtml = (str) => {
+        if (!str) return '';
+        return String(str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    };
+
     const STRATEGY_DEFINITIONS = {
         'gl_history_average': { title: "Historical GL Smoothing", text: "Analyzes historical General Ledger activity over a defined lookback period to calculate a baseline weekly average." },
         'vendor_payment_history': { title: "Vendor Aggregate Analysis", text: "Aggregates historical payments to specific vendors or categories." },
@@ -1174,6 +1191,7 @@
     window.fmtPct = fmtPct;
     window.getNsLink = getNsLink;
     window.getTrendHtml = getTrendHtml;
+    window.escapeHtml = escapeHtml;
     window.STRATEGY_DEFINITIONS = STRATEGY_DEFINITIONS;
     window.API = API;
     window.Router = Router;
