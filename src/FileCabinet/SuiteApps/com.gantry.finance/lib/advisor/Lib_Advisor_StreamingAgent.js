@@ -1572,16 +1572,17 @@ WRITE YOUR RESPONSE IN MARKDOWN with these special directives:
    Optional Title Here
    :::
 
-   FILTER tables to show specific categories (IMPORTANT for income statements):
-   :::table ref_xxx filter:category=Revenue
+   FILTER tables using the SLUG shown in CATEGORY BREAKDOWN:
+   :::table ref_xxx filter:category=revenue
    Revenue Details
    :::
-   :::table ref_xxx filter:category=Cost of Goods Sold
+   :::table ref_xxx filter:category=cost_of_goods_sold
    COGS Details
    :::
-   :::table ref_xxx filter:category=Operating Expenses
+   :::table ref_xxx filter:category=operating_expenses
    Operating Expenses Details
    :::
+   ⚠️ Use the exact slug from [slug: xxx] in CATEGORY BREAKDOWN
 
 2. CHARTS - Visualize data:
    :::chart bar ref_xxx
@@ -6683,14 +6684,16 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
             // CATEGORY INTELLIGENCE: Show breakdown by categorical columns
             // This prevents LLM from confusing total sum with specific categories
             // (e.g., knowing Revenue=$16.7M vs total of all rows=$31.9M)
+            // Shows SLUG for each category - use slug in filter:column=slug
             // ═══════════════════════════════════════════════════════════════════════
             if (summary.categoricalColumns && summary.categoricalColumns.length > 0) {
-                section += `CATEGORY BREAKDOWN:\n`;
+                section += `CATEGORY BREAKDOWN (use slug for filtering):\n`;
                 summary.categoricalColumns.forEach(catCol => {
                     section += `  By ${catCol.column}:\n`;
                     catCol.distribution.forEach(item => {
                         const sumStr = item.sumFormatted || formatStatValue(item.sum, 'currency');
-                        section += `    • ${item.value}: ${sumStr} (${item.count} rows)\n`;
+                        const slug = toSlug(item.value);
+                        section += `    • ${item.value} [slug: ${slug}]: ${sumStr} (${item.count} rows)\n`;
                     });
                 });
                 section += '\n';
@@ -7348,6 +7351,21 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
     }
 
     /**
+     * Convert a string value to a slug (lowercase, spaces/special chars → underscores)
+     * Used for category filtering - LLM uses slug, we match against slugified row values
+     * @param {string} value - The value to slugify
+     * @returns {string} Slugified value (e.g., "Cost of Goods Sold" → "cost_of_goods_sold")
+     */
+    function toSlug(value) {
+        if (!value) return '';
+        return String(value)
+            .toLowerCase()
+            .trim()
+            .replace(/[^a-z0-9]+/g, '_')  // Replace non-alphanumeric with underscore
+            .replace(/^_+|_+$/g, '');      // Trim leading/trailing underscores
+    }
+
+    /**
      * Format stat value for display in prompt
      * AGENTIC FIX: Properly formats negative currency as -$X instead of $-X
      */
@@ -7551,9 +7569,9 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
             }
 
             // ═══════════════════════════════════════════════════════════════════════
-            // FILTER SUPPORT: LLM can specify filter to show only matching rows
-            // Example: { "type": "table", "dataRef": "ref_xyz", "filter": {"category": "Revenue"} }
-            // Supports: exact match, substring match (case-insensitive), and startsWith
+            // FILTER SUPPORT: LLM uses slug to filter rows
+            // Example: filter:category=cost_of_goods_sold matches "Cost of Goods Sold"
+            // Both filter value and row value are slugified for comparison
             // ═══════════════════════════════════════════════════════════════════════
             let filteredRows = data.rows;
             let filterApplied = null;
@@ -7562,18 +7580,11 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
                 filteredRows = data.rows.filter(row => {
                     for (const [col, expectedValue] of Object.entries(block.filter)) {
                         const rowValue = row[col];
-                        const rowStr = String(rowValue || '').toLowerCase();
-                        const expectedStr = String(expectedValue || '').toLowerCase();
+                        // Compare slugified versions - clean, deterministic matching
+                        const rowSlug = toSlug(rowValue);
+                        const expectedSlug = toSlug(expectedValue);
 
-                        // Try multiple matching strategies:
-                        // 1. Exact match (case-insensitive)
-                        // 2. Row value starts with expected value (e.g., "Cost" matches "Cost of Goods Sold")
-                        // 3. Row value contains expected value as a word
-                        const exactMatch = rowStr === expectedStr;
-                        const startsWithMatch = rowStr.startsWith(expectedStr);
-                        const containsMatch = rowStr.includes(expectedStr);
-
-                        if (!exactMatch && !startsWithMatch && !containsMatch) {
+                        if (rowSlug !== expectedSlug) {
                             return false;
                         }
                     }
