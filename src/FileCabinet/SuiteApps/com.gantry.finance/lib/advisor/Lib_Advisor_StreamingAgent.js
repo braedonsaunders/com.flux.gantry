@@ -784,6 +784,110 @@ Reply JSON only:
     }
 
     /**
+     * Generate a hash for a tool call (tool name + args) for deduplication
+     * @param {string} toolName - The tool name
+     * @param {Object} args - The tool arguments
+     * @returns {string} A hash string for this tool call
+     */
+    function getToolCallHash(toolName, args) {
+        // Normalize args by sorting keys and removing undefined/null values
+        const normalizedArgs = {};
+        if (args && typeof args === 'object') {
+            Object.keys(args).sort().forEach(key => {
+                const value = args[key];
+                if (value !== undefined && value !== null) {
+                    normalizedArgs[key] = value;
+                }
+            });
+        }
+        return `${toolName}::${JSON.stringify(normalizedArgs)}`;
+    }
+
+    /**
+     * Detect duplicate tool calls in accumulated data
+     * Returns info about which tools have been called multiple times with same args
+     * @param {Object} state - Current agent state
+     * @returns {Object} { hasDuplicates, duplicates, maxDuplicates, mostDuplicated }
+     */
+    function detectDuplicateToolCalls(state) {
+        const accumulatedData = state.accumulatedData || [];
+
+        if (accumulatedData.length < 2) {
+            return { hasDuplicates: false, duplicates: {}, maxDuplicates: 0 };
+        }
+
+        // Count tool call occurrences by hash
+        const callCounts = {};
+        const callDetails = {};
+
+        for (const data of accumulatedData) {
+            if (!data.tool) continue;
+
+            const hash = getToolCallHash(data.tool, data.args);
+            callCounts[hash] = (callCounts[hash] || 0) + 1;
+
+            if (!callDetails[hash]) {
+                callDetails[hash] = {
+                    tool: data.tool,
+                    args: data.args,
+                    count: 0,
+                    firstResult: data
+                };
+            }
+            callDetails[hash].count = callCounts[hash];
+        }
+
+        // Find duplicates (count > 1)
+        const duplicates = {};
+        let maxDuplicates = 0;
+        let mostDuplicated = null;
+
+        for (const [hash, count] of Object.entries(callCounts)) {
+            if (count > 1) {
+                duplicates[hash] = callDetails[hash];
+                if (count > maxDuplicates) {
+                    maxDuplicates = count;
+                    mostDuplicated = callDetails[hash];
+                }
+            }
+        }
+
+        return {
+            hasDuplicates: Object.keys(duplicates).length > 0,
+            duplicates: duplicates,
+            maxDuplicates: maxDuplicates,
+            mostDuplicated: mostDuplicated
+        };
+    }
+
+    /**
+     * Check if a tool call has already been made with the same arguments
+     * Used to skip redundant tool calls before execution
+     * @param {Object} state - Current agent state
+     * @param {string} toolName - The tool to check
+     * @param {Object} args - The arguments to check
+     * @returns {Object} { isDuplicate, existingResult }
+     */
+    function checkForExistingToolResult(state, toolName, args) {
+        const accumulatedData = state.accumulatedData || [];
+        const targetHash = getToolCallHash(toolName, args);
+
+        for (const data of accumulatedData) {
+            if (!data.tool) continue;
+
+            const existingHash = getToolCallHash(data.tool, data.args);
+            if (existingHash === targetHash) {
+                return {
+                    isDuplicate: true,
+                    existingResult: data
+                };
+            }
+        }
+
+        return { isDuplicate: false, existingResult: null };
+    }
+
+    /**
      * Check if the circuit breaker should trigger based on progress
      * Enhanced with failure mode classification for smarter escalation
      * @param {Object} state - Current agent state
@@ -791,6 +895,26 @@ Reply JSON only:
      */
     function checkCircuitBreaker(state) {
         const accumulatedData = state.accumulatedData || [];
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // FIX: DUPLICATE TOOL CALL DETECTION
+        // If the same tool+args has been called multiple times, trigger immediately
+        // ═══════════════════════════════════════════════════════════════════════
+        const duplicateCheck = detectDuplicateToolCalls(state);
+        if (duplicateCheck.hasDuplicates && duplicateCheck.maxDuplicates >= 2) {
+            log.audit('Circuit breaker: duplicate tool calls detected', {
+                duplicates: duplicateCheck.duplicates,
+                maxDuplicates: duplicateCheck.maxDuplicates
+            });
+
+            return {
+                shouldTrigger: true,
+                reason: `Duplicate tool calls detected: "${duplicateCheck.mostDuplicated.tool}" called ${duplicateCheck.maxDuplicates} times with same parameters. Already have this data.`,
+                consecutiveFailures: duplicateCheck.maxDuplicates,
+                escalationAction: 'ANSWER_WITH_EXISTING', // Use data we already have
+                duplicateToolCalls: duplicateCheck.duplicates
+            };
+        }
 
         if (accumulatedData.length < NO_PROGRESS_THRESHOLD) {
             return { shouldTrigger: false };
@@ -3340,8 +3464,56 @@ Which 2 tools could provide similar data? Reply JSON only:
             // Intent type
             lines.push(`Question Intent: ${intent.intent}`);
 
-            // Transaction context
+            // ═══════════════════════════════════════════════════════════════════════
+            // FIX: STRONG TRANSACTION_CONTEXT GUIDANCE FOR TOOL SELECTION
+            // When the user asks about specific transaction types, we MUST use
+            // tools that return those transaction types, not aggregate tools.
+            // ═══════════════════════════════════════════════════════════════════════
             if (intent.transaction_context && intent.transaction_context !== 'all') {
+                lines.push(`\n⚠️⚠️⚠️ CRITICAL: Transaction Context = "${intent.transaction_context}" ⚠️⚠️⚠️`);
+                lines.push(`The user is asking about ${intent.transaction_context.toUpperCase()}!`);
+                lines.push('');
+
+                // Provide explicit tool recommendations based on transaction context
+                const transactionContextTools = {
+                    'invoices': {
+                        recommended: ['get_recent_transactions', 'get_entity_transactions'],
+                        params: { transaction_type: 'CustInvc' },
+                        avoid: ['get_revenue_by_month', 'get_customer_revenue'],
+                        reason: 'User wants to see individual INVOICES, not revenue aggregates'
+                    },
+                    'bills': {
+                        recommended: ['get_recent_transactions', 'get_entity_transactions'],
+                        params: { transaction_type: 'VendBill' },
+                        avoid: ['get_vendor_spend', 'get_expenses'],
+                        reason: 'User wants to see individual BILLS, not spending aggregates'
+                    },
+                    'payments': {
+                        recommended: ['get_recent_transactions', 'get_entity_transactions'],
+                        params: { transaction_type: 'CustPymt' },
+                        avoid: ['get_revenue_by_month'],
+                        reason: 'User wants to see individual PAYMENTS, not aggregates'
+                    },
+                    'journal_entries': {
+                        recommended: ['get_journal_entries', 'get_recent_transactions'],
+                        params: { transaction_type: 'Journal' },
+                        avoid: [],
+                        reason: 'User wants to see individual JOURNAL ENTRIES'
+                    }
+                };
+
+                const guidance = transactionContextTools[intent.transaction_context];
+                if (guidance) {
+                    lines.push(`✓ USE: ${guidance.recommended.join(' or ')} with ${JSON.stringify(guidance.params)}`);
+                    if (guidance.avoid.length > 0) {
+                        lines.push(`✗ AVOID: ${guidance.avoid.join(', ')} - ${guidance.reason}`);
+                    }
+                } else {
+                    lines.push(`Use transaction-listing tools (get_recent_transactions, get_entity_transactions)`);
+                    lines.push(`NOT aggregation tools (get_revenue_by_month, get_expenses, etc.)`);
+                }
+                lines.push('');
+            } else if (intent.transaction_context && intent.transaction_context !== 'all') {
                 lines.push(`Transaction Context: ${intent.transaction_context}`);
             }
 
@@ -3370,6 +3542,39 @@ Which 2 tools could provide similar data? Reply JSON only:
                     lines.push(`User Constraints: ${activeConstraints.join(', ')}`);
                 }
             }
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // FIX: FOLLOW-UP QUERY HANDLING
+        // When this is a follow-up/drill-down, guide the LLM to use similar tools
+        // as the previous query, just with modified parameters (e.g., different period)
+        // ═══════════════════════════════════════════════════════════════════════
+        if (intent.references_previous || intent.is_drill_down) {
+            lines.push('');
+            lines.push('🔄 FOLLOW-UP QUERY DETECTED:');
+            lines.push('   This is a follow-up to a previous question.');
+
+            if (intent.drill_down_context) {
+                lines.push(`   Context: ${intent.drill_down_context}`);
+            }
+
+            // Provide guidance based on what we know
+            if (intent.transaction_context && intent.transaction_context !== 'all') {
+                lines.push(`   The previous query was about "${intent.transaction_context}" - use the SAME data type!`);
+                lines.push('   → Use the SAME TOOLS as the previous query, just with updated parameters.');
+                lines.push('   → If previous query used get_entity_transactions for invoices, use it again.');
+                lines.push('   → DO NOT switch to aggregation tools (get_revenue_by_month, etc.)');
+            }
+
+            // If we have history with previous tool calls, reference them
+            if (state.history && state.history.length > 0) {
+                // Extract any tool mentions from assistant history
+                const assistantResponses = state.history.filter(h => h.role === 'assistant');
+                if (assistantResponses.length > 0) {
+                    lines.push('   → Review the RECENT CONVERSATION above to understand what data type was used.');
+                }
+            }
+            lines.push('');
         }
 
         // ═══════════════════════════════════════════════════════════════════════
@@ -4813,6 +5018,34 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
                 return { success: true, nextPhase: PHASES.REASON_ACT };
             }
 
+            // ═══════════════════════════════════════════════════════════════════════
+            // ANSWER_WITH_EXISTING: Duplicate tool calls detected - use existing data
+            // Don't waste more iterations, we already have the data we need
+            // ═══════════════════════════════════════════════════════════════════════
+            if (circuitBreaker.escalationAction === 'ANSWER_WITH_EXISTING') {
+                log.audit('REASON_ACT circuit breaker - using existing data (duplicate calls)', {
+                    duplicates: circuitBreaker.duplicateToolCalls ? Object.keys(circuitBreaker.duplicateToolCalls).length : 0,
+                    dataCount: state.accumulatedData?.length || 0
+                });
+
+                upsertThinkingStep(state, 'reason_act', {
+                    title: 'Using collected data',
+                    phase: 'reason_act',
+                    status: 'complete',
+                    duration: Date.now() - phaseStart,
+                    context: {
+                        circuitBreaker: true,
+                        escalation: 'ANSWER_WITH_EXISTING',
+                        reason: 'Duplicate tool calls detected - data already collected',
+                        dataCount: state.accumulatedData?.length || 0
+                    }
+                });
+
+                // Go directly to REFLECT to evaluate what we have
+                state.phase = PHASES.REFLECT;
+                return { success: true, nextPhase: PHASES.REFLECT };
+            }
+
             // Escalate based on the suggested action
             if (circuitBreaker.escalationAction === 'SYNTHESIZE' &&
                 state.synthesize?.enabled &&
@@ -5002,6 +5235,38 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
                     let args = parsed.args || {};
 
                     // ═══════════════════════════════════════════════════════════════════════
+                    // FIX: PRE-CHECK FOR EXISTING TOOL RESULT (SKIP DUPLICATES)
+                    // If we already called this exact tool with these exact args, skip it
+                    // ═══════════════════════════════════════════════════════════════════════
+                    const existingCheck = checkForExistingToolResult(state, toolName, args);
+                    if (existingCheck.isDuplicate) {
+                        log.debug('REASON_ACT skipping duplicate tool call', {
+                            tool: toolName,
+                            args: args,
+                            existingRowCount: existingCheck.existingResult?.rowCount
+                        });
+
+                        // Update thinking step to indicate we're reusing data
+                        upsertThinkingStep(state, 'reason_act', {
+                            title: 'Using cached data',
+                            phase: 'reason_act',
+                            status: 'complete',
+                            duration: duration,
+                            context: {
+                                iteration: state.reasonActIterations,
+                                action: 'SKIP_DUPLICATE',
+                                tool: toolName,
+                                reason: 'Already have data from this tool call'
+                            }
+                        });
+
+                        // Don't execute the tool again - loop back to REASON_ACT
+                        // The LLM will see the existing data in accumulated_data
+                        state.phase = PHASES.REASON_ACT;
+                        return { success: true, nextPhase: PHASES.REASON_ACT };
+                    }
+
+                    // ═══════════════════════════════════════════════════════════════════════
                     // AGENTIC PERIOD VALIDATION
                     // For tools that compare periods, validate the comparison makes sense
                     // ═══════════════════════════════════════════════════════════════════════
@@ -5141,6 +5406,27 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
                         if (!toolName) {
                             log.audit('GET_DATA_BATCH skipping invalid tool spec', toolSpec);
                             continue;
+                        }
+
+                        // ═══════════════════════════════════════════════════════════════════════
+                        // FIX: SKIP DUPLICATE TOOL CALLS IN BATCH
+                        // If we already have data from this exact tool call, skip it
+                        // ═══════════════════════════════════════════════════════════════════════
+                        const existingCheck = checkForExistingToolResult(state, toolName, args);
+                        if (existingCheck.isDuplicate) {
+                            log.debug('GET_DATA_BATCH skipping duplicate tool call', {
+                                tool: toolName,
+                                args: args,
+                                existingRowCount: existingCheck.existingResult?.rowCount
+                            });
+                            batchResults.push({
+                                tool: toolName,
+                                success: true,
+                                rowCount: existingCheck.existingResult?.rowCount || 0,
+                                skipped: true,
+                                reason: 'Already have data from this tool call'
+                            });
+                            continue; // Skip to next tool in batch
                         }
 
                         // Add tool call step for UI
