@@ -24,6 +24,7 @@ define([
     'N/search',
     'N/dataset',
     'N/workbook',
+    'N/cache',
     './Lib_Advisor_EntityResolver',
     './Lib_Advisor_QueryExecutor',
     './Lib_Advisor_Utils',
@@ -46,6 +47,7 @@ define([
     search,
     dataset,
     workbook,
+    cache,
     EntityResolver,
     QueryExecutor,
     Utils,
@@ -293,6 +295,7 @@ define([
     };
 
     // Valid enum values for transaction_type (the official NetSuite codes)
+    // This is the FALLBACK list - prefer dynamically discovered types from cache
     const VALID_TRANSACTION_TYPES = [
         'VendBill', 'VendPymt', 'VendCred',
         'CustInvc', 'CustPymt', 'CustCred',
@@ -300,8 +303,128 @@ define([
         'ExpRept', 'PurchOrd', 'SalesOrd'
     ];
 
+    // ═══════════════════════════════════════════════════════════════════════════
+    // DYNAMIC TRANSACTION TYPE DISCOVERY & CACHING
+    // Fetches actual transaction types from the NetSuite instance and caches them
+    // This enables the agent to recognize custom transaction types automatically
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    const TRANSACTION_TYPES_CACHE_KEY = 'txn_types_discovered';
+    const TRANSACTION_TYPES_CACHE_TTL = 3600; // 1 hour
+    let discoveredTransactionTypes = null; // In-memory cache per request
+
+    /**
+     * Get discovered transaction types from cache or fetch them
+     * @returns {Object} { types: Array, fromCache: boolean }
+     */
+    function getDiscoveredTransactionTypes() {
+        // Check in-memory cache first (per-request optimization)
+        if (discoveredTransactionTypes) {
+            return { types: discoveredTransactionTypes, fromCache: true, source: 'memory' };
+        }
+
+        try {
+            // Check persistent cache
+            const advisorCache = cache.getCache({
+                name: 'ADVISOR_CACHE',
+                scope: cache.Scope.PUBLIC
+            });
+
+            const cached = advisorCache.get({ key: TRANSACTION_TYPES_CACHE_KEY });
+            if (cached) {
+                try {
+                    const parsed = JSON.parse(cached);
+                    discoveredTransactionTypes = parsed.types || [];
+                    return { types: discoveredTransactionTypes, fromCache: true, source: 'cache' };
+                } catch (e) {
+                    log.debug('Transaction types cache parse error, will refresh');
+                }
+            }
+
+            // Fetch from database
+            return refreshTransactionTypesCache();
+
+        } catch (e) {
+            log.debug('Could not get transaction types from cache', { error: e.message });
+            return { types: VALID_TRANSACTION_TYPES, fromCache: false, source: 'fallback' };
+        }
+    }
+
+    /**
+     * Refresh transaction types cache from the database
+     * Called at session start or when cache is stale
+     * @returns {Object} { types: Array, fromCache: false }
+     */
+    function refreshTransactionTypesCache() {
+        try {
+            const sql = `
+                SELECT DISTINCT type
+                FROM transaction
+                WHERE type IS NOT NULL
+            `;
+
+            const results = QueryExecutor.executeQuery(sql);
+
+            if (results && results.rows && results.rows.length > 0) {
+                const types = results.rows.map(function(row) {
+                    return row.type;
+                }).filter(function(type) {
+                    return type != null;
+                });
+
+                // Save to persistent cache
+                const advisorCache = cache.getCache({
+                    name: 'ADVISOR_CACHE',
+                    scope: cache.Scope.PUBLIC
+                });
+
+                advisorCache.put({
+                    key: TRANSACTION_TYPES_CACHE_KEY,
+                    value: JSON.stringify({ types: types, updatedAt: new Date().toISOString() }),
+                    ttl: TRANSACTION_TYPES_CACHE_TTL
+                });
+
+                // Update in-memory cache
+                discoveredTransactionTypes = types;
+
+                log.audit('Transaction types cache refreshed', {
+                    count: types.length,
+                    types: types.slice(0, 10).join(', ') + (types.length > 10 ? '...' : '')
+                });
+
+                return { types: types, fromCache: false, source: 'database' };
+            }
+
+        } catch (e) {
+            log.debug('Could not refresh transaction types', { error: e.message });
+        }
+
+        // Fallback to static list
+        return { types: VALID_TRANSACTION_TYPES, fromCache: false, source: 'fallback' };
+    }
+
+    /**
+     * Check if a value is a valid transaction type (including custom types)
+     * Uses dynamically discovered types from cache
+     * @param {string} typeCode - The type code to validate
+     * @returns {boolean} True if the type exists in this NetSuite instance
+     */
+    function isValidTransactionType(typeCode) {
+        if (!typeCode) return false;
+
+        // First check static list (fast path)
+        if (VALID_TRANSACTION_TYPES.includes(typeCode)) {
+            return true;
+        }
+
+        // Check against discovered types (includes custom transactions)
+        const discovered = getDiscoveredTransactionTypes();
+        return discovered.types.includes(typeCode);
+    }
+
     /**
      * Normalize a transaction type value to its canonical NetSuite code
+     * Now uses dynamically discovered types for validation
      * @param {string} value - The value to normalize
      * @returns {Object} { normalized: string|null, wasNormalized: boolean, original: string, error: string|null }
      */
@@ -312,20 +435,35 @@ define([
 
         const lowerValue = value.toLowerCase().trim();
 
-        // Already a valid NetSuite code?
-        if (VALID_TRANSACTION_TYPES.includes(value)) {
+        // Get discovered types for validation
+        const discovered = getDiscoveredTransactionTypes();
+        const validTypes = new Set(discovered.types);
+
+        // Already a valid NetSuite code? (check both static and discovered)
+        if (VALID_TRANSACTION_TYPES.includes(value) || validTypes.has(value)) {
             return { normalized: value, wasNormalized: false, original: value, error: null };
         }
 
-        // Check canonical mappings
+        // Check canonical mappings (user-friendly names to NetSuite codes)
         if (TRANSACTION_TYPE_CANONICAL[lowerValue]) {
             const normalized = TRANSACTION_TYPE_CANONICAL[lowerValue];
             log.audit('Normalized transaction_type', { original: value, normalized: normalized });
             return { normalized: normalized, wasNormalized: true, original: value, error: null };
         }
 
-        // Unknown type - log warning but allow it through (may be custom transaction type)
-        log.debug('Unknown transaction type (may be custom):', value);
+        // Check if the value matches any discovered type (case-insensitive)
+        for (const discoveredType of discovered.types) {
+            if (discoveredType.toLowerCase() === lowerValue) {
+                return { normalized: discoveredType, wasNormalized: true, original: value, error: null };
+            }
+        }
+
+        // Unknown type - log warning but allow it through (may be new custom transaction type)
+        log.debug('Unknown transaction type (allowing through)', {
+            value: value,
+            discoveredTypes: discovered.types.length,
+            source: discovered.source
+        });
         return { normalized: value, wasNormalized: false, original: value, error: null };
     }
 
@@ -8413,7 +8551,12 @@ EXAMPLES:
         // Validation & Normalization
         validateAndNormalizeArgs: validateAndNormalizeArgs,  // Validate enums, normalize terms
         normalizeTransactionType: normalizeTransactionType,  // Normalize transaction types
-        VALID_TRANSACTION_TYPES: VALID_TRANSACTION_TYPES,    // Valid transaction type codes
+        VALID_TRANSACTION_TYPES: VALID_TRANSACTION_TYPES,    // Valid transaction type codes (fallback)
+
+        // Dynamic Transaction Type Discovery
+        getDiscoveredTransactionTypes: getDiscoveredTransactionTypes,  // Get cached/discovered types
+        refreshTransactionTypesCache: refreshTransactionTypesCache,    // Force refresh from DB
+        isValidTransactionType: isValidTransactionType,                // Check if type exists
 
         // Period Definitions (dynamic - add period once, available everywhere)
         getAvailablePeriods: getAvailablePeriods,  // For LLM prompt injection

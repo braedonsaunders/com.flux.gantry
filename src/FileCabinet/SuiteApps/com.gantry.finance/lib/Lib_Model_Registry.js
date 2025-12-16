@@ -628,6 +628,395 @@ define(['N/log', 'N/https', 'N/cache'], function(log, https, cache) {
     }
 
     // ==========================================
+    // DYNAMIC MODEL DISCOVERY FOR ALL PROVIDERS
+    // Fetches current models from provider APIs to ensure registry stays up-to-date
+    // ==========================================
+
+    const PROVIDER_CACHE_TTL = 3600; // 1 hour for provider models (less volatile than OpenRouter)
+
+    /**
+     * Fetch OpenAI models from their API
+     * @param {string} apiKey - OpenAI API key
+     * @returns {Array} List of available models with tool support
+     */
+    function fetchOpenAIModels(apiKey) {
+        if (!apiKey) {
+            log.debug('No OpenAI API key provided, using static registry');
+            return getModelsForProvider('openai');
+        }
+
+        try {
+            const cacheKey = 'openai_models';
+            const modelCache = cache.getCache({
+                name: 'GantryProviderModels',
+                scope: cache.Scope.PROTECTED
+            });
+
+            const cached = modelCache.get({ key: cacheKey });
+            if (cached) {
+                try {
+                    return JSON.parse(cached);
+                } catch (e) {
+                    log.debug('OpenAI cache parse error, fetching fresh');
+                }
+            }
+
+            const response = https.get({
+                url: 'https://api.openai.com/v1/models',
+                headers: {
+                    'Authorization': 'Bearer ' + apiKey,
+                    'Content-Type': 'application/json'
+                }
+            });
+
+            if (response.code !== 200) {
+                log.debug('OpenAI models API error', { code: response.code });
+                return getModelsForProvider('openai');
+            }
+
+            const data = JSON.parse(response.body);
+            const models = processOpenAIModels(data.data || []);
+
+            // Merge with static registry (static has curated metadata)
+            const mergedModels = mergeWithStaticRegistry(models, 'openai');
+
+            modelCache.put({
+                key: cacheKey,
+                value: JSON.stringify(mergedModels),
+                ttl: PROVIDER_CACHE_TTL
+            });
+
+            return mergedModels;
+
+        } catch (e) {
+            log.error('Failed to fetch OpenAI models', { error: e.message });
+            return getModelsForProvider('openai');
+        }
+    }
+
+    /**
+     * Process raw OpenAI API model list
+     * Filters to chat models that support function calling
+     */
+    function processOpenAIModels(rawModels) {
+        // OpenAI model patterns that support function calling
+        const toolSupportPatterns = [
+            /^gpt-4/,
+            /^gpt-5/,
+            /^gpt-3\.5-turbo/,
+            /^o1/,
+            /^o3/,
+            /^o4/
+        ];
+
+        return rawModels
+            .filter(function(m) {
+                // Only include models that match known tool-capable patterns
+                return m.id && toolSupportPatterns.some(function(pattern) {
+                    return pattern.test(m.id);
+                });
+            })
+            .map(function(m) {
+                return {
+                    id: m.id,
+                    provider: 'openai',
+                    name: m.id,
+                    discoveredAt: new Date().toISOString(),
+                    fromApi: true
+                };
+            });
+    }
+
+    /**
+     * Fetch Anthropic models from their API
+     * @param {string} apiKey - Anthropic API key
+     * @returns {Array} List of available models
+     */
+    function fetchAnthropicModels(apiKey) {
+        if (!apiKey) {
+            log.debug('No Anthropic API key provided, using static registry');
+            return getModelsForProvider('anthropic');
+        }
+
+        try {
+            const cacheKey = 'anthropic_models';
+            const modelCache = cache.getCache({
+                name: 'GantryProviderModels',
+                scope: cache.Scope.PROTECTED
+            });
+
+            const cached = modelCache.get({ key: cacheKey });
+            if (cached) {
+                try {
+                    return JSON.parse(cached);
+                } catch (e) {
+                    log.debug('Anthropic cache parse error, fetching fresh');
+                }
+            }
+
+            // Anthropic models API endpoint
+            const response = https.get({
+                url: 'https://api.anthropic.com/v1/models',
+                headers: {
+                    'x-api-key': apiKey,
+                    'anthropic-version': '2023-06-01',
+                    'Content-Type': 'application/json'
+                }
+            });
+
+            if (response.code !== 200) {
+                log.debug('Anthropic models API error', { code: response.code });
+                return getModelsForProvider('anthropic');
+            }
+
+            const data = JSON.parse(response.body);
+            const models = processAnthropicModels(data.data || data.models || []);
+
+            const mergedModels = mergeWithStaticRegistry(models, 'anthropic');
+
+            modelCache.put({
+                key: cacheKey,
+                value: JSON.stringify(mergedModels),
+                ttl: PROVIDER_CACHE_TTL
+            });
+
+            return mergedModels;
+
+        } catch (e) {
+            log.error('Failed to fetch Anthropic models', { error: e.message });
+            return getModelsForProvider('anthropic');
+        }
+    }
+
+    /**
+     * Process raw Anthropic API model list
+     */
+    function processAnthropicModels(rawModels) {
+        return rawModels
+            .filter(function(m) {
+                // Filter to Claude models that support tools
+                return m.id && m.id.includes('claude');
+            })
+            .map(function(m) {
+                return {
+                    id: m.id,
+                    provider: 'anthropic',
+                    name: m.display_name || m.id,
+                    discoveredAt: new Date().toISOString(),
+                    fromApi: true
+                };
+            });
+    }
+
+    /**
+     * Fetch Gemini models from Google's API
+     * @param {string} apiKey - Google AI API key
+     * @returns {Array} List of available models
+     */
+    function fetchGeminiModels(apiKey) {
+        if (!apiKey) {
+            log.debug('No Gemini API key provided, using static registry');
+            return getModelsForProvider('gemini');
+        }
+
+        try {
+            const cacheKey = 'gemini_models';
+            const modelCache = cache.getCache({
+                name: 'GantryProviderModels',
+                scope: cache.Scope.PROTECTED
+            });
+
+            const cached = modelCache.get({ key: cacheKey });
+            if (cached) {
+                try {
+                    return JSON.parse(cached);
+                } catch (e) {
+                    log.debug('Gemini cache parse error, fetching fresh');
+                }
+            }
+
+            // Google AI models endpoint
+            const response = https.get({
+                url: 'https://generativelanguage.googleapis.com/v1beta/models?key=' + apiKey,
+                headers: {
+                    'Content-Type': 'application/json'
+                }
+            });
+
+            if (response.code !== 200) {
+                log.debug('Gemini models API error', { code: response.code });
+                return getModelsForProvider('gemini');
+            }
+
+            const data = JSON.parse(response.body);
+            const models = processGeminiModels(data.models || []);
+
+            const mergedModels = mergeWithStaticRegistry(models, 'gemini');
+
+            modelCache.put({
+                key: cacheKey,
+                value: JSON.stringify(mergedModels),
+                ttl: PROVIDER_CACHE_TTL
+            });
+
+            return mergedModels;
+
+        } catch (e) {
+            log.error('Failed to fetch Gemini models', { error: e.message });
+            return getModelsForProvider('gemini');
+        }
+    }
+
+    /**
+     * Process raw Gemini API model list
+     */
+    function processGeminiModels(rawModels) {
+        return rawModels
+            .filter(function(m) {
+                // Filter to generative models that support function calling
+                return m.name &&
+                       m.name.includes('gemini') &&
+                       m.supportedGenerationMethods &&
+                       m.supportedGenerationMethods.includes('generateContent');
+            })
+            .map(function(m) {
+                // Extract model ID from full name (e.g., "models/gemini-pro" -> "gemini-pro")
+                const modelId = m.name.replace('models/', '');
+                return {
+                    id: modelId,
+                    provider: 'gemini',
+                    name: m.displayName || modelId,
+                    description: m.description,
+                    discoveredAt: new Date().toISOString(),
+                    fromApi: true
+                };
+            });
+    }
+
+    /**
+     * Merge API-discovered models with static registry
+     * Static registry has curated metadata (tier, pricing, capabilities)
+     * API discovery adds new models not in static registry
+     */
+    function mergeWithStaticRegistry(apiModels, providerId) {
+        const staticModels = getModelsForProvider(providerId);
+        const staticIds = new Set(staticModels.map(function(m) { return m.id; }));
+
+        // Start with static models (they have curated metadata)
+        const merged = staticModels.slice();
+
+        // Add any new models from API that aren't in static registry
+        apiModels.forEach(function(apiModel) {
+            if (!staticIds.has(apiModel.id)) {
+                // New model discovered - add with default metadata
+                merged.push({
+                    id: apiModel.id,
+                    provider: providerId,
+                    name: apiModel.name || apiModel.id,
+                    description: 'Dynamically discovered model',
+                    tier: 2, // Default to balanced tier
+                    contextWindow: 128000,
+                    maxOutput: 4096,
+                    capabilities: ['text', 'tools'],
+                    discoveredFromApi: true,
+                    settingsLabel: apiModel.name + ' (New)'
+                });
+                log.audit('New model discovered', {
+                    provider: providerId,
+                    modelId: apiModel.id
+                });
+            }
+        });
+
+        return merged;
+    }
+
+    /**
+     * Refresh models for a specific provider
+     * Fetches latest models from provider API and updates cache
+     * @param {string} providerId - Provider ID (openai, anthropic, gemini, openrouter)
+     * @param {string} apiKey - Provider API key
+     * @returns {Object} { models: Array, refreshed: boolean, error?: string }
+     */
+    function refreshProviderModels(providerId, apiKey) {
+        try {
+            var models;
+            switch (providerId) {
+                case 'openai':
+                    models = fetchOpenAIModels(apiKey);
+                    break;
+                case 'anthropic':
+                    models = fetchAnthropicModels(apiKey);
+                    break;
+                case 'gemini':
+                    models = fetchGeminiModels(apiKey);
+                    break;
+                case 'openrouter':
+                    models = fetchOpenRouterModels(apiKey);
+                    break;
+                default:
+                    return {
+                        models: getModelsForProvider(providerId),
+                        refreshed: false,
+                        error: 'Dynamic refresh not supported for provider: ' + providerId
+                    };
+            }
+
+            return {
+                models: models,
+                refreshed: true,
+                count: models.length
+            };
+
+        } catch (e) {
+            log.error('Failed to refresh provider models', {
+                provider: providerId,
+                error: e.message
+            });
+            return {
+                models: getModelsForProvider(providerId),
+                refreshed: false,
+                error: e.message
+            };
+        }
+    }
+
+    /**
+     * Clear cached models for a provider (forces refresh on next fetch)
+     * @param {string} providerId - Provider ID or 'all' for all providers
+     */
+    function clearModelCache(providerId) {
+        try {
+            const modelCache = cache.getCache({
+                name: 'GantryProviderModels',
+                scope: cache.Scope.PROTECTED
+            });
+
+            if (providerId === 'all') {
+                ['openai_models', 'anthropic_models', 'gemini_models'].forEach(function(key) {
+                    try { modelCache.remove({ key: key }); } catch (e) { /* ignore */ }
+                });
+                // Also clear OpenRouter cache
+                const orCache = cache.getCache({
+                    name: 'GantryOpenRouterModels',
+                    scope: cache.Scope.PROTECTED
+                });
+                try { orCache.remove({ key: OPENROUTER_CACHE_KEY }); } catch (e) { /* ignore */ }
+            } else {
+                const key = providerId + '_models';
+                modelCache.remove({ key: key });
+            }
+
+            log.audit('Model cache cleared', { provider: providerId });
+            return { success: true };
+
+        } catch (e) {
+            log.error('Failed to clear model cache', { error: e.message });
+            return { success: false, error: e.message };
+        }
+    }
+
+    // ==========================================
     // PUBLIC API
     // ==========================================
 
@@ -1002,10 +1391,15 @@ define(['N/log', 'N/https', 'N/cache'], function(log, https, cache) {
         getModelsForSettings: getModelsForSettings,
         getOpenRouterModelsForSettings: getOpenRouterModelsForSettings,
         
-        // OpenRouter dynamic models
+        // Dynamic model discovery (all providers)
         fetchOpenRouterModels: fetchOpenRouterModels,
+        fetchOpenAIModels: fetchOpenAIModels,
+        fetchAnthropicModels: fetchAnthropicModels,
+        fetchGeminiModels: fetchGeminiModels,
+        refreshProviderModels: refreshProviderModels,
+        clearModelCache: clearModelCache,
         getCuratedOpenRouterModels: getCuratedOpenRouterModels,
-        
+
         // Provider access
         getProvider: getProvider,
         PROVIDERS: PROVIDERS,

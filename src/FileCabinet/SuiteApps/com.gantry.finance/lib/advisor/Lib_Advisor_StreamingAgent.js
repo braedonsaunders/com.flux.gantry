@@ -485,63 +485,19 @@ Respond with JSON only: {"category":"...","recoverable":true/false,"suggestion":
                     semanticClassification: true
                 };
             } catch (e) {
-                log.debug('Semantic classification failed, using fallback', { error: e.message });
+                log.audit('Semantic error classification failed', {
+                    error: e.message,
+                    errorMessage: errorMessage.substring(0, 100)
+                });
+                // Fall through to default return below
             }
         }
 
         // ═══════════════════════════════════════════════════════════════════════
-        // FALLBACK: Simple pattern matching when LLM unavailable
+        // DEFAULT: Return generic error when semantic classification unavailable
+        // Pattern-matching fallback removed - LLM classification is always available
+        // and provides superior context-aware error handling
         // ═══════════════════════════════════════════════════════════════════════
-
-        // Type mismatch errors - NaN, type conversion failures
-        if (lowerError.includes('nan') || lowerError.includes('not a number') ||
-            (lowerError.includes('unknown identifier') && lowerError.includes('nan'))) {
-            return {
-                category: 'type_mismatch',
-                insight: `A non-numeric value was passed where a number was expected.`,
-                suggestedAction: `Use a numeric value instead of a string. For time ranges: "last 2 years" should be 24 (months).`,
-                parameterHints: { expectedType: 'number' },
-                recoverable: true
-            };
-        }
-
-        // Entity not found errors
-        if (lowerError.includes('not found') || lowerError.includes('no match') ||
-            lowerError.includes('does not exist')) {
-            return {
-                category: 'not_found',
-                insight: `The entity or record referenced does not exist in the system.`,
-                suggestedAction: `Verify the entity name spelling or try a broader search.`,
-                parameterHints: {},
-                recoverable: true
-            };
-        }
-
-        // Query/SQL errors
-        if (lowerError.includes('sql') || lowerError.includes('query') ||
-            lowerError.includes('search error') || lowerError.includes('syntax')) {
-            return {
-                category: 'invalid_query',
-                insight: `The database query failed due to invalid parameters or syntax.`,
-                suggestedAction: `Check parameter values match expected types.`,
-                parameterHints: { checkTypes: true, usedArgs: args },
-                recoverable: true
-            };
-        }
-
-        // Timeout errors
-        if (lowerError.includes('timeout') || lowerError.includes('took too long') ||
-            lowerError.includes('exceeded')) {
-            return {
-                category: 'timeout',
-                insight: `The query took too long to execute.`,
-                suggestedAction: `Add more filters to reduce the data volume.`,
-                parameterHints: { suggestShorterPeriod: true },
-                recoverable: true
-            };
-        }
-
-        // Default: unknown error category
         return {
             category: 'unknown',
             insight: `Error occurred: ${errorMessage.substring(0, 100)}`,
