@@ -6735,6 +6735,20 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
             }
 
             // ═══════════════════════════════════════════════════════════════════════
+            // DRILL-DOWN CAPABILITY: Tell LLM it can load ALL rows for any category
+            // This enables accurate financial reporting when sample is insufficient
+            // ═══════════════════════════════════════════════════════════════════════
+            if (primaryCatCol && rowsToDisplay.length < totalRows) {
+                section += `\n⚠️ DRILL-DOWN CAPABILITY: You see a SAMPLE (${rowsToDisplay.length} of ${totalRows} rows).\n`;
+                section += `   If your response requires ALL items in a specific category, use load_cached_data:\n`;
+                primaryCatCol.distribution.forEach(d => {
+                    const filterVal = JSON.stringify({ [primaryCatCol.column]: d.value });
+                    section += `   • ALL "${d.value}" (${d.count} rows): load_cached_data(ref_id="${ref.refId}", filter=${filterVal})\n`;
+                });
+                section += `   The table/chart output will show ALL rows - but cite specific items accurately from what you've loaded.\n`;
+            }
+
+            // ═══════════════════════════════════════════════════════════════════════
             // EXPLICIT TOKEN REFERENCE: List EXACTLY what tokens are available
             // This prevents LLM from inventing column names that don't exist
             // ═══════════════════════════════════════════════════════════════════════
