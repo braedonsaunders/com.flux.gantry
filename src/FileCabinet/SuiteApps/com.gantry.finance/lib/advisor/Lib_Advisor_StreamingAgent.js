@@ -7351,6 +7351,7 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
 
     /**
      * Build a table block from a dataRef
+     * Returns ALL rows - frontend handles pagination (default 25 rows, expandable)
      * @param {Object} block - Block with dataRef and optional title
      * @param {Object} state - Current state with dataReferences
      * @returns {Object|null} Table block or null if dataRef invalid
@@ -7363,8 +7364,11 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
         }
 
         try {
-            // Load data from cache
-            const data = Cache.loadRows(dataRef.requestId || state.requestId, dataRef.refId, 0, 49);
+            // ═══════════════════════════════════════════════════════════════════════
+            // LOAD ALL ROWS - Frontend handles pagination
+            // LLM needs full data visibility, UI shows 25 by default with expand button
+            // ═══════════════════════════════════════════════════════════════════════
+            const data = Cache.loadRows(dataRef.requestId || state.requestId, dataRef.refId, 0, 9999);
             if (!data || !data.rows || data.rows.length === 0) {
                 log.debug('buildTableBlockFromRef: no data for ref', { refId: block.dataRef });
                 return null;
@@ -7372,22 +7376,27 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
 
             const summary = dataRef.summary || {};
             const toolDisplayName = block.title || getToolDisplayName(summary.tool) || 'Results';
-
-            // Build table block with REAL data (same structure as progressive tables)
             const displayColumns = data.columns.slice(0, 8);
+
+            // Return ALL rows - frontend paginates with default 25, expand for more
             return {
                 type: 'table',
                 title: toolDisplayName,
                 dataRef: dataRef.refId,
-                totalRows: data.totalRows || data.rows.length,
+                totalRows: data.rows.length,
                 headers: displayColumns,
-                rows: data.rows.slice(0, 25).map(row => {
+                rows: data.rows.map(row => {
                     return displayColumns.map(col => formatCellValue(row[col], col));
                 }),
                 summary: {
-                    rowCount: data.totalRows || data.rows.length,
+                    rowCount: data.rows.length,
                     columns: data.columns.length,
                     aggregates: summary.aggregates
+                },
+                // Pagination config for frontend
+                pagination: {
+                    defaultPageSize: 25,
+                    expandable: true
                 },
                 // Mark as LLM-placed to distinguish from progressive tables
                 llmPlaced: true
