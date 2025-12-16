@@ -17,6 +17,9 @@
   // Table data store for pivot functionality
   const _tableData = {};
 
+  // Sort state store: { tableId: { column: 'colKey', direction: 'asc'|'desc' } }
+  const _tableSortState = {};
+
   // Track loaded libraries
   let _pivotLibLoaded = false;
   let _pivotLibLoading = false;
@@ -370,16 +373,25 @@
       const totalRows = rows.length;
       const hasHiddenRows = totalRows > rowLimit;
 
-      let html = '<table class="advisor-table">';
+      let html = `<table class="advisor-table" data-table-id="${tableId}">`;
 
-      // Header
+      // Header with sortable columns
       html += "<thead><tr>";
       columns.forEach((col) => {
         const colKey = this.normalizeKey(col);
         const alignment = align?.[colKey] || "left";
-        html += `<th style="text-align: ${alignment}">${this.escapeHtml(
-          col
-        )}</th>`;
+        const sortState = _tableSortState[tableId];
+        const isSorted = sortState && sortState.column === colKey;
+        const sortDirection = isSorted ? sortState.direction : null;
+        const sortIcon = isSorted
+          ? (sortDirection === 'asc' ? 'fa-sort-up' : 'fa-sort-down')
+          : 'fa-sort';
+        const sortClass = isSorted ? 'sorted' : '';
+
+        html += `<th style="text-align: ${alignment}" class="sortable-header ${sortClass}" data-column="${colKey}" onclick="AdvisorRenderer.sortTable('${tableId}', '${colKey}')">
+          <span class="header-content">${this.escapeHtml(col)}</span>
+          <i class="fas ${sortIcon} sort-icon"></i>
+        </th>`;
       });
       html += "</tr></thead>";
 
@@ -529,16 +541,25 @@
       // Find ALL numeric columns for multi-column totals
       const numericColumns = this.findNumericColumns(columns, rows, formatting);
 
-      let html = '<table class="advisor-table grouped-table">';
+      let html = `<table class="advisor-table grouped-table" data-table-id="${tableId}">`;
 
-      // Header
+      // Header with sortable columns
       html += "<thead><tr>";
       visibleColumns.forEach((col) => {
         const colKey = this.normalizeKey(col);
         const alignment = align?.[colKey] || "left";
-        html += `<th style="text-align: ${alignment}">${this.escapeHtml(
-          col
-        )}</th>`;
+        const sortState = _tableSortState[tableId];
+        const isSorted = sortState && sortState.column === colKey;
+        const sortDirection = isSorted ? sortState.direction : null;
+        const sortIcon = isSorted
+          ? (sortDirection === 'asc' ? 'fa-sort-up' : 'fa-sort-down')
+          : 'fa-sort';
+        const sortClass = isSorted ? 'sorted' : '';
+
+        html += `<th style="text-align: ${alignment}" class="sortable-header ${sortClass}" data-column="${colKey}" onclick="AdvisorRenderer.sortTable('${tableId}', '${colKey}')">
+          <span class="header-content">${this.escapeHtml(col)}</span>
+          <i class="fas ${sortIcon} sort-icon"></i>
+        </th>`;
       });
       html += "</tr></thead>";
 
@@ -1673,6 +1694,115 @@
 
       // Scroll table into view
       tableWrapper.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    },
+
+    // ═══════════════════════════════════════════════════════════════════
+    // TABLE SORTING
+    // ═══════════════════════════════════════════════════════════════════
+
+    /**
+     * Sort table by column
+     * Toggles between ascending and descending when clicking the same column
+     */
+    sortTable(tableId, colKey) {
+      const tableData = _tableData[tableId];
+      if (!tableData) {
+        console.warn('[AdvisorRenderer] No data found for table:', tableId);
+        return;
+      }
+
+      const { columns, rows, item } = tableData;
+
+      // Determine sort direction
+      const currentSort = _tableSortState[tableId];
+      let direction = 'asc';
+      if (currentSort && currentSort.column === colKey) {
+        direction = currentSort.direction === 'asc' ? 'desc' : 'asc';
+      }
+
+      // Update sort state
+      _tableSortState[tableId] = { column: colKey, direction };
+
+      // Sort the rows
+      const sortedRows = [...rows].sort((a, b) => {
+        const aVal = this.getRowValue(a, colKey);
+        const bVal = this.getRowValue(b, colKey);
+
+        // Handle null/undefined
+        if (aVal == null && bVal == null) return 0;
+        if (aVal == null) return direction === 'asc' ? 1 : -1;
+        if (bVal == null) return direction === 'asc' ? -1 : 1;
+
+        // Numeric comparison
+        if (typeof aVal === 'number' && typeof bVal === 'number') {
+          return direction === 'asc' ? aVal - bVal : bVal - aVal;
+        }
+
+        // Try to parse as numbers (for string numbers)
+        const aNum = parseFloat(aVal);
+        const bNum = parseFloat(bVal);
+        if (!isNaN(aNum) && !isNaN(bNum)) {
+          return direction === 'asc' ? aNum - bNum : bNum - aNum;
+        }
+
+        // Date comparison
+        const aDate = new Date(aVal);
+        const bDate = new Date(bVal);
+        if (!isNaN(aDate.getTime()) && !isNaN(bDate.getTime())) {
+          return direction === 'asc'
+            ? aDate.getTime() - bDate.getTime()
+            : bDate.getTime() - aDate.getTime();
+        }
+
+        // String comparison
+        const aStr = String(aVal).toLowerCase();
+        const bStr = String(bVal).toLowerCase();
+        if (direction === 'asc') {
+          return aStr.localeCompare(bStr);
+        } else {
+          return bStr.localeCompare(aStr);
+        }
+      });
+
+      // Update stored data with sorted rows
+      _tableData[tableId].rows = sortedRows;
+
+      // Re-render the table
+      const tableWrapper = document.getElementById(`${tableId}-table`);
+      if (!tableWrapper) return;
+
+      // Determine the variant to know which render method to use
+      const variant = item.variant || (item.groupBy ? 'grouped' : 'standard');
+
+      let newTableHtml;
+      const updatedItem = { ...item, rows: sortedRows };
+
+      switch (variant) {
+        case 'grouped':
+          newTableHtml = this.renderGroupedTable(tableId, updatedItem);
+          break;
+        case 'income_statement':
+        case 'balance_sheet':
+        case 'financial_statement':
+          // Financial statements have their own section-based sorting, skip for now
+          this.showToast('Financial statements use section-based ordering', 'info');
+          return;
+        default:
+          newTableHtml = this.renderStandardTable(tableId, updatedItem);
+      }
+
+      tableWrapper.innerHTML = newTableHtml;
+
+      // Show feedback
+      const sortDir = direction === 'asc' ? 'ascending' : 'descending';
+      this.showToast(`Sorted by ${colKey.replace(/_/g, ' ')} (${sortDir})`, 'info');
+    },
+
+    /**
+     * Clear sort state for a table
+     */
+    clearTableSort(tableId) {
+      delete _tableSortState[tableId];
     },
 
     // ═══════════════════════════════════════════════════════════════════

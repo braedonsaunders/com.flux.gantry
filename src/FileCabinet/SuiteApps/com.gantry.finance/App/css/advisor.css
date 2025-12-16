@@ -2552,6 +2552,43 @@ body.dark-mode .message-text .md-heading {
     white-space: nowrap;
 }
 
+/* Sortable Table Headers */
+.advisor-table th.sortable-header {
+    cursor: pointer;
+    user-select: none;
+    transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.advisor-table th.sortable-header:hover {
+    background: #f1f5f9;
+    color: var(--primary);
+}
+
+.advisor-table th.sortable-header .header-content {
+    display: inline;
+}
+
+.advisor-table th.sortable-header .sort-icon {
+    margin-left: 6px;
+    font-size: 10px;
+    opacity: 0.3;
+    transition: opacity 0.15s ease, color 0.15s ease;
+}
+
+.advisor-table th.sortable-header:hover .sort-icon {
+    opacity: 0.6;
+}
+
+.advisor-table th.sortable-header.sorted .sort-icon {
+    opacity: 1;
+    color: var(--primary);
+}
+
+.advisor-table th.sortable-header.sorted {
+    color: var(--primary);
+    background: linear-gradient(180deg, #eff6ff 0%, #f8fafc 100%);
+}
+
 .advisor-table td {
     padding: 10px 14px;
     border-bottom: 1px solid #f1f5f9;
@@ -3008,6 +3045,21 @@ body.dark-mode .advisor-table tbody tr:nth-child(even) td {
 
 body.dark-mode .advisor-table tr:hover td {
     background: rgba(59, 130, 246, 0.1);
+}
+
+/* Dark mode sortable headers */
+body.dark-mode .advisor-table th.sortable-header:hover {
+    background: #334155;
+    color: #60a5fa;
+}
+
+body.dark-mode .advisor-table th.sortable-header.sorted {
+    color: #60a5fa;
+    background: linear-gradient(180deg, #1e3a5f 0%, #1e293b 100%);
+}
+
+body.dark-mode .advisor-table th.sortable-header.sorted .sort-icon {
+    color: #60a5fa;
 }
 
 body.dark-mode .key-findings {
