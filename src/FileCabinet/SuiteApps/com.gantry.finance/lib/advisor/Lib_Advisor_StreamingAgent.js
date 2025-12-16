@@ -1036,7 +1036,7 @@ If you need MULTIPLE INDEPENDENT data points at once (e.g., comparing two period
   ],
   "userNarration": "Fetching multiple datasets"
 }}
-NOTE: Use GET_DATA_BATCH when tools are INDEPENDENT. For comparisons, prefer compare_metric_periods tool which does both periods in one call.
+NOTE: Use GET_DATA_BATCH when tools are INDEPENDENT. For YoY/period comparisons, use get_income_statement with compare_to parameter (e.g., period="ytd", compare_to="prior_year_ytd") to get pre-computed deltas in a single call.
 
 If you have ENOUGH DATA to answer:
 {{
@@ -6189,6 +6189,23 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
                     section += `  average: ${formatStatValue(computedStats.average, 'average')}\n`;
                 }
                 section += `  count: ${totalRows}\n`;
+                section += '\n';
+            }
+
+            // ═══════════════════════════════════════════════════════════════════════
+            // CATEGORY INTELLIGENCE: Show breakdown by categorical columns
+            // This prevents LLM from confusing total sum with specific categories
+            // (e.g., knowing Revenue=$16.7M vs total of all rows=$31.9M)
+            // ═══════════════════════════════════════════════════════════════════════
+            if (summary.categoricalColumns && summary.categoricalColumns.length > 0) {
+                section += `CATEGORY BREAKDOWN:\n`;
+                summary.categoricalColumns.forEach(catCol => {
+                    section += `  By ${catCol.column}:\n`;
+                    catCol.distribution.forEach(item => {
+                        const sumStr = item.sumFormatted || formatStatValue(item.sum, 'currency');
+                        section += `    • ${item.value}: ${sumStr} (${item.count} rows)\n`;
+                    });
+                });
                 section += '\n';
             }
 
