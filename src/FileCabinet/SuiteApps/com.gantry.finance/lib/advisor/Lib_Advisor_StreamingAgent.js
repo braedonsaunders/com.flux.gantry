@@ -2716,17 +2716,20 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
                     broaderParams.suggestions.forEach(s => lines.push(`      • ${s}`));
                 }
 
-                // Get entity-aware alternative tools
-                const alternatives = Tools.getEntityAwareAlternatives(
+                // Get semantically-selected alternative tools (LLM-based)
+                const alternatives = getAlternativeToolsForDiversification(
                     item.tool,
                     item.args,
-                    state.resolvedEntities
+                    state.resolvedEntities,
+                    state
                 );
                 if (alternatives.length > 0) {
                     lines.push(`    🔄 ALTERNATIVE TOOLS TO CONSIDER:`);
                     alternatives.forEach(alt => {
                         lines.push(`      • ${alt.tool}: ${alt.reason}`);
-                        lines.push(`        Suggested args: ${JSON.stringify(alt.args)}`);
+                        if (alt.args && Object.keys(alt.args).length > 0) {
+                            lines.push(`        Suggested args: ${JSON.stringify(alt.args)}`);
+                        }
                     });
                 }
 
@@ -4159,33 +4162,23 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
         const resolvedEntries = Object.entries(state.resolvedEntities);
 
         // ═══════════════════════════════════════════════════════════════════════
-        // DYNAMIC ENTITY ID INJECTION
-        // Instead of hardcoded tool lists, inspect the tool's parameter schema
-        // This automatically works for any new tools added in the future
+        // FULLY DYNAMIC ENTITY ID INJECTION
+        // Inspects tool's parameter schema to find matching parameters
+        // Works for standard entities AND custom record types
         // ═══════════════════════════════════════════════════════════════════════
 
         // Get tool schema to determine which parameters it accepts
         const tool = Tools.getTool(toolName);
         const toolParams = tool?.parameters?.properties || {};
-
-        // Mapping from entity type to parameter name(s)
-        const ENTITY_TYPE_TO_PARAMS = {
-            'customer': ['customer_id', 'entity_id'],
-            'vendor': ['vendor_id', 'entity_id'],
-            'employee': ['employee_id', 'entity_id'],
-            'account': ['account_id'],
-            'item': ['item_id'],
-            'project': ['project_id', 'job_id'],
-            'class': ['class_id'],
-            'department': ['department_id'],
-            'location': ['location_id']
-        };
+        const toolParamNames = Object.keys(toolParams);
 
         for (const [searchTerm, entity] of resolvedEntries) {
             if (!entity || !entity.id) continue;
 
             const entityType = (entity.type || '').toLowerCase();
-            const candidateParams = ENTITY_TYPE_TO_PARAMS[entityType] || [];
+
+            // Dynamically find matching parameter names from tool schema
+            const candidateParams = findEntityParamNames(entityType, toolParamNames);
 
             // Try to inject into each candidate parameter if the tool accepts it
             for (const paramName of candidateParams) {
@@ -4197,7 +4190,8 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
                         paramName,
                         entityName: entity.name,
                         entityId: entity.id,
-                        entityType: entityType
+                        entityType: entityType,
+                        detectionMethod: 'schema_introspection'
                     });
                     // Only inject into the first matching parameter
                     break;
@@ -4206,6 +4200,75 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
         }
 
         return enhanced;
+    }
+
+    /**
+     * Dynamically find parameter names that match an entity type
+     * Works for standard entities AND custom record types
+     *
+     * @param {string} entityType - The entity type (e.g., 'customer', 'vendor', 'customrecord_contact')
+     * @param {Array<string>} toolParamNames - Array of parameter names the tool accepts
+     * @returns {Array<string>} Ordered list of matching parameter names
+     */
+    function findEntityParamNames(entityType, toolParamNames) {
+        const entityLower = entityType.toLowerCase();
+        const candidates = [];
+
+        // Priority 1: Exact match with _id suffix (customer_id, vendor_id, etc.)
+        const exactMatch = `${entityLower}_id`;
+        if (toolParamNames.includes(exactMatch)) {
+            candidates.push(exactMatch);
+        }
+
+        // Priority 2: Handle special cases (project -> job_id)
+        const aliasMap = {
+            'project': 'job_id',
+            'job': 'project_id'
+        };
+        if (aliasMap[entityLower] && toolParamNames.includes(aliasMap[entityLower])) {
+            candidates.push(aliasMap[entityLower]);
+        }
+
+        // Priority 3: Check for custom record types (customrecord_xyz -> customrecord_xyz_id)
+        if (entityLower.startsWith('customrecord_')) {
+            const customParamName = `${entityLower}_id`;
+            if (toolParamNames.includes(customParamName)) {
+                candidates.push(customParamName);
+            }
+            // Also check for generic record_id
+            if (toolParamNames.includes('record_id') && !candidates.includes('record_id')) {
+                candidates.push('record_id');
+            }
+        }
+
+        // Priority 4: Generic entity_id (works for any entity type)
+        if (toolParamNames.includes('entity_id') && !candidates.includes('entity_id')) {
+            candidates.push('entity_id');
+        }
+
+        // Priority 5: Fuzzy match - parameter contains entity type
+        for (const paramName of toolParamNames) {
+            const paramLower = paramName.toLowerCase();
+            if (paramLower.includes(entityLower) && paramLower.endsWith('_id')) {
+                if (!candidates.includes(paramName)) {
+                    candidates.push(paramName);
+                }
+            }
+        }
+
+        // Priority 6: For common entities, also check plural forms
+        const pluralMap = {
+            'vendor': 'vendor_ids',
+            'customer': 'customer_ids',
+            'employee': 'employee_ids'
+        };
+        if (pluralMap[entityLower] && toolParamNames.includes(pluralMap[entityLower])) {
+            // Note: This would need array handling in the injection logic
+            // For now, just note its availability but don't add to candidates
+            log.debug('Plural parameter available', { entityType, param: pluralMap[entityLower] });
+        }
+
+        return candidates;
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
