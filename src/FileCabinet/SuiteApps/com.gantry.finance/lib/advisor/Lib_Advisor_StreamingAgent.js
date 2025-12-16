@@ -7684,23 +7684,57 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
             let chartData;
 
             if (categoricalColumn && categoricalColumn.distribution) {
-                // X-column is categorical - use pre-computed distribution for aggregated values
+                // X-column is categorical - need to aggregate y-values by category
                 log.debug('buildChartBlock: using categorical aggregation', {
                     xCol: xCol,
-                    categoryCount: categoricalColumn.distribution.length
+                    yCol: yCol,
+                    categoryCount: categoricalColumn.distribution.length,
+                    sumColumn: categoricalColumn.sumColumn
                 });
 
-                // Sort by sum descending for better visualization
-                const sortedDist = [...categoricalColumn.distribution]
-                    .sort((a, b) => Math.abs(b.sum) - Math.abs(a.sum));
+                // ═══════════════════════════════════════════════════════════════════════
+                // FIX: Only use pre-computed distribution if yCol matches sumColumn
+                // Otherwise, aggregate the correct column from raw data
+                // ═══════════════════════════════════════════════════════════════════════
+                let aggregatedData;
+
+                if (categoricalColumn.sumColumn === yCol) {
+                    // Pre-computed sums match requested y-column - use them
+                    aggregatedData = categoricalColumn.distribution.map(d => ({
+                        label: d.value,
+                        value: d.sum
+                    }));
+                } else {
+                    // Y-column differs from pre-computed sumColumn - aggregate from raw data
+                    log.debug('buildChartBlock: aggregating different column', {
+                        requested: yCol,
+                        precomputed: categoricalColumn.sumColumn
+                    });
+
+                    // Group and sum by category
+                    const categoryTotals = {};
+                    data.rows.forEach(row => {
+                        const category = row[xCol];
+                        const value = typeof row[yCol] === 'number' ? row[yCol] : parseFloat(row[yCol]) || 0;
+                        categoryTotals[category] = (categoryTotals[category] || 0) + value;
+                    });
+
+                    aggregatedData = Object.entries(categoryTotals).map(([label, value]) => ({
+                        label,
+                        value
+                    }));
+                }
+
+                // Sort by absolute value descending for better visualization
+                aggregatedData.sort((a, b) => Math.abs(b.value) - Math.abs(a.value));
 
                 // Limit data points
                 const maxDataPoints = chartType === 'pie' ? 10 : 20;
-                const limitedDist = sortedDist.slice(0, maxDataPoints);
+                const limitedData = aggregatedData.slice(0, maxDataPoints);
 
                 chartData = {
-                    labels: limitedDist.map(d => d.value),
-                    values: limitedDist.map(d => d.sum)
+                    labels: limitedData.map(d => d.label),
+                    values: limitedData.map(d => d.value)
                 };
             } else {
                 // Standard row-based chart data
