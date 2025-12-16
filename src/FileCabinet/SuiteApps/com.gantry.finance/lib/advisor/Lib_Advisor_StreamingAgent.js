@@ -951,8 +951,11 @@ YOUR TASK: Think step-by-step about what you need to answer this question.
 
 CRITICAL RULES:
 - Call ONE tool at a time, then evaluate results
-- For comparisons (YoY, MoM, etc): get BOTH periods' data before answering
-  Example: "YoY comparison" needs income_statement for BOTH "ytd" AND "prior_year_ytd"
+- For comparisons (YoY, MoM, etc): USE THE compare_to PARAMETER to get unified comparison data
+  Example: "YoY comparison" → get_income_statement(period="ytd", compare_to="prior_year_ytd")
+  This returns current_amount, prior_amount, change, pct_change columns in ONE dataset - MUCH better!
+  DO NOT make separate calls for each period - use compare_to instead
+{comparison_hint}
 - Don't guess or assume - if you need data, GET IT
 - After getting data, think: "Does this ACTUALLY answer the question?"
 - ENTITY IDs: When you resolve an entity (customer/vendor), look for "RESOLVED ENTITIES"
@@ -1026,17 +1029,32 @@ If you need MORE DATA (single tool):
   "userNarration": "Brief status (max 8 words)"
 }}
 
-If you need MULTIPLE INDEPENDENT data points at once (e.g., comparing two periods):
+⚠️ FOR PERIOD COMPARISONS (YoY, MoM, quarter vs quarter):
+ALWAYS use the compare_to parameter on financial statement tools - this returns a SINGLE unified table with pre-computed deltas (change, pct_change) which is MUCH better for comparison analysis.
+
+Example - comparing this year to last year:
 {{
-  "thinking": "For this comparison I need both periods simultaneously...",
+  "thinking": "User wants YoY comparison. I'll use compare_to for unified comparison data with deltas.",
+  "action": "GET_DATA",
+  "tool": "get_income_statement",
+  "args": {{ "period": "ytd", "compare_to": "prior_year_ytd" }},
+  "userNarration": "Building YoY comparison"
+}}
+
+This returns columns: current_amount, prior_amount, change, pct_change - perfect for comparison analysis.
+DO NOT make separate calls for each period - always use compare_to for comparisons.
+
+If you need MULTIPLE TRULY INDEPENDENT datasets (NOT for period comparisons):
+{{
+  "thinking": "I need unrelated datasets: customer revenue AND vendor spend...",
   "action": "GET_DATA_BATCH",
   "tools": [
-    {{ "tool": "tool_name_1", "args": {{}} }},
-    {{ "tool": "tool_name_2", "args": {{}} }}
+    {{ "tool": "get_customer_revenue", "args": {{}} }},
+    {{ "tool": "get_vendor_spend", "args": {{}} }}
   ],
   "userNarration": "Fetching multiple datasets"
 }}
-NOTE: Use GET_DATA_BATCH when tools are INDEPENDENT. For YoY/period comparisons, use get_income_statement with compare_to parameter (e.g., period="ytd", compare_to="prior_year_ytd") to get pre-computed deltas in a single call.
+NOTE: Only use GET_DATA_BATCH for truly independent data. NEVER use it for period comparisons.
 
 If you have ENOUGH DATA to answer:
 {{
@@ -1150,8 +1168,8 @@ RESPONSE FORMAT (JSON only):
 
   "response": {{
     "blocks": [
-      {{"type": "text", "content": "Analysis with {{{{data.rows[N].column}}}} tokens..."}},
-      {{"type": "metrics", "items": [{{"label": "Label", "value": "{{{{token}}}}", "trend": "up|down|neutral"}}]}},
+      {{"type": "text", "content": "Analysis with {{data.rows[N].column}} tokens..."}},
+      {{"type": "metrics", "items": [{{"label": "Label", "value": "{{token}}", "trend": "up|down|neutral"}}]}},
       {{"type": "table", "dataRef": "ref_xxx", "title": "Title"}},
       {{"type": "chart", "chartType": "bar|line|pie", "dataRef": "ref_xxx", "x": "label_column", "y": "value_column"}},
       {{"type": "list", "title": "Findings", "items": ["item1", "item2"]}}
@@ -1161,7 +1179,7 @@ RESPONSE FORMAT (JSON only):
 
 ⚠️ IMPORTANT: Only include "response" field if action is "PROCEED".
 The response.blocks should be the COMPLETE final answer using the data you have.
-Use {{{{data.rows[N].column}}}} tokens for actual values - they will be resolved.`;
+Use {{data.rows[N].column}} tokens for actual values - they will be resolved.`;
 
     // ═══════════════════════════════════════════════════════════════════════════
     // SYNTHESIZE PROMPT - LLM Writes Custom SuiteQL
@@ -1374,9 +1392,14 @@ WRITE YOUR RESPONSE IN MARKDOWN with these special directives:
 ═══════════════════════════════════════════════════════════════════════════════
 TOKEN SYNTAX - Reference actual data values:
 
-Row values: {{{{data.rows[0].column_name}}}} or {{{{data.rows[0].column_name:currency}}}}
-Stats: {{{{data.stats.total:currency}}}}, {{{{data.stats.count}}}}, {{{{data.stats.average}}}}
-Column totals: {{{{data.stats.total_column_name:currency}}}}
+Row values: {{data.rows[0].column_name}} or {{data.rows[0].column_name:currency}}
+Stats: {{data.stats.total:currency}}, {{data.stats.count}}, {{data.stats.average}}
+Column totals: {{data.stats.total_column_name:currency}}
+
+MULTI-DATA SOURCE SYNTAX (when comparing periods or multiple datasets):
+- First dataset: {{data[0].rows[0].column}} or {{data[0].stats.total:currency}}
+- Second dataset: {{data[1].rows[0].column}} or {{data[1].stats.total:currency}}
+- By ref ID: {{ref:ref_abc123.rows[0].column:currency}}
 
 ═══════════════════════════════════════════════════════════════════════════════
 {constraints_section}
@@ -1395,11 +1418,11 @@ GUIDELINES:
 ═══════════════════════════════════════════════════════════════════════════════
 EXAMPLE RESPONSE:
 
-Here's your year-over-year revenue comparison for {{{{data.rows[0].customer_name}}}}...
+Here's your year-over-year revenue comparison for {{data.rows[0].customer_name}}...
 
 :::metrics
-| Total Revenue | {{{{data.stats.total:currency}}}} | up |
-| Record Count | {{{{data.stats.count}}}} | neutral |
+| Total Revenue | {{data.stats.total:currency}} | up |
+| Record Count | {{data.stats.count}} | neutral |
 :::
 
 The current period shows strong performance:
@@ -3460,6 +3483,21 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
             ? '- Intent analysis suggests this question may need clarification - CLARIFY is acceptable if still unclear after analysis.'
             : '- Intent was CLEAR - strongly prefer using DEFAULT PERIODS and proceeding. Do NOT ask for clarification unless data is genuinely missing after trying tools.';
 
+        // Build comparison hint based on detected time_scope from intent phase
+        const timeScope = state.intent?.time_scope || state.intent?.timeScope;
+        const comparisonScopes = ['yoy', 'mom', 'qoq', 'comparison', 'prior_year', 'last_year', 'year_over_year'];
+        const isComparisonIntent = comparisonScopes.some(scope =>
+            timeScope?.toLowerCase()?.includes(scope) ||
+            state.intent?.intent === 'comparison'
+        );
+        const comparisonHint = isComparisonIntent
+            ? `
+⚠️ COMPARISON DETECTED: Your question involves period comparison (${timeScope || 'comparison'}).
+   USE compare_to PARAMETER: get_income_statement(period="ytd", compare_to="prior_year_ytd")
+   This gives you unified data with pre-computed change and pct_change columns.
+   DO NOT call the tool twice with different periods - use compare_to instead!`
+            : '';
+
         const prompt = REASON_ACT_PROMPT
             .replace('{date_context}', getDateContext())
             .replace('{history_context}', buildHistoryContext(state))
@@ -3467,7 +3505,8 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
             .replace('{accumulated_data}', buildAccumulatedDataSummary(state))
             .replace('{tool_list}', Tools.getToolListForPrompt())
             .replace('{period_options}', Tools.getAvailablePeriods())
-            .replace('{needs_resolution_context}', needsResolutionContext);
+            .replace('{needs_resolution_context}', needsResolutionContext)
+            .replace('{comparison_hint}', comparisonHint);
 
         // Add thinking step
         upsertThinkingStep(state, 'reason_act', {
