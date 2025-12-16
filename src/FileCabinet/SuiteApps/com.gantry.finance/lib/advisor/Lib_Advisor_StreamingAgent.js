@@ -687,9 +687,107 @@ Reply JSON only:
     // ═══════════════════════════════════════════════════════════════════════════
 
     /**
-     * Check if the circuit breaker should trigger based on progress
+     * Classify the failure mode based on accumulated tool attempts
+     * Analyzes patterns to understand WHY queries returned 0 rows
+     * @param {Array} recentData - Recent accumulated data entries
      * @param {Object} state - Current agent state
-     * @returns {Object} { shouldTrigger: boolean, reason: string, escalationAction: string }
+     * @returns {Object} { mode: string, remediation: string, shouldTrySynthesizeFirst: boolean }
+     */
+    function classifyFailureMode(recentData, state) {
+        const intent = state.intent || {};
+        const emptyResults = recentData.filter(d => d.success && d.rowCount === 0);
+
+        // Analyze period usage pattern
+        const periodsUsed = emptyResults
+            .filter(d => d.args?.period)
+            .map(d => d.args.period);
+        const hasTriedAllPeriod = periodsUsed.includes('all');
+        const onlyBoundedPeriods = periodsUsed.length > 0 && !hasTriedAllPeriod;
+
+        // Analyze tool type pattern
+        const toolsUsed = emptyResults.map(d => d.tool);
+        const usedAgingTools = toolsUsed.some(t => t && (t.includes('aging') || t.includes('_ar_') || t.includes('_ap_')));
+        const usedTransactionTools = toolsUsed.some(t => t && t.includes('transaction'));
+        const isTransactionLookupIntent = intent.intent === 'entity_transactions';
+
+        // Analyze entity resolution
+        const entityResolved = Object.keys(state.resolvedEntities || {}).length > 0;
+        const entityResolutionFailed = recentData.some(d => d.tool?.startsWith('resolve_') && !d.success);
+
+        // Determine failure mode and remediation
+        if (entityResolutionFailed) {
+            return {
+                mode: 'ENTITY_RESOLUTION_FAILED',
+                remediation: 'Entity could not be found. Try alternative entity names or ask user for clarification.',
+                shouldTrySynthesizeFirst: false
+            };
+        }
+
+        if (onlyBoundedPeriods && entityResolved) {
+            return {
+                mode: 'DATE_FILTER_MISS',
+                remediation: `Data may exist outside the time ranges tried (${periodsUsed.join(', ')}). Retry with period: "all" to search all time.`,
+                shouldTrySynthesizeFirst: false,
+                suggestedAction: 'RETRY_WITH_ALL_PERIOD'
+            };
+        }
+
+        if (isTransactionLookupIntent && usedAgingTools && !usedTransactionTools) {
+            return {
+                mode: 'WRONG_TOOL_TYPE',
+                remediation: 'Used aging tools for transaction lookup. Aging tools show current balances, not historical transactions. Try get_recent_transactions with period: "all" instead.',
+                shouldTrySynthesizeFirst: false,
+                suggestedAction: 'RETRY_WITH_CORRECT_TOOL'
+            };
+        }
+
+        if (usedAgingTools && emptyResults.length > 0) {
+            // Aging tools returning empty might mean all bills are paid
+            const isPayablesContext = intent.semantic_topics?.includes('payables') || intent.transaction_context === 'bills';
+            if (isPayablesContext) {
+                return {
+                    mode: 'AGING_EMPTY_PAID_BILLS',
+                    remediation: 'AP aging returned empty - this entity may have no UNPAID bills. For historical bill records, use get_recent_transactions with period: "all".',
+                    shouldTrySynthesizeFirst: false,
+                    suggestedAction: 'RETRY_WITH_TRANSACTION_TOOL'
+                };
+            }
+        }
+
+        if (hasTriedAllPeriod && entityResolved && emptyResults.length >= 2) {
+            return {
+                mode: 'ACTUAL_NO_DATA',
+                remediation: 'Data genuinely does not exist for this entity and query type. This is a valid finding.',
+                shouldTrySynthesizeFirst: true
+            };
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // SAFETY CHECK: Before escalating to synthesize, ensure period:"all" was tried
+        // This prevents unnecessary synthesize calls when simple parameter fix would work
+        // ═══════════════════════════════════════════════════════════════════════
+        if (entityResolved && !hasTriedAllPeriod && usedTransactionTools) {
+            return {
+                mode: 'PERIOD_NOT_EXHAUSTED',
+                remediation: 'Transaction tools were used but period: "all" was never tried. Retry get_recent_transactions with period: "all" to search all time before escalating.',
+                shouldTrySynthesizeFirst: false,
+                suggestedAction: 'RETRY_WITH_ALL_PERIOD'
+            };
+        }
+
+        // Default case - uncertain, try synthesize
+        return {
+            mode: 'UNDETERMINED',
+            remediation: 'Multiple attempts returned no data. Will try custom SQL query.',
+            shouldTrySynthesizeFirst: true
+        };
+    }
+
+    /**
+     * Check if the circuit breaker should trigger based on progress
+     * Enhanced with failure mode classification for smarter escalation
+     * @param {Object} state - Current agent state
+     * @returns {Object} { shouldTrigger: boolean, reason: string, escalationAction: string, failureMode: Object }
      */
     function checkCircuitBreaker(state) {
         const accumulatedData = state.accumulatedData || [];
@@ -731,8 +829,26 @@ Reply JSON only:
         const allFailed = recentData.every(d => !d.success || d.rowCount === 0);
 
         if (allFailed && totalRowsRecent === 0) {
-            // Determine escalation action based on context
+            // ═══════════════════════════════════════════════════════════════════════
+            // FAILURE MODE CLASSIFICATION - Understand WHY queries failed
+            // ═══════════════════════════════════════════════════════════════════════
+            const failureMode = classifyFailureMode(recentData, state);
+
+            log.debug('Circuit breaker failure mode analysis', {
+                mode: failureMode.mode,
+                remediation: failureMode.remediation,
+                shouldTrySynthesizeFirst: failureMode.shouldTrySynthesizeFirst
+            });
+
+            // Determine escalation action based on failure mode
             let escalationAction = 'SYNTHESIZE'; // Default: try custom SQL
+
+            // If failure mode suggests a simple fix, don't escalate to synthesize yet
+            if (!failureMode.shouldTrySynthesizeFirst && failureMode.suggestedAction) {
+                // Store remediation hint for the LLM to use
+                state.failureModeHint = failureMode;
+                escalationAction = 'RETRY_WITH_HINT';
+            }
 
             // If we've already tried synthesize, suggest clarification
             if (state.synthesize?.iterations > 0) {
@@ -740,10 +856,7 @@ Reply JSON only:
             }
 
             // If entity resolution failed, suggest different entity search
-            const hadEntityResolution = recentData.some(d =>
-                d.tool?.startsWith('resolve_') && !d.success
-            );
-            if (hadEntityResolution) {
+            if (failureMode.mode === 'ENTITY_RESOLUTION_FAILED') {
                 escalationAction = 'CLARIFY';
             }
 
@@ -760,8 +873,10 @@ Reply JSON only:
                 escalationAction: escalationAction,
                 validationFailureCount: validationFailures.length,
                 dataFailureCount: dataFailures,
+                failureMode: failureMode,
                 attemptsSummary: recentData.map(d => ({
                     tool: d.tool,
+                    args: d.args,
                     success: d.success,
                     rowCount: d.rowCount,
                     isValidationError: d.validationErrors?.length > 0
@@ -877,6 +992,17 @@ Analyze the SEMANTIC MEANING of the question. Extract:
    - sort_direction: "desc" for largest/fastest/most, "asc" for smallest/slowest/least
    - highlight: What to emphasize in the answer (e.g., "fastest growing category", "largest expense")
    - exclude: Items to exclude (e.g., "excluding COGS", "except marketing")
+8. PERIOD RECOMMENDATION - Determine the appropriate default time scope based on the SEMANTIC meaning:
+   - recommended_period: The period value to use (e.g., "all", "ytd", "last_90_days")
+   - period_rationale: Brief explanation of why this period fits the question semantically
+
+   SEMANTIC PERIOD GUIDANCE:
+   • "latest [X]", "most recent [X]", "show me [X] from entity" → recommended_period: "all" (user wants most recent available, not time-bounded)
+   • "recent [X]", "[X] this month", "[X] this week" → use the explicit time frame mentioned
+   • "current [X]", "outstanding [X]", "what do we owe" → recommended_period: "all" (current state, no history filter)
+   • Historical lookups for specific entity without explicit timeframe → recommended_period: "all"
+   • Reporting/aggregation without explicit timeframe → recommended_period: "ytd"
+   • Trend analysis → use period appropriate for trend (ytd, last_12_months)
 
 NEEDS_RESOLUTION GUIDELINES - Set true ONLY when genuinely ambiguous:
 - TRUE: "Show me the stuff" (genuinely unclear what they want)
@@ -902,7 +1028,7 @@ is_drill_down is true when user wants MORE detail on a previous result:
 - "itemize that"
 drill_down_context should describe what they want to expand on (e.g., "vendor analysis", "weekly projection", "AR buckets").
 
-Response format: {"intent": "category", "entities": ["named items"], "time_scope": "ytd|mtd|last_30|custom|none", "needs_resolution": true|false, "references_previous": true|false, "semantic_topics": ["topic1", "topic2"], "transaction_context": "bills|invoices|payments|credits|all", "constraints": {"limit": null, "sort_by": null, "sort_direction": "desc", "highlight": null, "exclude": []}, "is_drill_down": false, "drill_down_context": null, "userNarration": "Looking into your customer revenue..."}`;
+Response format: {"intent": "category", "entities": ["named items"], "time_scope": "ytd|mtd|last_30|custom|none", "needs_resolution": true|false, "references_previous": true|false, "semantic_topics": ["topic1", "topic2"], "transaction_context": "bills|invoices|payments|credits|all", "constraints": {"limit": null, "sort_by": null, "sort_direction": "desc", "highlight": null, "exclude": []}, "is_drill_down": false, "drill_down_context": null, "recommended_period": "all|ytd|mtd|last_30_days|etc", "period_rationale": "brief explanation", "userNarration": "Looking into your customer revenue..."}`;
 
     const SELECT_PROMPT = `Select tools to answer this {intent} question. Respond with JSON only.
 {date_context}
@@ -992,7 +1118,29 @@ AVAILABLE TOOLS:
 
 {period_options}
 
+{intent_guidance}
+
 ═══════════════════════════════════════════════════════════════════════════════
+INTENT-TO-TOOL SEMANTIC MAPPING:
+Use the semantic meaning of the question to choose the RIGHT tool:
+
+For "bills from [vendor]", "invoices to [customer]", "transactions for [entity]":
+  → Use get_recent_transactions with period: "all" (historical document lookup)
+  → NOT get_ap_aging or get_ar_aging (those are for CURRENT outstanding balances)
+
+For "what do we owe [vendor]", "AP aging", "overdue bills", "outstanding payables":
+  → Use get_ap_aging (current balances by age bucket)
+  → NOT get_recent_transactions (that's for historical lookup)
+
+For "who owes us", "AR aging", "overdue invoices", "outstanding receivables":
+  → Use get_ar_aging (current balances by age bucket)
+
+For "[vendor/customer] summary", "spending with [vendor]", "revenue from [customer]":
+  → Use get_vendor_spend or get_customer_revenue (aggregate analysis)
+
+CRITICAL: Match the tool to what the user SEMANTICALLY wants, not just keywords.
+═══════════════════════════════════════════════════════════════════════════════
+
 YOUR TASK: Think step-by-step about what you need to answer this question.
 
 1. ANALYZE what data you already have (see "DATA COLLECTED SO FAR")
@@ -1053,12 +1201,20 @@ If the data type doesn't match the question's metric type:
 WHEN A QUERY RETURNS 0 ROWS:
 - Look at "💡 BROADENING OPTIONS" - YOU DECIDE whether to use them
 - Look at "🔄 ALTERNATIVE TOOLS TO CONSIDER" - consider different approaches
-- Progressive strategy: Start specific, then broaden if needed
-  1. First try the exact request (e.g., bills from last 30 days)
-  2. If empty, consider: expand period (last_90_days → all) OR remove filters
-  3. If still empty, try alternative tools (get_vendor_details, get_ap_aging)
-  4. If entity has NO transaction history, that's a valid finding - report it
-- NEVER assume data doesn't exist without trying broader queries
+- SMART DEFAULT STRATEGY based on question intent:
+  For TRANSACTION LOOKUPS (entity_transactions, "bills from X", "invoices to Y"):
+    1. START with period: "all" - get all historical data first
+    2. If too many results, NARROW with period filters
+    3. "Latest" means "most recent available" - NOT "within last 30 days"
+  For REPORTING/AGGREGATION (revenue analysis, expense reports):
+    1. Start with sensible bounded period (ytd, this_month)
+    2. Broaden if needed for historical context
+- DIAGNOSIS: If a tool returns 0 rows, ask WHY before retrying:
+  • Wrong period filter? → Try period: "all"
+  • Wrong tool type? (aging vs transaction lookup) → Try the semantically correct tool
+  • Wrong entity? → Verify entity resolution
+  • Data genuinely doesn't exist? → That's a valid answer
+- NEVER assume data doesn't exist without trying period: "all"
 
 WHEN TO USE SYNTHESIZE (Custom SQL):
 - Use SYNTHESIZE only when pre-built tools CANNOT answer the question
@@ -2250,6 +2406,85 @@ Which 2 tools could provide similar data? Reply JSON only:
         }
 
         return sections.length > 0 ? `\n${sections.join('\n\n')}\n` : '';
+    }
+
+    /**
+     * Build intent guidance for REASON_ACT phase
+     * Uses the semantic analysis from INTENT phase to guide tool and period selection
+     * Also includes failure mode hints when previous attempts didn't find data
+     * @param {Object} state - Current agent state
+     * @returns {string} Formatted intent guidance string
+     */
+    function buildIntentGuidance(state) {
+        const intent = state.intent || {};
+        const lines = [];
+
+        // Only add guidance if we have intent information
+        if (!intent.intent && !state.failureModeHint) {
+            return '';
+        }
+
+        lines.push('═══════════════════════════════════════════════════════════════════════════════');
+        lines.push('SEMANTIC ANALYSIS FROM INTENT PHASE:');
+
+        if (intent.intent) {
+            // Intent type
+            lines.push(`Question Intent: ${intent.intent}`);
+
+            // Transaction context
+            if (intent.transaction_context && intent.transaction_context !== 'all') {
+                lines.push(`Transaction Context: ${intent.transaction_context}`);
+            }
+
+            // Recommended period from semantic analysis
+            if (intent.recommended_period) {
+                lines.push(`\n⚠️ RECOMMENDED PERIOD: ${intent.recommended_period}`);
+                if (intent.period_rationale) {
+                    lines.push(`   Rationale: ${intent.period_rationale}`);
+                }
+                lines.push(`   Use this period as the default for tool calls unless user specified otherwise.`);
+            }
+
+            // Semantic topics for tool selection context
+            if (intent.semantic_topics && intent.semantic_topics.length > 0) {
+                lines.push(`\nSemantic Topics: ${intent.semantic_topics.join(', ')}`);
+            }
+
+            // Constraints from user's question
+            if (intent.constraints) {
+                const constraints = intent.constraints;
+                const activeConstraints = [];
+                if (constraints.limit) activeConstraints.push(`limit: ${constraints.limit}`);
+                if (constraints.sort_by) activeConstraints.push(`sort_by: ${constraints.sort_by}`);
+                if (constraints.sort_direction !== 'desc') activeConstraints.push(`sort_direction: ${constraints.sort_direction}`);
+                if (activeConstraints.length > 0) {
+                    lines.push(`User Constraints: ${activeConstraints.join(', ')}`);
+                }
+            }
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // FAILURE MODE HINT: Inject guidance from circuit breaker analysis
+        // This helps the LLM understand WHY previous attempts failed and how to fix
+        // ═══════════════════════════════════════════════════════════════════════
+        if (state.failureModeHint) {
+            lines.push('');
+            lines.push('🚨 PREVIOUS ATTEMPTS ANALYSIS:');
+            lines.push(`   Failure Mode: ${state.failureModeHint.mode}`);
+            lines.push(`   Diagnosis: ${state.failureModeHint.remediation}`);
+            if (state.failureModeHint.suggestedAction) {
+                lines.push(`   Suggested Action: ${state.failureModeHint.suggestedAction}`);
+            }
+            lines.push('');
+            lines.push('   ⚠️ FOLLOW THIS GUIDANCE to find the data. Previous approach did not work.');
+
+            // Clear the hint after using it to avoid infinite loops
+            state.failureModeHint = null;
+        }
+
+        lines.push('═══════════════════════════════════════════════════════════════════════════════');
+
+        return lines.join('\n');
     }
 
     /**
@@ -3514,6 +3749,37 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
 
             state.circuitBreakerTriggered = true;
 
+            // ═══════════════════════════════════════════════════════════════════════
+            // SMART ESCALATION: Based on failure mode, decide best action
+            // ═══════════════════════════════════════════════════════════════════════
+
+            // RETRY_WITH_HINT: Don't escalate yet - give LLM one more chance with guidance
+            if (circuitBreaker.escalationAction === 'RETRY_WITH_HINT' && circuitBreaker.failureMode) {
+                log.audit('REASON_ACT circuit breaker - retry with hint', {
+                    failureMode: circuitBreaker.failureMode.mode,
+                    remediation: circuitBreaker.failureMode.remediation
+                });
+
+                // Store failure mode hint for injection into next REASON_ACT prompt
+                state.failureModeHint = circuitBreaker.failureMode;
+                state.circuitBreakerTriggered = false; // Allow one more iteration
+
+                upsertThinkingStep(state, 'reason_act', {
+                    title: 'Adjusting search strategy',
+                    phase: 'reason_act',
+                    status: 'complete',
+                    duration: Date.now() - phaseStart,
+                    context: {
+                        failureMode: circuitBreaker.failureMode.mode,
+                        remediation: circuitBreaker.failureMode.remediation
+                    }
+                });
+
+                // Don't escalate - let REASON_ACT continue with the hint
+                // The hint will be injected via buildIntentGuidance or buildAccumulatedDataSummary
+                return { success: true, nextPhase: PHASES.REASON_ACT };
+            }
+
             // Escalate based on the suggested action
             if (circuitBreaker.escalationAction === 'SYNTHESIZE' &&
                 state.synthesize?.enabled &&
@@ -3601,6 +3867,9 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
    DO NOT call the tool twice with different periods - use compare_to instead!`
             : '';
 
+        // Build intent guidance with recommended period from INTENT phase
+        const intentGuidance = buildIntentGuidance(state);
+
         const prompt = REASON_ACT_PROMPT
             .replace('{date_context}', getDateContext())
             .replace('{history_context}', buildHistoryContext(state))
@@ -3609,7 +3878,8 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
             .replace('{tool_list}', Tools.getToolListForPrompt())
             .replace('{period_options}', Tools.getAvailablePeriods())
             .replace('{needs_resolution_context}', needsResolutionContext)
-            .replace('{comparison_hint}', comparisonHint);
+            .replace('{comparison_hint}', comparisonHint)
+            .replace('{intent_guidance}', intentGuidance);
 
         // Add thinking step
         upsertThinkingStep(state, 'reason_act', {
@@ -6423,21 +6693,44 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
                 section += `  Row ${i}: {${data.columns.slice(0, 6).map((c, j) => `${c}: ${rowData[j]}`).join(', ')}}\n`;
             }
 
-            // Reference syntax guide with available column stats
-            section += `\nTOKEN REFERENCE GUIDE:\n`;
-            section += `  Rows: {{data.rows[N].column_name}} or {{data.rows[N].column_name:currency}}\n`;
-            section += `  Stats: {{data.stats.total}}, {{data.stats.count}}, {{data.stats.average}}\n`;
-            section += `  For table/chart blocks: use dataRef "${ref.refId}"\n`;
+            // ═══════════════════════════════════════════════════════════════════════
+            // EXPLICIT TOKEN REFERENCE: List EXACTLY what tokens are available
+            // This prevents LLM from inventing column names that don't exist
+            // ═══════════════════════════════════════════════════════════════════════
+            section += `\nAVAILABLE TOKEN REFERENCES (use ONLY these exact tokens):\n`;
 
-            // List columns with numeric stats
+            // List all available columns for row access
+            section += `\n  📊 ROW VALUES (access individual rows):\n`;
+            data.columns.forEach(col => {
+                const isMonetary = isMonetaryColumn(col);
+                const example = isMonetary
+                    ? `{{data.rows[0].${col}:currency}}`
+                    : `{{data.rows[0].${col}}}`;
+                section += `     ${col}: ${example}\n`;
+            });
+
+            // List computed stats with EXACT token syntax
+            section += `\n  📈 AGGREGATE STATS:\n`;
+            section += `     {{data.stats.count}} → ${totalRows} rows\n`;
+
+            // List per-column stats for numeric columns
             if (summary.schema) {
                 const numericCols = Object.entries(summary.schema)
                     .filter(([col, s]) => s.stats)
-                    .map(([col]) => col);
+                    .map(([col, s]) => ({ col, stats: s.stats }));
+
                 if (numericCols.length > 0) {
-                    section += `  Column totals: ${numericCols.map(c => '{{data.stats.total_' + c + ':currency}}').join(', ')}\n`;
+                    numericCols.forEach(({ col, stats }) => {
+                        section += `     {{data.stats.sum_${col}:currency}} → ${formatStatValue(stats.sum, 'currency')}\n`;
+                        section += `     {{data.stats.avg_${col}:currency}} → ${formatStatValue(stats.avg, 'currency')}\n`;
+                        section += `     {{data.stats.min_${col}:currency}} → ${formatStatValue(stats.min, 'currency')}\n`;
+                        section += `     {{data.stats.max_${col}:currency}} → ${formatStatValue(stats.max, 'currency')}\n`;
+                    });
                 }
             }
+
+            section += `\n  ⚠️ DO NOT invent tokens. Use ONLY the tokens listed above.\n`;
+            section += `  For table/chart blocks: use dataRef "${ref.refId}"\n`;
 
             sections.push(section);
         });
@@ -6734,6 +7027,24 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
                             const colName = avgMatch[2];
                             if (summary.schema[colName]?.stats?.avg !== undefined) {
                                 return formatResolvedValue(summary.schema[colName].stats.avg, format || 'currency', colName);
+                            }
+                        }
+
+                        // Check for min_X patterns
+                        const minMatch = statName.match(/^min_(.+)$/);
+                        if (minMatch) {
+                            const colName = minMatch[1];
+                            if (summary.schema[colName]?.stats?.min !== undefined) {
+                                return formatResolvedValue(summary.schema[colName].stats.min, format || 'currency', colName);
+                            }
+                        }
+
+                        // Check for max_X patterns
+                        const maxMatch = statName.match(/^max_(.+)$/);
+                        if (maxMatch) {
+                            const colName = maxMatch[1];
+                            if (summary.schema[colName]?.stats?.max !== undefined) {
+                                return formatResolvedValue(summary.schema[colName].stats.max, format || 'currency', colName);
                             }
                         }
 
