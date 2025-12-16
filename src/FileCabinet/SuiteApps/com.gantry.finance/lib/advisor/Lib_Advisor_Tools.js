@@ -28,6 +28,7 @@ define([
     './Lib_Advisor_QueryExecutor',
     './Lib_Advisor_Utils',
     './Lib_Advisor_Cache',
+    './Lib_Advisor_AIProviders',
     '../Lib_Dashboard_Registry',
     '../Lib_Config',
     '../Lib_Core',
@@ -49,6 +50,7 @@ define([
     QueryExecutor,
     Utils,
     Cache,
+    AIProviders,
     DashboardRegistry,
     ConfigLib,
     Core,
@@ -367,12 +369,18 @@ define([
         // ═══════════════════════════════════════════════════════════════════════
         // VALIDATE UNKNOWN PARAMETERS
         // Detect when LLM uses wrong parameter names and provide helpful hints
+        // Uses LLM for ambiguous cases when fast heuristics fail
         // ═══════════════════════════════════════════════════════════════════════
         const validParamNames = Object.keys(props);
+        const paramContext = {
+            toolName: toolName,
+            toolDescription: tool.description || tool.shortDescription || ''
+        };
+
         for (const providedParam of Object.keys(args)) {
             if (!props[providedParam]) {
-                // Find similar parameter name to suggest
-                const similar = findSimilarParamName(providedParam, validParamNames);
+                // Find similar parameter name to suggest (uses LLM for ambiguous cases)
+                const similar = findSimilarParamName(providedParam, validParamNames, paramContext);
                 if (similar) {
                     errors.push(
                         `Unknown parameter "${providedParam}". Did you mean "${similar}"? ` +
@@ -432,36 +440,64 @@ define([
 
     /**
      * Find similar parameter name for helpful error messages
-     * Uses simple heuristics to catch common LLM mistakes
+     * Uses fast heuristics first, then LLM for ambiguous cases
+     *
+     * @param {string} input - The parameter name provided by LLM
+     * @param {Array<string>} validParams - List of valid parameter names
+     * @param {Object} [context] - Optional context for LLM-based resolution
+     * @param {string} [context.toolName] - Name of the tool
+     * @param {string} [context.toolDescription] - Description of the tool
+     * @returns {string|null} Suggested parameter name or null
      */
-    function findSimilarParamName(input, validParams) {
+    function findSimilarParamName(input, validParams, context) {
         const inputLower = input.toLowerCase();
 
-        // Common semantic confusions LLMs make
-        const commonConfusions = {
-            'name': 'term',           // resolve_classification expects 'term' not 'name'
-            'term': 'name',           // resolve_entity expects 'name' not 'term'
-            'query': 'term',
-            'search': 'term',
-            'id': 'entity_id',
+        // ═══════════════════════════════════════════════════════════════════════
+        // FAST PATH: Check exact match first
+        // ═══════════════════════════════════════════════════════════════════════
+        if (validParams.includes(input)) {
+            return input;
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // FAST PATH: Obvious transformations (no LLM needed)
+        // ═══════════════════════════════════════════════════════════════════════
+        const obviousTransformations = {
+            // Entity shortcuts
             'vendor': 'vendor_id',
             'customer': 'customer_id',
-            'dept': 'department_id',
+            'employee': 'employee_id',
+            'account': 'account_id',
+            'item': 'item_id',
+            'project': 'project_id',
             'department': 'department_id',
+            'location': 'location_id',
             'class': 'class_id',
-            'type': 'dimension',
-            'category': 'dimension'
+            'entity': 'entity_id',
+
+            // Common abbreviations
+            'dept': 'department_id',
+            'loc': 'location_id',
+            'acct': 'account_id',
+            'emp': 'employee_id',
+
+            // Semantic equivalents (unambiguous)
+            'search': 'term',
+            'query': 'term',
+            'search_term': 'term',
+            'id': 'entity_id'
         };
 
-        // Check common confusions first
-        if (commonConfusions[inputLower]) {
-            const suggestion = commonConfusions[inputLower];
+        if (obviousTransformations[inputLower]) {
+            const suggestion = obviousTransformations[inputLower];
             if (validParams.includes(suggestion)) {
                 return suggestion;
             }
         }
 
-        // Check for substring matches
+        // ═══════════════════════════════════════════════════════════════════════
+        // FAST PATH: Substring matches
+        // ═══════════════════════════════════════════════════════════════════════
         for (const param of validParams) {
             const paramLower = param.toLowerCase();
             if (paramLower.includes(inputLower) || inputLower.includes(paramLower)) {
@@ -469,110 +505,61 @@ define([
             }
         }
 
-        return null;
-    }
+        // ═══════════════════════════════════════════════════════════════════════
+        // FAST PATH: Check for _id suffix patterns
+        // If input is "foo", check for "foo_id"
+        // ═══════════════════════════════════════════════════════════════════════
+        const withIdSuffix = `${inputLower}_id`;
+        const matchWithId = validParams.find(p => p.toLowerCase() === withIdSuffix);
+        if (matchWithId) {
+            return matchWithId;
+        }
 
-    // ═══════════════════════════════════════════════════════════════════════════
-    // ENTITY-AWARE ALTERNATIVE TOOL SUGGESTIONS
-    // When a query fails, suggest alternative tools based on entity type
-    // ═══════════════════════════════════════════════════════════════════════════
+        // ═══════════════════════════════════════════════════════════════════════
+        // LLM PATH: Use semantic understanding for truly ambiguous cases
+        // Only if context is provided and fast paths failed
+        // ═══════════════════════════════════════════════════════════════════════
+        if (context?.toolName && validParams.length > 0 && validParams.length <= 20) {
+            try {
+                const toolDesc = context.toolDescription ?
+                    context.toolDescription.substring(0, 200) : '';
 
-    /**
-     * Get alternative tool suggestions based on entity type and failed tool
-     * @param {string} failedTool - The tool that returned no data
-     * @param {Object} args - The arguments that were used
-     * @param {Object} resolvedEntities - Map of resolved entities from session
-     * @returns {Array} List of suggested alternative tools with reasoning
-     */
-    function getEntityAwareAlternatives(failedTool, args, resolvedEntities) {
-        const suggestions = [];
+                const prompt = `Parameter "${input}" is not valid for tool "${context.toolName}".
+${toolDesc ? `Tool description: ${toolDesc}` : ''}
+Valid parameters: ${validParams.join(', ')}
 
-        // Determine entity type from args or resolved entities
-        let entityType = null;
-        let entityId = args.entity_id || args.vendor_id || args.customer_id;
+Which valid parameter did the user most likely mean?
+Reply with JSON: {"param": "parameter_name", "confidence": 0.0-1.0}
+If no reasonable match, reply: {"param": null, "confidence": 0}`;
 
-        // Check resolved entities for type
-        if (resolvedEntities) {
-            for (const [name, entity] of Object.entries(resolvedEntities)) {
-                if (entity.id === entityId) {
-                    entityType = entity.type;
-                    break;
+                const result = AIProviders.callAI(prompt, {
+                    max_tokens: 50,
+                    temperature: 0,
+                    purpose: 'SCA:param_resolution'
+                });
+
+                const responseText = result.text || result;
+                const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+
+                if (jsonMatch) {
+                    const parsed = JSON.parse(jsonMatch[0]);
+                    if (parsed.param && parsed.confidence >= 0.7 && validParams.includes(parsed.param)) {
+                        log.debug('LLM parameter resolution', {
+                            input,
+                            suggested: parsed.param,
+                            confidence: parsed.confidence,
+                            tool: context.toolName
+                        });
+                        return parsed.param;
+                    }
                 }
+            } catch (e) {
+                log.debug('LLM parameter resolution failed', { error: e.message, input });
+                // Fall through to return null
             }
         }
 
-        // Infer from args if not found
-        if (!entityType) {
-            if (args.vendor_id) entityType = 'vendor';
-            else if (args.customer_id) entityType = 'customer';
-        }
-
-        // Transaction search failed
-        if (failedTool === 'get_recent_transactions') {
-            if (entityType === 'vendor') {
-                suggestions.push({
-                    tool: 'get_vendor_details',
-                    reason: 'Get vendor summary including total spend and outstanding AP',
-                    args: { vendor_id: entityId }
-                });
-                suggestions.push({
-                    tool: 'get_ap_aging',
-                    reason: 'Check if vendor has any outstanding bills in AP aging',
-                    args: { vendor_ids: [entityId] }
-                });
-                suggestions.push({
-                    tool: 'get_recent_transactions',
-                    reason: 'Try without transaction_type filter to see ALL transactions for this vendor',
-                    args: { entity_id: entityId, period: 'all' }
-                });
-            } else if (entityType === 'customer') {
-                suggestions.push({
-                    tool: 'get_customer_details',
-                    reason: 'Get customer summary including total revenue and outstanding AR',
-                    args: { customer_id: entityId }
-                });
-                suggestions.push({
-                    tool: 'get_ar_aging',
-                    reason: 'Check if customer has any outstanding invoices in AR aging',
-                    args: { customer_ids: [entityId] }
-                });
-                suggestions.push({
-                    tool: 'get_recent_transactions',
-                    reason: 'Try without transaction_type filter to see ALL transactions for this customer',
-                    args: { entity_id: entityId, period: 'all' }
-                });
-            }
-        }
-
-        // AP aging failed
-        if (failedTool === 'get_ap_aging' && entityType === 'vendor') {
-            suggestions.push({
-                tool: 'get_vendor_details',
-                reason: 'Vendor may have no open AP - check overall relationship',
-                args: { vendor_id: entityId }
-            });
-            suggestions.push({
-                tool: 'get_recent_transactions',
-                reason: 'Search for any vendor bills regardless of payment status',
-                args: { entity_id: entityId, transaction_type: 'VendBill', period: 'all' }
-            });
-        }
-
-        // AR aging failed
-        if (failedTool === 'get_ar_aging' && entityType === 'customer') {
-            suggestions.push({
-                tool: 'get_customer_details',
-                reason: 'Customer may have no open AR - check overall relationship',
-                args: { customer_id: entityId }
-            });
-            suggestions.push({
-                tool: 'get_recent_transactions',
-                reason: 'Search for any customer invoices regardless of payment status',
-                args: { entity_id: entityId, transaction_type: 'CustInvc', period: 'all' }
-            });
-        }
-
-        return suggestions;
+        return null;
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -6128,6 +6115,229 @@ Use to understand what "YTD", "this quarter", etc. mean for this organization.`,
         },
 
         // ═══════════════════════════════════════════════════════════════════════════
+        // TRANSACTION TYPE DISCOVERY
+        // Discovers all transaction types used in this NetSuite instance
+        // Enables semantic matching instead of relying on static mappings
+        // ═══════════════════════════════════════════════════════════════════════════
+
+        discover_transaction_types: {
+            name: 'discover_transaction_types',
+            shortDescription: 'Discover all transaction types in this NetSuite instance',
+            category: 'utility',
+            description: `Discover all transaction types available and actively used in this NetSuite instance.
+
+USE THIS TOOL WHEN:
+- User mentions a transaction type you don't recognize
+- User uses informal terms like "supplier bill", "A/P invoice", "payable"
+- You need to find custom transaction types (customtransaction_*)
+- You want to verify a transaction type exists before using it
+
+RETURNS:
+- type: NetSuite type code (e.g., "VendBill", "CustInvc")
+- display_name: Human-readable name
+- usage_count: How many transactions of this type exist (last 12 months)
+
+Use the returned type codes in other tools' transaction_type parameter.`,
+            parameters: {
+                type: 'object',
+                properties: {
+                    include_inactive: {
+                        type: 'boolean',
+                        description: 'Include transaction types with zero usage in last 12 months. Default: false'
+                    }
+                },
+                required: []
+            },
+            execute: function(args) {
+                try {
+                    const includeInactive = args.include_inactive === true;
+
+                    // Query to discover all transaction types with usage counts
+                    const query = `
+                        SELECT
+                            type,
+                            BUILTIN.DF(type) AS display_name,
+                            COUNT(*) AS usage_count
+                        FROM transaction
+                        WHERE trandate > ADD_MONTHS(SYSDATE, -12)
+                        GROUP BY type
+                        ORDER BY usage_count DESC
+                    `;
+
+                    const result = QueryExecutor.executeQuery(query);
+
+                    if (!result.success) {
+                        return {
+                            success: false,
+                            error: result.error || 'Failed to query transaction types',
+                            tool: 'discover_transaction_types'
+                        };
+                    }
+
+                    // Build a lookup of known canonical mappings for reference
+                    const knownTypes = Object.values(TRANSACTION_TYPE_CANONICAL);
+                    const discoveredTypes = result.rows || [];
+
+                    // Annotate with whether type is standard or custom
+                    const annotatedTypes = discoveredTypes.map(row => ({
+                        type: row.type,
+                        display_name: row.display_name,
+                        usage_count: row.usage_count,
+                        is_custom: row.type && row.type.toLowerCase().startsWith('customtransaction'),
+                        is_known: knownTypes.includes(row.type)
+                    }));
+
+                    return {
+                        success: true,
+                        rowCount: annotatedTypes.length,
+                        types: annotatedTypes,
+                        summary: {
+                            total_types: annotatedTypes.length,
+                            custom_types: annotatedTypes.filter(t => t.is_custom).length,
+                            standard_types: annotatedTypes.filter(t => !t.is_custom).length
+                        },
+                        usage_note: 'Use the "type" values in other tools\' transaction_type parameter',
+                        tool: 'discover_transaction_types'
+                    };
+                } catch (e) {
+                    log.error('discover_transaction_types failed', { error: e.message });
+                    return {
+                        success: false,
+                        error: e.message,
+                        tool: 'discover_transaction_types'
+                    };
+                }
+            },
+            displayName: function(args) {
+                return 'Discovering transaction types...';
+            }
+        },
+
+        // ═══════════════════════════════════════════════════════════════════════════
+        // NATURAL LANGUAGE DATE PARSING
+        // Converts human date expressions to start/end dates using LLM
+        // Handles expressions that period enums can't express
+        // ═══════════════════════════════════════════════════════════════════════════
+
+        parse_date_range: {
+            name: 'parse_date_range',
+            shortDescription: 'Parse natural language date expression to start/end dates',
+            category: 'utility',
+            description: `Convert natural language date expressions to YYYY-MM-DD date range.
+
+USE THIS TOOL WHEN:
+- User mentions a specific date range the period enum can't express
+- Examples: "September 2023", "Q2 2022", "last 18 months", "March to June"
+- User says things like "since last summer", "before the holidays"
+
+DO NOT USE WHEN:
+- Standard period enums work (ytd, this_month, last_quarter, etc.)
+- User says "last 30 days" or "this year" - use period enum instead
+
+RETURNS:
+- start: Start date in YYYY-MM-DD format
+- end: End date in YYYY-MM-DD format
+- interpretation: How the expression was interpreted
+
+Use the returned dates with start_date/end_date parameters in other tools.`,
+            parameters: {
+                type: 'object',
+                properties: {
+                    expression: {
+                        type: 'string',
+                        description: 'Natural language date expression (e.g., "September 2023", "Q2 2022", "last 18 months")'
+                    }
+                },
+                required: ['expression']
+            },
+            execute: function(args) {
+                try {
+                    if (!args.expression) {
+                        return {
+                            success: false,
+                            error: 'Missing required "expression" parameter',
+                            tool: 'parse_date_range'
+                        };
+                    }
+
+                    // Get fiscal context for fiscal year awareness
+                    const fiscalCalendar = ConfigLib.getFiscalCalendar() || { fiscalYearStartMonth: 0 };
+                    const today = new Date();
+                    const todayStr = Utils.formatDateYMD(today);
+
+                    // Build prompt for LLM
+                    const prompt = `Parse this date expression into a date range.
+
+Expression: "${args.expression}"
+Today's date: ${todayStr}
+Fiscal year starts: month ${fiscalCalendar.fiscalYearStartMonth + 1}
+
+Rules:
+- If only a month is given (e.g., "September"), assume current year unless that would be in the future
+- If a quarter is given (Q1, Q2, etc.), Q1=Jan-Mar, Q2=Apr-Jun, Q3=Jul-Sep, Q4=Oct-Dec
+- For "last N months", calculate from today backwards
+- For year references without month, use full year (Jan 1 to Dec 31)
+- For relative expressions, calculate from today
+
+Respond with JSON only:
+{"start": "YYYY-MM-DD", "end": "YYYY-MM-DD", "interpretation": "brief explanation"}`;
+
+                    const result = AIProviders.callAI(prompt, {
+                        max_tokens: 100,
+                        temperature: 0,
+                        purpose: 'SCA:date_parsing'
+                    });
+
+                    const responseText = result.text || result;
+
+                    // Parse JSON response
+                    const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+                    if (jsonMatch) {
+                        const parsed = JSON.parse(jsonMatch[0]);
+
+                        // Validate date format
+                        const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+                        if (!dateRegex.test(parsed.start) || !dateRegex.test(parsed.end)) {
+                            return {
+                                success: false,
+                                error: 'Invalid date format returned',
+                                raw_response: responseText,
+                                tool: 'parse_date_range'
+                            };
+                        }
+
+                        return {
+                            success: true,
+                            start: parsed.start,
+                            end: parsed.end,
+                            interpretation: parsed.interpretation || `Parsed "${args.expression}"`,
+                            original_expression: args.expression,
+                            usage_hint: 'Use these dates with start_date/end_date parameters in other tools, or omit period parameter',
+                            tool: 'parse_date_range'
+                        };
+                    }
+
+                    return {
+                        success: false,
+                        error: 'Could not parse date expression',
+                        raw_response: responseText,
+                        tool: 'parse_date_range'
+                    };
+                } catch (e) {
+                    log.error('parse_date_range failed', { error: e.message, expression: args.expression });
+                    return {
+                        success: false,
+                        error: e.message,
+                        tool: 'parse_date_range'
+                    };
+                }
+            },
+            displayName: function(args) {
+                return `Parsing date: "${args.expression || ''}"...`;
+            }
+        },
+
+        // ═══════════════════════════════════════════════════════════════════════════
         // CACHED DATA ACCESS TOOL
         // Allows LLM to query any data stored in cache from previous tool calls
         // ═══════════════════════════════════════════════════════════════════════════
@@ -8007,7 +8217,8 @@ EXAMPLES:
 
         // ReAct Pattern Support
         suggestBroaderParams: suggestBroaderParams,  // Auto-broaden on empty results
-        getEntityAwareAlternatives: getEntityAwareAlternatives,  // Alternative tools based on entity type
+        // NOTE: Alternative tool suggestions now handled by semantic LLM selection
+        // in StreamingAgent.getAlternativeToolsForDiversification()
 
         // Validation & Normalization
         validateAndNormalizeArgs: validateAndNormalizeArgs,  // Validate enums, normalize terms
