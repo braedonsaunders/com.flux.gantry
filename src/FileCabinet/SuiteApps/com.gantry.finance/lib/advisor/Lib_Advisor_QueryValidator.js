@@ -22,7 +22,7 @@ define(['N/log'], function(log) {
     const BLOCKED_TABLES = [
         'loginaudit',
         'role',
-        'rolerecord', 
+        'rolerecord',
         'rolefieldpermission',
         'rolepermission',
         'usernotes',
@@ -35,6 +35,43 @@ define(['N/log'], function(log) {
         'oauthtoken',
         'apitoken'
     ];
+
+    /**
+     * BLOCKED_PATTERNS - Pattern-based security to catch new/unknown sensitive tables
+     * These patterns match table names that are likely security-sensitive even if not
+     * explicitly enumerated in BLOCKED_TABLES. Catches future NetSuite updates.
+     */
+    const BLOCKED_PATTERNS = [
+        { pattern: /password/i, reason: 'Table name contains "password" - likely security-sensitive' },
+        { pattern: /^token/i, reason: 'Table name starts with "token" - likely authentication data' },
+        { pattern: /token$/i, reason: 'Table name ends with "token" - likely authentication data' },
+        { pattern: /oauth/i, reason: 'Table name contains "oauth" - authentication sensitive' },
+        { pattern: /credential/i, reason: 'Table name contains "credential" - security sensitive' },
+        { pattern: /secret/i, reason: 'Table name contains "secret" - security sensitive' },
+        { pattern: /apikey/i, reason: 'Table name contains "apikey" - security sensitive' },
+        { pattern: /^auth/i, reason: 'Table name starts with "auth" - likely authentication data' },
+        { pattern: /permission/i, reason: 'Table name contains "permission" - access control data' },
+        { pattern: /^login/i, reason: 'Table name starts with "login" - authentication audit data' },
+        { pattern: /accesscontrol/i, reason: 'Table name contains "accesscontrol" - security sensitive' },
+        { pattern: /encryption/i, reason: 'Table name contains "encryption" - cryptographic data' },
+        { pattern: /privatekey/i, reason: 'Table name contains "privatekey" - cryptographic data' },
+        { pattern: /certificate/i, reason: 'Table name contains "certificate" - security infrastructure' }
+    ];
+
+    /**
+     * Check if a table matches any blocked pattern
+     * @param {string} tableName - The table name to check
+     * @returns {Object|null} { blocked: true, reason: string } or null if not blocked
+     */
+    function matchesBlockedPattern(tableName) {
+        const normalized = tableName.toLowerCase();
+        for (const { pattern, reason } of BLOCKED_PATTERNS) {
+            if (pattern.test(normalized)) {
+                return { blocked: true, reason: reason };
+            }
+        }
+        return null;
+    }
 
     // DEPRECATED: Dynamic discovery now used via Utils.discoverTableSchema().
     // Tables are now validated dynamically - blocked tables are rejected,
@@ -55,7 +92,7 @@ define(['N/log'], function(log) {
 
     /**
      * Check if a table is allowed for querying
-     * Strategy: Block known-bad, allow everything else (including custom records)
+     * Strategy: Block known-bad (enumerated + pattern-based), allow everything else
      * Dynamic discovery will catch truly invalid tables at query time
      * @param {string} tableName - The table name to check
      * @returns {Object} { allowed: boolean, isCustomRecord?: boolean, reason?: string }
@@ -63,7 +100,7 @@ define(['N/log'], function(log) {
     function isTableAllowed(tableName) {
         const normalized = tableName.toLowerCase();
 
-        // Always block sensitive tables - security boundary
+        // 1. Check enumerated blocked tables first (exact match, fastest)
         if (BLOCKED_TABLES.includes(normalized)) {
             return {
                 allowed: false,
@@ -71,22 +108,36 @@ define(['N/log'], function(log) {
             };
         }
 
-        // Allow all custom records (custrecord_*, customrecord_*)
+        // 2. Allow custom records BEFORE pattern check (custrecord_*, customrecord_*)
+        // Custom records are user-created and safe to query
         if (normalized.startsWith('custrecord') || normalized.startsWith('customrecord')) {
             return { allowed: true, isCustomRecord: true };
         }
 
-        // Allow custom lists (customlist_*)
+        // 3. Allow custom lists (customlist_*)
         if (normalized.startsWith('customlist')) {
             return { allowed: true, isCustomList: true };
         }
 
-        // Allow custom transaction types (customtransaction_*)
+        // 4. Allow custom transaction types (customtransaction_*)
         if (normalized.startsWith('customtransaction')) {
             return { allowed: true, isCustomTransaction: true };
         }
 
-        // All other tables - allow through
+        // 5. Check pattern-based blocking (catches new/unknown sensitive tables)
+        const patternMatch = matchesBlockedPattern(tableName);
+        if (patternMatch) {
+            log.audit('Table blocked by pattern', {
+                table: tableName,
+                reason: patternMatch.reason
+            });
+            return {
+                allowed: false,
+                reason: `Access to table '${tableName}' is not permitted. ${patternMatch.reason}`
+            };
+        }
+
+        // 6. All other tables - allow through
         // Log for monitoring but allow - dynamic discovery will catch invalid tables at query time
         log.debug('Non-standard table queried:', tableName);
         return { allowed: true };
@@ -488,9 +539,11 @@ define(['N/log'], function(log) {
         hasRowLimit: hasRowLimit,
         suggestFix: suggestFix,
         isTableAllowed: isTableAllowed,
+        matchesBlockedPattern: matchesBlockedPattern,
         checkTransactionFilters: checkTransactionFilters,
         // STANDARD_TABLES removed - use dynamic discovery via Utils.discoverTableSchema()
         BLOCKED_TABLES: BLOCKED_TABLES,
+        BLOCKED_PATTERNS: BLOCKED_PATTERNS,
         MAX_ROWS: MAX_ROWS
     };
 });
