@@ -1673,19 +1673,23 @@ define(['N/query', 'N/runtime', 'N/search', 'N/log', './Lib_Core'], function(que
         const hhiCritical = cfg(config, 'hhiCriticalThreshold');
 
         const totalRevenue = customerData.reduce((sum, c) => sum + c.totalRevenue, 0);
-        
+
         // CRITICAL: Sort by revenue descending BEFORE calculating cumulative share
         // Otherwise customersFor80PctRevenue will be wrong
         const sortedData = [...customerData].sort((a, b) => b.totalRevenue - a.totalRevenue);
-        
-        let hhi = 0;
+
+        // Calculate HHI using Core utility (consolidated from duplicate implementations)
+        const hhiScaled = Core.calculateHerfindahlIndex(
+            sortedData.map(c => c.totalRevenue),
+            totalRevenue
+        );
+
         let cumulativeShare = 0;
         let top20PctCount = 0;
 
         const customers = sortedData.map((c, index) => {
             const share = totalRevenue > 0 ? (c.totalRevenue / totalRevenue) : 0;
             const sharePct = share * 100;
-            hhi += share * share;
             cumulativeShare += sharePct;
 
             // Count customers needed for 80% of revenue
@@ -1693,6 +1697,7 @@ define(['N/query', 'N/runtime', 'N/search', 'N/log', './Lib_Core'], function(que
                 top20PctCount = index + 1;
             }
 
+            // Per-customer risk classification (domain-specific logic preserved)
             let concentrationRisk = 'low';
             if (sharePct >= 25) concentrationRisk = 'critical';
             else if (sharePct >= 15) concentrationRisk = 'high';
@@ -1707,12 +1712,8 @@ define(['N/query', 'N/runtime', 'N/search', 'N/log', './Lib_Core'], function(que
             };
         });
 
-        // HHI scale (0-10000)
-        const hhiScaled = Math.round(hhi * 10000);
-        
-        let overallRisk = 'low';
-        if (hhiScaled >= hhiCritical) overallRisk = 'high';
-        else if (hhiScaled >= hhiWarning) overallRisk = 'moderate';
+        // Classify overall risk using Core utility
+        const overallRisk = Core.classifyConcentrationRisk(hhiScaled, hhiWarning, hhiCritical);
 
         // Pareto analysis
         const top10Pct = Math.ceil(customers.length * 0.1);
@@ -2520,9 +2521,7 @@ define(['N/query', 'N/runtime', 'N/search', 'N/log', './Lib_Core'], function(que
         return d.toISOString().split('T')[0];
     }
 
-    function getDefaultEndDate() {
-        return new Date().toISOString().split('T')[0];
-    }
+    // getDefaultEndDate() removed - use Core.getDefaultEndDate() if needed
 
     function percentile(arr, p) {
         if (!arr || arr.length === 0) return 0;

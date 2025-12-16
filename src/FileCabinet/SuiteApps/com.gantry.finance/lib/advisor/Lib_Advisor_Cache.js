@@ -1140,7 +1140,13 @@ define(['N/cache', 'N/log', '../Lib_Dashboard_Registry', './Lib_Advisor_Utils'],
         }
     }
 
-    function calculateTrend(values) {
+    /**
+     * Calculate simple percent change between last two values
+     * (Renamed from calculateTrend for clarity - this is NOT regression, just simple % change)
+     * @param {Array} values - Array of numeric values
+     * @returns {Object} { direction: 'up'|'down'|'stable', change: '+X.X%' }
+     */
+    function calculatePercentChange(values) {
         if (!Array.isArray(values) || values.length < 2) return null;
         const nums = values.filter(v => typeof v === 'number' && !isNaN(v));
         if (nums.length < 2) return null;
@@ -1279,7 +1285,7 @@ define(['N/cache', 'N/log', '../Lib_Dashboard_Registry', './Lib_Advisor_Utils'],
             if (fieldDef.trendPath) {
                 const trendData = getPath(rawData, fieldDef.trendPath);
                 if (Array.isArray(trendData)) {
-                    const trend = calculateTrend(trendData);
+                    const trend = calculatePercentChange(trendData);
                     if (trend) {
                         metric.trend = trend.direction;
                         metric.change = trend.change;

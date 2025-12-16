@@ -5874,10 +5874,8 @@
     // HELPER FUNCTIONS
     // ════════════════════════════════════════════════════════════════════════
     
-    function escapeHtml(str) {
-        if (!str) return '';
-        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-    }
+    // escapeHtml is now provided globally by Gantry.Core.js (window.escapeHtml)
+    // Removed local duplicate - use the global version which includes single-quote escaping
 
     // ════════════════════════════════════════════════════════════════════════
     // EXPORT & ROUTE REGISTRATION

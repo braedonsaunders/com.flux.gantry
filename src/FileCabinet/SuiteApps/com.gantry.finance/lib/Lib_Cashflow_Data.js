@@ -12,35 +12,13 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Core", "./Lib_Config"
 ) {
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // DEBUG LOGGING HELPERS
+  // DEBUG LOGGING HELPERS (consolidated from Lib_Advisor_Utils)
   // ═══════════════════════════════════════════════════════════════════════════
-  
-  // Cache debug mode to avoid repeated config lookups
-  let _debugModeCache = null;
-  let _debugModeCacheTime = 0;
-  const DEBUG_CACHE_TTL = 60000; // 1 minute cache
-  
-  function isDebugMode() {
-      const now = Date.now();
-      if (_debugModeCache === null || (now - _debugModeCacheTime) > DEBUG_CACHE_TTL) {
-          _debugModeCache = Utils.isDebugMode();
-          _debugModeCacheTime = now;
-      }
-      return _debugModeCache;
-  }
-  
-  // Conditional logging - only logs if debug mode is enabled
-  function debugLog(title, details) {
-      if (isDebugMode()) {
-          log.debug(title, details);
-      }
-  }
-  
-  function auditLog(title, details) {
-      if (isDebugMode()) {
-          log.audit(title, details);
-      }
-  }
+
+  // Use shared logging functions from Utils to avoid duplication
+  const isDebugMode = Utils.isDebugMode;
+  const debugLog = Utils.debugLog;
+  const auditLog = Utils.auditLog;
 
   function getData(context) {
     const startTime = Date.now();

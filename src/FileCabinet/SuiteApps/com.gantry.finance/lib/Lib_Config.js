@@ -14,13 +14,20 @@ define(["N/record", "N/search", "N/query", "N/log", "N/runtime", "./Lib_Dashboar
     // Cache for fiscal calendar (avoid repeated lookups)
     let _fiscalCalendarCache = null;
     
+    // ═══════════════════════════════════════════════════════════════════════════
+    // DEBUG LOGGING HELPERS (canonical implementation - other modules use Lib_Advisor_Utils)
+    // Note: Lib_Config cannot import Lib_Advisor_Utils due to circular dependency.
+    // Lib_Advisor_Utils re-exports equivalent functions that call this module's config.
+    // ═══════════════════════════════════════════════════════════════════════════
+
     // Cache for debug mode check
     let _debugModeCache = null;
     let _debugModeCacheTime = 0;
     const DEBUG_CACHE_TTL = 60000; // 1 minute
-    
+
     /**
      * Check if debug mode is enabled (reads from main config)
+     * This is the canonical implementation. Other modules should use Lib_Advisor_Utils.isDebugMode().
      */
     function isDebugMode() {
         const now = Date.now();
@@ -35,14 +42,21 @@ define(["N/record", "N/search", "N/query", "N/log", "N/runtime", "./Lib_Dashboar
         }
         return _debugModeCache;
     }
-    
-    // Conditional logging - only logs if debug mode is enabled
+
+    /**
+     * Conditional debug logging - only logs if debug mode is enabled
+     * Other modules should use Lib_Advisor_Utils.debugLog() for consistency.
+     */
     function debugLog(title, details) {
         if (isDebugMode()) {
             log.debug(title, details);
         }
     }
-    
+
+    /**
+     * Conditional audit logging - only logs if debug mode is enabled
+     * Other modules should use Lib_Advisor_Utils.auditLog() for consistency.
+     */
     function auditLog(title, details) {
         if (isDebugMode()) {
             log.audit(title, details);
