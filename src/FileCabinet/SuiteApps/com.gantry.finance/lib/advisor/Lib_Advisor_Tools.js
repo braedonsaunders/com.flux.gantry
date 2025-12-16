@@ -961,16 +961,28 @@ If no reasonable match, reply: {"param": null, "confidence": 0}`;
     const DISCOVERY_TOOLS = {
         resolve_entity: {
             name: 'resolve_entity',
-            shortDescription: 'Find customer/vendor/employee by name → returns ID',
+            shortDescription: 'Find customer/vendor/employee/project by name/code → returns internal ID',
             category: 'discovery',
-            description: `Find a business entity (customer, vendor, employee, item, project) by name.
-Returns the entity's ID, full name, and type.
-Use this when the user mentions a company name, person name, product, or project.
-Examples: "Oracle", "John Smith", "Widget Pro", "Project Alpha"
+            description: `Find a business entity (customer, vendor, employee, item, project) by name OR CODE.
+Returns the entity's INTERNAL ID, full name, and type.
+
+⚠️ CRITICAL: Tools like get_project_profitability require INTERNAL IDs, not codes!
+- User says "project 0915" → resolve first → get internal ID (e.g., 4567)
+- User says "Acme Corp" → resolve first → get internal ID (e.g., 123)
+
+Use this BEFORE calling any tool that needs entity_id/project_id/customer_id/vendor_id.
+
+Examples:
+- Customer name: "Oracle" → resolve → returns id like 416
+- Vendor name: "Smith & Co" → resolve → returns id like 789
+- Project CODE: "0915" → resolve → returns id like 4567  ← CODES NEED RESOLUTION TOO!
+- Project name: "Phase 1 Build" → resolve → returns id like 4567
+- Item code: "WIDGET-001" → resolve → returns id like 234
 
 IMPORTANT: Use transaction_context to help determine entity type:
 - For bills/payments to vendors → use type: "vendor"
-- For invoices/payments from customers → use type: "customer"`,
+- For invoices/payments from customers → use type: "customer"
+- For project profitability/performance → use type: "project"`,
             parameters: {
                 type: 'object',
                 properties: {
@@ -1302,6 +1314,109 @@ Only specify a specific dimension if you are CERTAIN which type it is.
                 // FIX: Handle case where LLM uses wrong param name (e.g., 'name' instead of 'term')
                 const searchTerm = args.term || args.name || 'unknown';
                 return `Finding classification "${searchTerm}"...`;
+            }
+        },
+
+        // ═══════════════════════════════════════════════════════════════════════════
+        // SEARCH_PROJECTS: Dedicated project search/discovery tool
+        // Returns multiple matches to help identify the right project
+        // ═══════════════════════════════════════════════════════════════════════════
+        search_projects: {
+            name: 'search_projects',
+            shortDescription: 'Search for projects by name/code/status',
+            category: 'discovery',
+            description: `Search for projects matching criteria. Use to:
+- Find projects by partial name or code
+- List active projects
+- Discover project IDs before querying profitability
+
+Returns: id (internal ID), entityid (code), companyname (name), status, parent_customer
+
+Use this when you need to find a project or list available projects.
+The returned 'id' field is the internal ID to use with get_project_profitability.`,
+            parameters: {
+                type: 'object',
+                properties: {
+                    term: {
+                        type: 'string',
+                        description: 'Project name or code to search for (partial match supported)'
+                    },
+                    status: {
+                        type: 'string',
+                        enum: ['active', 'all'],
+                        description: 'Filter by project status (default: all)'
+                    },
+                    customer_id: {
+                        type: 'number',
+                        description: 'Filter by parent customer ID'
+                    },
+                    limit: {
+                        type: 'number',
+                        description: 'Maximum results to return (default: 20)'
+                    }
+                },
+                required: []
+            },
+            execute: function(args) {
+                const limit = Math.min(args.limit || 20, 50);
+                const statusFilter = args.status === 'active' ? "AND j.isinactive = 'F'" : '';
+                const customerFilter = args.customer_id ? `AND j.parent = ${args.customer_id}` : '';
+
+                let searchFilter = '';
+                if (args.term) {
+                    const term = String(args.term).replace(/'/g, "''");
+                    searchFilter = `AND (
+                        LOWER(j.entityid) LIKE LOWER('%${term}%')
+                        OR LOWER(j.companyname) LIKE LOWER('%${term}%')
+                    )`;
+                }
+
+                const query = `
+                    SELECT
+                        j.id,
+                        j.entityid AS project_code,
+                        j.companyname AS project_name,
+                        CASE WHEN j.isinactive = 'T' THEN 'Inactive' ELSE 'Active' END AS status,
+                        j.parent AS parent_customer_id,
+                        BUILTIN.DF(j.parent) AS parent_customer_name,
+                        CASE
+                            WHEN LOWER(j.entityid) = LOWER('${args.term || ''}') THEN 1.00
+                            WHEN LOWER(j.entityid) LIKE LOWER('${args.term || ''}') || '%' THEN 0.90
+                            WHEN LOWER(j.companyname) = LOWER('${args.term || ''}') THEN 0.95
+                            WHEN LOWER(j.companyname) LIKE LOWER('${args.term || ''}') || '%' THEN 0.85
+                            ELSE 0.70
+                        END AS match_score
+                    FROM job j
+                    WHERE 1=1
+                        ${searchFilter}
+                        ${statusFilter}
+                        ${customerFilter}
+                    ORDER BY match_score DESC, j.companyname
+                    FETCH FIRST ${limit} ROWS ONLY
+                `;
+
+                const result = QueryExecutor.executeQuery(query);
+                const formatted = formatResult(result, 'search_projects', { limit: limit });
+
+                if (formatted.success && formatted.rowCount > 0) {
+                    formatted.found = true;
+                    formatted.projects = formatted.rows;
+                    formatted.bestMatch = formatted.rows[0];
+                    // Add helpful usage hint
+                    formatted.hint = 'Use the "id" field as project_id in get_project_profitability';
+                } else {
+                    formatted.found = false;
+                    formatted.message = args.term
+                        ? `No projects found matching "${args.term}"`
+                        : 'No projects found with the specified criteria';
+                }
+
+                return formatted;
+            },
+            displayName: function(args) {
+                return args.term
+                    ? `Searching for project "${args.term}"...`
+                    : 'Listing projects...';
             }
         }
     };
@@ -4852,13 +4967,16 @@ Can filter by account type, department, class, and specific accounts.`,
 Use for: "project profitability", "project P&L", "project margin", "project performance", "which projects are profitable"
 
 Uses ProjectFinancials data to show actuals by project with revenue/cost breakdown.
-Can filter by subsidiary, specific project, or transaction type.`,
+Can filter by subsidiary, specific project, or transaction type.
+
+⚠️ IMPORTANT: If filtering by a specific project, you MUST use resolve_entity first!
+User says "project 0915" → call resolve_entity(name="0915", type="project") → use returned ID here.`,
             parameters: {
                 type: 'object',
                 properties: {
                     project_id: {
                         type: 'number',
-                        description: 'Filter by specific project ID'
+                        description: 'Filter by specific project INTERNAL ID (numeric). ⚠️ If user provides a project code/number (like "0915"), call resolve_entity FIRST to get the internal ID!'
                     },
                     subsidiary_id: {
                         type: 'number',
@@ -4880,6 +4998,31 @@ Can filter by subsidiary, specific project, or transaction type.`,
                 required: []
             },
             execute: function(args) {
+                // ═══════════════════════════════════════════════════════════════════════
+                // VALIDATION: Detect likely unresolved project codes
+                // Project codes like "0915", "PRJ-001" should be resolved first
+                // ═══════════════════════════════════════════════════════════════════════
+                if (args.project_id !== undefined && args.project_id !== null) {
+                    const pid = String(args.project_id);
+                    // Detect if it looks like a code: contains non-numeric chars, or has leading zeros, or is a short string
+                    const looksLikeCode = /[^0-9]/.test(pid) ||
+                                         (pid.length > 1 && pid.startsWith('0')) ||
+                                         (pid.length <= 4 && /^\d+$/.test(pid));
+
+                    if (looksLikeCode) {
+                        return {
+                            success: false,
+                            error: `project_id "${pid}" looks like a project CODE, not an internal ID. ` +
+                                   `Please use resolve_entity(name="${pid}", type="project") first to get the internal ID.`,
+                            hint: 'resolve_entity_required',
+                            suggestedTool: 'resolve_entity',
+                            suggestedArgs: { name: pid, type: 'project' },
+                            rowCount: 0,
+                            tool: 'get_project_profitability'
+                        };
+                    }
+                }
+
                 const limit = Math.min(args.limit || 50, 100);
                 const projectFilter = args.project_id ? `AND pf.PROJECT = ${args.project_id}` : '';
                 const subsidiaryFilter = args.subsidiary_id ? `AND pf.subsidiary = ${args.subsidiary_id}` : '';
