@@ -1448,11 +1448,18 @@ accountingperiod
 
 **SUITEQL SYNTAX RULES (CRITICAL!):**
 
-1. ROW LIMITS: Wrap query in subquery and use ROWNUM (NOT "LIMIT" or "FETCH FIRST"!)
+1. ⚠️ NEVER USE "LIMIT" - IT DOES NOT EXIST IN SUITEQL! ⚠️
+   SuiteQL is Oracle-based. "LIMIT" is MySQL/PostgreSQL syntax and WILL FAIL.
+
+   For row limits, use ROWNUM in outer WHERE clause:
    ✓ SELECT * FROM (SELECT * FROM customer ORDER BY id) WHERE ROWNUM <= 100
-   ✗ SELECT * FROM customer LIMIT 100
-   ✗ SELECT * FROM customer FETCH FIRST 100 ROWS ONLY
-   NOTE: ROWNUM must be in outer WHERE clause because it's evaluated BEFORE ORDER BY
+   ✗ SELECT * FROM customer LIMIT 100  -- SYNTAX ERROR!
+   ✗ SELECT * FROM customer FETCH FIRST 100 ROWS ONLY  -- NOT SUPPORTED!
+   ✗ ... ORDER BY x LIMIT 1  -- SYNTAX ERROR EVEN IN SUBQUERIES!
+
+   For "top 1" in nested subqueries, use ROWNUM:
+   ✓ SELECT * FROM (SELECT * FROM table ORDER BY date DESC) WHERE ROWNUM = 1
+   ✗ SELECT * FROM table ORDER BY date DESC LIMIT 1  -- WILL FAIL!
 
 2. DISPLAY NAMES: Use BUILTIN.DF() for foreign key display values
    ✓ BUILTIN.DF(transaction.entity) AS entity_name
