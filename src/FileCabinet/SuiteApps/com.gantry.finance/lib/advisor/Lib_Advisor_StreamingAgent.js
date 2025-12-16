@@ -1572,6 +1572,17 @@ WRITE YOUR RESPONSE IN MARKDOWN with these special directives:
    Optional Title Here
    :::
 
+   FILTER tables to show specific categories (IMPORTANT for income statements):
+   :::table ref_xxx filter:category=Revenue
+   Revenue Details
+   :::
+   :::table ref_xxx filter:category=Cost of Goods Sold
+   COGS Details
+   :::
+   :::table ref_xxx filter:category=Operating Expenses
+   Operating Expenses Details
+   :::
+
 2. CHARTS - Visualize data:
    :::chart bar ref_xxx
    x_column | y_column | Optional Title
@@ -1759,22 +1770,38 @@ Now write your analysis:`;
 
     /**
      * Parse :::table ref_xxx directive
-     * Format: :::table ref_xxx
+     * Format: :::table ref_xxx [filter:column=value]
      *         Optional Title
      *         :::
+     * Filter syntax: filter:category=Revenue or filter:account_type=Income
      */
     function parseTableDirective(meta, content) {
-        // meta contains the dataRef
-        const dataRef = meta.trim();
+        // meta contains the dataRef and optional filter
+        // Example: "ref_xxx" or "ref_xxx filter:category=Revenue"
+        const metaParts = meta.trim().split(/\s+/);
+        const dataRef = metaParts[0];
+
         if (!dataRef || !dataRef.startsWith('ref_')) {
             log.debug('MDA: invalid table dataRef', { meta });
             return null;
         }
 
+        // Parse optional filter from meta
+        // Format: filter:column=value
+        let filter = null;
+        for (let i = 1; i < metaParts.length; i++) {
+            const filterMatch = metaParts[i].match(/^filter:(\w+)=(.+)$/);
+            if (filterMatch) {
+                filter = filter || {};
+                filter[filterMatch[1]] = filterMatch[2];
+            }
+        }
+
         return {
             type: 'table',
             dataRef: dataRef,
-            title: content.trim() || undefined
+            title: content.trim() || undefined,
+            filter: filter
         };
     }
 
@@ -6801,7 +6828,27 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
                 });
             }
 
+            // ═══════════════════════════════════════════════════════════════════════
+            // FINANCIAL STATEMENT METRICS (for income statements)
+            // These are PROPERLY computed - use these instead of {{data.stats.total}}
+            // ═══════════════════════════════════════════════════════════════════════
+            const computedStats = computeAggregateStats(summary);
+            if (computedStats && computedStats.isIncomeStatement) {
+                section += `\n  💰 FINANCIAL METRICS (use these for P&L metrics - properly computed):\n`;
+                section += `     {{data.stats.revenue:currency}} → ${formatStatValue(computedStats.revenue, 'currency')}\n`;
+                section += `     {{data.stats.cogs:currency}} → ${formatStatValue(computedStats.cogs, 'currency')}\n`;
+                section += `     {{data.stats.gross_profit:currency}} → ${formatStatValue(computedStats.gross_profit, 'currency')} (Revenue - COGS)\n`;
+                section += `     {{data.stats.opex:currency}} → ${formatStatValue(computedStats.opex, 'currency')}\n`;
+                section += `     {{data.stats.net_income:currency}} → ${formatStatValue(computedStats.net_income, 'currency')} (Revenue - COGS - OpEx)\n`;
+                section += `     {{data.stats.gross_margin:percent}} → ${(computedStats.gross_margin * 100).toFixed(1)}%\n`;
+                section += `     {{data.stats.operating_margin:percent}} → ${(computedStats.operating_margin * 100).toFixed(1)}%\n`;
+                section += `\n  ⚠️ INCOME STATEMENT WARNING: {{data.stats.total}} = ${formatStatValue(computedStats.total, 'currency')} is the arithmetic SUM of all rows.\n`;
+                section += `     This is NOT "Net Income" or "Net Total". For meaningful P&L metrics, use the FINANCIAL METRICS above.\n`;
+            }
+
             section += `\n  ⚠️ DO NOT invent tokens. Use ONLY the tokens listed above.\n`;
+            section += `  ⚠️ DO NOT use {{data.rows[N]}} for rows not shown in the sample above - values will show as [N/A].\n`;
+            section += `     Inline actual values from displayed rows instead of guessing row indices.\n`;
             section += `  For table/chart blocks: use dataRef "${ref.refId}"\n`;
 
             sections.push(section);
@@ -6852,7 +6899,7 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
 
         if (!primaryStats) return null;
 
-        return {
+        const result = {
             total: primaryStats.sum,
             average: primaryStats.avg,
             min: primaryStats.min,
@@ -6860,6 +6907,45 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
             count: primaryStats.count,
             column: primaryCol
         };
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // FINANCIAL STATEMENT COMPUTED METRICS
+        // For income statements (Revenue, COGS, OpEx), compute proper financial metrics
+        // {{data.stats.total}} is arithmetic sum - NOT meaningful for P&L!
+        // ═══════════════════════════════════════════════════════════════════════
+        if (summary.categoricalColumns && summary.categoricalColumns.length > 0) {
+            const catCol = summary.categoricalColumns[0];
+            if (catCol.column === 'category' && catCol.distribution) {
+                // Check if this is an income statement (has Revenue, COGS, and/or Operating Expenses)
+                const categories = {};
+                catCol.distribution.forEach(d => {
+                    const key = d.value.toLowerCase().replace(/\s+/g, '_');
+                    categories[key] = d.sum || 0;
+                });
+
+                const hasRevenue = categories['revenue'] !== undefined;
+                const hasCogs = categories['cost_of_goods_sold'] !== undefined;
+                const hasOpex = categories['operating_expenses'] !== undefined;
+
+                // If it looks like an income statement, compute financial metrics
+                if (hasRevenue && (hasCogs || hasOpex)) {
+                    const revenue = categories['revenue'] || 0;
+                    const cogs = categories['cost_of_goods_sold'] || 0;
+                    const opex = categories['operating_expenses'] || 0;
+
+                    result.isIncomeStatement = true;
+                    result.revenue = revenue;
+                    result.cogs = cogs;
+                    result.opex = opex;
+                    result.gross_profit = revenue - cogs;
+                    result.net_income = revenue - cogs - opex;
+                    result.gross_margin = revenue > 0 ? ((revenue - cogs) / revenue) : 0;
+                    result.operating_margin = revenue > 0 ? ((revenue - cogs - opex) / revenue) : 0;
+                }
+            }
+        }
+
+        return result;
     }
 
     /**
@@ -7018,11 +7104,14 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
                     adjustedPath = path;
                 }
 
-                if (!dataRef) return match;
+                if (!dataRef) return '{{UNRESOLVED:' + expr + '}}';
 
-                // Use dataRef.requestId for follow-up queries
-                const data = Cache.loadRows(dataRef.requestId || state.requestId, dataRef.refId, 0, 49);
-                if (!data) return match;
+                // ═══════════════════════════════════════════════════════════════════════
+                // LOAD ALL ROWS for token resolution
+                // LLM might reference any row index - we need complete data access
+                // ═══════════════════════════════════════════════════════════════════════
+                const data = Cache.loadRows(dataRef.requestId || state.requestId, dataRef.refId, 0, 9999);
+                if (!data) return '{{UNRESOLVED:' + expr + '}}';
 
                 const totalRows = data.range?.total || data.rows.length;
 
@@ -7035,22 +7124,25 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
                     // FIXED: Add explicit bounds checking before array access
                     if (!data.rows || !Array.isArray(data.rows)) {
                         log.debug('Token resolution: no rows array', { expr: expr });
-                        return match;
+                        return '{{UNRESOLVED:' + expr + '}}';
                     }
                     if (rowIdx < 0 || rowIdx >= data.rows.length) {
-                        // Out of bounds - graceful degradation with informative fallback
+                        // Out of bounds - mark as UNRESOLVED so it becomes [N/A]
                         log.debug('Token resolution: index out of bounds', {
                             expr: expr,
                             rowIdx: rowIdx,
                             availableRows: data.rows.length,
                             refId: dataRef.refId
                         });
-                        return match; // Keep original token as fallback
+                        return '{{UNRESOLVED:' + expr + '}}';
                     }
                     if (data.rows[rowIdx] === null || data.rows[rowIdx] === undefined) {
-                        return match;
+                        return '{{UNRESOLVED:' + expr + '}}';
                     }
                     const value = data.rows[rowIdx][column];
+                    if (value === null || value === undefined) {
+                        return '{{UNRESOLVED:' + expr + '}}';
+                    }
                     return formatResolvedValue(value, format, column);
                 }
 
@@ -7079,6 +7171,34 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
                         }
                         if (statName === 'max' && computedStats.max !== undefined) {
                             return formatResolvedValue(computedStats.max, format || 'currency', 'max');
+                        }
+
+                        // ═══════════════════════════════════════════════════════════════════════
+                        // FINANCIAL STATEMENT METRICS RESOLUTION
+                        // These are PROPERLY computed: net_income = Revenue - COGS - OpEx
+                        // ═══════════════════════════════════════════════════════════════════════
+                        if (computedStats.isIncomeStatement) {
+                            if (statName === 'net_income') {
+                                return formatResolvedValue(computedStats.net_income, format || 'currency', 'net_income');
+                            }
+                            if (statName === 'gross_profit') {
+                                return formatResolvedValue(computedStats.gross_profit, format || 'currency', 'gross_profit');
+                            }
+                            if (statName === 'revenue') {
+                                return formatResolvedValue(computedStats.revenue, format || 'currency', 'revenue');
+                            }
+                            if (statName === 'cogs') {
+                                return formatResolvedValue(computedStats.cogs, format || 'currency', 'cogs');
+                            }
+                            if (statName === 'opex' || statName === 'operating_expenses') {
+                                return formatResolvedValue(computedStats.opex, format || 'currency', 'opex');
+                            }
+                            if (statName === 'gross_margin') {
+                                return formatResolvedValue(computedStats.gross_margin * 100, format || 'percent', 'gross_margin');
+                            }
+                            if (statName === 'operating_margin' || statName === 'net_margin') {
+                                return formatResolvedValue(computedStats.operating_margin * 100, format || 'percent', 'operating_margin');
+                            }
                         }
                     }
 
@@ -7407,7 +7527,8 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
     /**
      * Build a table block from a dataRef
      * Returns ALL rows - frontend handles pagination (default 25 rows, expandable)
-     * @param {Object} block - Block with dataRef and optional title
+     * Supports optional filter parameter to show only matching rows
+     * @param {Object} block - Block with dataRef, optional title, and optional filter
      * @param {Object} state - Current state with dataReferences
      * @returns {Object|null} Table block or null if dataRef invalid
      */
@@ -7429,24 +7550,50 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
                 return null;
             }
 
+            // ═══════════════════════════════════════════════════════════════════════
+            // FILTER SUPPORT: LLM can specify filter to show only matching rows
+            // Example: { "type": "table", "dataRef": "ref_xyz", "filter": {"category": "Revenue"} }
+            // ═══════════════════════════════════════════════════════════════════════
+            let filteredRows = data.rows;
+            let filterApplied = null;
+            if (block.filter && typeof block.filter === 'object') {
+                filterApplied = block.filter;
+                filteredRows = data.rows.filter(row => {
+                    for (const [col, expectedValue] of Object.entries(block.filter)) {
+                        const rowValue = row[col];
+                        // Support simple equality
+                        if (rowValue !== expectedValue && String(rowValue) !== String(expectedValue)) {
+                            return false;
+                        }
+                    }
+                    return true;
+                });
+                log.debug('buildTableBlockFromRef: filter applied', {
+                    filter: block.filter,
+                    originalRows: data.rows.length,
+                    filteredRows: filteredRows.length
+                });
+            }
+
             const summary = dataRef.summary || {};
             const toolDisplayName = block.title || getToolDisplayName(summary.tool) || 'Results';
             const displayColumns = data.columns.slice(0, 8);
 
-            // Return ALL rows - frontend paginates with default 25, expand for more
+            // Return filtered rows - frontend paginates with default 25, expand for more
             return {
                 type: 'table',
                 title: toolDisplayName,
                 dataRef: dataRef.refId,
-                totalRows: data.rows.length,
+                totalRows: filteredRows.length,
                 headers: displayColumns,
-                rows: data.rows.map(row => {
+                rows: filteredRows.map(row => {
                     return displayColumns.map(col => formatCellValue(row[col], col));
                 }),
                 summary: {
-                    rowCount: data.rows.length,
+                    rowCount: filteredRows.length,
                     columns: data.columns.length,
-                    aggregates: summary.aggregates
+                    aggregates: summary.aggregates,
+                    filterApplied: filterApplied
                 },
                 // Pagination config for frontend
                 pagination: {
