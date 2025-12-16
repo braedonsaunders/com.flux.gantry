@@ -2010,15 +2010,31 @@ Ask yourself these questions:
    - Having "some data" is NOT the same as having "the right data"
 
 ═══════════════════════════════════════════════════════════════════════════════
+CRITICAL: HANDLING "VALID_SEARCH_NO_MATCH" RESULTS
+
+If TOOL SUMMARY shows a tool with status "VALID_SEARCH_NO_MATCH", this means:
+- The query executed SUCCESSFULLY
+- There is simply NO matching data in the system for the user's criteria
+- This IS a valid answer - you should PROCEED and tell the user!
+
+Example: User asks "Show journal entries posted on weekends last month"
+→ Query runs successfully but finds 0 rows
+→ This means: There WERE NO journal entries posted on weekends
+→ CORRECT response: "I searched for journal entries posted on weekends in the last month and found none. This means all journal entries during this period were posted during standard business days."
+
+DO NOT retry, broaden, or give up when you see VALID_SEARCH_NO_MATCH!
+This is useful information that answers the user's question.
+
+═══════════════════════════════════════════════════════════════════════════════
 DECIDE YOUR ACTION:
 
-- PROCEED: You have EXACTLY what's needed. Include the full response blocks (saves a round trip)
+- PROCEED: You have EXACTLY what's needed OR you have a VALID_SEARCH_NO_MATCH result. Include the full response blocks (saves a round trip)
 - LOAD_COLLECTION: A dashboard collection exists with needed detail → load it
-- BROADEN: Retry with broader parameters (expand date range, remove filters)
+- BROADEN: Retry with broader parameters (expand date range, remove filters) - NEVER use for VALID_SEARCH_NO_MATCH
 - DIFFERENT_TOOL: Need a completely different tool
 - SYNTHESIZE: Need custom SQL query (tools don't cover this)
 - CLARIFY: Genuinely ambiguous, need user input
-- GIVE_UP: Exhausted all options
+- GIVE_UP: Exhausted all options (NOT for VALID_SEARCH_NO_MATCH - that's a valid result!)
 
 ═══════════════════════════════════════════════════════════════════════════════
 CHART AXIS RULES:
@@ -6792,38 +6808,55 @@ FIX THE ERROR. Common fixes:
             state.synthesize.queries[state.synthesize.queries.length - 1].success = true;
             state.synthesize.queries[state.synthesize.queries.length - 1].rowCount = queryResult.rowCount;
 
+            // ═══════════════════════════════════════════════════════════════════════
+            // FIX: Record SYNTHESIZE success even with 0 rows
+            // A successful query that returns 0 rows is still a valid answer -
+            // it means the searched-for data doesn't exist, which is useful information!
+            // ═══════════════════════════════════════════════════════════════════════
+
             // Store data reference if we got rows
             if (queryResult.rows && queryResult.rows.length > 0) {
                 const dataRef = Cache.storeData(state.requestId, 'synthesized_query', queryResult);
                 state.dataReferences.push(dataRef);
                 state.reflection.dataFound = true;
+            } else {
+                // Query succeeded but found 0 rows - this is still a valid result!
+                // Mark that we successfully completed our search (just found nothing)
+                state.reflection.searchCompleted = true;
+                state.reflection.zeroRowsReason = `Query executed successfully but found no matching records. This means the searched-for data (${purpose}) does not exist in the system for the specified criteria.`;
 
-                // ═══════════════════════════════════════════════════════════════════════
-                // FIX: Record SYNTHESIZE as a tool invocation so REFLECT sees it
-                // Without this, buildToolSummaryForReflection() returns "No tools executed"
-                // even when SYNTHESIZE successfully found data
-                // ═══════════════════════════════════════════════════════════════════════
-                state.toolInvocations.push({
-                    tool: 'synthesized_query',
-                    args: {
-                        sql: generatedSql.substring(0, 200) + (generatedSql.length > 200 ? '...' : ''),
-                        purpose: purpose
-                    },
-                    success: true,
-                    rowCount: queryResult.rowCount,
-                    failed: false,
-                    resultClass: 'DATA',
-                    synthesized: true,  // Flag to indicate this came from SYNTHESIZE phase
-                    columns: queryResult.columns
-                });
-
-                state.reflection.journey.push({
-                    action: 'synthesize_success',
+                log.debug('SYNTHESIZE - query succeeded with 0 rows', {
                     purpose: purpose,
-                    rowCount: queryResult.rowCount,
-                    iterations: state.synthesize.iterations
+                    sql: generatedSql.substring(0, 200)
                 });
             }
+
+            // ALWAYS record SYNTHESIZE as a tool invocation (even with 0 rows)
+            // so REFLECT and RESPOND can see that we actually executed a query
+            state.toolInvocations.push({
+                tool: 'synthesized_query',
+                args: {
+                    sql: generatedSql.substring(0, 200) + (generatedSql.length > 200 ? '...' : ''),
+                    purpose: purpose
+                },
+                success: true,
+                rowCount: queryResult.rowCount,
+                failed: false,
+                resultClass: queryResult.rowCount > 0 ? 'DATA' : 'NO_MATCH',
+                synthesized: true,  // Flag to indicate this came from SYNTHESIZE phase
+                columns: queryResult.columns,
+                zeroRowsIsValidResult: queryResult.rowCount === 0  // Flag for RESPOND phase
+            });
+
+            state.reflection.journey.push({
+                action: queryResult.rowCount > 0 ? 'synthesize_success' : 'synthesize_no_match',
+                purpose: purpose,
+                rowCount: queryResult.rowCount,
+                iterations: state.synthesize.iterations,
+                message: queryResult.rowCount === 0
+                    ? 'Query executed successfully but found no matching data'
+                    : `Found ${queryResult.rowCount} matching records`
+            });
 
             // Update tool call step with success
             addToolCallStep(state, {
@@ -6985,7 +7018,20 @@ FIX THE ERROR. Common fixes:
         // Add regular tool invocations
         if (state.toolInvocations.length > 0) {
             const toolSummary = state.toolInvocations.map((inv, idx) => {
-                const status = inv.failed ? 'FAILED' : (inv.rowCount > 0 ? 'SUCCESS' : 'NO_DATA');
+                // ═══════════════════════════════════════════════════════════════════════
+                // FIX: Differentiate between "query failed" and "query succeeded with 0 rows"
+                // The latter is a VALID search result that should proceed to response
+                // ═══════════════════════════════════════════════════════════════════════
+                let status;
+                if (inv.failed) {
+                    status = 'FAILED';
+                } else if (inv.rowCount > 0) {
+                    status = 'SUCCESS';
+                } else if (inv.zeroRowsIsValidResult) {
+                    status = 'VALID_SEARCH_NO_MATCH';  // Query worked, just no data exists
+                } else {
+                    status = 'NO_DATA';
+                }
                 const details = [];
 
                 if (inv.args) {
@@ -7007,6 +7053,15 @@ FIX THE ERROR. Common fixes:
                 // Flag synthesized queries
                 if (inv.synthesized) {
                     details.push('Source: SYNTHESIZE phase (custom SQL)');
+                }
+
+                // ═══════════════════════════════════════════════════════════════════════
+                // FIX: Explicitly tell LLM that 0-rows is a valid result to respond with
+                // ═══════════════════════════════════════════════════════════════════════
+                if (inv.zeroRowsIsValidResult) {
+                    details.push('⚠️ VALID SEARCH: Query executed successfully but found NO matching records.');
+                    details.push('→ This is a definitive answer: the searched-for data does not exist.');
+                    details.push('→ You should PROCEED and tell the user no matching data was found.');
                 }
 
                 return `${idx + 1}. ${inv.tool}: ${status} (${inv.rowCount || 0} rows)\n   ${details.join('\n   ')}`;
@@ -7411,6 +7466,44 @@ FIX THE ERROR. Common fixes:
                 ]
             };
             state.phase = PHASES.COMPLETE;
+            return { success: true, nextPhase: PHASES.COMPLETE };
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // FIX: Handle valid 0-row search results
+        // When SYNTHESIZE (or a tool) succeeds but finds no matching data,
+        // this is a VALID ANSWER - not a failure! We should tell the user.
+        // ═══════════════════════════════════════════════════════════════════════
+        if (state.reflection.searchCompleted && state.dataReferences.length === 0) {
+            const duration = Date.now() - phaseStart;
+
+            // Build a helpful response explaining what we searched for and found nothing
+            const zeroRowsResponse = buildZeroRowsSuccessResponse(state);
+
+            state.formattedResponse = {
+                title: zeroRowsResponse.title,
+                summary: zeroRowsResponse.summary,
+                blocks: zeroRowsResponse.blocks
+            };
+            state.phase = PHASES.COMPLETE;
+
+            upsertThinkingStep(state, 'respond', {
+                title: 'Generating response',
+                phase: 'respond',
+                status: 'complete',
+                duration: duration,
+                context: {
+                    validSearch: true,
+                    zeroRows: true,
+                    message: 'Search completed successfully with no matches'
+                }
+            });
+
+            log.debug('SCA RESPOND - valid 0-row search result', {
+                searchCompleted: true,
+                zeroRowsReason: state.reflection.zeroRowsReason
+            });
+
             return { success: true, nextPhase: PHASES.COMPLETE };
         }
 
@@ -8862,6 +8955,99 @@ FIX THE ERROR. Common fixes:
         }
 
         return items.length > 0 ? items : null;
+    }
+
+    /**
+     * Build a helpful response for valid 0-row search results
+     *
+     * This is NOT a failure - the query succeeded but found no matching data.
+     * This is useful information that answers the user's question definitively.
+     *
+     * Example: "Show journal entries posted on weekends"
+     * → Query succeeds with 0 rows
+     * → Response: "I searched for journal entries posted on weekends and found none.
+     *              This means all entries in this period were posted during business days."
+     */
+    function buildZeroRowsSuccessResponse(state) {
+        const question = state.message || 'your question';
+        const zeroRowsReason = state.reflection.zeroRowsReason || '';
+
+        // Find the synthesize query info for context
+        const synthQuery = state.toolInvocations.find(inv =>
+            inv.synthesized && inv.zeroRowsIsValidResult
+        );
+        const purpose = synthQuery?.args?.purpose || 'the requested data';
+
+        // Build a contextual, helpful response
+        let title = 'Search Complete';
+        let summary = 'No matching records were found.';
+
+        // Build explanation based on what we searched for
+        let explanation = `I searched the system for ${purpose.toLowerCase()} and found no matching records.\n\n`;
+
+        // Add interpretation - what does "no data" mean for this question?
+        explanation += '**What this means:**\n';
+        explanation += `Based on your question "${question.substring(0, 100)}${question.length > 100 ? '...' : ''}", `;
+
+        // Provide contextual interpretation based on question patterns
+        const questionLower = question.toLowerCase();
+        if (questionLower.includes('weekend') || questionLower.includes('outside') || questionLower.includes('after hours')) {
+            explanation += 'there are no entries matching these unusual time criteria. ';
+            explanation += 'This typically indicates good compliance with standard business practices.';
+        } else if (questionLower.includes('overdue') || questionLower.includes('past due') || questionLower.includes('late')) {
+            explanation += 'there are no overdue or late items matching your criteria. ';
+            explanation += 'This is generally positive news for your accounts.';
+        } else if (questionLower.includes('error') || questionLower.includes('issue') || questionLower.includes('problem')) {
+            explanation += 'there are no records flagged with the specified issues. ';
+            explanation += 'This suggests the area is in good standing.';
+        } else if (questionLower.includes('increase') || questionLower.includes('decrease') || questionLower.includes('change')) {
+            explanation += 'there were no significant changes matching your criteria. ';
+            explanation += 'The metrics appear stable for the specified period.';
+        } else {
+            explanation += 'no records exist in the system matching the specified criteria. ';
+            explanation += 'This could mean the data hasn\'t been entered, or the conditions simply haven\'t occurred.';
+        }
+
+        explanation += '\n\n';
+
+        // Add helpful suggestions
+        explanation += '**Suggestions:**\n';
+        explanation += '• Try expanding the date range if you specified a time period\n';
+        explanation += '• Check if similar data exists with different filters\n';
+        explanation += '• Verify the entity names or identifiers are correct';
+
+        const blocks = [{
+            type: 'text',
+            content: explanation
+        }];
+
+        // Add what we searched for (journey summary)
+        const journeyItems = [];
+        if (synthQuery) {
+            journeyItems.push(`Executed custom SQL query for: ${purpose}`);
+            journeyItems.push('Query executed successfully with 0 results');
+        }
+
+        // Add any other tool attempts
+        const otherTools = state.toolInvocations.filter(inv => !inv.synthesized);
+        if (otherTools.length > 0) {
+            const toolNames = [...new Set(otherTools.map(t => t.tool))];
+            journeyItems.push(`Also searched using: ${toolNames.join(', ')}`);
+        }
+
+        if (journeyItems.length > 0) {
+            blocks.push({
+                type: 'list',
+                title: 'Search Summary',
+                items: journeyItems
+            });
+        }
+
+        return {
+            title: title,
+            summary: summary,
+            blocks: blocks
+        };
     }
 
     /**
