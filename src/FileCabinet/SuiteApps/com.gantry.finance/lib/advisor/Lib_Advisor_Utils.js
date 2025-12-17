@@ -352,13 +352,17 @@ define(['N/log', 'N/runtime', 'N/record', 'N/query', '../Lib_Config'], function(
                 log.audit('Governance check failed', { remaining, required: requiredUnits });
             } else if (remaining < requiredUnits * 2) {
                 // Warning if we're getting close
-                log.debug('Governance running low', { remaining, required: requiredUnits });
+                if (isDebugMode()) {
+                    log.debug('Governance running low', { remaining, required: requiredUnits });
+                }
             }
             
             return { hasEnough, remaining, warning };
         } catch (e) {
             // If runtime not available (e.g., in testing), assume we have enough
-            log.debug('Could not check governance', { error: e.message });
+            if (isDebugMode()) {
+                log.debug('Could not check governance', { error: e.message });
+            }
             return { hasEnough: true, remaining: 9999, warning: null };
         }
     }
@@ -694,10 +698,12 @@ define(['N/log', 'N/runtime', 'N/record', 'N/query', '../Lib_Config'], function(
 
             const fieldCount = Object.keys(fields).length;
 
-            log.debug('Schema Discovery (SuiteQL)', {
-                tableName: tableName,
-                fieldCount: fieldCount
-            });
+            if (isDebugMode()) {
+                log.debug('Schema Discovery (SuiteQL)', {
+                    tableName: tableName,
+                    fieldCount: fieldCount
+                });
+            }
 
             return {
                 success: true,
@@ -714,10 +720,12 @@ define(['N/log', 'N/runtime', 'N/record', 'N/query', '../Lib_Config'], function(
                 hint: 'This is a SuiteQL table. Use these fields in SuiteQL queries.'
             };
         } catch (e) {
-            log.debug('SuiteQL Schema Discovery Failed', {
-                tableName: tableName,
-                error: e.message
-            });
+            if (isDebugMode()) {
+                log.debug('SuiteQL Schema Discovery Failed', {
+                    tableName: tableName,
+                    error: e.message
+                });
+            }
             return null; // Signal that SuiteQL discovery failed
         }
     }
@@ -845,11 +853,13 @@ define(['N/log', 'N/runtime', 'N/record', 'N/query', '../Lib_Config'], function(
             const fieldCount = Object.keys(schema.fields).length;
             const sublistCount = Object.keys(schema.sublists).length;
 
-            log.debug('Schema Discovery (Record)', {
-                recordType: mappedType,
-                fieldCount: fieldCount,
-                sublistCount: sublistCount
-            });
+            if (isDebugMode()) {
+                log.debug('Schema Discovery (Record)', {
+                    recordType: mappedType,
+                    fieldCount: fieldCount,
+                    sublistCount: sublistCount
+                });
+            }
 
             return {
                 success: true,
@@ -864,10 +874,12 @@ define(['N/log', 'N/runtime', 'N/record', 'N/query', '../Lib_Config'], function(
             // STRATEGY 2: Try SuiteQL for tables that aren't scriptable records
             // (e.g., transaction, transactionline, account, etc.)
             // ═══════════════════════════════════════════════════════════════
-            log.debug('Record creation failed, trying SuiteQL discovery', {
-                recordType: mappedType,
-                error: recordErr.message
-            });
+            if (isDebugMode()) {
+                log.debug('Record creation failed, trying SuiteQL discovery', {
+                    recordType: mappedType,
+                    error: recordErr.message
+                });
+            }
 
             const suiteqlResult = discoverTableSchema(mappedType);
 

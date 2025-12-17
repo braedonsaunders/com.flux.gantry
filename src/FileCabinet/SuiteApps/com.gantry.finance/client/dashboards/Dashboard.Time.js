@@ -4531,6 +4531,5 @@
 
     window.TimeController = TimeController;
     Router.register('time', () => TimeController.init());
-    console.log('[Dashboard.Time] Loaded - Enhanced');
 
 })(window);

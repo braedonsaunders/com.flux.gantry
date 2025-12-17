@@ -1083,13 +1083,13 @@ define(['N/cache', 'N/log', '../Lib_Dashboard_Registry', './Lib_Advisor_Utils'],
             const cached = getCache().get({ key: cacheKey });
             if (cached) {
                 const result = JSON.parse(cached);
-                log.debug('Tool cache HIT', { tool: toolName });
+                Utils.debugLog('Tool cache HIT', { tool: toolName });
                 result._cached = true;
                 result._cacheKey = cacheKey;
                 return result;
             }
         } catch (e) {
-            log.debug('Tool cache miss', { tool: toolName });
+            Utils.debugLog('Tool cache miss', { tool: toolName });
         }
 
         return null;
@@ -1107,12 +1107,12 @@ define(['N/cache', 'N/log', '../Lib_Dashboard_Registry', './Lib_Advisor_Utils'],
                 getCache().put({ key: cacheKey, value: payload, ttl: ttl });
             }
         } catch (e) {
-            log.debug('Failed to cache tool result', { tool: toolName, error: e.message });
+            Utils.debugLog('Failed to cache tool result', { tool: toolName, error: e.message });
         }
     }
 
     function toolClearCache() {
-        log.debug('Tool cache clear requested - results will expire per TTL');
+        Utils.debugLog('Tool cache clear requested - results will expire per TTL');
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -1429,7 +1429,7 @@ define(['N/cache', 'N/log', '../Lib_Dashboard_Registry', './Lib_Advisor_Utils'],
                     memoryCache[baseRefId] = cached;
                 }
             } catch (e) {
-                log.debug('Dashboard cache read failed', { error: e.message });
+                Utils.debugLog('Dashboard cache read failed', { error: e.message });
             }
         }
 

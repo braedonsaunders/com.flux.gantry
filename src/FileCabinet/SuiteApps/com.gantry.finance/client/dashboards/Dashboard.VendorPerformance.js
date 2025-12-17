@@ -1978,7 +1978,5 @@
     
     // Register route
     Router.register('vendorperformance', function() { VendorPerformanceController.init(); });
-    
-    console.log('[Dashboard.VendorPerformance] Procurement 5.2 Audit Fixes + Pagination Loaded');
 
 })(window);

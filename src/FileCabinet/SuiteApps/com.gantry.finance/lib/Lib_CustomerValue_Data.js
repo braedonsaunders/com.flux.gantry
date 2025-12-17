@@ -15,7 +15,7 @@
  * @NApiVersion 2.1
  * @NModuleScope Public
  */
-define(['N/query', 'N/runtime', 'N/search', 'N/log', './Lib_Core'], function(query, runtime, search, log, Core) {
+define(['N/query', 'N/runtime', 'N/search', 'N/log', './Lib_Core', './advisor/Lib_Advisor_Utils'], function(query, runtime, search, log, Core, Utils) {
     'use strict';
 
     // Use core utilities
@@ -541,12 +541,12 @@ define(['N/query', 'N/runtime', 'N/search', 'N/log', './Lib_Core'], function(que
             
             // If ProjectFinancials returns no data, fallback to gl_rollup
             if (!result.customers || result.customers.length === 0) {
-                log.audit('Profitability Fallback', 'ProjectFinancials returned no data, falling back to gl_rollup');
+                Utils.auditLog('Profitability Fallback', 'ProjectFinancials returned no data, falling back to gl_rollup');
                 const fallbackResult = calculateGLRollupProfitability(startDate, endDate, subsidiaryId, config);
-                
+
                 // If gl_rollup also fails, fallback to estimated
                 if (!fallbackResult.customers || fallbackResult.customers.length === 0) {
-                    log.audit('Profitability Fallback', 'GL rollup also returned no data, falling back to estimated margin');
+                    Utils.auditLog('Profitability Fallback', 'GL rollup also returned no data, falling back to estimated margin');
                     const estimatedFallback = calculateEstimatedProfitability(customerData, estimatedMarginPct);
                     estimatedFallback.summary.method = 'estimated_fallback';
                     // Pass through diagnostic from ProjectFinancials attempt
@@ -569,7 +569,7 @@ define(['N/query', 'N/runtime', 'N/search', 'N/log', './Lib_Core'], function(que
         
         // If job cost returns no data, fallback to estimated
         if (!result.customers || result.customers.length === 0) {
-            log.audit('Profitability Fallback', 'GL rollup returned no data, falling back to estimated margin');
+            Utils.auditLog('Profitability Fallback', 'GL rollup returned no data, falling back to estimated margin');
             const fallback = calculateEstimatedProfitability(customerData, estimatedMarginPct);
             fallback.summary.method = 'estimated_fallback';
             return fallback;
@@ -878,9 +878,9 @@ define(['N/query', 'N/runtime', 'N/search', 'N/log', './Lib_Core'], function(que
                 sampleRow: results.length > 0 ? results[0] : null,
                 success: true
             });
-            
-            log.audit('ProjectFinancials Query', 'Returned ' + results.length + ' job rows');
-            
+
+            Utils.auditLog('ProjectFinancials Query', 'Returned ' + results.length + ' job rows');
+
             // Group by customer
             const customerMap = {};
             
@@ -2510,7 +2510,7 @@ define(['N/query', 'N/runtime', 'N/search', 'N/log', './Lib_Core'], function(que
                 };
             }
         } catch (e) {
-            log.debug('Currency lookup failed', e.message);
+            Utils.debugLog('Currency lookup failed', e.message);
         }
         return { symbol: '$', code: 'USD', name: 'US Dollar' };
     }

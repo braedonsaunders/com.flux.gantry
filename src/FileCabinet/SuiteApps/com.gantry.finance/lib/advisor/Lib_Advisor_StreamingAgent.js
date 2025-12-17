@@ -260,18 +260,18 @@ define([
 
         // Premium for complex multi-source analysis
         if (complexity >= 5) {
-            log.debug('AIR: Premium tier for RESPOND', { complexity });
+            Utils.debugLog('AIR: Premium tier for RESPOND', { complexity });
             return TIERS.PREMIUM;
         }
 
         // Balanced for moderate complexity
         if (complexity >= 2) {
-            log.debug('AIR: Balanced tier for RESPOND', { complexity });
+            Utils.debugLog('AIR: Balanced tier for RESPOND', { complexity });
             return TIERS.BALANCED;
         }
 
         // Fast for simple summaries
-        log.debug('AIR: Fast tier for RESPOND', { complexity });
+        Utils.debugLog('AIR: Fast tier for RESPOND', { complexity });
         return TIERS.FAST;
     }
 
@@ -357,7 +357,7 @@ Respond with JSON only: {"category":"...","recoverable":true/false,"suggestion":
                 };
             }
         } catch (classificationError) {
-            log.debug('Semantic error classification failed', { error: classificationError.message });
+            Utils.debugLog('Semantic error classification failed', { error: classificationError.message });
         }
 
         // Fallback if LLM response isn't valid JSON or call failed
@@ -485,7 +485,7 @@ Respond with JSON only: {"category":"...","recoverable":true/false,"suggestion":
                     semanticClassification: true
                 };
             } catch (e) {
-                log.audit('Semantic error classification failed', {
+                Utils.auditLog('Semantic error classification failed', {
                     error: e.message,
                     errorMessage: errorMessage.substring(0, 100)
                 });
@@ -619,7 +619,7 @@ Reply JSON only:
                     }));
             }
         } catch (e) {
-            log.debug('Semantic tool diversification failed, using empty fallback', {
+            Utils.debugLog('Semantic tool diversification failed, using empty fallback', {
                 error: e.message,
                 failedTool: failedTool
             });
@@ -938,7 +938,7 @@ Reply JSON only:
         // ═══════════════════════════════════════════════════════════════════════
         const duplicateCheck = detectDuplicateToolCalls(state);
         if (duplicateCheck.hasDuplicates && duplicateCheck.maxDuplicates >= 2) {
-            log.audit('Circuit breaker: duplicate tool calls detected', {
+            Utils.auditLog('Circuit breaker: duplicate tool calls detected', {
                 duplicates: duplicateCheck.duplicates,
                 maxDuplicates: duplicateCheck.maxDuplicates
             });
@@ -975,7 +975,7 @@ Reply JSON only:
         // If most recent attempts were validation errors, don't trigger circuit breaker
         // The LLM needs a chance to fix its parameter usage
         if (validationFailures.length >= Math.floor(NO_PROGRESS_THRESHOLD / 2)) {
-            log.debug('Circuit breaker skipped: validation errors detected', {
+            Utils.debugLog('Circuit breaker skipped: validation errors detected', {
                 validationFailures: validationFailures.length,
                 actualExecutions: actualExecutions.length
             });
@@ -994,7 +994,7 @@ Reply JSON only:
             // ═══════════════════════════════════════════════════════════════════════
             const failureMode = classifyFailureMode(recentData, state);
 
-            log.debug('Circuit breaker failure mode analysis', {
+            Utils.debugLog('Circuit breaker failure mode analysis', {
                 mode: failureMode.mode,
                 remediation: failureMode.remediation,
                 shouldTrySynthesizeFirst: failureMode.shouldTrySynthesizeFirst
@@ -1052,7 +1052,7 @@ Reply JSON only:
         if (totalRowsRecent > 0 && accumulatedData.length >= 3) {
             const schemaGap = detectSchemaGap(state);
             if (schemaGap.detected) {
-                log.audit('Schema gap circuit breaker triggered', {
+                Utils.auditLog('Schema gap circuit breaker triggered', {
                     gap: schemaGap.gap,
                     suggestion: schemaGap.suggestion,
                     iterations: accumulatedData.length
@@ -1153,7 +1153,7 @@ Reply JSON only:
                 );
 
                 if (!hasRequiredField) {
-                    log.debug('Schema gap detected', {
+                    Utils.debugLog('Schema gap detected', {
                         gap: pattern.gap,
                         question: question.substring(0, 100),
                         availableColumns: Array.from(allColumns).slice(0, 10),
@@ -1432,7 +1432,7 @@ Respond with JSON only:
             const parsed = parseJsonResponse(response?.text);
 
             if (parsed) {
-                log.debug('Tool capability assessment', {
+                Utils.debugLog('Tool capability assessment', {
                     canAnswer: parsed.can_answer_with_tools,
                     recommendation: parsed.recommendation,
                     matchingTools: parsed.matching_tools?.length || 0,
@@ -1451,7 +1451,7 @@ Respond with JSON only:
                 };
             }
         } catch (e) {
-            log.debug('Tool capability assessment failed', { error: e.message });
+            Utils.debugLog('Tool capability assessment failed', { error: e.message });
         }
 
         // Fallback: proceed optimistically
@@ -1525,7 +1525,7 @@ Respond with JSON only:
             const parsed = parseJsonResponse(response?.text);
 
             if (parsed?.corrected_args && parsed.confidence >= 0.7) {
-                log.debug('Agentic parameter correction', {
+                Utils.debugLog('Agentic parameter correction', {
                     tool: toolName,
                     corrections: parsed.corrections_made,
                     confidence: parsed.confidence
@@ -1539,7 +1539,7 @@ Respond with JSON only:
                 };
             }
         } catch (e) {
-            log.debug('Agentic parameter correction failed', { error: e.message });
+            Utils.debugLog('Agentic parameter correction failed', { error: e.message });
         }
 
         return { corrected: false, args: originalArgs, explanation: 'Could not auto-correct' };
@@ -1605,7 +1605,7 @@ Respond with JSON only:
             const parsed = parseJsonResponse(response?.text);
 
             if (parsed) {
-                log.debug('Tool health classification', {
+                Utils.debugLog('Tool health classification', {
                     tool: toolName,
                     errorType: parsed.error_type,
                     isToolBug: parsed.is_tool_bug,
@@ -1622,7 +1622,7 @@ Respond with JSON only:
                 };
             }
         } catch (e) {
-            log.debug('Tool health classification failed', { error: e.message });
+            Utils.debugLog('Tool health classification failed', { error: e.message });
         }
 
         // Fallback: assume recoverable by trying different approach
@@ -1694,7 +1694,7 @@ Respond with JSON only:
             const parsed = parseJsonResponse(response?.text);
 
             if (parsed && parsed.should_decompose && parsed.sub_queries?.length > 0) {
-                log.debug('Query decomposition', {
+                Utils.debugLog('Query decomposition', {
                     shouldDecompose: parsed.should_decompose,
                     subQueryCount: parsed.sub_queries.length,
                     strategy: parsed.combination_strategy
@@ -1708,7 +1708,7 @@ Respond with JSON only:
                 };
             }
         } catch (e) {
-            log.debug('Query decomposition failed', { error: e.message });
+            Utils.debugLog('Query decomposition failed', { error: e.message });
         }
 
         return {
@@ -1779,7 +1779,7 @@ Respond with JSON only:
                 };
             }
         } catch (e) {
-            log.debug('Period validation failed', { error: e.message });
+            Utils.debugLog('Period validation failed', { error: e.message });
         }
 
         // Fallback: assume valid
@@ -1842,7 +1842,7 @@ Respond with JSON only:
                 };
             }
         } catch (e) {
-            log.debug('Tool-query fit assessment failed', { error: e.message });
+            Utils.debugLog('Tool-query fit assessment failed', { error: e.message });
         }
 
         // Fallback: assume it fits
@@ -1915,7 +1915,7 @@ Respond with JSON only:
         // Upgrade tier based on failure patterns
         if (validationErrorCount >= 2) {
             // Multiple validation errors - upgrade for better tool understanding
-            log.debug('Adaptive tier upgrade: validation errors', {
+            Utils.debugLog('Adaptive tier upgrade: validation errors', {
                 baseTier,
                 validationErrorCount,
                 upgradeTo: Math.min(baseTier + 1, TIERS.PREMIUM)
@@ -1925,7 +1925,7 @@ Respond with JSON only:
 
         if (failureCount >= 3) {
             // Multiple failures - upgrade for better reasoning
-            log.debug('Adaptive tier upgrade: repeated failures', {
+            Utils.debugLog('Adaptive tier upgrade: repeated failures', {
                 baseTier,
                 failureCount,
                 upgradeTo: Math.min(baseTier + 1, TIERS.PREMIUM)
@@ -2867,7 +2867,7 @@ Now write your analysis:`;
      */
     function parseMarkdownDirectives(markdown, state) {
         if (!markdown || typeof markdown !== 'string') {
-            log.debug('MDA: empty or invalid markdown input');
+            Utils.debugLog('MDA: empty or invalid markdown input');
             return [];
         }
 
@@ -2901,7 +2901,7 @@ Now write your analysis:`;
                     blocks.push(block);
                 }
             } catch (e) {
-                log.debug('MDA: error parsing directive', {
+                Utils.debugLog('MDA: error parsing directive', {
                     type: directiveType,
                     error: e.message
                 });
@@ -2919,7 +2919,7 @@ Now write your analysis:`;
             });
         }
 
-        log.debug('MDA: parsed markdown into blocks', {
+        Utils.debugLog('MDA: parsed markdown into blocks', {
             inputLength: markdown.length,
             blockCount: blocks.length,
             blockTypes: blocks.map(b => b.type).join(',')
@@ -2964,7 +2964,7 @@ Now write your analysis:`;
         const dataRef = metaParts[0];
 
         if (!dataRef || !dataRef.startsWith('ref_')) {
-            log.debug('MDA: invalid table dataRef', { meta });
+            Utils.debugLog('MDA: invalid table dataRef', { meta });
             return null;
         }
 
@@ -2997,7 +2997,7 @@ Now write your analysis:`;
         // meta format: "bar ref_xxx" or "line ref_xxx" or "pie ref_xxx"
         const metaParts = meta.trim().split(/\s+/);
         if (metaParts.length < 2) {
-            log.debug('MDA: invalid chart meta', { meta });
+            Utils.debugLog('MDA: invalid chart meta', { meta });
             return null;
         }
 
@@ -3005,19 +3005,19 @@ Now write your analysis:`;
         const dataRef = metaParts[1];
 
         if (!['bar', 'line', 'pie'].includes(chartType)) {
-            log.debug('MDA: invalid chart type', { chartType });
+            Utils.debugLog('MDA: invalid chart type', { chartType });
             return null;
         }
 
         if (!dataRef || !dataRef.startsWith('ref_')) {
-            log.debug('MDA: invalid chart dataRef', { dataRef });
+            Utils.debugLog('MDA: invalid chart dataRef', { dataRef });
             return null;
         }
 
         // content format: "x_column | y_column | Optional Title"
         const contentParts = content.split('|').map(s => s.trim());
         if (contentParts.length < 2) {
-            log.debug('MDA: invalid chart content', { content });
+            Utils.debugLog('MDA: invalid chart content', { content });
             return null;
         }
 
@@ -3173,7 +3173,7 @@ Which 2 tools could provide similar data? Reply JSON only:
                     .slice(0, 2);
             }
         } catch (e) {
-            log.debug('Semantic tool fallback failed', {
+            Utils.debugLog('Semantic tool fallback failed', {
                 error: e.message,
                 failedTool: toolName
             });
@@ -3239,7 +3239,7 @@ Which 2 tools could provide similar data? Reply JSON only:
         const schema = dashboard?.dataSchema;
 
         if (!schema) {
-            log.debug('Dashboard Intelligence Bridge', 'No schema for: ' + dashboardId);
+            Utils.debugLog('Dashboard Intelligence Bridge', 'No schema for: ' + dashboardId);
             return null;
         }
 
@@ -3288,7 +3288,7 @@ Which 2 tools could provide similar data? Reply JSON only:
                         inlinedCollections[collectionName] = collectionResult;
                     }
                 } catch (e) {
-                    log.debug('Dashboard Intelligence Bridge', 'Failed to load collection for inline: ' + e.message);
+                    Utils.debugLog('Dashboard Intelligence Bridge', 'Failed to load collection for inline: ' + e.message);
                 }
             }
 
@@ -3430,7 +3430,7 @@ Which 2 tools could provide similar data? Reply JSON only:
         const dashboardData = buildDashboardIntelligenceData(result);
 
         if (!dashboardData) {
-            log.debug('Dashboard Intelligence Bridge', 'Failed to build data for: ' + toolName);
+            Utils.debugLog('Dashboard Intelligence Bridge', 'Failed to build data for: ' + toolName);
             return null;
         }
 
@@ -3451,7 +3451,7 @@ Which 2 tools could provide similar data? Reply JSON only:
             intelligence: dashboardData.intelligence
         });
 
-        log.debug('Dashboard Intelligence Bridge', {
+        Utils.debugLog('Dashboard Intelligence Bridge', {
             action: 'stored_data_reference',
             toolName: toolName,
             dashboardId: dashboardData.dashboardId,
@@ -4047,13 +4047,13 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
                                 suggested_tool: toolCheck.suggested_tool,
                                 reason: toolCheck.reason
                             };
-                            log.debug('SCA Intent - general intent may benefit from tools', {
+                            Utils.debugLog('SCA Intent - general intent may benefit from tools', {
                                 suggestedTool: toolCheck.suggested_tool,
                                 reason: toolCheck.reason
                             });
                         }
                     } catch (toolCheckError) {
-                        log.debug('SCA Intent - tool check failed, defaulting to no tools', {
+                        Utils.debugLog('SCA Intent - tool check failed, defaulting to no tools', {
                             error: toolCheckError.message
                         });
                     }
@@ -4085,13 +4085,13 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
                             debug: buildDebugInfo(prompt, response, state, { parsedIntent: parsed })
                         });
 
-                        log.debug('SCA Intent - general intent routing to REASON_ACT for tool use');
+                        Utils.debugLog('SCA Intent - general intent routing to REASON_ACT for tool use');
                         return { success: true, nextPhase: PHASES.REASON_ACT };
                     }
 
                     // No tools needed - pure conversational response
                     state.phase = PHASES.RESPOND;
-                    log.debug('SCA Intent - general/conversational, skipping to RESPOND');
+                    Utils.debugLog('SCA Intent - general/conversational, skipping to RESPOND');
 
                     upsertThinkingStep(state, 'intent', {
                         title: 'Understanding your question',
@@ -4124,7 +4124,7 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
                 // Store assessment for use in REASON_ACT
                 state.capabilityAssessment = capabilityAssessment;
 
-                log.debug('Pre-flight capability assessment', {
+                Utils.debugLog('Pre-flight capability assessment', {
                     canAnswer: capabilityAssessment.canAnswer,
                     recommendation: capabilityAssessment.recommendation,
                     bestToolCount: capabilityAssessment.bestTools?.length || 0,
@@ -4136,7 +4136,7 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
                     const decomposition = decomposeQuery(state.message, parsed, toolManifest);
                     if (decomposition.shouldDecompose) {
                         state.queryDecomposition = decomposition;
-                        log.debug('Query decomposition planned', {
+                        Utils.debugLog('Query decomposition planned', {
                             subQueryCount: decomposition.subQueries?.length || 0,
                             strategy: decomposition.strategy
                         });
@@ -4176,7 +4176,7 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
                     debug: buildDebugInfo(prompt, response, state, { parsedIntent: parsed })
                 });
 
-                log.debug('SCA Intent phase complete', { intent: parsed.intent, duration: duration });
+                Utils.debugLog('SCA Intent phase complete', { intent: parsed.intent, duration: duration });
                 return { success: true, nextPhase: PHASES.REASON_ACT };
             } else {
                 throw new Error('Failed to parse intent: ' + (response?.text?.substring(0, 100) || 'empty response'));
@@ -4823,7 +4823,7 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
                     suggestion = 'Try a different approach.';
             }
 
-            log.audit('REASON_ACT HARD BLOCK', {
+            Utils.auditLog('REASON_ACT HARD BLOCK', {
                 tool: toolName,
                 args: args,
                 reason: blockCheck.reason,
@@ -4881,7 +4881,7 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
                 );
 
                 if (agenticCorrection.corrected && agenticCorrection.confidence >= 0.7) {
-                    log.audit('AGENTIC AUTO-CORRECTION: Using LLM-corrected args', {
+                    Utils.auditLog('AGENTIC AUTO-CORRECTION: Using LLM-corrected args', {
                         tool: toolName,
                         originalArgs: args,
                         correctedArgs: agenticCorrection.args,
@@ -4925,7 +4925,7 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
                     }
 
                     if (hasCorrectable) {
-                        log.audit('FALLBACK AUTO-CORRECTION: Using pattern-matched args', {
+                        Utils.auditLog('FALLBACK AUTO-CORRECTION: Using pattern-matched args', {
                             tool: toolName,
                             originalArgs: args,
                             correctedArgs: correctedArgs
@@ -4952,7 +4952,7 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
 
                 // If it's a tool bug, mark for potential alerting
                 if (healthClassification.shouldAlert) {
-                    log.audit('TOOL BUG DETECTED', {
+                    Utils.auditLog('TOOL BUG DETECTED', {
                         tool: toolName,
                         errorType: healthClassification.errorType,
                         error: result.error?.substring(0, 200),
@@ -5143,7 +5143,7 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
 
         // Check for max iterations to prevent infinite loops
         if (state.reasonActIterations > MAX_REASON_ACT_ITERATIONS) {
-            log.audit('REASON_ACT max iterations reached', {
+            Utils.auditLog('REASON_ACT max iterations reached', {
                 iterations: state.reasonActIterations,
                 dataCollected: state.accumulatedData?.length || 0
             });
@@ -5170,7 +5170,7 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
         // ═══════════════════════════════════════════════════════════════════════
         const circuitBreaker = checkCircuitBreaker(state);
         if (circuitBreaker.shouldTrigger) {
-            log.audit('REASON_ACT circuit breaker triggered', {
+            Utils.auditLog('REASON_ACT circuit breaker triggered', {
                 reason: circuitBreaker.reason,
                 consecutiveFailures: circuitBreaker.consecutiveFailures,
                 escalationAction: circuitBreaker.escalationAction
@@ -5184,7 +5184,7 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
 
             // RETRY_WITH_HINT: Don't escalate yet - give LLM one more chance with guidance
             if (circuitBreaker.escalationAction === 'RETRY_WITH_HINT' && circuitBreaker.failureMode) {
-                log.audit('REASON_ACT circuit breaker - retry with hint', {
+                Utils.auditLog('REASON_ACT circuit breaker - retry with hint', {
                     failureMode: circuitBreaker.failureMode.mode,
                     remediation: circuitBreaker.failureMode.remediation
                 });
@@ -5214,7 +5214,7 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
             // Don't waste more iterations, we already have the data we need
             // ═══════════════════════════════════════════════════════════════════════
             if (circuitBreaker.escalationAction === 'ANSWER_WITH_EXISTING') {
-                log.audit('REASON_ACT circuit breaker - using existing data (duplicate calls)', {
+                Utils.auditLog('REASON_ACT circuit breaker - using existing data (duplicate calls)', {
                     duplicates: circuitBreaker.duplicateToolCalls ? Object.keys(circuitBreaker.duplicateToolCalls).length : 0,
                     dataCount: state.accumulatedData?.length || 0
                 });
@@ -5284,7 +5284,7 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
         // ═══════════════════════════════════════════════════════════════════════
         const diversification = checkToolDiversificationRequired(state);
         if (diversification.required) {
-            log.audit('REASON_ACT tool diversification required', {
+            Utils.auditLog('REASON_ACT tool diversification required', {
                 reason: diversification.reason,
                 exhaustedTool: diversification.exhaustedTool,
                 suggestions: diversification.suggestions.map(s => s.tool)
@@ -5343,7 +5343,7 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
             const relevantTools = state.capabilityAssessment?.bestTools
                 ?.map(t => t.tool) || null;
             toolListForPrompt = getEnhancedToolListForPrompt(relevantTools);
-            log.debug('Using enhanced tool list for prompt', {
+            Utils.debugLog('Using enhanced tool list for prompt', {
                 reason: hasValidationErrors ? 'validation_errors' : 'multiple_iterations',
                 relevantTools: relevantTools?.length || 'all'
             });
@@ -5379,7 +5379,7 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
             // Upgrade model quality based on failure history for better recovery
             // ═══════════════════════════════════════════════════════════════════════
             const adaptiveTier = getAdaptiveModelTier('reason_act', state);
-            log.debug('REASON_ACT adaptive tier', {
+            Utils.debugLog('REASON_ACT adaptive tier', {
                 baseTier: getTierForPhase('reason_act', state),
                 adaptiveTier: adaptiveTier,
                 iteration: state.reasonActIterations
@@ -5400,7 +5400,7 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
                 throw new Error('Invalid REASON_ACT response - missing action');
             }
 
-            log.debug('REASON_ACT decision', {
+            Utils.debugLog('REASON_ACT decision', {
                 iteration: state.reasonActIterations,
                 action: parsed.action,
                 thinking: parsed.thinking?.substring(0, 100),
@@ -5431,7 +5431,7 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
                     // ═══════════════════════════════════════════════════════════════════════
                     const existingCheck = checkForExistingToolResult(state, toolName, args);
                     if (existingCheck.isDuplicate) {
-                        log.debug('REASON_ACT skipping duplicate tool call', {
+                        Utils.debugLog('REASON_ACT skipping duplicate tool call', {
                             tool: toolName,
                             args: args,
                             existingRowCount: existingCheck.existingResult?.rowCount
@@ -5469,7 +5469,7 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
                         );
 
                         if (!periodValidation.valid) {
-                            log.audit('Period validation failed', {
+                            Utils.auditLog('Period validation failed', {
                                 tool: toolName,
                                 period1: args.period1,
                                 period2: args.period2,
@@ -5486,7 +5486,7 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
                                 if (recommended.period2 && recommended.period2 !== args.period2) {
                                     args = { ...args, period2: recommended.period2 };
                                 }
-                                log.audit('Period auto-corrected', {
+                                Utils.auditLog('Period auto-corrected', {
                                     original: { period1: parsed.args.period1, period2: parsed.args.period2 },
                                     corrected: { period1: args.period1, period2: args.period2 }
                                 });
@@ -5513,7 +5513,7 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
 
                         // Log if fit is poor
                         if (!fitAssessment.fits && fitAssessment.fitScore < 0.5) {
-                            log.debug('Tool-query fit assessment: poor fit', {
+                            Utils.debugLog('Tool-query fit assessment: poor fit', {
                                 tool: toolName,
                                 fitScore: fitAssessment.fitScore,
                                 missingElements: fitAssessment.missingElements,
@@ -5581,7 +5581,7 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
                         throw new Error('GET_DATA_BATCH action requires tools array');
                     }
 
-                    log.debug('REASON_ACT executing batch tools', {
+                    Utils.debugLog('REASON_ACT executing batch tools', {
                         count: parsed.tools.length,
                         tools: parsed.tools.map(t => t.tool)
                     });
@@ -5595,7 +5595,7 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
                         const args = toolSpec.args || {};
 
                         if (!toolName) {
-                            log.audit('GET_DATA_BATCH skipping invalid tool spec', toolSpec);
+                            Utils.auditLog('GET_DATA_BATCH skipping invalid tool spec', toolSpec);
                             continue;
                         }
 
@@ -5605,7 +5605,7 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
                         // ═══════════════════════════════════════════════════════════════════════
                         const existingCheck = checkForExistingToolResult(state, toolName, args);
                         if (existingCheck.isDuplicate) {
-                            log.debug('GET_DATA_BATCH skipping duplicate tool call', {
+                            Utils.debugLog('GET_DATA_BATCH skipping duplicate tool call', {
                                 tool: toolName,
                                 args: args,
                                 existingRowCount: existingCheck.existingResult?.rowCount
@@ -5681,7 +5681,7 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
 
                 case 'ANSWER': {
                     // LLM decided we have enough data - proceed to RESPOND
-                    log.debug('REASON_ACT ready to answer', {
+                    Utils.debugLog('REASON_ACT ready to answer', {
                         iterations: state.reasonActIterations,
                         dataCount: state.accumulatedData?.length || 0,
                         thinking: parsed.thinking
@@ -5707,7 +5707,7 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
 
                 case 'SYNTHESIZE': {
                     // LLM wants to write custom SQL
-                    log.debug('REASON_ACT routing to SYNTHESIZE', {
+                    Utils.debugLog('REASON_ACT routing to SYNTHESIZE', {
                         thinking: parsed.thinking
                     });
 
@@ -5730,7 +5730,7 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
 
                 case 'CLARIFY': {
                     // Need user clarification - store question and go to respond
-                    log.debug('REASON_ACT needs clarification', {
+                    Utils.debugLog('REASON_ACT needs clarification', {
                         question: parsed.clarification_question
                     });
 
@@ -5755,7 +5755,7 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
 
                 default: {
                     // Unknown action - log and proceed to respond
-                    log.audit('REASON_ACT unknown action', { action: parsed.action });
+                    Utils.auditLog('REASON_ACT unknown action', { action: parsed.action });
 
                     upsertThinkingStep(state, 'reason_act', {
                         title: 'Analysis complete',
@@ -5848,7 +5848,7 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
 
                 if (toolCheck && toolCheck.use_tools && toolCheck.suggested_tool) {
                     // Tools would help - continue to normal tool selection with hint
-                    log.debug('SCA SELECT phase - general intent may benefit from tools', {
+                    Utils.debugLog('SCA SELECT phase - general intent may benefit from tools', {
                         suggestedTool: toolCheck.suggested_tool,
                         reason: toolCheck.reason
                     });
@@ -5889,12 +5889,12 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
                         }
                     });
 
-                    log.debug('SCA SELECT phase - general/conversational intent, skipping to RESPOND');
+                    Utils.debugLog('SCA SELECT phase - general/conversational intent, skipping to RESPOND');
                     return { success: true, nextPhase: PHASES.RESPOND };
                 }
             } catch (toolCheckError) {
                 // If tool check fails, default to skipping tools for general intent
-                log.debug('SCA SELECT phase - tool check failed, defaulting to no tools', {
+                Utils.debugLog('SCA SELECT phase - tool check failed, defaulting to no tools', {
                     error: toolCheckError.message
                 });
 
@@ -5937,7 +5937,7 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
 
             if (isDrillDownRequest && hasDashboardData) {
                 // This looks like a drill-down request - let LLM select load_cached_data
-                log.debug('SCA SELECT phase - detected drill-down request, allowing tool selection', {
+                Utils.debugLog('SCA SELECT phase - detected drill-down request, allowing tool selection', {
                     message: state.message.substring(0, 50),
                     hasDashboardData: true,
                     drillDownContext: state.intent.drill_down_context
@@ -5945,7 +5945,7 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
                 // Continue to normal tool selection (don't skip)
             } else {
                 // Simple follow-up - reuse previous data
-                log.debug('SCA SELECT phase - simple follow-up, reusing previous data');
+                Utils.debugLog('SCA SELECT phase - simple follow-up, reusing previous data');
 
                 // Reuse previous data references
                 state.dataReferences = state.previousDataRefs;
@@ -6053,7 +6053,7 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
                         debug: buildDebugInfo(prompt, response, state, { parsedSelection: parsed })
                     });
 
-                    log.debug('SCA Select phase - conversational query, skipping to RESPOND');
+                    Utils.debugLog('SCA Select phase - conversational query, skipping to RESPOND');
                     return { success: true, nextPhase: PHASES.RESPOND };
                 }
 
@@ -6079,7 +6079,7 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
                     debug: buildDebugInfo(prompt, response, state, { parsedSelection: parsed })
                 });
 
-                log.debug('SCA Select phase complete', { tools: state.selectedTools, duration: duration });
+                Utils.debugLog('SCA Select phase complete', { tools: state.selectedTools, duration: duration });
                 return { success: true, nextPhase: PHASES.INVOKE };
             } else {
                 throw new Error('No tools selected from response');
@@ -6172,7 +6172,7 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
                 // Check if tool accepts this parameter AND we haven't already set it
                 if (toolParams[paramName] && !enhanced[paramName]) {
                     enhanced[paramName] = entity.id;
-                    log.debug('Dynamic entity ID injection', {
+                    Utils.debugLog('Dynamic entity ID injection', {
                         toolName,
                         paramName,
                         entityName: entity.name,
@@ -6252,7 +6252,7 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
         if (pluralMap[entityLower] && toolParamNames.includes(pluralMap[entityLower])) {
             // Note: This would need array handling in the injection logic
             // For now, just note its availability but don't add to candidates
-            log.debug('Plural parameter available', { entityType, param: pluralMap[entityLower] });
+            Utils.debugLog('Plural parameter available', { entityType, param: pluralMap[entityLower] });
         }
 
         return candidates;
@@ -6282,7 +6282,7 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
         ];
 
         if (allRefs.length === 0) {
-            log.debug('autoInjectCacheRefId - no refs available');
+            Utils.debugLog('autoInjectCacheRefId - no refs available');
             return args;
         }
 
@@ -6305,7 +6305,7 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
                     const collectionNames = Object.keys(intelligence.collections).map(c => c.toLowerCase());
                     if (collectionNames.includes(collectionNameLower)) {
                         enhanced.ref_id = ref.refId;
-                        log.debug('autoInjectCacheRefId - auto-injected ref_id from collection match', {
+                        Utils.debugLog('autoInjectCacheRefId - auto-injected ref_id from collection match', {
                             collection_name: args.collection_name,
                             ref_id: ref.refId,
                             dashboard: ref.summary?.dashboardName || 'unknown'
@@ -6320,7 +6320,7 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
         const dashboardRefs = allRefs.filter(r => r.refId && r.refId.startsWith('dash_'));
         if (dashboardRefs.length === 1 && !args.collection_name) {
             enhanced.ref_id = dashboardRefs[0].refId;
-            log.debug('autoInjectCacheRefId - auto-injected single dashboard ref_id', {
+            Utils.debugLog('autoInjectCacheRefId - auto-injected single dashboard ref_id', {
                 ref_id: dashboardRefs[0].refId
             });
             return enhanced;
@@ -6329,14 +6329,14 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
         // If there's only one ref total, use it
         if (allRefs.length === 1 && !args.collection_name) {
             enhanced.ref_id = allRefs[0].refId;
-            log.debug('autoInjectCacheRefId - auto-injected single ref_id', {
+            Utils.debugLog('autoInjectCacheRefId - auto-injected single ref_id', {
                 ref_id: allRefs[0].refId
             });
             return enhanced;
         }
 
         // Log warning if we couldn't auto-inject
-        log.debug('autoInjectCacheRefId - could not auto-inject ref_id', {
+        Utils.debugLog('autoInjectCacheRefId - could not auto-inject ref_id', {
             collection_name: args.collection_name || 'not specified',
             availableRefIds: allRefs.map(r => r.refId),
             dashboardCount: dashboardRefs.length
@@ -6456,7 +6456,7 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
             // These MUST be merged into args to actually change the query behavior
             // ═══════════════════════════════════════════════════════════════════════
             if (state.broadenedParams && Object.keys(state.broadenedParams).length > 0) {
-                log.debug('Applying broadened parameters from REFLECT', {
+                Utils.debugLog('Applying broadened parameters from REFLECT', {
                     tool: toolName,
                     originalArgs: args,
                     broadenedParams: state.broadenedParams
@@ -6472,7 +6472,7 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
             // This allows REFLECT to directly specify what collection to load
             // ═══════════════════════════════════════════════════════════════════════
             if (state.pendingToolArgs && Object.keys(state.pendingToolArgs).length > 0) {
-                log.debug('Applying pending tool args from REFLECT', {
+                Utils.debugLog('Applying pending tool args from REFLECT', {
                     tool: toolName,
                     originalArgs: args,
                     pendingArgs: state.pendingToolArgs
@@ -6493,7 +6493,7 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
             if (result) {
                 // Cache hit - use cached result
                 fromCache = true;
-                log.debug('Tool result from cache', { tool: toolName, args: args });
+                Utils.debugLog('Tool result from cache', { tool: toolName, args: args });
             } else {
                 // Cache miss - execute the tool
                 result = Tools.executeTool(toolName, args);
@@ -6518,7 +6518,7 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
                 if (dataRef) {
                     state.dataReferences.push(dataRef);
                     state.reflection.dataFound = true;
-                    log.debug('INVOKE phase - dashboard intelligence stored', {
+                    Utils.debugLog('INVOKE phase - dashboard intelligence stored', {
                         tool: toolName,
                         dashboard: result.dashboard,
                         metricsCount: Object.keys(result.intelligence?.metrics || {}).length,
@@ -6609,7 +6609,7 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
                 })
             });
 
-            log.debug('SCA Invoke phase - tool executed', {
+            Utils.debugLog('SCA Invoke phase - tool executed', {
                 tool: toolName,
                 success: result.success,
                 rowCount: invocation.rowCount,
@@ -6676,7 +6676,7 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
                     const alternativeTool = validAlternatives[0];
                     state.selectedTools.push(alternativeTool);
 
-                    log.debug('SCA Proactive error recovery - trying alternative tool', {
+                    Utils.debugLog('SCA Proactive error recovery - trying alternative tool', {
                         failedTool: toolName,
                         alternativeTool: alternativeTool,
                         error: e.message
@@ -6696,7 +6696,7 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
                     // No alternatives available - store retry suggestion for user
                     const suggestion = buildRetrySuggestion(toolName, e.message);
                     state.errors[state.errors.length - 1].suggestion = suggestion;
-                    log.debug('SCA No alternative tools available', { tool: toolName });
+                    Utils.debugLog('SCA No alternative tools available', { tool: toolName });
                 }
             }
 
@@ -6805,7 +6805,7 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
 
         // Check for infinite loop prevention
         if (state.reflectIterations > MAX_REFLECT_ITERATIONS) {
-            log.audit('SCA REFLECT phase - max iterations reached, proceeding to RESPOND', {
+            Utils.auditLog('SCA REFLECT phase - max iterations reached, proceeding to RESPOND', {
                 iterations: state.reflectIterations
             });
             state.phase = PHASES.RESPOND;
@@ -6829,7 +6829,7 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
         const totalRows = state.toolInvocations.reduce((sum, inv) =>
             sum + (inv.rowCount || 0), 0) + synthesizeRows;
 
-        log.debug('SCA REFLECT phase - evaluating with LLM (always-evaluate mode)', {
+        Utils.debugLog('SCA REFLECT phase - evaluating with LLM (always-evaluate mode)', {
             dataRefs: state.dataReferences.length,
             totalRows: totalRows,
             synthesizeRows: synthesizeRows,
@@ -6890,12 +6890,12 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
                 }
 
                 // Success - break out of retry loop
-                log.debug('SCA REFLECT LLM succeeded', { attempt: attempt });
+                Utils.debugLog('SCA REFLECT LLM succeeded', { attempt: attempt });
                 break;
 
             } catch (e) {
                 lastError = e;
-                log.debug('SCA REFLECT LLM attempt failed', {
+                Utils.debugLog('SCA REFLECT LLM attempt failed', {
                     attempt: attempt,
                     maxAttempts: MAX_LLM_RETRIES,
                     error: e.message
@@ -6951,7 +6951,7 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
                 debug: buildDebugInfo(prompt, null, state, { reflection: parsed })
             });
 
-            log.debug('SCA REFLECT phase complete', {
+            Utils.debugLog('SCA REFLECT phase complete', {
                 action: parsed.action,
                 failureMode: parsed.evaluation?.failure_mode,
                 nextPhase: nextPhase,
@@ -6997,7 +6997,7 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
                 // This saves an entire LLM round trip
                 // ═══════════════════════════════════════════════════════════════════════
                 if (parsed.response && parsed.response.blocks && Array.isArray(parsed.response.blocks)) {
-                    log.debug('SCA REFLECT - PROCEED with inline response (combined mode)', {
+                    Utils.debugLog('SCA REFLECT - PROCEED with inline response (combined mode)', {
                         blockCount: parsed.response.blocks.length
                     });
                     // Store the response blocks for later processing
@@ -7015,7 +7015,7 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
                 // This is the key to making the system truly agentic
                 // ═══════════════════════════════════════════════════════════════════════
                 if (details.collection_name && details.ref_id) {
-                    log.debug('SCA REFLECT - LOAD_COLLECTION', {
+                    Utils.debugLog('SCA REFLECT - LOAD_COLLECTION', {
                         collection: details.collection_name,
                         refId: details.ref_id
                     });
@@ -7037,7 +7037,7 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
                     return PHASES.INVOKE;
                 }
                 // Missing params - proceed to respond with what we have
-                log.debug('SCA REFLECT - LOAD_COLLECTION missing params', { details });
+                Utils.debugLog('SCA REFLECT - LOAD_COLLECTION missing params', { details });
                 state.phase = PHASES.RESPOND;
                 return PHASES.RESPOND;
 
@@ -7046,7 +7046,7 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
                 // DIRECT SYNTHESIZE: LLM wants to write custom SQL
                 // ═══════════════════════════════════════════════════════════════════════
                 if (state.synthesize.enabled && state.synthesize.iterations < MAX_SYNTHESIZE_ITERATIONS) {
-                    log.debug('SCA REFLECT - direct SYNTHESIZE action', {
+                    Utils.debugLog('SCA REFLECT - direct SYNTHESIZE action', {
                         synthesizeIterations: state.synthesize.iterations,
                         reason: parsed.reasoning
                     });
@@ -7070,7 +7070,7 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
 
                 if (state.reflection.broadeningAttempts > 2) {
                     // Too many broadening attempts - give up
-                    log.debug('SCA REFLECT - too many broadening attempts, giving up');
+                    Utils.debugLog('SCA REFLECT - too many broadening attempts, giving up');
                     state.phase = PHASES.RESPOND;
                     return PHASES.RESPOND;
                 }
@@ -7125,7 +7125,7 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
                 // This is the world-class innovation - let LLM write custom queries
                 // ═══════════════════════════════════════════════════════════════════════
                 if (state.synthesize.enabled && state.synthesize.iterations < MAX_SYNTHESIZE_ITERATIONS) {
-                    log.debug('SCA REFLECT - GIVE_UP redirected to SYNTHESIZE', {
+                    Utils.debugLog('SCA REFLECT - GIVE_UP redirected to SYNTHESIZE', {
                         synthesizeIterations: state.synthesize.iterations,
                         reason: details.explanation
                     });
@@ -7148,7 +7148,7 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
 
             default:
                 // Unknown action - proceed to respond
-                log.audit('SCA REFLECT - unknown action', { action: action });
+                Utils.auditLog('SCA REFLECT - unknown action', { action: action });
                 state.phase = PHASES.RESPOND;
                 return PHASES.RESPOND;
         }
@@ -7168,7 +7168,7 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
         const phaseStart = Date.now();
         state.synthesize.iterations++;
 
-        log.debug('SCA SYNTHESIZE phase starting', {
+        Utils.debugLog('SCA SYNTHESIZE phase starting', {
             requestId: state.requestId,
             iteration: state.synthesize.iterations,
             hasLastError: !!state.synthesize.lastError
@@ -7176,7 +7176,7 @@ Reply JSON only: {"use_tools": true/false, "suggested_tool": "tool_name or null"
 
         // Check iteration limit
         if (state.synthesize.iterations > MAX_SYNTHESIZE_ITERATIONS) {
-            log.audit('SCA SYNTHESIZE - max iterations reached', {
+            Utils.auditLog('SCA SYNTHESIZE - max iterations reached', {
                 iterations: state.synthesize.iterations
             });
             state.synthesize.enabled = false;
@@ -7277,7 +7277,7 @@ FIX THE ERROR. Common fixes:
             let generatedSql = parsed.query;
             const purpose = parsed.purpose || 'Custom query';
 
-            log.debug('SCA SYNTHESIZE - generated SQL', {
+            Utils.debugLog('SCA SYNTHESIZE - generated SQL', {
                 sqlPreview: generatedSql.substring(0, 300),
                 purpose: purpose,
                 reasoning: parsed.reasoning?.substring(0, 200)
@@ -7301,7 +7301,7 @@ FIX THE ERROR. Common fixes:
                     preFlightRejected: true
                 });
 
-                log.debug('SCA SYNTHESIZE - pre-flight SQL validation failed', {
+                Utils.debugLog('SCA SYNTHESIZE - pre-flight SQL validation failed', {
                     errors: sqlValidation.errors,
                     suggestions: sqlValidation.suggestions
                 });
@@ -7333,7 +7333,7 @@ FIX THE ERROR. Common fixes:
 
             // Apply auto-corrections if any
             if (sqlValidation.correctedSql) {
-                log.debug('SCA SYNTHESIZE - auto-corrected SQL', {
+                Utils.debugLog('SCA SYNTHESIZE - auto-corrected SQL', {
                     original: generatedSql.substring(0, 100),
                     corrected: sqlValidation.correctedSql.substring(0, 100),
                     corrections: sqlValidation.corrections
@@ -7370,7 +7370,7 @@ FIX THE ERROR. Common fixes:
                 state.synthesize.lastError = errorMsg;
                 state.synthesize.queries[state.synthesize.queries.length - 1].error = errorMsg;
 
-                log.debug('SCA SYNTHESIZE - query failed, will retry', {
+                Utils.debugLog('SCA SYNTHESIZE - query failed, will retry', {
                     error: errorMsg,
                     iteration: state.synthesize.iterations
                 });
@@ -7410,7 +7410,7 @@ FIX THE ERROR. Common fixes:
                     const recordMatch = errorMsg.match(/record\s+['"]?(\w+)['"]?\s+was not found/i);
                     const badTableName = recordMatch ? recordMatch[1].toLowerCase() : 'unknown';
 
-                    log.debug('SCA SYNTHESIZE - record not found error', {
+                    Utils.debugLog('SCA SYNTHESIZE - record not found error', {
                         badTableName: badTableName,
                         error: errorMsg,
                         failedQuery: generatedSql?.substring(0, 200)
@@ -7429,7 +7429,7 @@ FIX THE ERROR. Common fixes:
                         // Add to error context for next iteration
                         state.synthesize.lastError = `${errorMsg}\n\n⚠️ TABLE CORRECTION: "${badTableName}" does not exist! ${correction}`;
 
-                        log.audit('SCA SYNTHESIZE - providing table correction', {
+                        Utils.auditLog('SCA SYNTHESIZE - providing table correction', {
                             badTable: badTableName,
                             correction: correction
                         });
@@ -7464,7 +7464,7 @@ FIX THE ERROR. Common fixes:
                                        errorMsg.match(/table\s+['"]?(\w+)['"]?/i);
                     const tableName = tableMatch ? tableMatch[1].toLowerCase() : 'transaction';
 
-                    log.debug('SCA SYNTHESIZE - field error detected, routing to REASON_ACT for discovery', {
+                    Utils.debugLog('SCA SYNTHESIZE - field error detected, routing to REASON_ACT for discovery', {
                         tableName: tableName,
                         error: errorMsg,
                         failedQuery: generatedSql?.substring(0, 200)
@@ -7518,7 +7518,7 @@ FIX THE ERROR. Common fixes:
                 state.reflection.searchCompleted = true;
                 state.reflection.zeroRowsReason = `Query executed successfully but found no matching records. This means the searched-for data (${purpose}) does not exist in the system for the specified criteria.`;
 
-                log.debug('SYNTHESIZE - query succeeded with 0 rows', {
+                Utils.debugLog('SYNTHESIZE - query succeeded with 0 rows', {
                     purpose: purpose,
                     sql: generatedSql.substring(0, 200)
                 });
@@ -7582,7 +7582,7 @@ FIX THE ERROR. Common fixes:
                 }
             });
 
-            log.debug('SCA SYNTHESIZE - success', {
+            Utils.debugLog('SCA SYNTHESIZE - success', {
                 rowCount: queryResult.rowCount,
                 iterations: state.synthesize.iterations,
                 duration: queryDuration
@@ -7982,7 +7982,7 @@ FIX THE ERROR. Common fixes:
             if (parsed && parsed.alternative_tool && parsed.suggestion !== 'GIVE_UP') {
                 // Verify the tool exists
                 if (Tools.getTool(parsed.alternative_tool)) {
-                    log.debug('SCA LLM-suggested recovery tool', {
+                    Utils.debugLog('SCA LLM-suggested recovery tool', {
                         failed: toolName,
                         suggested: parsed.alternative_tool,
                         reasoning: parsed.reasoning
@@ -7996,7 +7996,7 @@ FIX THE ERROR. Common fixes:
 
             return null;
         } catch (e) {
-            log.debug('SCA LLM recovery failed, falling back to static alternatives', { error: e.message });
+            Utils.debugLog('SCA LLM recovery failed, falling back to static alternatives', { error: e.message });
             return null;
         }
     }
@@ -8081,7 +8081,7 @@ FIX THE ERROR. Common fixes:
         // This saves an entire LLM round trip
         // ═══════════════════════════════════════════════════════════════════════
         if (state.reflectResponse && state.reflectResponse.blocks) {
-            log.debug('SCA RESPOND - using combined mode response from REFLECT', {
+            Utils.debugLog('SCA RESPOND - using combined mode response from REFLECT', {
                 blockCount: state.reflectResponse.blocks.length
             });
 
@@ -8111,11 +8111,11 @@ FIX THE ERROR. Common fixes:
                     }
                 });
 
-                log.debug('SCA RESPOND phase complete (combined mode)', { duration, blockCount: resolved.length });
+                Utils.debugLog('SCA RESPOND phase complete (combined mode)', { duration, blockCount: resolved.length });
                 return { success: true, nextPhase: PHASES.COMPLETE };
             }
             // If resolution failed, fall through to normal RESPOND
-            log.debug('SCA RESPOND - combined mode resolution failed, falling back to normal flow');
+            Utils.debugLog('SCA RESPOND - combined mode resolution failed, falling back to normal flow');
         }
 
         // ═══════════════════════════════════════════════════════════════════════
@@ -8192,7 +8192,7 @@ FIX THE ERROR. Common fixes:
                 }
             });
 
-            log.debug('SCA RESPOND - valid 0-row search result', {
+            Utils.debugLog('SCA RESPOND - valid 0-row search result', {
                 searchCompleted: true,
                 zeroRowsReason: state.reflection.zeroRowsReason
             });
@@ -8273,7 +8273,7 @@ FIX THE ERROR. Common fixes:
 
             rawMarkdown = response?.text || '';
 
-            log.debug('MDA: received markdown response', {
+            Utils.debugLog('MDA: received markdown response', {
                 length: rawMarkdown.length,
                 preview: rawMarkdown.substring(0, 200)
             });
@@ -8297,7 +8297,7 @@ FIX THE ERROR. Common fixes:
                 throw new Error('MDA: no blocks resolved');
             }
 
-            log.debug('MDA: successfully parsed and resolved blocks', {
+            Utils.debugLog('MDA: successfully parsed and resolved blocks', {
                 parsedCount: parsedBlocks.length,
                 resolvedCount: resolved.length,
                 blockTypes: resolved.map(b => b.type).join(',')
@@ -8350,7 +8350,7 @@ FIX THE ERROR. Common fixes:
                 })
             });
 
-            log.debug('MDA Respond phase complete', { duration: duration, blockCount: resolved.length });
+            Utils.debugLog('MDA Respond phase complete', { duration: duration, blockCount: resolved.length });
             return { success: true, nextPhase: PHASES.COMPLETE };
         }
 
@@ -8877,7 +8877,7 @@ FIX THE ERROR. Common fixes:
                     adjustedPath = 'data.' + explicitRefMatch[2];
                     dataRef = state.dataReferences.find(r => r.refId === refId);
                     if (!dataRef) {
-                        log.debug('Token resolution: explicit ref not found', { refId: refId });
+                        Utils.debugLog('Token resolution: explicit ref not found', { refId: refId });
                         return match;
                     }
                 }
@@ -8891,7 +8891,7 @@ FIX THE ERROR. Common fixes:
                         if (refIdx >= 0 && refIdx < state.dataReferences.length) {
                             dataRef = state.dataReferences[refIdx];
                         } else {
-                            log.debug('Token resolution: dataRef index out of bounds', {
+                            Utils.debugLog('Token resolution: dataRef index out of bounds', {
                                 refIdx: refIdx,
                                 available: state.dataReferences.length
                             });
@@ -8942,12 +8942,12 @@ FIX THE ERROR. Common fixes:
 
                     // FIXED: Add explicit bounds checking before array access
                     if (!data.rows || !Array.isArray(data.rows)) {
-                        log.debug('Token resolution: no rows array', { expr: expr });
+                        Utils.debugLog('Token resolution: no rows array', { expr: expr });
                         return '{{UNRESOLVED:' + expr + '}}';
                     }
                     if (rowIdx < 0 || rowIdx >= data.rows.length) {
                         // Out of bounds - mark as UNRESOLVED so it becomes [N/A]
-                        log.debug('Token resolution: index out of bounds', {
+                        Utils.debugLog('Token resolution: index out of bounds', {
                             expr: expr,
                             rowIdx: rowIdx,
                             availableRows: data.rows.length,
@@ -9120,10 +9120,10 @@ FIX THE ERROR. Common fixes:
                 }
 
                 // Token could not be resolved - mark for potential cleanup
-                log.debug('Token resolution: unresolved token', { expr: expr, path: adjustedPath });
+                Utils.debugLog('Token resolution: unresolved token', { expr: expr, path: adjustedPath });
                 return '{{UNRESOLVED:' + expr + '}}';
             } catch (e) {
-                log.debug('Token resolution error', { expr: expr, error: e.message });
+                Utils.debugLog('Token resolution error', { expr: expr, error: e.message });
                 return match;
             }
         });
@@ -9218,7 +9218,7 @@ FIX THE ERROR. Common fixes:
      */
     function resolveBlockSequence(blocks, state) {
         if (!blocks || !Array.isArray(blocks)) {
-            log.debug('resolveBlockSequence: invalid blocks input', { blocks: typeof blocks });
+            Utils.debugLog('resolveBlockSequence: invalid blocks input', { blocks: typeof blocks });
             return [];
         }
 
@@ -9230,7 +9230,7 @@ FIX THE ERROR. Common fixes:
             try {
                 const validatedBlock = validateBlock(block);
                 if (!validatedBlock) {
-                    log.debug('resolveBlockSequence: invalid block skipped', { block: JSON.stringify(block).substring(0, 100) });
+                    Utils.debugLog('resolveBlockSequence: invalid block skipped', { block: JSON.stringify(block).substring(0, 100) });
                     continue;
                 }
 
@@ -9261,7 +9261,7 @@ FIX THE ERROR. Common fixes:
                                     items: validItems
                                 });
                             } else {
-                                log.debug('resolveBlockSequence: all metrics items had unresolved tokens, skipping block');
+                                Utils.debugLog('resolveBlockSequence: all metrics items had unresolved tokens, skipping block');
                             }
                         }
                         break;
@@ -9294,12 +9294,12 @@ FIX THE ERROR. Common fixes:
                                 chartCount++;
                             }
                         } else {
-                            log.debug('resolveBlockSequence: max charts reached, skipping', { chartCount });
+                            Utils.debugLog('resolveBlockSequence: max charts reached, skipping', { chartCount });
                         }
                         break;
 
                     default:
-                        log.debug('resolveBlockSequence: unknown block type', { type: validatedBlock.type });
+                        Utils.debugLog('resolveBlockSequence: unknown block type', { type: validatedBlock.type });
                 }
             } catch (e) {
                 log.error('resolveBlockSequence: error processing block', {
@@ -9369,7 +9369,7 @@ FIX THE ERROR. Common fixes:
     function buildTableBlockFromRef(block, state) {
         const dataRef = findDataRefByRefId(block.dataRef, state);
         if (!dataRef) {
-            log.debug('buildTableBlockFromRef: dataRef not found', { refId: block.dataRef });
+            Utils.debugLog('buildTableBlockFromRef: dataRef not found', { refId: block.dataRef });
             return null;
         }
 
@@ -9380,7 +9380,7 @@ FIX THE ERROR. Common fixes:
             // ═══════════════════════════════════════════════════════════════════════
             const data = Cache.loadRows(dataRef.requestId || state.requestId, dataRef.refId, 0, 9999);
             if (!data || !data.rows || data.rows.length === 0) {
-                log.debug('buildTableBlockFromRef: no data for ref', { refId: block.dataRef });
+                Utils.debugLog('buildTableBlockFromRef: no data for ref', { refId: block.dataRef });
                 return null;
             }
 
@@ -9399,7 +9399,7 @@ FIX THE ERROR. Common fixes:
                 const invalidFilterCols = Object.keys(block.filter).filter(col => !data.columns.includes(col));
 
                 if (invalidFilterCols.length > 0) {
-                    log.debug('buildTableBlockFromRef: filter column(s) not found, skipping filter', {
+                    Utils.debugLog('buildTableBlockFromRef: filter column(s) not found, skipping filter', {
                         invalidCols: invalidFilterCols,
                         availableCols: data.columns
                     });
@@ -9425,7 +9425,7 @@ FIX THE ERROR. Common fixes:
                         }
                         return true;
                     });
-                    log.debug('buildTableBlockFromRef: filter applied', {
+                    Utils.debugLog('buildTableBlockFromRef: filter applied', {
                         filter: validFilter,
                         originalRows: data.rows.length,
                         filteredRows: filteredRows.length
@@ -9482,7 +9482,7 @@ FIX THE ERROR. Common fixes:
     function buildChartBlock(block, state) {
         const dataRef = findDataRefByRefId(block.dataRef, state);
         if (!dataRef) {
-            log.debug('buildChartBlock: dataRef not found', { refId: block.dataRef });
+            Utils.debugLog('buildChartBlock: dataRef not found', { refId: block.dataRef });
             return null;
         }
 
@@ -9490,7 +9490,7 @@ FIX THE ERROR. Common fixes:
             // Load data from cache (limit rows for chart performance)
             const data = Cache.loadRows(dataRef.requestId || state.requestId, dataRef.refId, 0, 49);
             if (!data || !data.rows || data.rows.length === 0) {
-                log.debug('buildChartBlock: no data for ref', { refId: block.dataRef });
+                Utils.debugLog('buildChartBlock: no data for ref', { refId: block.dataRef });
                 return null;
             }
 
@@ -9498,7 +9498,7 @@ FIX THE ERROR. Common fixes:
             const xCol = block.x;
             const yCol = block.y;
             if (!data.columns.includes(xCol) || !data.columns.includes(yCol)) {
-                log.debug('buildChartBlock: invalid columns', {
+                Utils.debugLog('buildChartBlock: invalid columns', {
                     x: xCol,
                     y: yCol,
                     availableColumns: data.columns
@@ -9522,7 +9522,7 @@ FIX THE ERROR. Common fixes:
 
             if (categoricalColumn && categoricalColumn.distribution) {
                 // X-column is categorical - need to aggregate y-values by category
-                log.debug('buildChartBlock: using categorical aggregation', {
+                Utils.debugLog('buildChartBlock: using categorical aggregation', {
                     xCol: xCol,
                     yCol: yCol,
                     categoryCount: categoricalColumn.distribution.length,
@@ -9543,7 +9543,7 @@ FIX THE ERROR. Common fixes:
                     }));
                 } else {
                     // Y-column differs from pre-computed sumColumn - aggregate from raw data
-                    log.debug('buildChartBlock: aggregating different column', {
+                    Utils.debugLog('buildChartBlock: aggregating different column', {
                         requested: yCol,
                         precomputed: categoricalColumn.sumColumn
                     });
@@ -9962,7 +9962,7 @@ Response:`;
                 return response.text.trim();
             }
         } catch (e) {
-            log.debug('Conversational response generation failed', { error: e.message });
+            Utils.debugLog('Conversational response generation failed', { error: e.message });
         }
 
         // Fallback if LLM fails
@@ -10039,7 +10039,7 @@ Response:`;
      */
     function addProgressiveTableBlocks(state) {
         if (!state.dataReferences || state.dataReferences.length === 0) {
-            log.debug('SCA addProgressiveTableBlocks - no data refs', { requestId: state.requestId });
+            Utils.debugLog('SCA addProgressiveTableBlocks - no data refs', { requestId: state.requestId });
             return;
         }
 
@@ -10049,7 +10049,7 @@ Response:`;
                 // Use ref.requestId for follow-up queries
                 const data = Cache.loadRows(ref.requestId || state.requestId, ref.refId, 0, 19);
                 if (!data || !data.rows || data.rows.length === 0) {
-                    log.debug('SCA addProgressiveTableBlocks - no rows for ref', { refId: ref.refId });
+                    Utils.debugLog('SCA addProgressiveTableBlocks - no rows for ref', { refId: ref.refId });
                     return;
                 }
 
@@ -10078,7 +10078,7 @@ Response:`;
                 // Add to progress store for immediate frontend rendering
                 Cache.addBlock(state.requestId, tableBlock);
 
-                log.debug('SCA addProgressiveTableBlocks - added table block', {
+                Utils.debugLog('SCA addProgressiveTableBlocks - added table block', {
                     requestId: state.requestId,
                     refId: ref.refId,
                     rowCount: tableBlock.rows.length,
@@ -10190,7 +10190,7 @@ Reply JSON only: {"tools": ["tool1", "tool2"], "reasoning": "brief explanation"}
                 // Validate suggested tools exist
                 const validTools = parsed.tools.filter(t => toolManifest[t]).slice(0, 2);
                 if (validTools.length > 0) {
-                    log.debug('Semantic intent tool selection', {
+                    Utils.debugLog('Semantic intent tool selection', {
                         intent: intent,
                         selectedTools: validTools,
                         reasoning: parsed.reasoning
@@ -10199,7 +10199,7 @@ Reply JSON only: {"tools": ["tool1", "tool2"], "reasoning": "brief explanation"}
                 }
             }
         } catch (e) {
-            log.debug('Semantic intent tool selection failed', {
+            Utils.debugLog('Semantic intent tool selection failed', {
                 error: e.message,
                 intent: intent
             });
@@ -10377,7 +10377,7 @@ Reply JSON only: {"tools": ["tool1", "tool2"], "reasoning": "brief explanation"}
      * Returns { hasMore: boolean, phase: string } or { hasMore: false, response: object }
      */
     function runStep(state) {
-        log.debug('SCA runStep', {
+        Utils.debugLog('SCA runStep', {
             phase: state.phase,
             iteration: state.iteration,
             analyzeIter: state.analyzeIterations,
@@ -10526,14 +10526,14 @@ Reply JSON only: {"tools": ["tool1", "tool2"], "reasoning": "brief explanation"}
                     ...richContent.slice(insertPosition)
                 ];
 
-                log.debug('Merged progressive table blocks into richContent', {
+                Utils.debugLog('Merged progressive table blocks into richContent', {
                     requestId: state.requestId,
                     tableCount: progressiveTableBlocks.length,
                     totalBlocks: richContent.length
                 });
             }
         } else if (llmPlacedTables) {
-            log.debug('Skipping progressive tables: LLM placed tables explicitly', {
+            Utils.debugLog('Skipping progressive tables: LLM placed tables explicitly', {
                 requestId: state.requestId,
                 llmTableCount: richContent.filter(b => b.type === 'table').length
             });

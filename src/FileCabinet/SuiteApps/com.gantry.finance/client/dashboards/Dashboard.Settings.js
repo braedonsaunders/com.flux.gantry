@@ -267,8 +267,6 @@
                         }
                     }
                 });
-                
-                console.log('[Settings] Merged new dashboards:', missingDashboards);
             }
             
             // Also remove any dashboards that no longer exist in schema
@@ -2137,7 +2135,7 @@
                     this.applySidebarSettings();
                 }
             } catch(e) {
-                console.log("Could not load main config, using defaults");
+                // Could not load main config, using defaults
             }
         }
     };
@@ -2149,7 +2147,5 @@
     window.MainConfigController = SettingsController; // Alias for backwards compatibility
     
     Router.register('settings', () => SettingsController.init());
-    
-    console.log('[Dashboard.Settings] Loaded - SettingsController available');
 
 })(window);

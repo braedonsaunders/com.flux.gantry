@@ -35,10 +35,10 @@ define([
         try {
             // Ensure row limit is present
             const safeSql = QueryValidator.ensureRowLimit(sql, DEFAULT_ROW_LIMIT);
-            
-            log.debug('Executing Query', { 
+
+            Utils.debugLog('Executing Query', {
                 sql: safeSql.substring(0, 500),
-                paramCount: Object.keys(params).length 
+                paramCount: Object.keys(params).length
             });
 
             // Build parameter array (SuiteQL uses positional parameters)
@@ -115,9 +115,9 @@ define([
 
             const executionTime = Date.now() - startTime;
 
-            log.debug('Query Success', { 
-                rowCount: rows.length, 
-                executionTime: executionTime + 'ms' 
+            Utils.debugLog('Query Success', {
+                rowCount: rows.length,
+                executionTime: executionTime + 'ms'
             });
 
             return {
@@ -219,7 +219,7 @@ Respond with JSON only: {"category":"...","recoverable":true/false,"suggestion":
                 };
             }
         } catch (classificationError) {
-            log.debug('Semantic SQL error classification failed', { error: classificationError.message });
+            Utils.debugLog('Semantic SQL error classification failed', { error: classificationError.message });
         }
 
         // Fallback if LLM response isn't valid JSON or call failed
@@ -256,7 +256,7 @@ Respond with JSON only: {"category":"...","recoverable":true/false,"suggestion":
                 const semanticResult = classifySQLErrorSemantically(error.message);
                 return semanticResult.category;
             } catch (e) {
-                log.debug('Semantic SQL classification failed, using fallback', { error: e.message });
+                Utils.debugLog('Semantic SQL classification failed, using fallback', { error: e.message });
             }
         }
 

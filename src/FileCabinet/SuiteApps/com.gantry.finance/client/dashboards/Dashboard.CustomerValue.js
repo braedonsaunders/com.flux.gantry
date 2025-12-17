@@ -2519,6 +2519,4 @@
     Router.register('customervalue', function() {
         CustomerValueController.init();
     });
-
-    console.log('[Dashboard.CustomerValue] Loaded and registered');
 })();

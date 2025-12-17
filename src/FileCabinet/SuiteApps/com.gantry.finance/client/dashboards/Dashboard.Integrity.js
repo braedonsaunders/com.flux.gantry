@@ -2930,6 +2930,5 @@
 
     window.IntegrityController = IntegrityController;
     Router.register('integrity', function() { IntegrityController.init(); });
-    console.log('[Dashboard.Integrity] Next-Level Enterprise Forensic Version Loaded');
 
 })(window);

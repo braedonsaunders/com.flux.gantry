@@ -13,7 +13,7 @@
  * - Capability flags
  * - OpenRouter dynamic model support
  */
-define(['N/log', 'N/https', 'N/cache'], function(log, https, cache) {
+define(['N/log', 'N/https', 'N/cache', './advisor/Lib_Advisor_Utils'], function(log, https, cache, Utils) {
     'use strict';
 
     // Cache for OpenRouter models (5 minute TTL)
@@ -469,7 +469,7 @@ define(['N/log', 'N/https', 'N/cache'], function(log, https, cache) {
      */
     function fetchOpenRouterModels(apiKey) {
         if (!apiKey) {
-            log.debug('No OpenRouter API key provided, returning curated list');
+            Utils.debugLog('No OpenRouter API key provided, returning curated list');
             return getCuratedOpenRouterModels();
         }
         
@@ -485,7 +485,7 @@ define(['N/log', 'N/https', 'N/cache'], function(log, https, cache) {
                 try {
                     return JSON.parse(cached);
                 } catch (e) {
-                    log.debug('Cache parse error, fetching fresh');
+                    Utils.debugLog('Cache parse error, fetching fresh');
                 }
             }
             
@@ -641,7 +641,7 @@ define(['N/log', 'N/https', 'N/cache'], function(log, https, cache) {
      */
     function fetchOpenAIModels(apiKey) {
         if (!apiKey) {
-            log.debug('No OpenAI API key provided, using static registry');
+            Utils.debugLog('No OpenAI API key provided, using static registry');
             return getModelsForProvider('openai');
         }
 
@@ -657,7 +657,7 @@ define(['N/log', 'N/https', 'N/cache'], function(log, https, cache) {
                 try {
                     return JSON.parse(cached);
                 } catch (e) {
-                    log.debug('OpenAI cache parse error, fetching fresh');
+                    Utils.debugLog('OpenAI cache parse error, fetching fresh');
                 }
             }
 
@@ -670,7 +670,7 @@ define(['N/log', 'N/https', 'N/cache'], function(log, https, cache) {
             });
 
             if (response.code !== 200) {
-                log.debug('OpenAI models API error', { code: response.code });
+                Utils.debugLog('OpenAI models API error', { code: response.code });
                 return getModelsForProvider('openai');
             }
 
@@ -734,7 +734,7 @@ define(['N/log', 'N/https', 'N/cache'], function(log, https, cache) {
      */
     function fetchAnthropicModels(apiKey) {
         if (!apiKey) {
-            log.debug('No Anthropic API key provided, using static registry');
+            Utils.debugLog('No Anthropic API key provided, using static registry');
             return getModelsForProvider('anthropic');
         }
 
@@ -750,7 +750,7 @@ define(['N/log', 'N/https', 'N/cache'], function(log, https, cache) {
                 try {
                     return JSON.parse(cached);
                 } catch (e) {
-                    log.debug('Anthropic cache parse error, fetching fresh');
+                    Utils.debugLog('Anthropic cache parse error, fetching fresh');
                 }
             }
 
@@ -765,7 +765,7 @@ define(['N/log', 'N/https', 'N/cache'], function(log, https, cache) {
             });
 
             if (response.code !== 200) {
-                log.debug('Anthropic models API error', { code: response.code });
+                Utils.debugLog('Anthropic models API error', { code: response.code });
                 return getModelsForProvider('anthropic');
             }
 
@@ -815,7 +815,7 @@ define(['N/log', 'N/https', 'N/cache'], function(log, https, cache) {
      */
     function fetchGeminiModels(apiKey) {
         if (!apiKey) {
-            log.debug('No Gemini API key provided, using static registry');
+            Utils.debugLog('No Gemini API key provided, using static registry');
             return getModelsForProvider('gemini');
         }
 
@@ -831,7 +831,7 @@ define(['N/log', 'N/https', 'N/cache'], function(log, https, cache) {
                 try {
                     return JSON.parse(cached);
                 } catch (e) {
-                    log.debug('Gemini cache parse error, fetching fresh');
+                    Utils.debugLog('Gemini cache parse error, fetching fresh');
                 }
             }
 
@@ -844,7 +844,7 @@ define(['N/log', 'N/https', 'N/cache'], function(log, https, cache) {
             });
 
             if (response.code !== 200) {
-                log.debug('Gemini models API error', { code: response.code });
+                Utils.debugLog('Gemini models API error', { code: response.code });
                 return getModelsForProvider('gemini');
             }
 
@@ -921,7 +921,7 @@ define(['N/log', 'N/https', 'N/cache'], function(log, https, cache) {
                     discoveredFromApi: true,
                     settingsLabel: apiModel.name + ' (New)'
                 });
-                log.audit('New model discovered', {
+                Utils.auditLog('New model discovered', {
                     provider: providerId,
                     modelId: apiModel.id
                 });
@@ -1007,7 +1007,7 @@ define(['N/log', 'N/https', 'N/cache'], function(log, https, cache) {
                 modelCache.remove({ key: key });
             }
 
-            log.audit('Model cache cleared', { provider: providerId });
+            Utils.auditLog('Model cache cleared', { provider: providerId });
             return { success: true };
 
         } catch (e) {

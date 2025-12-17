@@ -57,7 +57,7 @@ define([
             Utils.setForceDebugMode(true);
         }
 
-        log.debug('ProcessChatAsync starting', {
+        Utils.debugLog('ProcessChatAsync starting', {
             requestId: requestId,
             messageLength: message.length
         });
@@ -69,7 +69,7 @@ define([
             // Create progress entry
             Cache.create(requestId, message, agentState);
 
-            log.debug('ProcessChatAsync returning immediately', {
+            Utils.debugLog('ProcessChatAsync returning immediately', {
                 requestId: requestId,
                 provider: aiSettings.provider || 'default'
             });
@@ -166,7 +166,7 @@ define([
         // If another poll is already processing, just return current state
         // ═══════════════════════════════════════════════════════════════════════
         if (!Cache.acquireProcessingLock(requestId)) {
-            log.debug('getStatus - another poll is processing, returning current state', {
+            Utils.debugLog('getStatus - another poll is processing, returning current state', {
                 requestId: requestId
             });
             return Cache.getPollingResponse(requestId);
@@ -199,7 +199,7 @@ define([
                 });
             }
 
-            log.debug('getStatus ran step', {
+            Utils.debugLog('getStatus ran step', {
                 requestId: requestId,
                 phase: agentState.phase,
                 hasMore: stepResult.hasMore,

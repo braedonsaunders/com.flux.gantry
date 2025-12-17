@@ -932,7 +932,6 @@
                     if (closedPeriod && closedPeriod.endDate) {
                         // Use latest closed period end date (ensures complete accounting data)
                         endEl.value = closedPeriod.endDate;
-                        console.log('[Health] Using latest closed period end date:', closedPeriod.endDate, '(' + closedPeriod.periodName + ')');
                     } else if (this.fiscalCalendar.fiscalYearEndDate) {
                         // Fallback: use fiscal year end or today, whichever is earlier
                         var fyEnd = new Date(this.fiscalCalendar.fiscalYearEndDate);
@@ -5885,7 +5884,5 @@
     
     // Register route
     Router.register('health', () => HealthController.init());
-    
-    console.log('[Dashboard.Health] Profitability Pulse 2.0 Loaded');
 
 })(window);
