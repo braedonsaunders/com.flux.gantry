@@ -6,8 +6,8 @@
  *              Provides date handling, query helpers, period system, and common operations.
  *              PERIOD SYSTEM: Single source of truth for all date period definitions.
  */
-define(['N/query', 'N/search', 'N/runtime', 'N/format', 'N/log', './Lib_Config'],
-function(query, search, runtime, format, log, ConfigLib) {
+define(['N/query', 'N/search', 'N/runtime', 'N/format', 'N/log', './Lib_Config', './advisor/Lib_Advisor_Utils'],
+function(query, search, runtime, format, log, ConfigLib, Utils) {
     'use strict';
 
     // ==========================================
@@ -704,7 +704,7 @@ function(query, search, runtime, format, log, ConfigLib) {
 
         if (!def) {
             if (period && period !== 'all') {
-                log.audit('getPeriodDates', 'Unknown period "' + period + '", using default "' + defaultPeriod + '"');
+                Utils.auditLog('getPeriodDates', 'Unknown period "' + period + '", using default "' + defaultPeriod + '"');
             }
             const fallbackDef = PERIOD_DEFINITIONS[defaultPeriod] || PERIOD_DEFINITIONS['ytd'];
             const dates = fallbackDef.dates(ctx);
@@ -728,7 +728,7 @@ function(query, search, runtime, format, log, ConfigLib) {
 
         if (!def) {
             if (period && period !== 'all') {
-                log.audit('buildPeriodFilter', 'Unknown period "' + period + '", defaulting to all');
+                Utils.auditLog('buildPeriodFilter', 'Unknown period "' + period + '", defaulting to all');
             }
             return '1=1';
         }
@@ -777,7 +777,7 @@ function(query, search, runtime, format, log, ConfigLib) {
         const def = PERIOD_DEFINITIONS[period];
         if (!def) {
             if (period && period !== 'all') {
-                log.audit('buildAccountingPeriodFilter', 'Unknown period "' + period + '", defaulting to all');
+                Utils.auditLog('buildAccountingPeriodFilter', 'Unknown period "' + period + '", defaulting to all');
             }
             return '1=1';
         }
@@ -1030,7 +1030,7 @@ function(query, search, runtime, format, log, ConfigLib) {
             return runQuery(sql);
         } catch (e) {
             // Not a OneWorld account or error
-            log.debug('getSubsidiaries', 'Not a OneWorld account or error: ' + e.message);
+            Utils.debugLog('getSubsidiaries', 'Not a OneWorld account or error: ' + e.message);
             return [];
         }
     }

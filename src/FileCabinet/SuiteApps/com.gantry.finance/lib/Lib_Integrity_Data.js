@@ -97,10 +97,10 @@ function(query, record, search, runtime, format, Core, Utils) {
             const newStartDt = new Date(endDt);
             newStartDt.setDate(newStartDt.getDate() - maxDays);
             startDate = newStartDt.toISOString().split('T')[0];
-            log.audit('Integrity Analysis', 'Date range capped from ' + daySpan + ' to ' + maxDays + ' days');
+            Utils.auditLog('Integrity Analysis', 'Date range capped from ' + daySpan + ' to ' + maxDays + ' days');
         }
-        
-        log.audit('Integrity Analysis', { startDate, endDate, subsidiaryId, debugMode });
+
+        Utils.auditLog('Integrity Analysis', { startDate, endDate, subsidiaryId, debugMode });
         
         // Diagnostics collector - only populated in debug mode
         const diagnostics = debugMode ? {
@@ -350,7 +350,7 @@ function(query, record, search, runtime, format, Core, Utils) {
                 results.weekendEntries = enrichWithNames(results.weekendEntries || [], 'entityId', 'createdById');
                 results.rsfAnomalies = enrichWithNames(results.rsfAnomalies || [], 'vendorId', 'createdById');
                 results.zScoreAnomalies = enrichWithNames(results.zScoreAnomalies || [], 'vendorId', 'createdById');
-                log.audit('Name Enrichment', { 
+                Utils.auditLog('Name Enrichment', {
                     weekend: results.weekendEntries.length,
                     rsf: results.rsfAnomalies.length,
                     zscore: results.zScoreAnomalies.length
@@ -405,7 +405,7 @@ function(query, record, search, runtime, format, Core, Utils) {
             (results || []).forEach(r => { map[r.id] = r.name; });
             return map;
         } catch (e) {
-            log.debug('Vendor lookup failed', e.message);
+            Utils.debugLog('Vendor lookup failed', e.message);
             return {};
         }
     }
@@ -431,7 +431,7 @@ function(query, record, search, runtime, format, Core, Utils) {
             (results || []).forEach(r => { map[r.id] = r.name; });
             return map;
         } catch (e) {
-            log.debug('User lookup failed', e.message);
+            Utils.debugLog('User lookup failed', e.message);
             return {};
         }
     }
@@ -644,7 +644,7 @@ function(query, record, search, runtime, format, Core, Utils) {
             let txnData = [];
             try {
                 txnData = runSuiteQL(sqlFlagged);
-                log.debug('Benford Flagged Query', { count: (txnData || []).length });
+                Utils.debugLog('Benford Flagged Query', { count: (txnData || []).length });
             } catch (flaggedErr) {
                 log.error('Benford Flagged SQL Error', flaggedErr.message);
             }
@@ -883,8 +883,8 @@ function(query, record, search, runtime, format, Core, Utils) {
         try {
             const weekendResults = runSuiteQL(sql);
             const fetchedCount = weekendResults ? weekendResults.length : 0;
-            log.audit('Weekend Analysis', { 
-                phase: 'fetch', 
+            Utils.auditLog('Weekend Analysis', {
+                phase: 'fetch',
                 fetchedCount: fetchedCount
             });
             
@@ -951,7 +951,7 @@ function(query, record, search, runtime, format, Core, Utils) {
             `;
             
             const dateRangeResults = runSuiteQL(sqlDateRange);
-            log.audit('RSF Analysis', { phase: 'fetch_date_range', count: dateRangeResults ? dateRangeResults.length : 0 });
+            Utils.auditLog('RSF Analysis', { phase: 'fetch_date_range', count: dateRangeResults ? dateRangeResults.length : 0 });
             
             if (!dateRangeResults || dateRangeResults.length === 0) return [];
             
@@ -994,12 +994,12 @@ function(query, record, search, runtime, format, Core, Utils) {
                         }
                     } catch (e) {
                         // Skip this vendor on error
-                        log.debug('RSF vendor query error', { vendorId, error: e.message });
+                        Utils.debugLog('RSF vendor query error', { vendorId, error: e.message });
                     }
                 }
             }
-            
-            log.audit('RSF Analysis', { phase: 'baselines_built', vendorCount: Object.keys(vendorBaselines).length });
+
+            Utils.auditLog('RSF Analysis', { phase: 'baselines_built', vendorCount: Object.keys(vendorBaselines).length });
             
             // Group date range transactions by vendor
             const vendorGroups = {};
@@ -1068,11 +1068,11 @@ function(query, record, search, runtime, format, Core, Utils) {
                     }
                 });
             });
-            
-            log.audit('RSF Analysis', { 
-                phase: 'complete', 
+
+            Utils.auditLog('RSF Analysis', {
+                phase: 'complete',
                 vendorGroups: Object.keys(vendorGroups).length,
-                anomaliesFound: anomalies.length 
+                anomaliesFound: anomalies.length
             });
             
             return anomalies.sort((a, b) => b.rsf - a.rsf).slice(0, 50);
@@ -1110,7 +1110,7 @@ function(query, record, search, runtime, format, Core, Utils) {
             `;
             
             const dateRangeResults = runSuiteQL(sqlDateRange);
-            log.audit('Z-Score Analysis', { phase: 'fetch_date_range', count: dateRangeResults ? dateRangeResults.length : 0 });
+            Utils.auditLog('Z-Score Analysis', { phase: 'fetch_date_range', count: dateRangeResults ? dateRangeResults.length : 0 });
             
             if (!dateRangeResults || dateRangeResults.length < 5) return [];
             
@@ -1169,11 +1169,11 @@ function(query, record, search, runtime, format, Core, Utils) {
                         }
                     });
                 } catch (e) {
-                    log.debug('Z-Score batch query error', { batch: i, error: e.message });
+                    Utils.debugLog('Z-Score batch query error', { batch: i, error: e.message });
                 }
             }
-            
-            log.audit('Z-Score Analysis', { phase: 'baselines_built', vendorCount: Object.keys(vendorBaselines).length });
+
+            Utils.auditLog('Z-Score Analysis', { phase: 'baselines_built', vendorCount: Object.keys(vendorBaselines).length });
             
             // Group date range transactions by vendor
             const vendorGroups = {};
@@ -1238,7 +1238,7 @@ function(query, record, search, runtime, format, Core, Utils) {
                 });
             });
             
-            log.audit('Z-Score Analysis', { phase: 'complete', vendorGroups: Object.keys(vendorGroups).length, anomaliesFound: zScoreAnomalies.length });
+            Utils.auditLog('Z-Score Analysis', { phase: 'complete', vendorGroups: Object.keys(vendorGroups).length, anomaliesFound: zScoreAnomalies.length });
             return zScoreAnomalies.sort((a, b) => b.riskScore - a.riskScore).slice(0, 100);
         } catch (e) {
             log.error('Z-Score Error', { message: e.message, name: e.name });
@@ -1614,7 +1614,7 @@ function(query, record, search, runtime, format, Core, Utils) {
                 const newStart = new Date(end);
                 newStart.setDate(newStart.getDate() - maxDays);
                 startDate = newStart.toISOString().split('T')[0];
-                log.audit('Audit Trail', 'Date range capped from ' + daySpan + ' to ' + maxDays + ' days');
+                Utils.auditLog('Audit Trail', 'Date range capped from ' + daySpan + ' to ' + maxDays + ' days');
             }
             
             // PHASE 1: Quick scan to identify high-risk records (fast - just gets record IDs)
@@ -1643,7 +1643,7 @@ function(query, record, search, runtime, format, Core, Utils) {
                 log.error('Audit Trail Phase 1 SQL Error', { error: sqlErr.message });
             }
             const phase1Time = Date.now() - startTime;
-            log.audit('Audit Trail Phase 1', { count: phase1Results ? phase1Results.length : 0, ms: phase1Time });
+            Utils.auditLog('Audit Trail Phase 1', { count: phase1Results ? phase1Results.length : 0, ms: phase1Time });
             
             // Collect high-risk record identifiers (use object for compatibility)
             // Store both recordid (for queries) and record (display name for UI)
@@ -1717,7 +1717,7 @@ function(query, record, search, runtime, format, Core, Utils) {
             }
             
             const phase3Time = Date.now() - phase3Start;
-            log.audit('Audit Trail Phase 3', { rawCount: rawResults ? rawResults.length : 0, ms: phase3Time });
+            Utils.auditLog('Audit Trail Phase 3', { rawCount: rawResults ? rawResults.length : 0, ms: phase3Time });
             
             // Aggregate in JavaScript - use recordid as key
             const recordAggregates = {};
@@ -1868,7 +1868,7 @@ function(query, record, search, runtime, format, Core, Utils) {
             });
             
             const queryTime = Date.now() - startTime;
-            log.audit('Audit Trail Complete', { records: allRecords.length, totalChanges: totalChanges, ms: queryTime });
+            Utils.auditLog('Audit Trail Complete', { records: allRecords.length, totalChanges: totalChanges, ms: queryTime });
             
             // Calculate metrics
             const highRiskRecordsList = allRecords.filter(r => r.riskScore >= 70);
@@ -1916,17 +1916,17 @@ function(query, record, search, runtime, format, Core, Utils) {
      */
     function getAuditRecordDetail(recordId, startDate, endDate) {
         // Log everything immediately
-        log.audit('getAuditRecordDetail CALLED', {
+        Utils.auditLog('getAuditRecordDetail CALLED', {
             recordId: recordId,
             recordIdType: typeof recordId,
             startDate: startDate,
             endDate: endDate
         });
-        
+
         try {
             // Super simple validation
             if (!recordId) {
-                log.audit('getAuditRecordDetail', 'No recordId provided');
+                Utils.auditLog('getAuditRecordDetail', 'No recordId provided');
                 return { 
                     success: true,
                     changes: [], 
@@ -1940,7 +1940,7 @@ function(query, record, search, runtime, format, Core, Utils) {
             // Convert to number - simple approach
             var numericId = parseInt(recordId, 10);
             if (!numericId || numericId <= 0) {
-                log.audit('getAuditRecordDetail', 'Invalid recordId: ' + recordId);
+                Utils.auditLog('getAuditRecordDetail', 'Invalid recordId: ' + recordId);
                 return { 
                     success: true,
                     changes: [], 
@@ -1962,7 +1962,7 @@ function(query, record, search, runtime, format, Core, Utils) {
                 startDate = thirtyAgo.toISOString().split('T')[0];
             }
             
-            log.audit('getAuditRecordDetail params', { numericId: numericId, startDate: startDate, endDate: endDate });
+            Utils.auditLog('getAuditRecordDetail params', { numericId: numericId, startDate: startDate, endDate: endDate });
             
             // Query with user name lookup built-in via BUILTIN.DF
             var sql = "SELECT id, record AS record_name, date AS note_date, name AS user_id, " +
@@ -1974,13 +1974,13 @@ function(query, record, search, runtime, format, Core, Utils) {
                       "AND date < TO_DATE('" + endDate + "', 'YYYY-MM-DD') + 1 " +
                       "ORDER BY date DESC " +
                       "FETCH FIRST 500 ROWS ONLY";
-            
-            log.audit('getAuditRecordDetail SQL', sql);
-            
+
+            Utils.auditLog('getAuditRecordDetail SQL', sql);
+
             var results = null;
             try {
                 results = runSuiteQL(sql);
-                log.audit('getAuditRecordDetail results', { count: results ? results.length : 0 });
+                Utils.auditLog('getAuditRecordDetail results', { count: results ? results.length : 0 });
             } catch (sqlErr) {
                 log.error('getAuditRecordDetail SQL Error', sqlErr.message);
                 return { 
@@ -2065,7 +2065,7 @@ function(query, record, search, runtime, format, Core, Utils) {
             
             var uniqueUserCount = Object.keys(userMap).length;
             
-            log.audit('getAuditRecordDetail SUCCESS', { changesCount: changes.length });
+            Utils.auditLog('getAuditRecordDetail SUCCESS', { changesCount: changes.length });
             
             return {
                 success: true,

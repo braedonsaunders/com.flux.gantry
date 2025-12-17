@@ -152,7 +152,7 @@ define([
             const schema = Utils.getRecordSchema ? Utils.getRecordSchema(recordType) : null;
 
             if (!schema || !schema.fields) {
-                log.debug('Could not get schema for record type', { recordType: recordType });
+                Utils.debugLog('Could not get schema for record type', { recordType: recordType });
                 return null;
             }
 
@@ -174,14 +174,14 @@ define([
                 context.cache.set(cacheKey, config, 3600); // 1 hour TTL
             }
 
-            log.debug('Dynamically discovered entity config', {
+            Utils.debugLog('Dynamically discovered entity config', {
                 recordType: recordType,
                 config: config
             });
 
             return config;
         } catch (error) {
-            log.debug('Could not discover entity config', {
+            Utils.debugLog('Could not discover entity config', {
                 recordType: recordType,
                 error: error.message || error
             });
@@ -205,7 +205,7 @@ define([
         const dynamicConfig = discoverEntityConfig(entityType, context);
 
         if (dynamicConfig) {
-            log.debug('Using dynamically discovered entity config', { entityType: entityType });
+            Utils.debugLog('Using dynamically discovered entity config', { entityType: entityType });
             return dynamicConfig;
         }
 
@@ -242,7 +242,7 @@ define([
                 return records;
             }
         } catch (error) {
-            log.debug('Could not discover custom entity records', {
+            Utils.debugLog('Could not discover custom entity records', {
                 error: error.message || error
             });
         }
@@ -319,7 +319,7 @@ define([
                 }
             }
         } catch (e) {
-            log.debug('Entity search failed', { type: entityType, table: config.table, error: e.message });
+            Utils.debugLog('Entity search failed', { type: entityType, table: config.table, error: e.message });
         }
 
         return candidates;
@@ -353,11 +353,11 @@ define([
                     }
                 } catch (e) {
                     // Skip custom records that fail - continue with others
-                    log.debug('Skipping custom record in auto search', { type: customType, error: e.message });
+                    Utils.debugLog('Skipping custom record in auto search', { type: customType, error: e.message });
                 }
             }
         } catch (e) {
-            log.debug('Custom record discovery failed in auto mode', { error: e.message });
+            Utils.debugLog('Custom record discovery failed in auto mode', { error: e.message });
         }
 
         return allCandidates;
@@ -418,7 +418,7 @@ define([
 
             // If no results for specific type, fall back to auto mode
             if (allCandidates.length === 0) {
-                log.debug('No results for specific type, falling back to auto', { type: type });
+                Utils.debugLog('No results for specific type, falling back to auto', { type: type });
                 allCandidates = resolveEntityAuto(term, preferredType, context);
             }
         }
@@ -450,7 +450,7 @@ define([
 
             if (filteredCandidates.length === 0) {
                 // No high-confidence matches for short term
-                log.debug('Short term requires high confidence', {
+                Utils.debugLog('Short term requires high confidence', {
                     term: term,
                     termLength: termLength,
                     candidates: allCandidates.length,
@@ -491,7 +491,7 @@ define([
         const isAmbiguous = detectAmbiguity(filteredCandidates, best.score);
 
         if (isAmbiguous.ambiguous) {
-            log.debug('Ambiguous entity match detected', {
+            Utils.debugLog('Ambiguous entity match detected', {
                 term: term,
                 topMatches: isAmbiguous.topMatches.map(m => `${m.name}(${m.score})`)
             });
@@ -575,7 +575,7 @@ define([
      */
     function executeEntityResolution(args) {
         if (!args || !args.term || typeof args.term !== 'string') {
-            log.debug('executeEntityResolution called with invalid args', { args: args });
+            Utils.debugLog('executeEntityResolution called with invalid args', { args: args });
             return {
                 success: false,
                 error: 'Invalid entity resolution request - missing term'
@@ -660,7 +660,7 @@ define([
                 }));
             }
         } catch (e) {
-            log.debug('getEntitiesOfType failed', { type: entityType, error: e.message });
+            Utils.debugLog('getEntitiesOfType failed', { type: entityType, error: e.message });
         }
 
         return [];

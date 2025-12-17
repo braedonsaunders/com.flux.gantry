@@ -48,7 +48,7 @@ define([
                     modelMaxOutput = modelInfo.maxOutput;
                 }
             } catch (e) {
-                log.debug('Could not get model info for max tokens', { model: modelId, error: e.message });
+                Utils.debugLog('Could not get model info for max tokens', { model: modelId, error: e.message });
             }
         }
 
@@ -124,7 +124,7 @@ define([
      */
     function getNetSuiteModelFamily(modelName) {
         if (!modelName) {
-            log.debug('No NetSuite model name provided, using default');
+            Utils.debugLog('No NetSuite model name provided, using default');
             return llm.ModelFamily.COHERE_COMMAND_A;
         }
         
@@ -196,8 +196,8 @@ define([
         
         // ModelRegistry now returns { provider, model }
         const result = ModelRegistry.getModelForTier(provider, effectiveTier, selectedModel, tierConfig);
-        
-        log.debug('Model selection', { 
+
+        Utils.debugLog('Model selection', {
             mode: mode,
             originalTier: tier,
             effectiveTier: effectiveTier,
@@ -230,7 +230,7 @@ define([
             const validProviders = ['netsuite', 'openai', 'anthropic', 'gemini', 'openrouter', 'grok'];
             let provider = config.aiProvider || 'netsuite';
             if (!validProviders.includes(provider)) {
-                log.audit('Invalid AI provider, defaulting to netsuite', { configured: provider });
+                Utils.auditLog('Invalid AI provider, defaulting to netsuite', { configured: provider });
                 provider = 'netsuite';
             }
             
@@ -239,7 +239,7 @@ define([
             // Allow any gemini model - Google releases new ones frequently
             // Just validate it starts with 'gemini'
             if (!geminiModel.startsWith('gemini')) {
-                log.audit('Invalid Gemini model, using default', { configured: geminiModel });
+                Utils.auditLog('Invalid Gemini model, using default', { configured: geminiModel });
                 geminiModel = ModelRegistry.getDefaultModel('gemini') || 'gemini-2.5-flash';
             }
             
@@ -277,12 +277,12 @@ define([
                 tier3Provider: config.tier3Provider || 'gemini',
                 tier3Model: config.tier3Model || ModelRegistry.getDefaultModel('gemini') || 'gemini-2.5-pro'
             };
-            
+
             // Debug log to verify config is being read
-            log.audit('AI Config Loaded', { 
+            Utils.auditLog('AI Config Loaded', {
                 aiMode: aiConfig.aiMode,
-                provider: aiConfig.provider, 
-                model: aiConfig.provider === 'gemini' ? aiConfig.geminiModel : 
+                provider: aiConfig.provider,
+                model: aiConfig.provider === 'gemini' ? aiConfig.geminiModel :
                        aiConfig.provider === 'openai' ? aiConfig.openaiModel :
                        aiConfig.provider === 'anthropic' ? aiConfig.anthropicModel :
                        aiConfig.provider === 'openrouter' ? aiConfig.openrouterModel :
@@ -418,9 +418,9 @@ define([
                 supportsTools: supportsTools
             });
             if (!supportsTools) {
-                log.debug('Model does not support tools, using JSON fallback', { 
-                    model: effectiveModel, 
-                    provider: effectiveProvider 
+                Utils.debugLog('Model does not support tools, using JSON fallback', {
+                    model: effectiveModel,
+                    provider: effectiveProvider
                 });
                 // Convert tool schema to JSON instruction in system prompt
                 unifiedOptions.toolsStripped = true;
@@ -435,8 +435,8 @@ define([
                 unifiedOptions.tools = null;
             }
         }
-        
-        log.debug('Tier resolution', {
+
+        Utils.debugLog('Tier resolution', {
             tier: tier,
             mainProvider: aiConfig.provider,
             tierConfigEnabled: aiConfig.tierConfigEnabled,
@@ -470,12 +470,12 @@ define([
                 callConfig.netsuiteModel = effectiveModel;
                 break;
         }
-        
+
         const purpose = options.purpose || 'AI request';
         const modelInfo = getModelDisplayInfo(effectiveModel);
-        log.debug('AI Call Start', { 
-            provider: effectiveProvider, 
-            model: effectiveModel, 
+        Utils.debugLog('AI Call Start', {
+            provider: effectiveProvider,
+            model: effectiveModel,
             tier: tier,
             tierName: modelInfo.tierName,
             purpose: purpose,
@@ -551,8 +551,8 @@ define([
             type: result?.type || 'text',
             tier: tier
         });
-        
-        log.debug('AI Call Complete', { provider: effectiveProvider, model: effectiveModel, duration: duration + 'ms' });
+
+        Utils.debugLog('AI Call Complete', { provider: effectiveProvider, model: effectiveModel, duration: duration + 'ms' });
         
         // Handle null/undefined result
         if (!result) {
@@ -694,7 +694,7 @@ define([
                 modelFamilyEnum: llm && llm.ModelFamily ? Object.keys(llm.ModelFamily) : [],
                 chatRoleEnum: llm && llm.ChatRole ? Object.keys(llm.ChatRole) : []
             };
-            log.audit('N/llm Tool Discovery', _nllmDiscoveryInfo);
+            Utils.auditLog('N/llm Tool Discovery', _nllmDiscoveryInfo);
         }
         
         // ═══════════════════════════════════════════════════════════════
@@ -703,21 +703,21 @@ define([
         if (options.tools && options.tools.length > 0) {
             // DEFENSIVE: Filter out any undefined tools to prevent "Cannot read property 'name' of undefined"
             const validTools = options.tools.filter(t => t && t.name);
-            
+
             if (validTools.length === 0) {
-                log.debug('No valid tools provided (all were undefined or missing name)', {
+                Utils.debugLog('No valid tools provided (all were undefined or missing name)', {
                     originalCount: options.tools.length
                 });
             } else if (validTools.length < options.tools.length) {
-                log.debug('Some tools were undefined and filtered out', {
+                Utils.debugLog('Some tools were undefined and filtered out', {
                     originalCount: options.tools.length,
                     validCount: validTools.length
                 });
             }
-            
+
             // Verify required methods exist
             if (validTools.length > 0 && (typeof llm.createTool !== 'function' || typeof llm.createToolParameter !== 'function')) {
-                log.debug('N/llm tool creation methods not available');
+                Utils.debugLog('N/llm tool creation methods not available');
             } else if (validTools.length > 0) {
                 try {
                     params.tools = validTools.map(tool => {
@@ -747,8 +747,8 @@ define([
                             parameters: toolParams
                         });
                     });
-                    
-                    log.debug('NetSuite tools created successfully', { 
+
+                    Utils.debugLog('NetSuite tools created successfully', {
                         toolCount: params.tools.length,
                         toolNames: validTools.map(t => t.name)
                     });
@@ -812,10 +812,10 @@ define([
             _nllmDiscoveryInfo.responseKeys = Object.keys(response || {});
             _nllmDiscoveryInfo.hasToolCalls = !!(response.toolCalls && response.toolCalls.length > 0);
         }
-        
+
         // Check for tool calls in response
         if (response.toolCalls && response.toolCalls.length > 0) {
-            log.debug('NetSuite returned tool calls', { 
+            Utils.debugLog('NetSuite returned tool calls', {
                 count: response.toolCalls.length,
                 calls: response.toolCalls.map(tc => tc.name || tc.function?.name)
             });
@@ -1526,14 +1526,14 @@ define([
             try {
                 generateRemaining = llm.getRemainingFreeUsage() || 0;
             } catch (e) {
-                log.debug('Could not get generate usage', e.message);
+                Utils.debugLog('Could not get generate usage', e.message);
             }
             
             let embedRemaining = 0;
             try {
                 embedRemaining = llm.getRemainingFreeEmbedUsage() || 0;
             } catch (e) {
-                log.debug('Could not get embed usage', e.message);
+                Utils.debugLog('Could not get embed usage', e.message);
             }
             
             // NetSuite free tier is 20,000 per month for each

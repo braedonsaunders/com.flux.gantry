@@ -3299,7 +3299,5 @@
     
     // Register route
     Router.register('spendvelocity', function() { SpendVelocityController.init(); });
-    
-    console.log('[Dashboard.SpendVelocity] Physics for Finance v2.0 Loaded');
 
 })(window);

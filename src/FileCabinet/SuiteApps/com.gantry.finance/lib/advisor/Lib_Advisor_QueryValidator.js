@@ -12,7 +12,7 @@
  * - Dangerous operation blocking
  * - Row limit enforcement
  */
-define(['N/log'], function(log) {
+define(['N/log', './Lib_Advisor_Utils'], function(log, Utils) {
     'use strict';
 
     /**
@@ -127,7 +127,7 @@ define(['N/log'], function(log) {
         // 5. Check pattern-based blocking (catches new/unknown sensitive tables)
         const patternMatch = matchesBlockedPattern(tableName);
         if (patternMatch) {
-            log.audit('Table blocked by pattern', {
+            Utils.auditLog('Table blocked by pattern', {
                 table: tableName,
                 reason: patternMatch.reason
             });
@@ -139,7 +139,7 @@ define(['N/log'], function(log) {
 
         // 6. All other tables - allow through
         // Log for monitoring but allow - dynamic discovery will catch invalid tables at query time
-        log.debug('Non-standard table queried:', tableName);
+        Utils.debugLog('Non-standard table queried:', tableName);
         return { allowed: true };
     }
 
@@ -218,7 +218,7 @@ define(['N/log'], function(log) {
 
         // Check for row limit
         if (!hasRowLimit(normalizedSql)) {
-            log.debug('Query Missing Row Limit', { sql: normalizedSql.substring(0, 200) });
+            Utils.debugLog('Query Missing Row Limit', { sql: normalizedSql.substring(0, 200) });
             // We'll add the limit during execution, but warn
         }
 
@@ -472,7 +472,7 @@ define(['N/log'], function(log) {
 
         // If query has FETCH FIRST (invalid SuiteQL), convert to ROWNUM
         if (hasFetchFirst(cleanSql)) {
-            log.debug('QueryValidator converting FETCH FIRST to ROWNUM', {
+            Utils.debugLog('QueryValidator converting FETCH FIRST to ROWNUM', {
                 originalSql: cleanSql.substring(0, 200)
             });
             return convertFetchFirstToRownum(cleanSql);
@@ -480,7 +480,7 @@ define(['N/log'], function(log) {
 
         // If query has LIMIT (invalid SuiteQL), convert to ROWNUM
         if (hasLimitClause(cleanSql)) {
-            log.debug('QueryValidator converting LIMIT to ROWNUM', {
+            Utils.debugLog('QueryValidator converting LIMIT to ROWNUM', {
                 originalSql: cleanSql.substring(0, 200)
             });
             return convertLimitToRownum(cleanSql, limit);

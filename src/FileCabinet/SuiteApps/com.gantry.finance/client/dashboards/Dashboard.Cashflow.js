@@ -3840,6 +3840,4 @@
     Router.register('cashflow', () => CashflowController.init());
     Router.register('config', () => ConfigController.init());
 
-    console.log('[Dashboard.Cashflow] World-Class Flyout Version Loaded');
-
 })(window);

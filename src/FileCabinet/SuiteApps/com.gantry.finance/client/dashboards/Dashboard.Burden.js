@@ -234,10 +234,7 @@
             
             // Set loading flag to true
             this.isLoading = true;
-            if (typeof Utils !== 'undefined' && Utils.isDebugMode) {
-                console.log('%c[Burden] Loading state: START', 'color: #f59e0b;');
-            }
-            
+
             // KPI skeletons
             var kpiIds = ['burdenCompositeRate', 'totalexpenses', 'burdenapplied', 'burdenexpensesspread', 'burdenTotalHours'];
             kpiIds.forEach(function(id) {
@@ -370,7 +367,6 @@
                     if (closedPeriod && closedPeriod.endDate) {
                         // Use latest closed period end date for burden (ensures complete accounting data)
                         endEl.value = closedPeriod.endDate;
-                        console.log('[Burden] Using latest closed period end date:', closedPeriod.endDate, '(' + closedPeriod.periodName + ')');
                     } else if (self.fiscalCalendar.fiscalYearEndDate) {
                         // Fallback: use fiscal year end or today, whichever is earlier
                         var fyEnd = new Date(self.fiscalCalendar.fiscalYearEndDate);
@@ -416,9 +412,6 @@
             // Light refresh mode - skips expensive calculations (history, forecast, unbilledDetail)
             if (lightRefresh) {
                 params.lightRefresh = true;
-                console.log('%c[Burden] LIGHT REFRESH MODE ACTIVATED - skipping history/forecast', 'color: #f59e0b; font-weight: bold; font-size: 14px;');
-            } else {
-                console.log('%c[Burden] FULL REFRESH - loading all data', 'color: #3b82f6; font-weight: bold;');
             }
 
             return API.get('burden', params).then(function(res) {
@@ -426,7 +419,6 @@
                 
                 // If this was a light refresh, merge with existing data
                 if (lightRefresh && self.latestData && newData.meta?.lightRefresh) {
-                    console.log('%c[Burden] Merging light refresh data with existing data', 'color: #10b981;');
                     
                     // Keep existing heavy data that wasn't recalculated
                     if (!newData.history && self.latestData.history) {
@@ -445,26 +437,7 @@
                 
                 self.latestData = newData;
                 self.isLoading = false; // Clear loading state
-                
-                if (typeof Utils !== 'undefined' && Utils.isDebugMode) {
-                    console.log('%c[Burden] Loading state: COMPLETE (isLoading=' + self.isLoading + ')', 'color: #10b981;');
-                }
-                
-                // Log diagnostics if available (debug mode)
-                if (self.latestData.diagnostics) {
-                    console.group('%c[BURDEN] Performance Diagnostics' + (lightRefresh ? ' (LIGHT REFRESH)' : ''), 'color: #3b82f6; font-weight: bold;');
-                    console.log('%cTotal Time: ' + self.latestData.diagnostics.timings.total + 'ms', 'font-weight: bold;');
-                    console.log('%cSlowest Operations:', 'color: #ef4444;');
-                    console.table(self.latestData.diagnostics.slowestOperations);
-                    console.log('%cAll Timings (sorted by duration):', 'color: #f59e0b;');
-                    console.table(self.latestData.diagnostics.timings);
-                    console.log('%cData Counts:', 'color: #10b981;');
-                    console.table(self.latestData.diagnostics.counts);
-                    console.groupEnd();
-                } else {
-                    console.log('%c[Burden] No diagnostics in response (advisorDebugMode may be disabled in Settings > Main Config)', 'color: #f59e0b;');
-                }
-                
+
                 if (applyBtn) applyBtn.innerHTML = '<i class="fas fa-sync-alt mr-1"></i> Apply';
                 self.updateProfileSelector();
                 self.renderAll();
@@ -5228,7 +5201,6 @@
                 config: { rateBuilder: rateBuilderConfig },
                 mergeOnly: true  // Signal to merge, not replace
             }).then(function() {
-                console.log('[RateBuilder] Config saved');
                 // Update local cache so next restore uses latest
                 if (self.latestData && self.latestData.meta && self.latestData.meta.config) {
                     self.latestData.meta.config.rateBuilder = rateBuilderConfig;
@@ -5308,8 +5280,6 @@
             
             // Clear flag after restore complete
             this._restoringRateBuilder = false;
-            
-            console.log('[RateBuilder] Config restored:', rb);
         },
 
         updateRatePreview: function() {
@@ -8715,7 +8685,6 @@
                     }
                 });
                 categoryData.accountIds = accountIds;
-                console.log('[SaveNewCategory] Captured', accountIds.length, 'accounts');
             }
 
             // Add to local data
@@ -10501,7 +10470,6 @@
         },
 
         doAddAccount: function(accountId, categoryId) {
-            console.log('doAddAccount called:', accountId, categoryId);
             if (!this.pendingCategoryChanges) {
                 this.pendingCategoryChanges = { added: {}, removed: {}, confirmed: {} };
             }
@@ -10510,7 +10478,6 @@
         },
         
         doRemoveAccount: function(accountId, categoryId) {
-            console.log('doRemoveAccount called:', accountId, categoryId);
             if (!this.pendingCategoryChanges) {
                 this.pendingCategoryChanges = { added: {}, removed: {}, confirmed: {} };
             }
@@ -10519,7 +10486,6 @@
         },
         
         doConfirmAccount: function(accountId, categoryId) {
-            console.log('doConfirmAccount called:', accountId, categoryId);
             if (!this.pendingCategoryChanges) {
                 this.pendingCategoryChanges = { added: {}, removed: {}, confirmed: {} };
             }
@@ -10528,7 +10494,6 @@
         },
         
         doRejectAccount: function(accountId, categoryId) {
-            console.log('doRejectAccount called:', accountId, categoryId);
             if (!this.pendingCategoryChanges) {
                 this.pendingCategoryChanges = { added: {}, removed: {}, confirmed: {} };
             }
@@ -10729,9 +10694,6 @@
                     return;
                 }
             }
-            
-            console.log('[SaveCategory] catType:', catType, 'newCatId:', newCatId, 'originalId:', originalId, 'idChanged:', idChanged);
-            console.log('[SaveCategory] pendingCategoryChanges:', JSON.stringify(self.pendingCategoryChanges || {}));
 
             // Get existing category to preserve calculated values
             var existingCat = null;
@@ -10895,15 +10857,10 @@
             // This is done OUTSIDE the catType check to ensure accounts are captured
             // regardless of what category type is detected
             var accountMultiselect = el('#accountMultiselect');
-            console.log('[SaveCategory] accountMultiselect element:', accountMultiselect);
             if (accountMultiselect) {
                 var accountIds = [];
                 var checkboxes = accountMultiselect.querySelectorAll('input[type="checkbox"]');
-                console.log('[SaveCategory] Total checkboxes found:', checkboxes.length);
-                
-                var checkedCount = 0;
-                var uncheckedCount = 0;
-                var uncheckedIds = [];
+
                 checkboxes.forEach(function(cb) {
                     var label = cb.closest('.account-select-item');
                     if (label) {
@@ -10911,68 +10868,51 @@
                         // Use the actual checkbox checked state from the DOM
                         var isChecked = cb.checked;
                         if (isChecked) {
-                            checkedCount++;
                             if (accountId) accountIds.push(accountId);
-                        } else {
-                            uncheckedCount++;
-                            if (accountId) uncheckedIds.push(accountId);
                         }
                     }
                 });
-                
-                console.log('[SaveCategory] Checked:', checkedCount, 'Unchecked:', uncheckedCount);
-                console.log('[SaveCategory] Unchecked IDs:', JSON.stringify(uncheckedIds));
-                
+
                 // Cross-check with pendingCategoryChanges
                 var catIdStr = String(newCatId);
                 var pendingRemoved = (self.pendingCategoryChanges && self.pendingCategoryChanges.removed && self.pendingCategoryChanges.removed[catIdStr]) || [];
-                console.log('[SaveCategory] pendingCategoryChanges.removed:', JSON.stringify(pendingRemoved));
-                
+
                 // If there are pending removed accounts that ARE in the checked list, something is wrong
                 // Remove them explicitly
                 if (pendingRemoved.length > 0) {
-                    var beforeCount = accountIds.length;
                     accountIds = accountIds.filter(function(id) {
                         return !pendingRemoved.includes(id) && !pendingRemoved.includes(String(id));
                     });
-                    if (accountIds.length !== beforeCount) {
-                        console.warn('[SaveCategory] FIXED: Removed', beforeCount - accountIds.length, 'accounts that were in pendingRemoved but still checked in DOM!');
-                    }
                 }
-                
+
                 // ALWAYS set accountIds when multiselect exists (even if empty to clear assignments)
                 categoryData.accountIds = accountIds;
-                console.log('[SaveCategory] Final accountIds array (' + accountIds.length + ' accounts):', JSON.stringify(accountIds.slice(0, 10)) + (accountIds.length > 10 ? '...' : ''));
-                
+
                 // Update local classification immediately
                 if (self.latestData.classification && self.latestData.classification.byCategory) {
                     var allAccounts = self.latestData.accounts?.all || [];
                     var unassigned = self.latestData.classification.unassigned || [];
                     var catIdStr = String(categoryData.id);
-                    
-                    console.log('[SaveCategory] Updating local classification for category:', catIdStr);
-                    
+
                     // Get OLD accounts from this category before update
                     var oldCatData = self.latestData.classification.byCategory[catIdStr];
                     var oldAccounts = (oldCatData && oldCatData.accounts) ? oldCatData.accounts : [];
-                    console.log('[SaveCategory] Previous count:', oldAccounts.length);
-                    
+
                     // Build set of new account IDs
                     var newAccountSet = {};
                     accountIds.forEach(function(id) { newAccountSet[String(id)] = true; });
-                    
+
                     // Find accounts that were REMOVED (in old but not in new)
                     var removedAccounts = oldAccounts.filter(function(a) {
                         return !newAccountSet[String(a.id)];
                     });
-                    console.log('[SaveCategory] Removed accounts:', removedAccounts.length);
-                    
+
                     // Add removed accounts to unassigned
                     if (removedAccounts.length > 0) {
                         // Make sure we don't add duplicates
                         var unassignedSet = {};
                         unassigned.forEach(function(a) { unassignedSet[String(a.id)] = true; });
-                        
+
                         removedAccounts.forEach(function(acct) {
                             if (!unassignedSet[String(acct.id)]) {
                                 unassigned.push(acct);
@@ -10980,7 +10920,7 @@
                             }
                         });
                     }
-                    
+
                     // Build new assigned accounts list
                     var newAssigned = accountIds.map(function(aid) {
                         var acct = allAccounts.find(function(a) { return String(a.id) === String(aid); });
@@ -10989,25 +10929,19 @@
                         }
                         return acct || { id: aid, number: '', name: '', amount: 0 };
                     });
-                    
+
                     // Update classification using STRING category ID
                     if (!self.latestData.classification.byCategory[catIdStr]) {
                         self.latestData.classification.byCategory[catIdStr] = { count: 0, accounts: [] };
                     }
                     self.latestData.classification.byCategory[catIdStr].accounts = newAssigned;
                     self.latestData.classification.byCategory[catIdStr].count = newAssigned.length;
-                    
-                    console.log('[SaveCategory] New count:', self.latestData.classification.byCategory[catIdStr].count);
-                    
+
                     // Update unassigned list - remove accounts that are now assigned
                     self.latestData.classification.unassigned = unassigned.filter(function(a) {
                         return !newAccountSet[String(a.id)];
                     });
-                    
-                    console.log('[SaveCategory] Unassigned count:', self.latestData.classification.unassigned.length);
                 }
-            } else {
-                console.log('[SaveCategory] WARNING: No accountMultiselect element found!');
             }
 
             if (!categoryData.id || !categoryData.label) {
@@ -11047,18 +10981,13 @@
             // Close flyout
             self.closeFlyout();
 
-            console.log('[SaveCategory] Sending to server:', JSON.stringify(categoryData, null, 2));
-            console.log('[SaveCategory] isNew:', isNew);
-            
             // Save to server, then do LIGHT refresh to get recalculated rates
             // Light refresh skips expensive history/forecast calculations
             API.post('burden', { subAction: 'save_category', category: categoryData, isNew: isNew }).then(function(response) {
-                console.log('[SaveCategory] Server response received, starting light refresh...');
                 showToast('Category saved - refreshing...', 'success');
                 // LIGHT REFRESH: Skip history/forecast recalculation for faster save
                 return self.loadData(true);
             }).then(function() {
-                console.log('[SaveCategory] Light refresh complete');
                 showToast('Data refreshed', 'success');
             }).catch(function(err) {
                 console.error('[SaveCategory] Error:', err);
@@ -11487,7 +11416,5 @@
 
     // Register route
     Router.register('burden', function() { BurdenController.init(); });
-
-    console.log('[Dashboard.Burden] Rate Engine 2.0 Loaded');
 
 })(window);

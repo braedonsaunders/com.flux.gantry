@@ -99,7 +99,7 @@ define([
         }
 
         // Log rejected column for audit
-        log.audit('Invalid sort column rejected', {
+        Utils.auditLog('Invalid sort column rejected', {
             received: sortBy,
             allowed: allowedColumns,
             usingDefault: defaultColumn
@@ -337,7 +337,7 @@ define([
                     discoveredTransactionTypes = parsed.types || [];
                     return { types: discoveredTransactionTypes, fromCache: true, source: 'cache' };
                 } catch (e) {
-                    log.debug('Transaction types cache parse error, will refresh');
+                    Utils.debugLog('Transaction types cache parse error, will refresh');
                 }
             }
 
@@ -345,7 +345,7 @@ define([
             return refreshTransactionTypesCache();
 
         } catch (e) {
-            log.debug('Could not get transaction types from cache', { error: e.message });
+            Utils.debugLog('Could not get transaction types from cache', { error: e.message });
             return { types: VALID_TRANSACTION_TYPES, fromCache: false, source: 'fallback' };
         }
     }
@@ -387,7 +387,7 @@ define([
                 // Update in-memory cache
                 discoveredTransactionTypes = types;
 
-                log.audit('Transaction types cache refreshed', {
+                Utils.auditLog('Transaction types cache refreshed', {
                     count: types.length,
                     types: types.slice(0, 10).join(', ') + (types.length > 10 ? '...' : '')
                 });
@@ -396,7 +396,7 @@ define([
             }
 
         } catch (e) {
-            log.debug('Could not refresh transaction types', { error: e.message });
+            Utils.debugLog('Could not refresh transaction types', { error: e.message });
         }
 
         // Fallback to static list
@@ -447,7 +447,7 @@ define([
         // Check canonical mappings (user-friendly names to NetSuite codes)
         if (TRANSACTION_TYPE_CANONICAL[lowerValue]) {
             const normalized = TRANSACTION_TYPE_CANONICAL[lowerValue];
-            log.audit('Normalized transaction_type', { original: value, normalized: normalized });
+            Utils.auditLog('Normalized transaction_type', { original: value, normalized: normalized });
             return { normalized: normalized, wasNormalized: true, original: value, error: null };
         }
 
@@ -459,7 +459,7 @@ define([
         }
 
         // Unknown type - log warning but allow it through (may be new custom transaction type)
-        log.debug('Unknown transaction type (allowing through)', {
+        Utils.debugLog('Unknown transaction type (allowing through)', {
             value: value,
             discoveredTypes: discovered.types.length,
             source: discovered.source
@@ -715,7 +715,7 @@ If no reasonable match, reply: {"param": null, "confidence": 0}`;
                 if (jsonMatch) {
                     const parsed = JSON.parse(jsonMatch[0]);
                     if (parsed.param && parsed.confidence >= 0.7 && validParams.includes(parsed.param)) {
-                        log.debug('LLM parameter resolution', {
+                        Utils.debugLog('LLM parameter resolution', {
                             input,
                             suggested: parsed.param,
                             confidence: parsed.confidence,
@@ -725,7 +725,7 @@ If no reasonable match, reply: {"param": null, "confidence": 0}`;
                     }
                 }
             } catch (e) {
-                log.debug('LLM parameter resolution failed', { error: e.message, input });
+                Utils.debugLog('LLM parameter resolution failed', { error: e.message, input });
                 // Fall through to return null
             }
         }
@@ -964,7 +964,7 @@ If no reasonable match, reply: {"param": null, "confidence": 0}`;
             formatted.truncationNote = `Results limited to ${options.limit} rows. More data may be available. ` +
                 `To see additional records, the user can ask for more results or use more specific filters.`;
 
-            log.debug('formatResult: Results truncated', {
+            Utils.debugLog('formatResult: Results truncated', {
                 tool: toolName,
                 limit: options.limit,
                 rowCount: rowCount
@@ -1027,7 +1027,7 @@ If no reasonable match, reply: {"param": null, "confidence": 0}`;
 
             return suggestions;
         } catch (e) {
-            log.debug('getSimilarClassifications failed', { error: e.message });
+            Utils.debugLog('getSimilarClassifications failed', { error: e.message });
             return [];
         }
     }
@@ -1107,7 +1107,7 @@ IMPORTANT: Use transaction_context to help determine entity type:
                     } else if (customerTypes.includes(args.transaction_context)) {
                         entityType = 'customer';
                     }
-                    log.debug('resolve_entity inferred type from transaction_context', {
+                    Utils.debugLog('resolve_entity inferred type from transaction_context', {
                         name: name,
                         transaction_context: args.transaction_context,
                         inferred_type: entityType
@@ -1123,13 +1123,13 @@ IMPORTANT: Use transaction_context to help determine entity type:
                     // it's actually a customer) from causing complete entity resolution failure
                     // ═══════════════════════════════════════════════════════════════════════
                     if ((!result.resolved || !result.entity) && entityType && entityType !== 'auto') {
-                        log.debug('resolve_entity fallback: specific type not found, trying auto', {
+                        Utils.debugLog('resolve_entity fallback: specific type not found, trying auto', {
                             name: name,
                             failedType: entityType
                         });
                         result = EntityResolver.resolveEntityWithFallback(name, 'auto');
                         if (result.resolved && result.entity) {
-                            log.debug('resolve_entity fallback succeeded', {
+                            Utils.debugLog('resolve_entity fallback succeeded', {
                                 name: name,
                                 originalType: entityType,
                                 foundType: result.actualType
@@ -1360,7 +1360,7 @@ Only specify a specific dimension if you are CERTAIN which type it is.
 
                 // AUTO-RETRY: If specific dimension returned 0 results, try 'auto' to search all
                 if (formatted.rowCount === 0 && dimension !== 'auto') {
-                    log.debug('resolve_classification auto-retry', {
+                    Utils.debugLog('resolve_classification auto-retry', {
                         originalDimension: dimension,
                         term: args.term,
                         retryingWithAuto: true
@@ -1687,7 +1687,7 @@ For backward compatibility, this tool redirects to get_record_schema and merges 
             },
             execute: function(args) {
                 // Log deprecation warning
-                log.audit('DEPRECATED_TOOL', 'explore_schema called - use get_record_schema instead. Table: ' + args.table);
+                Utils.auditLog('DEPRECATED_TOOL', 'explore_schema called - use get_record_schema instead. Table: ' + args.table);
 
                 try {
                     // Redirect to dynamic schema discovery
@@ -6424,7 +6424,7 @@ Use for: "cash flow", "runway", "cash projection", "liquidity", "treasury", "wor
 
                     // Debug: Log if metrics extraction seems to have failed
                     if (metricsCount === 0 && rawData?.company?.cash) {
-                        log.debug('dashboard_cashflow: metrics empty but rawData exists', {
+                        Utils.debugLog('dashboard_cashflow: metrics empty but rawData exists', {
                             hasRawData: !!rawData,
                             hasCash: !!rawData?.company?.cash,
                             startingCash: rawData?.company?.cash?.startingCash,
@@ -7383,7 +7383,7 @@ AGGREGATE OPERATIONS: sum, avg, min, max, count`,
                 const refId = args.ref_id;
                 const requestId = args.request_id;
 
-                log.debug('load_cached_data', {
+                Utils.debugLog('load_cached_data', {
                     refId: refId,
                     collectionName: args.collection_name,
                     hasFilter: !!args.filter
@@ -7633,7 +7633,7 @@ IMPORTANT FIELDS:
                 required: ['sql', 'purpose']
             },
             execute: function(args) {
-                log.debug('run_custom_query', { purpose: args.purpose, sqlPreview: args.sql.substring(0, 200) });
+                Utils.debugLog('run_custom_query', { purpose: args.purpose, sqlPreview: args.sql.substring(0, 200) });
 
                 // ═══════════════════════════════════════════════════════════════════════
                 // PRE-FLIGHT SQL VALIDATION: Catch SQL Server syntax before execution
@@ -7642,7 +7642,7 @@ IMPORTANT FIELDS:
                 const validationResult = validateCustomQuerySql(sql);
 
                 if (validationResult.hasCriticalErrors) {
-                    log.debug('run_custom_query - SQL validation failed', {
+                    Utils.debugLog('run_custom_query - SQL validation failed', {
                         errors: validationResult.errors
                     });
                     return {
@@ -7655,7 +7655,7 @@ IMPORTANT FIELDS:
 
                 // Apply auto-corrections if any
                 if (validationResult.correctedSql) {
-                    log.debug('run_custom_query - auto-corrected SQL', {
+                    Utils.debugLog('run_custom_query - auto-corrected SQL', {
                         corrections: validationResult.corrections
                     });
                     sql = validationResult.correctedSql;
@@ -7720,7 +7720,7 @@ Examples:
                 const additionalFilters = args.filters || [];
                 const maxResults = Math.min(args.max_results || 500, 1000);
 
-                log.debug('run_saved_search', {
+                Utils.debugLog('run_saved_search', {
                     searchId: searchId,
                     filterCount: additionalFilters.length,
                     maxResults: maxResults
@@ -7843,7 +7843,7 @@ Returns search ID, title, record type, and description.`,
                 const titleContains = (args.title_contains || '').toLowerCase();
                 const maxResults = Math.min(args.max_results || 50, 200);
 
-                log.debug('list_saved_searches', {
+                Utils.debugLog('list_saved_searches', {
                     recordType: recordType,
                     titleContains: titleContains
                 });
@@ -8041,7 +8041,7 @@ Use this when:
             execute: function(args) {
                 const maxResults = Math.min(args.max_results || 50, 200);
 
-                log.debug('list_datasets', { maxResults: maxResults });
+                Utils.debugLog('list_datasets', { maxResults: maxResults });
 
                 try {
                     // Use N/dataset.list() to get all available datasets
@@ -8126,7 +8126,7 @@ The dataset is executed and returns results similar to a saved search or SuiteQL
                 const datasetId = args.dataset_id;
                 const maxResults = Math.min(args.max_results || 500, 1000);
 
-                log.debug('run_dataset', { datasetId: datasetId, maxResults: maxResults });
+                Utils.debugLog('run_dataset', { datasetId: datasetId, maxResults: maxResults });
 
                 if (!datasetId) {
                     return {
@@ -8255,7 +8255,7 @@ Use this when:
             execute: function(args) {
                 const maxResults = Math.min(args.max_results || 50, 200);
 
-                log.debug('list_workbooks', { maxResults: maxResults });
+                Utils.debugLog('list_workbooks', { maxResults: maxResults });
 
                 try {
                     // Use N/workbook.list() to get all available workbooks
@@ -8354,7 +8354,7 @@ By default runs the first pivot table. Use component_type and component_id for s
                 const componentId = args.component_id || args.pivot_id; // backwards compat
                 const maxResults = Math.min(args.max_results || 500, 1000);
 
-                log.debug('run_workbook', { workbookId: workbookId, componentType: componentType, componentId: componentId, maxResults: maxResults });
+                Utils.debugLog('run_workbook', { workbookId: workbookId, componentType: componentType, componentId: componentId, maxResults: maxResults });
 
                 if (!workbookId) {
                     return {
@@ -9009,7 +9009,7 @@ EXAMPLES:
         const validation = validateAndNormalizeArgs(toolName, args);
 
         if (!validation.valid) {
-            log.audit('Tool validation failed', {
+            Utils.auditLog('Tool validation failed', {
                 tool: toolName,
                 args: args,
                 errors: validation.errors
@@ -9026,7 +9026,7 @@ EXAMPLES:
         // Use normalized args (with warnings logged)
         const normalizedArgs = validation.args;
         if (validation.warnings.length > 0) {
-            log.audit('Tool args normalized', {
+            Utils.auditLog('Tool args normalized', {
                 tool: toolName,
                 warnings: validation.warnings,
                 original: args,
@@ -9035,13 +9035,13 @@ EXAMPLES:
         }
 
         try {
-            log.debug('Executing tool', { toolName: toolName, args: JSON.stringify(normalizedArgs) });
+            Utils.debugLog('Executing tool', { toolName: toolName, args: JSON.stringify(normalizedArgs) });
             const startTime = Date.now();
 
             const result = tool.execute(normalizedArgs);
 
             const duration = Date.now() - startTime;
-            log.debug('Tool executed', { toolName: toolName, duration: duration, success: result.success });
+            Utils.debugLog('Tool executed', { toolName: toolName, duration: duration, success: result.success });
 
             result.duration = duration;
 

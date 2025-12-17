@@ -157,9 +157,6 @@
         },
 
         init: function() {
-            console.log('%c[TopographicAnimation] ' + this.VERSION + ' initialized',
-                'color: #6366f1; font-weight: bold; font-size: 14px;');
-
             this.cleanup();
             this.noise.init();
 
@@ -1057,12 +1054,9 @@
 
             // Check for and resume any active request from before navigation
             if (activeRequest && activeRequest.requestId) {
-                console.log('[Advisor] Found active request to resume:', activeRequest.requestId);
                 // Resume polling in background (don't await - let init complete)
                 this.resumeActiveRequest(activeRequest);
             }
-
-            console.log('[Advisor] Initialized');
         },
         
         /**
@@ -2010,8 +2004,6 @@
             // Show floating panel if it exists
             const fab = document.getElementById('advisor-fab');
             if (fab) fab.style.display = '';
-
-            console.log('[Advisor] Cleanup complete, active request preserved:', !!activeRequest);
         },
         
         /**
@@ -2466,7 +2458,6 @@
                 while (true) {
                     // Check if this polling loop has been superseded by another (e.g., resumed after navigation)
                     if (currentPollingId !== myPollingId) {
-                        console.log('[Advisor Polling] Polling loop superseded by newer instance, exiting');
                         return;
                     }
 
@@ -2490,17 +2481,9 @@
                         continue;
                     }
 
-                    console.log('[Advisor Polling]', {
-                        status: status.status,
-                        stepCount: status.steps ? status.steps.length : 0,
-                        lastStepCount: lastStepCount,
-                        hasNewSteps: status.steps && status.steps.length > lastStepCount
-                    });
-
                     // Update steps progressively
                     if (status.steps && status.steps.length > lastStepCount) {
                         const newSteps = status.steps.slice(lastStepCount);
-                        console.log('[Advisor Polling] Appending new steps:', newSteps.length, newSteps.map(s => s.title));
                         this.appendStepsToProgressiveMessage(progressiveMsgId, newSteps);
                         lastStepCount = status.steps.length;
 
@@ -2582,8 +2565,6 @@
             const POLL_INTERVAL = 500;
             const MAX_POLL_TIME = 120000;
 
-            console.log('[Advisor] Resuming active request:', savedRequest.requestId);
-
             // Set new polling ID - this will cause any old polling loop to exit
             const myPollingId = 'resume-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
             currentPollingId = myPollingId;
@@ -2596,7 +2577,6 @@
 
             // Render any steps we already received before navigating away
             if (savedRequest.steps && savedRequest.steps.length > 0) {
-                console.log('[Advisor] Restoring', savedRequest.steps.length, 'previous steps');
                 this.appendStepsToProgressiveMessage(progressiveMsgId, savedRequest.steps);
             }
 
@@ -2611,7 +2591,6 @@
                 while (true) {
                     // Check if this polling loop has been superseded
                     if (currentPollingId !== myPollingId) {
-                        console.log('[Advisor Resume Polling] Polling loop superseded, exiting');
                         return;
                     }
 
@@ -2635,16 +2614,9 @@
                         continue;
                     }
 
-                    console.log('[Advisor Resume Polling]', {
-                        status: status.status,
-                        stepCount: status.steps ? status.steps.length : 0,
-                        lastStepCount: lastStepCount
-                    });
-
                     // Update steps progressively (only new ones since last seen)
                     if (status.steps && status.steps.length > lastStepCount) {
                         const newSteps = status.steps.slice(lastStepCount);
-                        console.log('[Advisor Resume Polling] Appending new steps:', newSteps.length);
                         this.appendStepsToProgressiveMessage(progressiveMsgId, newSteps);
                         lastStepCount = status.steps.length;
 
@@ -2766,11 +2738,9 @@
             retryCount = retryCount || 0;
             const MAX_RETRIES = 5;
 
-            console.log('[Advisor appendSteps] msgId:', msgId, 'steps:', steps.length, 'retry:', retryCount);
             const stepsContainer = document.getElementById(msgId + '-steps');
             if (!stepsContainer) {
                 if (retryCount < MAX_RETRIES) {
-                    console.log('[Advisor appendSteps] Container NOT FOUND, scheduling retry:', msgId + '-steps');
                     const self = this;
                     requestAnimationFrame(function() {
                         setTimeout(function() {
@@ -2782,12 +2752,10 @@
                 }
                 return;
             }
-            console.log('[Advisor appendSteps] Container found:', stepsContainer);
 
             // Remove thinking indicator if present
             const thinking = stepsContainer.querySelector('.progressive-thinking');
             if (thinking) {
-                console.log('[Advisor appendSteps] Removing thinking indicator');
                 thinking.remove();
             }
 
@@ -2828,7 +2796,6 @@
 
                 // Skip if nothing changed
                 if (!hasChanges) {
-                    console.log('[Advisor appendSteps] No changes detected, skipping update');
                     return;
                 }
 
@@ -2957,7 +2924,6 @@
             const msgEl = document.getElementById(msgId);
             if (!msgEl) {
                 if (retryCount < MAX_RETRIES) {
-                    console.log('[Advisor finalizeMessage] Container NOT FOUND, scheduling retry:', msgId);
                     const self = this;
                     requestAnimationFrame(function() {
                         setTimeout(function() {
@@ -3200,8 +3166,6 @@
 
                 // Apply content-specific animation to the new block
                 ContentAnimator.animate(blockEl, block.type);
-
-                console.log('[Advisor] Rendered progressive block:', block.type, block.id);
             });
 
             self.scrollToBottom();
@@ -3409,8 +3373,6 @@
         stopPolling: function() {
             if (!isProcessing) return;
 
-            console.log('[Advisor] Stopping polling...');
-
             // Generate new polling ID to cause current loop to exit
             currentPollingId = 'stopped-' + Date.now();
 
@@ -3468,8 +3430,6 @@
 
             // Save session to persist the stopped state (no activeRequest)
             this.saveSession();
-
-            console.log('[Advisor] Polling stopped');
         },
 
         /**
@@ -5994,10 +5954,8 @@
                 try {
                     const el = document.getElementById(chartId);
                     if (el) {
-                        console.log('[Dashboard.Advisor] Chart container found on attempt', attempt);
                         self.renderChartElement(chartId, item);
                     } else if (attempt < 5) {
-                        console.log('[Dashboard.Advisor] Chart container not found, retry', attempt + 1);
                         setTimeout(function() { tryRender(attempt + 1); }, 100);
                     } else {
                         console.error('[Dashboard.Advisor] Chart container never found:', chartId);
@@ -6015,20 +5973,17 @@
          * Actually render the chart element using simple SVG
          */
         renderChartElement: function(chartId, item) {
-            console.log('[Dashboard.Advisor] renderChartElement called:', chartId, item);
             const container = document.getElementById(chartId);
             if (!container) {
                 console.error('[Dashboard.Advisor] Chart container not found:', chartId);
                 return;
             }
-            
+
             let data = item.data;
             const chartType = item.chartType || 'bar';
-            console.log('[Dashboard.Advisor] Chart type:', chartType, 'Raw data:', data);
-            
+
             // Handle Chart.js format: { labels: [...], datasets: [{ data: [...] }] }
             if (data && !Array.isArray(data) && data.labels && data.datasets) {
-                console.log('[Dashboard.Advisor] Converting Chart.js format');
                 const labels = data.labels;
                 const firstDataset = data.datasets[0] || {};
                 const values = firstDataset.data || [];
@@ -6036,12 +5991,10 @@
                     label: label,
                     value: values[i] || 0
                 }));
-                console.log('[Dashboard.Advisor] Converted to array:', data.length, 'items');
             }
-            
+
             // Handle object format: { labels: [...], values: [...] }
             if (data && !Array.isArray(data) && data.labels && data.values) {
-                console.log('[Dashboard.Advisor] Converting labels/values format:', data);
                 const labels = data.labels;
                 const values = data.values;
                 data = labels.map((label, i) => ({
@@ -6180,7 +6133,6 @@
             }
             // Line chart (simple)
             else if (chartType === 'line') {
-                console.log('[Dashboard.Advisor] Rendering line chart with data:', data);
                 try {
                     const maxVal = Math.max(...data.map(d => d.value));
                     const minVal = Math.min(...data.map(d => d.value));
@@ -6189,9 +6141,7 @@
                     const chartHeight = 150;
                     const padding = 40;
                     const bottomPadding = 50; // Extra space for labels
-                    
-                    console.log('[Dashboard.Advisor] Line chart params:', { maxVal, minVal, range, chartWidth, chartHeight });
-                    
+
                     const points = data.map((d, i) => {
                         const x = padding + (i / (data.length - 1 || 1)) * (chartWidth - 2 * padding);
                         const y = chartHeight - bottomPadding - ((d.value - minVal) / range) * (chartHeight - padding - bottomPadding);
@@ -6214,9 +6164,8 @@
                             svg += `<text x="${x}" y="${chartHeight - 10}" text-anchor="middle" class="chart-label" font-size="10">${this.escapeHtml(labelText)}</text>`;
                         }
                     });
-                    
+
                     svg += `</svg>`;
-                    console.log('[Dashboard.Advisor] Line chart SVG length:', svg.length);
                     container.innerHTML = svg;
                 } catch (lineErr) {
                     console.error('[Dashboard.Advisor] Line chart error:', lineErr);
