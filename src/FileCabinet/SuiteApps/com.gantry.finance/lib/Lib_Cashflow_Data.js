@@ -2127,12 +2127,14 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Core", "./Lib_Config"
   function getAgingBucketDetail(context) {
     const bucket = context.bucket; // 'Current', '1-30', '31-60', '61-90', '90+'
     const type = context.type || 'ar'; // 'ar' or 'ap'
-    
+
     if (!bucket) {
       return { status: 'error', error: 'bucket is required' };
     }
-    
+
+    // Normalize to midnight to match main dashboard calculation
     const today = new Date();
+    today.setHours(0, 0, 0, 0);
     const items = [];
     
     // Determine date filters based on bucket
