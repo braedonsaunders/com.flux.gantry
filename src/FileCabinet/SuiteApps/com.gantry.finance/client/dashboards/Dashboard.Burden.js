@@ -4445,16 +4445,14 @@
             
             // Collect selected departments (multiselect)
             // If checkboxes exist, read from UI; otherwise use saved config
+            // IMPORTANT: Always send explicit list of checked departments to avoid
+            // hidden departments being included when "all visible" are checked
             var deptCheckboxes = document.querySelectorAll('.time-dept-filter');
             if (deptCheckboxes.length > 0) {
                 var departmentIds = [];
-                var checkedDepts = document.querySelectorAll('.time-dept-filter:checked');
-                // Only set departmentIds if not all are checked (partial selection)
-                if (checkedDepts.length > 0 && checkedDepts.length < deptCheckboxes.length) {
-                    checkedDepts.forEach(function(cb) {
-                        departmentIds.push(cb.value);
-                    });
-                }
+                document.querySelectorAll('.time-dept-filter:checked').forEach(function(cb) {
+                    departmentIds.push(cb.value);
+                });
                 filters.departmentIds = departmentIds;
             } else {
                 // UI not loaded yet, use saved config
@@ -8608,21 +8606,13 @@
                 });
                 
                 // Gather selected departments (multiselect)
-                var deptCheckboxes = document.querySelectorAll('.time-dept-filter');
-                var allDeptsChecked = true;
+                // IMPORTANT: Always store explicit list of checked departments to avoid
+                // hidden departments being included when "all visible" are checked
                 var departmentIds = [];
-                deptCheckboxes.forEach(function(cb) {
-                    if (cb.checked) {
-                        departmentIds.push(cb.value);
-                    } else {
-                        allDeptsChecked = false;
-                    }
+                document.querySelectorAll('.time-dept-filter:checked').forEach(function(cb) {
+                    departmentIds.push(cb.value);
                 });
-                // If all are checked, store empty array (means "all departments")
-                if (allDeptsChecked) {
-                    departmentIds = [];
-                }
-                
+
                 categoryData.timeFilters = {
                     includeBillable: el('#timeIncludeBillable')?.checked !== false,
                     includeNonBillable: el('#timeIncludeNonBillable')?.checked || false,
@@ -10778,22 +10768,15 @@
                 }
                 
                 // Gather selected departments (multiselect) - preserve saved if UI not loaded
+                // IMPORTANT: Always store explicit list of checked departments to avoid
+                // hidden departments being included when "all visible" are checked
                 var deptCheckboxes = document.querySelectorAll('.time-dept-filter');
                 var departmentIds;
                 if (deptCheckboxes.length > 0) {
-                    var allDeptsChecked = true;
                     departmentIds = [];
-                    deptCheckboxes.forEach(function(cb) {
-                        if (cb.checked) {
-                            departmentIds.push(cb.value);
-                        } else {
-                            allDeptsChecked = false;
-                        }
+                    document.querySelectorAll('.time-dept-filter:checked').forEach(function(cb) {
+                        departmentIds.push(cb.value);
                     });
-                    // If all are checked, store empty array (means "all departments")
-                    if (allDeptsChecked) {
-                        departmentIds = [];
-                    }
                 } else {
                     departmentIds = savedFilters.departmentIds || [];
                 }
