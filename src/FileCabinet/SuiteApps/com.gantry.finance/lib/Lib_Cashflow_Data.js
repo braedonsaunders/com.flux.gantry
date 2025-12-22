@@ -1290,45 +1290,8 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Core", "./Lib_Config"
     const bills = [];
     const buckets = { Current: 0, "1-30": 0, "31-60": 0, "61-90": 0, "90+": 0 };
 
-    // Get authoritative AP balance directly from GL (matches balance sheet exactly)
-    try {
-      const apBalanceResult = query.runSuiteQL({
-        query: `SELECT SUM(account.balance) as ap_balance FROM account WHERE account.accttype = 'AcctPay' AND account.isinactive = 'F'`
-      }).asMappedResults();
-      if (apBalanceResult.length > 0 && apBalanceResult[0].ap_balance != null) {
-        totalOutstanding = Math.abs(parseFloat(apBalanceResult[0].ap_balance)) || 0;
-      }
-    } catch (e) {
-      log.debug("buildAPForecast", "SuiteQL AP balance query failed, falling back to transaction search: " + e.message);
-    }
-
-    // Subtract excluded vendor categories from AP total
+    // Build filters - exclusions handled via filter (totalOutstanding calculated from bills, matching AR approach)
     const hasExclusions = exclusions && exclusions.excludeVendorCategories && exclusions.excludeVendorCategories.length;
-    if (hasExclusions && totalOutstanding > 0) {
-      try {
-        let excludedTotal = 0;
-        const excludedSearch = search.create({
-          type: search.Type.VENDOR_BILL,
-          filters: [
-            ["mainline", "is", "T"], "AND",
-            ["amountremaining", "greaterthan", 0], "AND",
-            ["vendor.category", "anyof", exclusions.excludeVendorCategories]
-          ],
-          columns: [search.createColumn({ name: "amountremaining", summary: search.Summary.SUM })]
-        });
-        excludedSearch.run().each(function(result) {
-          excludedTotal = parseFloat(result.getValue({ name: "amountremaining", summary: search.Summary.SUM })) || 0;
-          return true;
-        });
-        if (excludedTotal > 0) {
-          log.debug("buildAPForecast", "Excluding " + excludedTotal + " from vendor categories: " + exclusions.excludeVendorCategories.join(','));
-          totalOutstanding -= excludedTotal;
-        }
-      } catch (e) {
-        log.error("buildAPForecast", "Excluded vendor category search failed: " + e.message);
-      }
-    }
-
     const filters = [["mainline", "is", "T"], "AND", ["amountremaining", "greaterthan", 0]];
     if (hasExclusions) {
       filters.push("AND", ["vendor.category", "noneof", exclusions.excludeVendorCategories]);
@@ -1356,6 +1319,9 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Core", "./Lib_Config"
         const entityId = res.getValue("entity");
         const customDateRaw = res.getValue("custbodyexpected_pay_date");
         const vendorCat = res.getValue({ name: "category", join: "vendor" });
+
+        // Accumulate total from bills (matching AR approach - ensures totalOutstanding matches bucket sums)
+        totalOutstanding += amt;
 
         // Calculate days past due for display
         let daysOverDue = 0;
@@ -2242,12 +2208,22 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Core", "./Lib_Config"
         });
       });
     } else {
+      // Apply same exclusions as main dashboard for consistency
+      const storedConfig = ConfigLib.getStoredConfiguration('cashflow');
+      const apFilters = storedConfig.apFilters || {};
+      const hasExclusions = apFilters.excludeVendorCategories && apFilters.excludeVendorCategories.length;
+
+      const filters = [
+        ["mainline", "is", "T"], "AND",
+        ["amountremaining", "greaterthan", 0]
+      ];
+      if (hasExclusions) {
+        filters.push("AND", ["vendor.category", "noneof", apFilters.excludeVendorCategories]);
+      }
+
       const searchObj = search.create({
         type: search.Type.VENDOR_BILL,
-        filters: [
-          ["mainline", "is", "T"], "AND",
-          ["amountremaining", "greaterthan", 0]
-        ],
+        filters: filters,
         columns: [
           "internalid", "tranid", "entity", "amountremaining",
           "trandate", "duedate"
