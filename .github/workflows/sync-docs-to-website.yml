@@ -1,0 +1,106 @@
+# ============================================================================
+# FLUX DOCS AUTO-SYNC WORKFLOW
+# ============================================================================
+#
+# Place this file in your SuiteApp repository at:
+#   .github/workflows/sync-docs-to-website.yml
+#
+# This workflow automatically syncs documentation from this SuiteApp repo
+# to the Flux marketing website when docs are updated.
+#
+# SETUP INSTRUCTIONS:
+# 1. Copy this file to .github/workflows/sync-docs-to-website.yml
+# 2. Create a Personal Access Token (PAT) with 'repo' scope
+# 3. Add the PAT as a secret named WEBSITE_PAT in this repo's settings
+# 4. Update PRODUCT_NAME below (gantry or capture)
+# 5. Create a /docs folder in this repo with your MDX documentation
+#
+# ============================================================================
+
+name: Sync Docs to Website
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - 'docs/**'
+  workflow_dispatch:
+
+env:
+  # Change this to 'gantry' or 'capture' depending on which product this is
+  PRODUCT_NAME: gantry
+  # The website repository (owner/repo format)
+  WEBSITE_REPO: braedonsaunders/flux.com
+
+jobs:
+  sync-docs:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout this repo
+        uses: actions/checkout@v4
+
+      - name: Check for docs
+        id: check
+        run: |
+          if [ -d "docs" ] && [ "$(ls -A docs 2>/dev/null)" ]; then
+            echo "has_docs=true" >> $GITHUB_OUTPUT
+            echo "Found docs directory with content"
+          else
+            echo "has_docs=false" >> $GITHUB_OUTPUT
+            echo "No docs directory or empty"
+          fi
+
+      - name: Checkout website repo
+        if: steps.check.outputs.has_docs == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.WEBSITE_REPO }}
+          path: website
+          token: ${{ secrets.WEBSITE_PAT }}
+
+      - name: Sync docs to website
+        if: steps.check.outputs.has_docs == 'true'
+        run: |
+          TARGET_DIR="website/src/content/docs/${{ env.PRODUCT_NAME }}"
+
+          # Create target directory
+          mkdir -p "$TARGET_DIR"
+
+          # Copy all docs (rsync for proper sync with deletions)
+          rsync -av --delete docs/ "$TARGET_DIR/"
+
+          echo "Synced docs to $TARGET_DIR"
+          ls -la "$TARGET_DIR"
+
+      - name: Commit and push to website
+        if: steps.check.outputs.has_docs == 'true'
+        working-directory: website
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Check if there are changes
+          if [ -n "$(git status --porcelain)" ]; then
+            git add src/content/docs/
+            git commit -m "docs(${{ env.PRODUCT_NAME }}): auto-sync from SuiteApp repo
+
+          Source commit: ${{ github.repository }}@${{ github.sha }}
+          Triggered by: ${{ github.actor }}"
+
+            git push
+            echo "Successfully pushed docs update to website"
+          else
+            echo "No changes to push"
+          fi
+
+      - name: Summary
+        run: |
+          echo "## Docs Sync Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Product**: ${{ env.PRODUCT_NAME }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Source**: ${{ github.repository }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Target**: ${{ env.WEBSITE_REPO }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit**: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
