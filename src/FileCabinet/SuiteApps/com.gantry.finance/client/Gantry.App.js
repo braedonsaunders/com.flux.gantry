@@ -316,12 +316,25 @@
     // ==========================================
     // INITIALIZATION
     // ==========================================
-    
-    // Set up navigation click handlers
+
+    // Initialize License module from server-injected config
+    if (window.License && typeof License.init === 'function') {
+        License.init();
+    }
+
+    // Set up navigation click handlers with license check
     document.querySelectorAll('.gantry-nav-link').forEach(link => {
         link.addEventListener('click', (e) => {
             e.preventDefault();
             const route = e.target.closest('a').dataset.route;
+
+            // Check license before navigating (settings is always allowed)
+            if (window.License && !License.isRouteAllowed(route)) {
+                License.showOverlay();
+                Router.navigate('settings');
+                return;
+            }
+
             Router.navigate(route);
         });
     });
@@ -425,6 +438,16 @@
             } catch (e) {
                 // Use defaults if settings fail to load
             }
+        }
+
+        // === LICENSE CHECK ===
+        // If license is invalid, redirect to settings and show overlay
+        if (window.License && !License.isValid()) {
+            defaultRoute = 'settings';
+            // Show overlay after a brief delay to let settings load
+            setTimeout(() => {
+                License.showOverlay();
+            }, 500);
         }
 
         // Navigate to default route

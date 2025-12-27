@@ -1,171 +1,240 @@
 /**
  * Dashboard.Settings.js
  * Global Application Settings Controller
- * 
- * Uses a declarative SETTINGS_SCHEMA for easy extensibility.
+ *
+ * Uses a declarative SETTINGS_SCHEMA with tabs for easy extensibility.
  * Add new settings by simply extending the schema.
  */
 (function(window) {
     'use strict';
 
     // ==========================================
-    // SETTINGS SCHEMA - Add new settings here
+    // SETTINGS SCHEMA - Tab-based organization
     // ==========================================
     const SETTINGS_SCHEMA = {
         // Dashboard definitions
         dashboards: [
-    { id: 'advisor', icon: 'fa-robot', color: 'text-primary', defaultName: 'Advisor', route: 'advisor' },
-    { id: 'cashflow', icon: 'fa-money-bill-wave', color: 'text-success', defaultName: 'Liquidity', route: 'cashflow' },
-    { id: 'health', icon: 'fa-heartbeat', color: 'text-danger', defaultName: 'P&L', route: 'health' },
-    { id: 'burden', icon: 'fa-weight-hanging', color: 'text-warning', defaultName: 'True Cost', route: 'burden' },
-    { id: 'time', icon: 'fa-clock', color: 'text-info', defaultName: 'Billable IQ', route: 'time' },
-    { id: 'integrity', icon: 'fa-shield-alt', color: 'text-danger', defaultName: 'Sentinel', route: 'integrity' },
-    { id: 'vendorperformance', icon: 'fa-handshake', color: 'text-purple', defaultName: 'Procurement', route: 'vendorperformance' },
-    { id: 'customervalue', icon: 'fa-users', color: 'text-success', defaultName: 'Revenue Intelligence', route: 'customervalue' },
-    { id: 'spendvelocity', icon: 'fa-tachometer-alt', color: 'text-indigo', defaultName: 'Spend Velocity', route: 'spendvelocity' }
-],
+            { id: 'advisor', icon: 'fa-robot', color: 'text-primary', defaultName: 'Advisor', route: 'advisor' },
+            { id: 'cashflow', icon: 'fa-money-bill-wave', color: 'text-success', defaultName: 'Liquidity', route: 'cashflow' },
+            { id: 'health', icon: 'fa-heartbeat', color: 'text-danger', defaultName: 'P&L', route: 'health' },
+            { id: 'burden', icon: 'fa-weight-hanging', color: 'text-warning', defaultName: 'True Cost', route: 'burden' },
+            { id: 'time', icon: 'fa-clock', color: 'text-info', defaultName: 'Billable IQ', route: 'time' },
+            { id: 'integrity', icon: 'fa-shield-alt', color: 'text-danger', defaultName: 'Sentinel', route: 'integrity' },
+            { id: 'vendorperformance', icon: 'fa-handshake', color: 'text-purple', defaultName: 'Procurement', route: 'vendorperformance' },
+            { id: 'customervalue', icon: 'fa-users', color: 'text-success', defaultName: 'Revenue Intelligence', route: 'customervalue' },
+            { id: 'spendvelocity', icon: 'fa-tachometer-alt', color: 'text-indigo', defaultName: 'Spend Velocity', route: 'spendvelocity' }
+        ],
 
-        // Settings sections - each section becomes a card
-        sections: [
+        // Tab definitions - dynamically rendered
+        tabs: [
+            {
+                id: 'license',
+                label: 'License',
+                icon: 'fa-id-card',
+                order: 1,
+                sections: [
+                    {
+                        id: 'licenseKey',
+                        title: 'License Key',
+                        icon: 'fa-key',
+                        description: 'Enter your Gantry license key to activate the application.',
+                        fields: [
+                            {
+                                id: 'licenseKey',
+                                type: 'password',
+                                label: 'License Key',
+                                placeholder: 'GANTRY-XXXX-XXXX-XXXX'
+                            }
+                        ],
+                        actions: [
+                            { id: 'checkLicense', label: 'Verify License', icon: 'fa-check-circle', handler: 'onCheckLicense' }
+                        ]
+                    },
+                    {
+                        id: 'licenseStatus',
+                        title: 'License Status',
+                        icon: 'fa-info-circle',
+                        type: 'license_status' // Special type for license status display
+                    }
+                ]
+            },
+            {
+                id: 'ai',
+                label: 'AI Provider',
+                icon: 'fa-robot',
+                order: 2,
+                sections: [
+                    {
+                        id: 'aiModel',
+                        title: 'AI Configuration',
+                        icon: 'fa-brain',
+                        description: 'Configure how the AI Advisor processes your queries.',
+                        fields: [
+                            {
+                                id: 'aiMode',
+                                type: 'mode_select_compact',
+                                label: 'AI Mode',
+                                default: 'smart',
+                                options: [
+                                    { value: 'smart', label: 'Smart', icon: 'fa-magic', color: '#3b82f6', desc: 'Auto-selects model by task', recommended: true },
+                                    { value: 'max', label: 'Max', icon: 'fa-gem', color: '#8b5cf6', desc: 'Always premium models' },
+                                    { value: 'light', label: 'Light', icon: 'fa-feather', color: '#10b981', desc: 'Always fast models' },
+                                    { value: 'custom', label: 'Custom', icon: 'fa-sliders-h', color: '#f59e0b', desc: 'Pick models per tier' }
+                                ]
+                            },
+                            {
+                                id: 'aiProvider',
+                                type: 'select',
+                                label: 'Provider',
+                                default: 'gemini',
+                                options: [
+                                    { value: 'gemini', label: 'Google Gemini' },
+                                    { value: 'anthropic', label: 'Anthropic Claude' },
+                                    { value: 'openai', label: 'OpenAI' },
+                                    { value: 'openrouter', label: 'OpenRouter (100+ models)' },
+                                    { value: 'grok', label: 'xAI Grok' },
+                                    { value: 'netsuite', label: 'NetSuite (Free)' }
+                                ],
+                                showWhen: { field: 'aiMode', notValue: 'custom' }
+                            },
+                            {
+                                id: 'openrouterModel',
+                                type: 'openrouter_model_select',
+                                label: 'OpenRouter Model',
+                                description: 'Select from 100+ models - click Refresh to load latest',
+                                default: 'anthropic/claude-sonnet-4',
+                                showWhen: { field: 'aiProvider', value: 'openrouter' }
+                            },
+                            {
+                                id: 'aiTemperature',
+                                type: 'select',
+                                label: 'Response Style',
+                                default: '0.2',
+                                options: [
+                                    { value: '0.1', label: 'Precise' },
+                                    { value: '0.2', label: 'Balanced' },
+                                    { value: '0.5', label: 'Creative' },
+                                    { value: '0.8', label: 'Very Creative' }
+                                ]
+                            },
+                            {
+                                id: 'tier1Model',
+                                type: 'model_select',
+                                label: 'Tier 1 (Fast)',
+                                description: 'Planning, classification',
+                                default: 'gemini-2.5-flash-lite',
+                                showWhen: { field: 'aiMode', value: 'custom' }
+                            },
+                            {
+                                id: 'tier2Model',
+                                type: 'model_select',
+                                label: 'Tier 2 (Balanced)',
+                                description: 'Query generation',
+                                default: 'gemini-2.5-flash',
+                                showWhen: { field: 'aiMode', value: 'custom' }
+                            },
+                            {
+                                id: 'tier3Model',
+                                type: 'model_select',
+                                label: 'Tier 3 (Premium)',
+                                description: 'Complex reasoning',
+                                default: 'gemini-2.5-pro',
+                                showWhen: { field: 'aiMode', value: 'custom' }
+                            }
+                        ]
+                    },
+                    {
+                        id: 'apiKeys',
+                        title: 'API Keys',
+                        icon: 'fa-key',
+                        description: 'Configure API keys for external AI providers.',
+                        fields: [
+                            {
+                                id: 'netsuiteUsage',
+                                type: 'usage',
+                                label: 'NetSuite AI Usage',
+                                description: 'Free monthly quota'
+                            },
+                            {
+                                id: 'geminiApiKey',
+                                type: 'password',
+                                label: 'Google AI (Gemini)',
+                                placeholder: 'AIza...'
+                            },
+                            {
+                                id: 'anthropicApiKey',
+                                type: 'password',
+                                label: 'Anthropic (Claude)',
+                                placeholder: 'sk-ant-...'
+                            },
+                            {
+                                id: 'openaiApiKey',
+                                type: 'password',
+                                label: 'OpenAI',
+                                placeholder: 'sk-...'
+                            },
+                            {
+                                id: 'openrouterApiKey',
+                                type: 'password',
+                                label: 'OpenRouter',
+                                placeholder: 'sk-or-...'
+                            },
+                            {
+                                id: 'grokApiKey',
+                                type: 'password',
+                                label: 'xAI (Grok)',
+                                placeholder: 'xai-...'
+                            }
+                        ]
+                    }
+                ]
+            },
             {
                 id: 'dashboards',
-                title: 'Dashboard Management',
+                label: 'Dashboards',
                 icon: 'fa-th-large',
-                description: 'Control dashboard visibility, names, and order in the sidebar.',
-                type: 'dashboards' // Special type for dashboard management
-            },
-            {
-                id: 'aiModel',
-                title: 'AI Configuration',
-                icon: 'fa-brain',
-                description: 'Configure how the AI Advisor processes your queries.',
-                fields: [
+                order: 3,
+                sections: [
                     {
-                        id: 'aiMode',
-                        type: 'mode_select_compact',
-                        label: 'AI Mode',
-                        default: 'smart',
-                        options: [
-                            { value: 'smart', label: 'Smart', icon: 'fa-magic', color: '#3b82f6', desc: 'Auto-selects model by task', recommended: true },
-                            { value: 'max', label: 'Max', icon: 'fa-gem', color: '#8b5cf6', desc: 'Always premium models' },
-                            { value: 'light', label: 'Light', icon: 'fa-feather', color: '#10b981', desc: 'Always fast models' },
-                            { value: 'custom', label: 'Custom', icon: 'fa-sliders-h', color: '#f59e0b', desc: 'Pick models per tier' }
-                        ]
-                    },
-                    { 
-                        id: 'aiProvider', 
-                        type: 'select', 
-                        label: 'Provider', 
-                        default: 'gemini',
-                        options: [
-                            { value: 'gemini', label: 'Google Gemini' },
-                            { value: 'anthropic', label: 'Anthropic Claude' },
-                            { value: 'openai', label: 'OpenAI' },
-                            { value: 'openrouter', label: 'OpenRouter (100+ models)' },
-                            { value: 'grok', label: 'xAI Grok' },
-                            { value: 'netsuite', label: 'NetSuite (Free)' }
-                        ],
-                        showWhen: { field: 'aiMode', notValue: 'custom' }
-                    },
-                    {
-                        id: 'openrouterModel',
-                        type: 'openrouter_model_select',
-                        label: 'OpenRouter Model',
-                        description: 'Select from 100+ models - click Refresh to load latest',
-                        default: 'anthropic/claude-sonnet-4',
-                        showWhen: { field: 'aiProvider', value: 'openrouter' }
-                    },
-                    { 
-                        id: 'aiTemperature', 
-                        type: 'select', 
-                        label: 'Response Style', 
-                        default: '0.2',
-                        options: [
-                            { value: '0.1', label: 'Precise' },
-                            { value: '0.2', label: 'Balanced' },
-                            { value: '0.5', label: 'Creative' },
-                            { value: '0.8', label: 'Very Creative' }
-                        ]
-                    },
-                    {
-                        id: 'tier1Model',
-                        type: 'model_select',
-                        label: 'Tier 1 (Fast)',
-                        description: 'Planning, classification',
-                        default: 'gemini-2.5-flash-lite',
-                        showWhen: { field: 'aiMode', value: 'custom' }
-                    },
-                    {
-                        id: 'tier2Model',
-                        type: 'model_select',
-                        label: 'Tier 2 (Balanced)',
-                        description: 'Query generation',
-                        default: 'gemini-2.5-flash',
-                        showWhen: { field: 'aiMode', value: 'custom' }
-                    },
-                    {
-                        id: 'tier3Model',
-                        type: 'model_select',
-                        label: 'Tier 3 (Premium)',
-                        description: 'Complex reasoning',
-                        default: 'gemini-2.5-pro',
-                        showWhen: { field: 'aiMode', value: 'custom' }
+                        id: 'dashboards',
+                        title: 'Dashboard Management',
+                        icon: 'fa-th-large',
+                        description: 'Control dashboard visibility, names, and order in the sidebar.',
+                        type: 'dashboards' // Special type for dashboard management
                     }
                 ]
             },
             {
-                id: 'apiKeys',
-                title: 'API Keys',
-                icon: 'fa-key',
-                description: 'Configure API keys for external AI providers.',
-                fields: [
-                    {
-                        id: 'netsuiteUsage',
-                        type: 'usage',
-                        label: 'NetSuite AI Usage',
-                        description: 'Free monthly quota'
-                    },
-                    { 
-                        id: 'geminiApiKey', 
-                        type: 'password', 
-                        label: 'Google AI (Gemini)', 
-                        placeholder: 'AIza...'
-                    },
-                    { 
-                        id: 'anthropicApiKey', 
-                        type: 'password', 
-                        label: 'Anthropic (Claude)', 
-                        placeholder: 'sk-ant-...'
-                    },
-                    { 
-                        id: 'openaiApiKey', 
-                        type: 'password', 
-                        label: 'OpenAI', 
-                        placeholder: 'sk-...'
-                    },
-                    { 
-                        id: 'openrouterApiKey', 
-                        type: 'password', 
-                        label: 'OpenRouter', 
-                        placeholder: 'sk-or-...'
-                    },
-                    { 
-                        id: 'grokApiKey', 
-                        type: 'password', 
-                        label: 'xAI (Grok)', 
-                        placeholder: 'xai-...'
-                    }
-                ]
-            },
-            {
-                id: 'rolePermissions',
-                title: 'Role Permissions',
+                id: 'permissions',
+                label: 'Permissions',
                 icon: 'fa-user-shield',
-                description: 'Control which dashboards each role can access. Admin-only setting.',
-                type: 'permissions',
-                adminOnly: true
+                order: 4,
+                adminOnly: true,
+                sections: [
+                    {
+                        id: 'rolePermissions',
+                        title: 'Role Permissions',
+                        icon: 'fa-user-shield',
+                        description: 'Control which dashboards each role can access. Admin-only setting.',
+                        type: 'permissions',
+                        adminOnly: true
+                    }
+                ]
             }
-        ]
+        ],
+
+        // Legacy sections array for compatibility - maps to tabs
+        get sections() {
+            const allSections = [];
+            this.tabs.forEach(tab => {
+                if (tab.sections) {
+                    tab.sections.forEach(section => {
+                        allSections.push(section);
+                    });
+                }
+            });
+            return allSections;
+        }
     };
 
     const SettingsController = {
@@ -276,18 +345,39 @@
         renderTemplate() {
             const isAdmin = window.GANTRY_CONFIG?.user?.isAdmin || window.GANTRY_CONFIG?.permissions?.isAdmin;
 
-            const sectionsHtml = SETTINGS_SCHEMA.sections.map(section => {
-                // Skip admin-only sections for non-admins
-                if (section.adminOnly && !isAdmin) {
-                    return '';
-                }
-                if (section.type === 'dashboards') {
-                    return this.renderDashboardSection(section);
-                }
-                if (section.type === 'permissions') {
-                    return this.renderPermissionsSection(section);
-                }
-                return this.renderFieldSection(section);
+            // Get visible tabs
+            const visibleTabs = SETTINGS_SCHEMA.tabs
+                .filter(tab => !tab.adminOnly || isAdmin)
+                .sort((a, b) => a.order - b.order);
+
+            // Generate tab navigation
+            const tabNavHtml = visibleTabs.map((tab, idx) => `
+                <li class="nav-item">
+                    <a class="nav-link settings-tab-link ${idx === 0 ? 'active' : ''}"
+                       href="#"
+                       data-tab="${tab.id}"
+                       id="settings-tab-${tab.id}">
+                        <i class="fas ${tab.icon} mr-2"></i>${tab.label}
+                    </a>
+                </li>
+            `).join('');
+
+            // Generate tab content panels
+            const tabContentHtml = visibleTabs.map((tab, idx) => {
+                const sectionsHtml = tab.sections.map(section => {
+                    if (section.adminOnly && !isAdmin) return '';
+                    if (section.type === 'dashboards') return this.renderDashboardSection(section);
+                    if (section.type === 'permissions') return this.renderPermissionsSection(section);
+                    if (section.type === 'license_status') return this.renderLicenseStatusSection(section);
+                    return this.renderFieldSection(section);
+                }).join('');
+
+                return `
+                <div class="settings-tab-pane ${idx === 0 ? 'active' : ''}"
+                     id="settings-pane-${tab.id}"
+                     data-tab="${tab.id}">
+                    ${sectionsHtml}
+                </div>`;
             }).join('');
 
             return `
@@ -302,7 +392,15 @@
                     </div>
                 </div>
 
-                ${sectionsHtml}
+                <!-- Tab Navigation -->
+                <ul class="nav nav-tabs settings-tabs mb-4" id="settingsTabNav">
+                    ${tabNavHtml}
+                </ul>
+
+                <!-- Tab Content -->
+                <div class="settings-tab-content">
+                    ${tabContentHtml}
+                </div>
 
                 <div class="text-right mt-4">
                     <button class="btn btn-outline-secondary mr-2" id="btnResetSettings">
@@ -313,14 +411,67 @@
                     </button>
                 </div>
             </div>
-            
+
             <style>
-                /* Tier pill styles for model selects - T1/T2/T3 instead of rockets */
+                /* Settings Tabs */
+                .settings-tabs {
+                    border-bottom: 2px solid #e2e8f0;
+                    flex-wrap: nowrap;
+                    overflow-x: auto;
+                }
+                .settings-tabs .nav-item {
+                    flex-shrink: 0;
+                }
+                .settings-tabs .nav-link {
+                    color: #64748b;
+                    border: none;
+                    border-bottom: 2px solid transparent;
+                    margin-bottom: -2px;
+                    padding: 12px 20px;
+                    font-weight: 500;
+                    transition: all 0.15s ease;
+                    white-space: nowrap;
+                }
+                .settings-tabs .nav-link:hover {
+                    color: #3b82f6;
+                    border-bottom-color: #93c5fd;
+                }
+                .settings-tabs .nav-link.active {
+                    color: #3b82f6;
+                    border-bottom-color: #3b82f6;
+                    background: transparent;
+                }
+                .dark-mode .settings-tabs {
+                    border-bottom-color: #374151;
+                }
+                .dark-mode .settings-tabs .nav-link {
+                    color: #9ca3af;
+                }
+                .dark-mode .settings-tabs .nav-link:hover,
+                .dark-mode .settings-tabs .nav-link.active {
+                    color: #60a5fa;
+                    border-bottom-color: #60a5fa;
+                }
+
+                /* Tab Panes */
+                .settings-tab-pane {
+                    display: none;
+                }
+                .settings-tab-pane.active {
+                    display: block;
+                    animation: fadeIn 0.2s ease;
+                }
+                @keyframes fadeIn {
+                    from { opacity: 0; transform: translateY(4px); }
+                    to { opacity: 1; transform: translateY(0); }
+                }
+
+                /* Tier pill styles for model selects */
                 .model-select option,
                 .openrouter-model-select option {
                     padding: 8px 12px;
                 }
-                
+
                 /* Tier badge styles */
                 .tier-badge {
                     display: inline-flex;
@@ -332,44 +483,44 @@
                     font-weight: 600;
                     letter-spacing: 0.025em;
                 }
-                
+
                 .tier-badge.t1 {
                     background: linear-gradient(135deg, #dcfce7 0%, #bbf7d0 100%);
                     color: #166534;
                     border: 1px solid #86efac;
                 }
-                
+
                 .tier-badge.t2 {
                     background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%);
                     color: #1e40af;
                     border: 1px solid #93c5fd;
                 }
-                
+
                 .tier-badge.t3 {
                     background: linear-gradient(135deg, #fae8ff 0%, #f5d0fe 100%);
                     color: #86198f;
                     border: 1px solid #e879f9;
                 }
-                
+
                 /* Dark mode tier badges */
                 .dark-mode .tier-badge.t1 {
                     background: linear-gradient(135deg, #166534 0%, #14532d 100%);
                     color: #dcfce7;
                     border: 1px solid #22c55e;
                 }
-                
+
                 .dark-mode .tier-badge.t2 {
                     background: linear-gradient(135deg, #1e40af 0%, #1e3a8a 100%);
                     color: #dbeafe;
                     border: 1px solid #3b82f6;
                 }
-                
+
                 .dark-mode .tier-badge.t3 {
                     background: linear-gradient(135deg, #86198f 0%, #701a75 100%);
                     color: #fae8ff;
                     border: 1px solid #d946ef;
                 }
-                
+
                 /* Model select with tier indicator */
                 .model-tier-indicator {
                     display: inline-flex;
@@ -379,11 +530,161 @@
                     font-size: 12px;
                     color: #64748b;
                 }
-                
+
                 .dark-mode .model-tier-indicator {
                     color: #94a3b8;
                 }
+
+                /* License Status Styles */
+                .license-status-card {
+                    background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+                    border: 1px solid #e2e8f0;
+                    border-radius: 12px;
+                    padding: 20px;
+                }
+                .dark-mode .license-status-card {
+                    background: linear-gradient(135deg, #1f2937 0%, #111827 100%);
+                    border-color: #374151;
+                }
+                .license-status-badge {
+                    display: inline-flex;
+                    align-items: center;
+                    padding: 6px 14px;
+                    border-radius: 20px;
+                    font-weight: 600;
+                    font-size: 13px;
+                }
+                .license-status-badge.valid {
+                    background: #dcfce7;
+                    color: #166534;
+                }
+                .license-status-badge.invalid {
+                    background: #fef2f2;
+                    color: #dc2626;
+                }
+                .license-status-badge.expired {
+                    background: #fef3c7;
+                    color: #d97706;
+                }
+                .license-status-badge.offline {
+                    background: #e0e7ff;
+                    color: #4f46e5;
+                }
+                .dark-mode .license-status-badge.valid {
+                    background: #166534;
+                    color: #dcfce7;
+                }
+                .dark-mode .license-status-badge.invalid {
+                    background: #7f1d1d;
+                    color: #fecaca;
+                }
+                .dark-mode .license-status-badge.expired {
+                    background: #78350f;
+                    color: #fef3c7;
+                }
+                .license-tier-badge {
+                    display: inline-block;
+                    padding: 4px 10px;
+                    border-radius: 6px;
+                    font-weight: 600;
+                    font-size: 12px;
+                    text-transform: uppercase;
+                    letter-spacing: 0.05em;
+                }
+                .license-info-row {
+                    display: flex;
+                    justify-content: space-between;
+                    padding: 10px 0;
+                    border-bottom: 1px solid #e2e8f0;
+                }
+                .license-info-row:last-child {
+                    border-bottom: none;
+                }
+                .dark-mode .license-info-row {
+                    border-bottom-color: #374151;
+                }
+                .license-info-label {
+                    color: #64748b;
+                    font-size: 13px;
+                }
+                .dark-mode .license-info-label {
+                    color: #9ca3af;
+                }
+                .license-info-value {
+                    font-weight: 500;
+                    font-size: 14px;
+                }
             </style>`;
+        },
+
+        /**
+         * Render license status section
+         */
+        renderLicenseStatusSection(section) {
+            const licenseData = window.GANTRY_CONFIG?.license || { valid: false, status: 'unknown' };
+            const statusClass = licenseData.valid ? 'valid' :
+                               (licenseData.status === 'expired' ? 'expired' :
+                               (licenseData.isOffline ? 'offline' : 'invalid'));
+            const statusLabel = licenseData.valid ? 'Active' :
+                               (licenseData.status === 'expired' ? 'Expired' :
+                               (licenseData.isOffline ? 'Offline Mode' : 'Invalid'));
+            const statusIcon = licenseData.valid ? 'fa-check-circle' :
+                              (licenseData.status === 'expired' ? 'fa-clock' :
+                              (licenseData.isOffline ? 'fa-wifi' : 'fa-times-circle'));
+
+            return `
+            <div class="card shadow-sm mb-4" id="licenseStatusSection">
+                <div class="card-header bg-light py-2">
+                    <h6 class="mb-0 font-weight-bold"><i class="fas ${section.icon} mr-2"></i>${section.title}</h6>
+                </div>
+                <div class="card-body">
+                    <div class="license-status-card">
+                        <div class="d-flex align-items-center justify-content-between mb-3">
+                            <span class="license-status-badge ${statusClass}">
+                                <i class="fas ${statusIcon} mr-2"></i>${statusLabel}
+                            </span>
+                            ${licenseData.tier ? License.getTierBadge(licenseData.tier, licenseData.tierLabel) : ''}
+                        </div>
+
+                        <div class="license-info-row">
+                            <span class="license-info-label">Licensed To</span>
+                            <span class="license-info-value" id="licensedToDisplay">${licenseData.licensedTo || 'Not licensed'}</span>
+                        </div>
+
+                        <div class="license-info-row">
+                            <span class="license-info-label">Subscription Tier</span>
+                            <span class="license-info-value" id="licenseTierDisplay">${licenseData.tierLabel || licenseData.tier || 'N/A'}</span>
+                        </div>
+
+                        <div class="license-info-row">
+                            <span class="license-info-label">Expires</span>
+                            <span class="license-info-value" id="licenseExpiresDisplay">${licenseData.expiresAt ? License.formatExpiry(licenseData.expiresAt) : 'N/A'}</span>
+                        </div>
+
+                        ${licenseData.isOffline ? `
+                        <div class="license-info-row">
+                            <span class="license-info-label">Offline Grace Period</span>
+                            <span class="license-info-value text-warning">
+                                <i class="fas fa-exclamation-triangle mr-1"></i>Active (24 hours)
+                            </span>
+                        </div>` : ''}
+
+                        ${!licenseData.valid ? `
+                        <div class="mt-3 p-3 bg-light rounded">
+                            <p class="mb-2 small text-muted">
+                                <i class="fas fa-info-circle mr-1"></i>
+                                Don't have a license? Visit our website to purchase one.
+                            </p>
+                            <a href="https://fluxfornetsuite.com/gantry" target="_blank" class="btn btn-sm btn-primary">
+                                <i class="fas fa-external-link-alt mr-1"></i>Get License
+                            </a>
+                            <a href="mailto:sales@fluxfornetsuite.com" class="btn btn-sm btn-outline-secondary ml-2">
+                                <i class="fas fa-envelope mr-1"></i>Contact Sales
+                            </a>
+                        </div>` : ''}
+                    </div>
+                </div>
+            </div>`;
         },
 
         renderDashboardSection(section) {
@@ -552,7 +853,20 @@
 
         renderFieldSection(section) {
             const fieldsHtml = (section.fields || []).map(field => this.renderField(field)).join('');
-            
+
+            // Render action buttons if defined
+            let actionsHtml = '';
+            if (section.actions && section.actions.length > 0) {
+                actionsHtml = `
+                    <div class="mt-3 pt-3 border-top">
+                        ${section.actions.map(action => `
+                            <button class="btn btn-sm btn-primary mr-2" id="btn${action.id.charAt(0).toUpperCase() + action.id.slice(1)}">
+                                <i class="fas ${action.icon} mr-2"></i>${action.label}
+                            </button>
+                        `).join('')}
+                    </div>`;
+            }
+
             // Build showWhen for section
             let showWhenAttr = '';
             if (section.showWhen) {
@@ -564,7 +878,7 @@
                     showWhenAttr += ` data-show-when-not-value="${section.showWhen.notValue}"`;
                 }
             }
-            
+
             return `
             <div class="card shadow-sm mb-4 settings-card" ${showWhenAttr}>
                 <div class="card-header bg-light py-2">
@@ -575,6 +889,7 @@
                     <div class="row">
                         ${fieldsHtml}
                     </div>
+                    ${actionsHtml}
                 </div>
             </div>`;
         },
@@ -1442,6 +1757,18 @@
         },
 
         setupEventListeners() {
+            // Tab switching
+            document.querySelectorAll('.settings-tab-link').forEach(tabLink => {
+                tabLink.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    const tabId = tabLink.dataset.tab;
+                    this.switchTab(tabId);
+                });
+            });
+
+            // License check button
+            el('#btnCheckLicense')?.addEventListener('click', () => this.onCheckLicense());
+
             // Dashboard visibility toggles (use event delegation)
             el("#dashboardOrderList")?.addEventListener('change', (e) => {
                 if (e.target.classList.contains('dashboard-visibility')) {
@@ -2137,6 +2464,117 @@
             } catch(e) {
                 // Could not load main config, using defaults
             }
+        },
+
+        // ==========================================
+        // TAB MANAGEMENT
+        // ==========================================
+
+        /**
+         * Switch to a specific tab
+         */
+        switchTab(tabId) {
+            // Update tab links
+            document.querySelectorAll('.settings-tab-link').forEach(link => {
+                link.classList.toggle('active', link.dataset.tab === tabId);
+            });
+
+            // Update tab panes
+            document.querySelectorAll('.settings-tab-pane').forEach(pane => {
+                pane.classList.toggle('active', pane.dataset.tab === tabId);
+            });
+
+            // Store current tab
+            this._currentTab = tabId;
+        },
+
+        // ==========================================
+        // LICENSE MANAGEMENT
+        // ==========================================
+
+        /**
+         * Handle license check/refresh
+         */
+        async onCheckLicense() {
+            const btn = el('#btnCheckLicense');
+            if (btn) {
+                btn.disabled = true;
+                btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Checking...';
+            }
+
+            try {
+                // Collect and save the license key first if it changed
+                const licenseKeyInput = el('#setting_licenseKey');
+                if (licenseKeyInput && licenseKeyInput.value) {
+                    this.data.licenseKey = licenseKeyInput.value;
+
+                    // Save to server to trigger license refresh
+                    const saveRes = await API.post('save_main_config', this.data);
+
+                    if (saveRes.licenseStatus) {
+                        // Update global config and License object
+                        window.GANTRY_CONFIG.license = saveRes.licenseStatus;
+                        License.update(saveRes.licenseStatus);
+
+                        // Re-render license status section
+                        this.updateLicenseStatusDisplay(saveRes.licenseStatus);
+
+                        if (saveRes.licenseStatus.valid) {
+                            showToast('License activated successfully!');
+                        } else {
+                            showToast('License key is invalid or expired', 'error');
+                        }
+                    }
+                } else {
+                    // Just refresh status without saving
+                    const status = await License.refresh();
+                    this.updateLicenseStatusDisplay(status);
+                    showToast('License status refreshed');
+                }
+            } catch (e) {
+                console.error('License check failed:', e);
+                showToast('Failed to check license: ' + e.message, 'error');
+            } finally {
+                if (btn) {
+                    btn.disabled = false;
+                    btn.innerHTML = '<i class="fas fa-check-circle mr-2"></i>Verify License';
+                }
+            }
+        },
+
+        /**
+         * Update license status display after refresh
+         */
+        updateLicenseStatusDisplay(licenseData) {
+            const statusSection = el('#licenseStatusSection');
+            if (!statusSection) return;
+
+            const statusClass = licenseData.valid ? 'valid' :
+                               (licenseData.status === 'expired' ? 'expired' :
+                               (licenseData.isOffline ? 'offline' : 'invalid'));
+            const statusLabel = licenseData.valid ? 'Active' :
+                               (licenseData.status === 'expired' ? 'Expired' :
+                               (licenseData.isOffline ? 'Offline Mode' : 'Invalid'));
+            const statusIcon = licenseData.valid ? 'fa-check-circle' :
+                              (licenseData.status === 'expired' ? 'fa-clock' :
+                              (licenseData.isOffline ? 'fa-wifi' : 'fa-times-circle'));
+
+            // Update badge
+            const badge = statusSection.querySelector('.license-status-badge');
+            if (badge) {
+                badge.className = `license-status-badge ${statusClass}`;
+                badge.innerHTML = `<i class="fas ${statusIcon} mr-2"></i>${statusLabel}`;
+            }
+
+            // Update info rows
+            const licensedTo = el('#licensedToDisplay');
+            if (licensedTo) licensedTo.textContent = licenseData.licensedTo || 'Not licensed';
+
+            const tierDisplay = el('#licenseTierDisplay');
+            if (tierDisplay) tierDisplay.textContent = licenseData.tierLabel || licenseData.tier || 'N/A';
+
+            const expiresDisplay = el('#licenseExpiresDisplay');
+            if (expiresDisplay) expiresDisplay.textContent = licenseData.expiresAt ? License.formatExpiry(licenseData.expiresAt) : 'N/A';
         }
     };
 

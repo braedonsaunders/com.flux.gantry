@@ -153,6 +153,149 @@
         </div>
     </div>
 
+    <!-- LICENSE OVERLAY -->
+    <div id="license-overlay" class="license-overlay">
+        <div class="license-overlay-backdrop"></div>
+        <div class="license-overlay-content">
+            <div class="license-overlay-card">
+                <div class="license-overlay-icon">
+                    <i class="fas fa-layer-group"></i>
+                </div>
+                <h2 class="license-overlay-title">License Required</h2>
+                <p class="license-overlay-text">
+                    Gantry requires a valid license to access dashboards and features.
+                    Please enter your license key in Settings to continue.
+                </p>
+                <div class="license-overlay-actions">
+                    <button class="btn btn-primary btn-lg" onclick="License.goToSettings()">
+                        <i class="fas fa-cog mr-2"></i>Go to Settings
+                    </button>
+                    <a href="https://fluxfornetsuite.com/gantry" target="_blank" class="btn btn-outline-light btn-lg ml-3">
+                        <i class="fas fa-external-link-alt mr-2"></i>Get License
+                    </a>
+                </div>
+                <p class="license-overlay-contact">
+                    Questions? Contact <a href="mailto:sales@fluxfornetsuite.com">sales@fluxfornetsuite.com</a>
+                </p>
+            </div>
+        </div>
+    </div>
+    <style>
+        .license-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            z-index: 9999;
+            display: none;
+            align-items: center;
+            justify-content: center;
+        }
+        .license-overlay.visible {
+            display: flex;
+        }
+        .license-overlay-backdrop {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: linear-gradient(135deg, rgba(30, 41, 59, 0.95) 0%, rgba(15, 23, 42, 0.98) 100%);
+            backdrop-filter: blur(8px);
+        }
+        .license-overlay-content {
+            position: relative;
+            z-index: 1;
+            max-width: 500px;
+            width: 90%;
+            animation: licenseSlideIn 0.3s ease;
+        }
+        @keyframes licenseSlideIn {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .license-overlay-card {
+            background: white;
+            border-radius: 16px;
+            padding: 48px 40px;
+            text-align: center;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+        }
+        .dark-mode .license-overlay-card {
+            background: #1f2937;
+            color: #f3f4f6;
+        }
+        .license-overlay-icon {
+            width: 80px;
+            height: 80px;
+            margin: 0 auto 24px;
+            background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%);
+            border-radius: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 32px;
+            color: white;
+        }
+        .license-overlay-title {
+            font-size: 28px;
+            font-weight: 700;
+            margin-bottom: 16px;
+            color: #1e293b;
+        }
+        .dark-mode .license-overlay-title {
+            color: #f3f4f6;
+        }
+        .license-overlay-text {
+            font-size: 16px;
+            color: #64748b;
+            line-height: 1.6;
+            margin-bottom: 32px;
+        }
+        .dark-mode .license-overlay-text {
+            color: #9ca3af;
+        }
+        .license-overlay-actions {
+            display: flex;
+            justify-content: center;
+            flex-wrap: wrap;
+            gap: 12px;
+            margin-bottom: 24px;
+        }
+        .license-overlay-actions .btn {
+            min-width: 160px;
+        }
+        .license-overlay-actions .btn-outline-light {
+            border-color: #e2e8f0;
+            color: #475569;
+        }
+        .license-overlay-actions .btn-outline-light:hover {
+            background: #f1f5f9;
+            border-color: #cbd5e1;
+        }
+        .dark-mode .license-overlay-actions .btn-outline-light {
+            border-color: #4b5563;
+            color: #d1d5db;
+        }
+        .dark-mode .license-overlay-actions .btn-outline-light:hover {
+            background: #374151;
+            border-color: #6b7280;
+        }
+        .license-overlay-contact {
+            font-size: 14px;
+            color: #94a3b8;
+            margin: 0;
+        }
+        .license-overlay-contact a {
+            color: #3b82f6;
+            text-decoration: none;
+        }
+        .license-overlay-contact a:hover {
+            text-decoration: underline;
+        }
+    </style>
+
     <!-- TEMPLATES -->
     
     <!-- 0. Advisor Dashboard (Full Page - Premium) -->
