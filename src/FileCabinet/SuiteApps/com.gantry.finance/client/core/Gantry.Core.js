@@ -1182,6 +1182,158 @@
     }
 
     // ==========================================
+    // LICENSE MANAGEMENT
+    // ==========================================
+    const License = {
+        _data: null,
+        _unlicensedMode: false,
+        _overlayVisible: false,
+
+        /**
+         * Initialize license from server-injected config
+         */
+        init() {
+            const config = window.GANTRY_CONFIG;
+            if (config && config.license) {
+                this._data = config.license;
+                this._unlicensedMode = !config.license.valid;
+            } else {
+                this._data = { valid: false, status: 'unknown' };
+                this._unlicensedMode = true;
+            }
+            return this._data;
+        },
+
+        /**
+         * Check if license is valid
+         */
+        isValid() {
+            if (!this._data) this.init();
+            return this._data && this._data.valid === true;
+        },
+
+        /**
+         * Check if a route is allowed in current license state
+         */
+        isRouteAllowed(route) {
+            // Settings is always allowed (for license key entry)
+            if (route === 'settings') return true;
+            return this.isValid();
+        },
+
+        /**
+         * Get current license data
+         */
+        getData() {
+            if (!this._data) this.init();
+            return this._data;
+        },
+
+        /**
+         * Get license status for display
+         */
+        getStatus() {
+            if (!this._data) this.init();
+            return {
+                valid: this._data.valid,
+                status: this._data.status || 'unknown',
+                tier: this._data.tier,
+                tierLabel: this._data.tierLabel,
+                licensedTo: this._data.licensedTo,
+                expiresAt: this._data.expiresAt,
+                isOffline: this._data.isOffline
+            };
+        },
+
+        /**
+         * Update license data (after refresh)
+         */
+        update(data) {
+            this._data = data;
+            this._unlicensedMode = !data.valid;
+
+            // Hide overlay if license is now valid
+            if (data.valid && this._overlayVisible) {
+                this.hideOverlay();
+            }
+        },
+
+        /**
+         * Refresh license from server
+         */
+        async refresh() {
+            try {
+                const result = await API.get('license_refresh');
+                this.update(result);
+                return result;
+            } catch (e) {
+                console.error('License refresh error:', e);
+                return this._data;
+            }
+        },
+
+        /**
+         * Show license required overlay
+         */
+        showOverlay() {
+            if (this._overlayVisible) return;
+
+            const overlay = document.getElementById('license-overlay');
+            if (overlay) {
+                overlay.classList.add('visible');
+                this._overlayVisible = true;
+            }
+        },
+
+        /**
+         * Hide license overlay
+         */
+        hideOverlay() {
+            const overlay = document.getElementById('license-overlay');
+            if (overlay) {
+                overlay.classList.remove('visible');
+                this._overlayVisible = false;
+            }
+        },
+
+        /**
+         * Navigate to settings (for license entry)
+         */
+        goToSettings() {
+            this.hideOverlay();
+            Router.navigate('settings');
+        },
+
+        /**
+         * Format expiry date for display
+         */
+        formatExpiry(expiresAt) {
+            if (!expiresAt) return 'Never';
+            try {
+                const date = new Date(expiresAt);
+                return date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+            } catch (e) {
+                return expiresAt;
+            }
+        },
+
+        /**
+         * Get tier badge HTML
+         */
+        getTierBadge(tier, tierLabel) {
+            if (!tier) return '';
+            const colors = {
+                'starter': { bg: '#6b7280', text: '#fff' },
+                'standard': { bg: '#3b82f6', text: '#fff' },
+                'professional': { bg: '#8b5cf6', text: '#fff' },
+                'enterprise': { bg: '#f59e0b', text: '#fff' }
+            };
+            const color = colors[tier] || colors.standard;
+            return `<span class="license-tier-badge" style="background:${color.bg};color:${color.text};">${tierLabel || tier}</span>`;
+        }
+    };
+
+    // ==========================================
     // EXPOSE GLOBALLY
     // ==========================================
     // These need to be global for dashboard controllers to use
@@ -1197,17 +1349,20 @@
     window.Router = Router;
     window.showToast = showToast;
     window.renderStub = renderStub;
-    
+
     // New visual components
     window.Sparkline = Sparkline;
     window.HealthGauge = HealthGauge;
     window.RunwayBar = RunwayBar;
     window.ChartManager = ChartManager;
     window.StatusColors = StatusColors;
-    
+
     // Loading & Error handling
     window.Skeleton = Skeleton;
     window.ErrorBoundary = ErrorBoundary;
+
+    // License management
+    window.License = License;
 
     // Resize charts on window resize
     window.addEventListener('resize', () => {

@@ -16,8 +16,9 @@ define([
     'N/url',
     'N/runtime',
     'N/log',
-    '../lib/Lib_Permissions'
-], function(file, serverWidget, url, runtime, log, Permissions) {
+    '../lib/Lib_Permissions',
+    '../lib/Lib_LicenseGuard'
+], function(file, serverWidget, url, runtime, log, Permissions, LicenseGuard) {
     'use strict';
 
     /**
@@ -109,10 +110,19 @@ define([
         const routerUrl = resolveRouterUrl();
         log.debug('Router URL', routerUrl);
 
-        // 2. Resolve file URLs for all scripts
+        // 2. Validate license (non-blocking)
+        let licenseStatus = null;
+        try {
+            licenseStatus = LicenseGuard.getStatus();
+        } catch (e) {
+            log.error('License Validation Error', e.message);
+            licenseStatus = { valid: false, status: 'error', message: e.message };
+        }
+
+        // 3. Resolve file URLs for all scripts
         const fileUrls = resolveFileUrls();
 
-        // 3. Load HTML Template
+        // 4. Load HTML Template
         const htmlPath = CONFIG.basePath + '/App/gantry_index.html';
         const htmlFile = file.load({ id: htmlPath });
         let htmlContent = htmlFile.getContents();
@@ -134,7 +144,7 @@ define([
         htmlContent = htmlContent.replace('{{CSS_HEALTH_URL}}', fileUrls['css_health'] || '');
         htmlContent = htmlContent.replace('{{CSS_CASHFLOW_URL}}', fileUrls['css_cashflow'] || '');
       
-        // 5. Build configuration injection
+        // 6. Build configuration injection
         const currentUser = runtime.getCurrentUser();
         const accountId = runtime.accountId;
 
@@ -163,6 +173,7 @@ define([
                 subsidiaries: ${JSON.stringify(userPermissions.permittedSubsidiaries)},
                 isAdmin: ${userPermissions.isAdmin}
             },
+            license: ${JSON.stringify(licenseStatus)},
             version: "2.1.0",
             buildDate: "${new Date().toISOString().split('T')[0]}",
             features: {

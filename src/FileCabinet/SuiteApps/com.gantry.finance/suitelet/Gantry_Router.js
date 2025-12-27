@@ -14,6 +14,7 @@ define([
     '../lib/Lib_Config',
     '../lib/Lib_Dashboard_Registry',
     '../lib/Lib_Permissions',
+    '../lib/Lib_LicenseGuard',
     '../lib/Lib_Health_Data',
     '../lib/Lib_Cashflow_Data',
     '../lib/Lib_Time_Data',
@@ -32,6 +33,7 @@ define([
     ConfigLib,
     DashboardRegistry,
     Permissions,
+    LicenseGuard,
     HealthData,
     CashflowData,
     TimeData,
@@ -68,7 +70,56 @@ define([
         customervalue: CustomerValueData,
         spendvelocity: SpendVelocityData
     };
-    
+
+    /**
+     * Actions that don't require a license (settings access for license key entry)
+     */
+    const LICENSE_EXEMPT_ACTIONS = [
+        'user_permissions',
+        'main_config',
+        'license_status',
+        'license_refresh',
+        'roles',
+        'models',
+        'openrouter_models'
+    ];
+
+    /**
+     * Check if action requires license and validate
+     * @param {string} action - Action name
+     * @returns {Object|null} Error response if license invalid, null if OK
+     */
+    function checkLicense(action) {
+        // Skip license check for exempt actions
+        if (LICENSE_EXEMPT_ACTIONS.indexOf(action) !== -1) {
+            return null;
+        }
+
+        // Check if this is a config endpoint (allow for settings)
+        if (action.endsWith('_config') || action.startsWith('save_')) {
+            return null;
+        }
+
+        try {
+            const license = LicenseGuard.validate();
+            if (!license || !license.valid) {
+                return {
+                    error: 'FLUX_LICENSE_REQUIRED',
+                    message: 'Valid Gantry license required. Go to Settings to enter your license key.',
+                    licenseStatus: LicenseGuard.getStatus()
+                };
+            }
+        } catch (e) {
+            log.error('License Check Error', e.message);
+            return {
+                error: 'LICENSE_CHECK_FAILED',
+                message: 'Unable to validate license: ' + e.message
+            };
+        }
+
+        return null;
+    }
+
     /**
      * Handle GET requests
      */
@@ -76,6 +127,21 @@ define([
         const action = context.action;
 
         try {
+            // License status endpoint (always allowed)
+            if (action === 'license_status') {
+                return LicenseGuard.getStatus();
+            }
+
+            // License refresh endpoint (always allowed)
+            if (action === 'license_refresh') {
+                return LicenseGuard.refresh() ? LicenseGuard.getStatus() : LicenseGuard.getStatus();
+            }
+
+            // Check license for protected actions
+            const licenseError = checkLicense(action);
+            if (licenseError) {
+                return licenseError;
+            }
             // Dashboard list from registry (filtered by permissions)
             if (action === 'dashboards') {
                 return getDashboardList();
@@ -183,14 +249,27 @@ define([
     function doPost(context) {
         const action = context.action;
         const data = context.data;
-        
+
         try {
             // Save config
             if (action.startsWith('save_') && action.endsWith('_config')) {
                 const configName = action.replace('save_', '').replace('_config', '');
-                return ConfigLib.save(data, configName);
+                const result = ConfigLib.save(data, configName);
+
+                // If saving main config and licenseKey was updated, refresh license
+                if (configName === 'main' && data.licenseKey !== undefined) {
+                    try {
+                        LicenseGuard.refresh();
+                        result.licenseStatus = LicenseGuard.getStatus();
+                    } catch (e) {
+                        log.error('License Refresh Error', e.message);
+                        result.licenseStatus = { valid: false, status: 'error', message: e.message };
+                    }
+                }
+
+                return result;
             }
-            
+
             if (action === 'save_config') {
                 return ConfigLib.save(data, 'cashflow');
             }
