@@ -32,7 +32,7 @@ env:
   # Change this to 'gantry' or 'capture' depending on which product this is
   PRODUCT_NAME: gantry
   # The website repository (owner/repo format)
-  WEBSITE_REPO: braedonsaunders/flux.com
+  WEBSITE_REPO: braedonsaunders/fluxfornetsuite.com
 
 jobs:
   sync-docs:
