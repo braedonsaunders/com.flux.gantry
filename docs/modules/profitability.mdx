@@ -1,0 +1,249 @@
+---
+title: "Profitability"
+description: "Margin analysis and financial health scoring"
+order: 3
+icon: "heart-pulse"
+---
+
+## Overview
+
+The Profitability dashboard (also called P&L or Financial Health) provides a comprehensive view of your organization's financial performance. It answers the fundamental question: "Are we making money?"
+
+This dashboard combines traditional profit and loss analysis with a proprietary health score that synthesizes multiple performance indicators.
+
+## The Health Score
+
+### What It Is
+
+The Health Score is a single number (0-100) that represents your overall financial health. It combines multiple factors into one easy-to-understand metric.
+
+| Score Range | Grade | Meaning |
+|-------------|-------|---------|
+| 80-100 | A | Excellent — strong financial position |
+| 70-79 | B | Good — healthy with minor areas for improvement |
+| 60-69 | C | Fair — some concerning trends |
+| 50-59 | D | Poor — significant issues need attention |
+| Below 50 | F | Critical — immediate action required |
+
+### What Affects the Score
+
+The health score considers:
+- **Gross margin** — Are you pricing appropriately?
+- **Revenue trend** — Is the business growing?
+- **Expense control** — Are operating costs reasonable?
+- **Cash flow** — Is cash position healthy?
+- **Margin consistency** — Are margins stable or volatile?
+
+## Key Metrics
+
+### Header Metrics
+
+| Metric | Description |
+|--------|-------------|
+| **Health Score** | Overall financial health (0-100) |
+| **Revenue YTD** | Total revenue for current fiscal year |
+| **Gross Margin** | Revenue minus cost of goods sold |
+| **Gross Margin %** | Gross margin as percentage of revenue |
+| **Operating Expenses** | Total OpEx for the period |
+| **Net Operating Income** | Revenue - COGS - OpEx |
+
+### Trend Indicators
+
+| Metric | Description |
+|--------|-------------|
+| **Revenue vs. Prior Year** | Year-over-year revenue change |
+| **Current Month Revenue** | This month's revenue |
+| **Run Rate** | Projected annual revenue based on current pace |
+| **Margin Trend** | Direction of gross margin over time |
+
+## Dashboard Sections
+
+### Margin Waterfall
+
+The waterfall chart shows how revenue flows to profit:
+
+1. **Revenue** — Starting point
+2. **COGS** — Cost of goods sold (subtracted)
+3. **Gross Profit** — Revenue minus COGS
+4. **Operating Expenses** — Broken down by category
+5. **Net Operating Income** — Bottom line
+
+Click any bar to drill into the details.
+
+### Department Performance
+
+If you track by department, see:
+- Revenue by department
+- Gross margin by department
+- Contribution to overall profit
+- Department-level health scores
+
+This helps identify which parts of your business are most profitable.
+
+### Revenue Analysis
+
+- **Top Revenue Movers** — Customers driving growth or decline
+- **Revenue Concentration** — How dependent are you on key customers?
+- **Revenue by Category** — Product/service mix analysis
+
+### Anomaly Detection
+
+Gantry automatically identifies unusual patterns:
+- Sudden margin changes
+- Unexpected expense spikes
+- Revenue drops
+- Unusual transaction patterns
+
+Anomalies are flagged with color-coded severity.
+
+## How Metrics Are Calculated
+
+### Gross Margin
+
+```
+Gross Margin = Revenue - Cost of Goods Sold
+Gross Margin % = (Revenue - COGS) / Revenue × 100
+```
+
+COGS includes:
+- Direct materials
+- Direct labor
+- Manufacturing overhead
+- Subcontractor costs
+- Other costs directly tied to revenue
+
+### Operating Expense Ratio
+
+```
+OpEx Ratio = Operating Expenses / Revenue × 100
+```
+
+A lower ratio indicates better expense control.
+
+### Health Score Components
+
+The health score uses weighted factors:
+
+| Factor | Weight | Optimal Range |
+|--------|--------|---------------|
+| Gross Margin | 30% | 25-50% depending on industry |
+| Revenue Growth | 20% | Positive YoY growth |
+| OpEx Ratio | 20% | Under 30% of revenue |
+| Cash Position | 15% | Positive runway |
+| Margin Stability | 15% | Low variance |
+
+Your configuration can adjust these targets to match your industry.
+
+## Using the Dashboard
+
+### Monthly Review
+
+1. Check overall health score trend
+2. Review gross margin against target
+3. Identify top revenue movers
+4. Investigate any flagged anomalies
+5. Compare departments if applicable
+
+### Quarterly Analysis
+
+1. Compare to same quarter last year
+2. Analyze margin trends
+3. Review expense categories
+4. Assess department performance
+5. Adjust targets if needed
+
+### Annual Planning
+
+1. Review full-year health score progression
+2. Set margin targets for next year
+3. Identify departments needing improvement
+4. Plan expense optimization initiatives
+
+## Configuration Options
+
+Access via **Settings → Profitability**:
+
+### Margin Thresholds
+
+| Setting | Purpose | Default |
+|---------|---------|---------|
+| **Target Gross Margin** | Your goal margin | 20% |
+| **Warning Threshold** | Yellow alert level | 15% |
+| **Critical Threshold** | Red alert level | 10% |
+| **Margin Upper Bound** | For display scaling | 60% |
+| **Margin Lower Bound** | For display scaling | 5% |
+
+### Expense Settings
+
+| Setting | Purpose | Default |
+|---------|---------|---------|
+| **OpEx-to-Revenue Warning** | Alert when OpEx ratio exceeds | 30% |
+| **Revenue Decline Alert** | Alert on YoY decline of | 10% |
+
+### Department Settings
+
+| Setting | Purpose |
+|---------|---------|
+| **Hidden Departments** | Exclude from analysis |
+| **Department Targets** | Set margin targets per department |
+
+## Understanding Anomalies
+
+Gantry flags these types of anomalies:
+
+### Margin Anomalies
+- Sudden drops in gross margin
+- Margin outside normal range
+- Margin significantly different from same period last year
+
+### Revenue Anomalies
+- Unexpected revenue spikes or drops
+- Revenue concentration risks (too dependent on one customer)
+- Unusual seasonality patterns
+
+### Expense Anomalies
+- Expense categories growing faster than revenue
+- Unusual one-time expenses
+- Expense timing anomalies
+
+Each anomaly shows:
+- What was detected
+- Magnitude of the anomaly
+- Suggested investigation steps
+
+## Best Practices
+
+### Set Realistic Targets
+Use industry benchmarks appropriate for your business. A 40% margin target for a service business might be aggressive; for software, it might be low.
+
+### Track Trends, Not Just Numbers
+A 22% margin is less important than knowing if margins are improving or declining.
+
+### Investigate Anomalies Promptly
+Anomalies are early warning signals. Investigate before small issues become big problems.
+
+### Compare Apples to Apples
+When comparing periods, account for seasonality and one-time events.
+
+### Align Across Organization
+Share the health score with leadership. A single number creates common understanding.
+
+## Common Questions
+
+### Why is my health score low when profits are good?
+The score considers trends and stability, not just current performance. Check if margins are volatile or declining.
+
+### How do I improve my health score?
+Focus on the weakest components: improve margins, grow revenue, control expenses, or stabilize performance.
+
+### Can I customize the health score formula?
+The weights are currently fixed, but threshold settings let you adjust what's considered "good" for your business.
+
+### Why don't the numbers match my P&L report?
+Check date ranges and account classifications. Some items may be categorized differently.
+
+## Related Dashboards
+
+- **[Liquidity](/docs/gantry/modules/liquidity)** — Cash impact of profitability
+- **[True Cost](/docs/gantry/modules/true-cost)** — Understand overhead affecting margins
+- **[Revenue Intelligence](/docs/gantry/modules/revenue-intelligence)** — Customer profitability

@@ -1,0 +1,212 @@
+---
+title: "Configuration"
+description: "How to configure Gantry to match your business needs"
+order: 3
+icon: "settings"
+---
+
+## Overview
+
+Gantry works out of the box with sensible defaults, but every business is different. This guide explains how to customize Gantry's settings to match your organization's specific targets, thresholds, and workflows.
+
+## Accessing Settings
+
+1. Open Gantry
+2. Click the **Settings** icon (gear) in the sidebar
+3. Use the tabs to navigate between configuration sections
+
+## General Settings
+
+### Dashboard Display
+
+Control which dashboards appear and in what order:
+
+| Setting | Description |
+|---------|-------------|
+| **Dashboard Visibility** | Toggle dashboards on/off for the navigation |
+| **Dashboard Order** | Drag to reorder how dashboards appear in the sidebar |
+| **Default Dashboard** | Choose which dashboard loads when you first open Gantry |
+
+### Visual Preferences
+
+| Setting | Description |
+|---------|-------------|
+| **Dark Mode** | Switch between light and dark themes |
+| **Compact Mode** | Reduce spacing for denser information display |
+| **Sparklines** | Toggle mini trend charts on/off in tables |
+
+### Data Settings
+
+| Setting | Description |
+|---------|-------------|
+| **Default Date Range** | Set the default time period (30, 60, 90 days, or custom) |
+| **Auto-Refresh** | Automatically refresh dashboard data periodically |
+| **Refresh Interval** | How often to refresh (5, 15, or 30 minutes) |
+
+## Dashboard-Specific Configuration
+
+Each dashboard has its own configuration options. Access them through the Settings page or directly within each dashboard.
+
+### Liquidity Settings
+
+Configure how cash flow analysis works:
+
+| Setting | Description | Default |
+|---------|-------------|---------|
+| **Bank Accounts** | Select which accounts to include in cash analysis | All bank accounts |
+| **Volatility Threshold** | Define when cash flow is considered "volatile" | 15% variance |
+| **Overdue Payment Days** | How far overdue before flagging receivables | 30 days |
+| **Payment History Lookback** | How far back to analyze payment patterns | 12 months |
+| **Weekly Payment Cap** | Optional limit on weekly AP disbursements | None |
+| **Preservation Mode** | Enable to restrict non-essential payments during cash crunches | Off |
+
+### Profitability Settings
+
+Set your financial health benchmarks:
+
+| Setting | Description | Default |
+|---------|-------------|---------|
+| **Target Gross Margin** | Your organization's GM goal | 20% |
+| **Gross Margin Warning** | Alert when GM falls below this | 15% |
+| **Gross Margin Critical** | Urgent alert threshold | 10% |
+| **OpEx-to-Revenue Warning** | Flag when operating expenses exceed this ratio | 30% |
+| **Revenue Decline Alert** | Alert on year-over-year decline greater than this | 10% |
+| **Hidden Departments** | Exclude specific departments from analysis | None |
+
+### True Cost (Burden) Settings
+
+Configure overhead rate calculations:
+
+| Setting | Description | Default |
+|---------|-------------|---------|
+| **Labor Overhead Factor** | Multiplier for fully-loaded labor cost | 1.15 (15% wrap) |
+| **Burden Applied Accounts** | Accounts containing allocated overhead | Auto-detected |
+| **Hidden Departments** | Exclude from burden analysis | None |
+
+> ℹ️ **Info**: The labor overhead factor accounts for employer taxes, benefits, and other costs not captured in base salary. A factor of 1.15 means $100 of salary costs $115 fully loaded.
+
+### Billable IQ Settings
+
+Configure utilization tracking:
+
+| Setting | Description | Default |
+|---------|-------------|---------|
+| **Target Billable Percent** | Your utilization goal | 70% |
+| **Cost Spike Threshold** | Alert when non-billable costs exceed this | 25% increase |
+| **Minimum Hours** | Ignore employees with fewer hours (too little data) | 20 hours |
+| **Hidden Employees** | Exclude specific employees from tracking | None |
+| **Hidden Departments** | Exclude departments | None |
+
+### Sentinel Settings
+
+Configure fraud detection thresholds:
+
+| Setting | Description | Default |
+|---------|-------------|---------|
+| **Duplicate Time Window** | Days between transactions to consider as potential duplicates | 7 days |
+| **Duplicate Minimum Amount** | Only flag duplicates above this amount | $500 |
+| **Approval Threshold** | Flag transactions above this for review | $10,000 |
+| **Benford Alert Level** | Sensitivity of first-digit analysis | Warning |
+| **Weekend Entry Monitoring** | Flag transactions entered on weekends | On |
+| **Round Number Alerts** | Flag suspiciously round amounts ($1,000, $5,000, etc.) | On |
+| **Excluded Vendors** | Whitelist vendors from fraud checks | None |
+| **Excluded Accounts** | Whitelist accounts from fraud checks | None |
+
+### Procurement Settings
+
+Configure vendor performance scoring:
+
+**Scorecard Weights (must total 100%):**
+
+| Weight | Description | Default |
+|--------|-------------|---------|
+| **OTIF Weight** | On-Time In-Full delivery importance | 35% |
+| **PPV Weight** | Purchase Price Variance importance | 25% |
+| **Maverick Spend Weight** | Bills without POs importance | 25% |
+| **Terms Compliance Weight** | Payment terms adherence importance | 15% |
+
+**Thresholds:**
+
+| Setting | Description | Default |
+|---------|-------------|---------|
+| **Maverick Warning** | Flag when maverick spend exceeds | 15% |
+| **Maverick Critical** | Urgent flag level | 30% |
+| **Price Variance Threshold** | Alert on price changes greater than | 10% |
+| **On-Time Delivery Window** | Days of grace period | 3 days |
+
+### Revenue Intelligence Settings
+
+Configure customer health analysis:
+
+**RFM Scoring Weights (must total 100%):**
+
+| Weight | Description | Default |
+|--------|-------------|---------|
+| **Recency Weight** | How recently customer purchased | 25% |
+| **Frequency Weight** | How often customer purchases | 25% |
+| **Monetary Weight** | Customer spend amount | 30% |
+| **Payment History Weight** | On-time payment record | 20% |
+
+**Thresholds:**
+
+| Setting | Description | Default |
+|---------|-------------|---------|
+| **Good Recency** | Days since purchase considered "good" | 30 days |
+| **Warning Recency** | Days before concern | 90 days |
+| **Critical Recency** | Days for at-risk classification | 180 days |
+| **Health Score Breakpoints** | Good/Warning/Critical thresholds | 80/60/40 |
+| **CLV Projection Years** | How far to project lifetime value | 5 years |
+
+### Spend Velocity Settings
+
+Configure spending pattern detection:
+
+| Setting | Description | Default |
+|---------|-------------|---------|
+| **High Velocity Threshold** | Monthly spend increase considered "high" | 20% |
+| **Acceleration Threshold** | Rate of velocity change to flag | 15% |
+| **Boiling Frog Days** | Lookback for subscription creep | 180 days |
+| **Boiling Frog Increase** | Cumulative increase to flag | 25% |
+| **Shadow IT Employee Threshold** | Users of tool to flag as viral | 5 employees |
+| **Anomaly Standard Deviations** | Statistical threshold for outliers | 2.5 |
+| **Zombie Spend Days** | Inactivity period to flag | 90 days |
+
+## Fiscal Calendar
+
+Gantry automatically detects your fiscal calendar from NetSuite accounting periods. The detected calendar type appears in Settings under **System Information**.
+
+Supported calendar types:
+- **Standard Calendar Year** (January - December)
+- **Shifted Fiscal Year** (e.g., July - June)
+- **4-4-5 Retail Calendar**
+- **53-Week Year** (automatically detected)
+
+If your fiscal year is not detected correctly, verify your accounting periods are properly configured in NetSuite under **Setup → Accounting → Manage Accounting Periods**.
+
+## Saving Configuration
+
+All changes are saved automatically when you:
+- Toggle a setting
+- Select from a dropdown
+- Click away from a text field
+
+For settings with a Save button, click Save to apply your changes.
+
+## Resetting to Defaults
+
+To reset a dashboard's configuration to default values:
+
+1. Open Settings
+2. Navigate to the specific dashboard tab
+3. Click **Reset to Defaults**
+4. Confirm the reset
+
+> ⚠️ **Warning**: This cannot be undone. Your custom thresholds will be replaced with factory defaults.
+
+## Configuration Best Practices
+
+1. **Start with defaults** — Use Gantry for a week before customizing thresholds
+2. **Adjust gradually** — Change one setting at a time to see its effect
+3. **Document changes** — Note why you changed settings for future reference
+4. **Review quarterly** — Business conditions change; update thresholds accordingly
+5. **Align with goals** — Thresholds should reflect your actual targets, not aspirations

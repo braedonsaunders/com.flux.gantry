@@ -1,0 +1,152 @@
+---
+title: "Installation"
+description: "How to install Gantry Financial Suite in your NetSuite account"
+order: 1
+icon: "download"
+---
+
+## Before You Begin
+
+Installing Gantry takes just a few minutes. Before you start, make sure you have:
+
+- **Administrator access** to your NetSuite account
+- **SuiteApp installation permissions** (most Administrator roles have this by default)
+- Your **license key** from Flux (you'll need this after installation)
+
+> ℹ️ **Tip**: If you're installing in a Sandbox account for testing, you'll need a separate sandbox license key. Contact your Flux representative for sandbox licensing.
+
+## Installation Steps
+
+### Step 1: Access the SuiteApp Marketplace
+
+1. Log into NetSuite with your Administrator account
+2. Navigate to **Customization → SuiteCloud Development → SuiteApp Marketplace**
+3. In the search box, type **"Gantry"** or **"Flux"**
+
+### Step 2: Review and Install
+
+1. Click on **Gantry Financial Suite** in the search results
+2. Review the application description and permissions requested
+3. Click the **Install** button
+4. On the confirmation screen, review the bundle details
+5. Click **Install Bundle** to proceed
+
+The installation typically completes within 1-2 minutes. NetSuite will display a confirmation message when finished.
+
+### Step 3: Verify Installation
+
+After installation completes:
+
+1. Navigate to **Customization → Scripting → Script Deployments**
+2. Search for "Gantry"
+3. You should see two deployments:
+   - **Gantry Suitelet** — The main application
+   - **Gantry Router** — The API backend
+
+Both should show a status of **Released**.
+
+### Step 4: Access Gantry
+
+There are several ways to access Gantry after installation:
+
+**Option A: Direct Link**
+1. Go to **Script Deployments** (as above)
+2. Find **Gantry Suitelet**
+3. Click the **URL** link to open Gantry
+
+**Option B: Add to Navigation**
+1. Navigate to **Customization → Centers and Tabs → Center Links**
+2. Create a new link pointing to the Gantry Suitelet URL
+3. Add it to your preferred center (e.g., Financial under Reports)
+
+**Option C: Create a Shortcut**
+1. Open Gantry using the direct link
+2. Bookmark the URL in your browser for quick access
+
+## Post-Installation Setup
+
+### Automatic Configuration
+
+When you first open Gantry, the system automatically:
+
+- **Detects your fiscal calendar** from your NetSuite accounting periods
+- **Creates default configurations** for all dashboards
+- **Enables all dashboards** for all users (can be restricted later)
+
+### Enter Your License Key
+
+Before you can use Gantry's full features:
+
+1. Open Gantry
+2. Click the **Settings** icon (gear) in the navigation
+3. Go to the **License** tab
+4. Enter your license key in the field provided
+5. Click **Verify License**
+
+See [Licensing](/docs/gantry/licensing) for details on license tiers and features.
+
+### Configure AI Advisor (Optional)
+
+If your license includes the AI Advisor:
+
+1. In Settings, go to the **AI Provider** tab
+2. Choose your preferred AI provider (Google Gemini, Claude, OpenAI, etc.)
+3. Enter the API key for your chosen provider
+4. Select your preferred model settings
+
+See [AI Advisor](/docs/gantry/modules/ai-advisor) for setup details.
+
+## What Gets Installed
+
+Gantry installs the following components in your NetSuite account:
+
+| Component | Purpose |
+|-----------|---------|
+| Gantry Suitelet | Main application interface |
+| Gantry Router | API backend for data requests |
+| Gantry Config Record | Stores your configuration settings |
+
+Gantry does **not** modify any of your existing records, transactions, or data. It only reads information for analysis and stores its own configuration separately.
+
+## Updating Gantry
+
+When a new version of Gantry is available:
+
+1. Navigate to **Customization → SuiteCloud Development → Installed SuiteApps**
+2. Find Gantry Financial Suite
+3. If an update is available, you'll see an **Update** button
+4. Click to install the latest version
+
+Your configuration settings are preserved during updates.
+
+## Uninstalling
+
+If you need to remove Gantry:
+
+1. Go to **Customization → SuiteCloud Development → Installed SuiteApps**
+2. Find Gantry Financial Suite
+3. Click **Uninstall**
+
+> ⚠️ **Warning**: Uninstalling removes all Gantry configuration settings. If you plan to reinstall later, export your settings first.
+
+## Troubleshooting Installation
+
+### "Insufficient Privileges" Error
+
+You need the Administrator role or a role with SuiteApp installation permissions. Contact your NetSuite administrator.
+
+### Installation Seems Stuck
+
+Bundle installations can take up to 5 minutes for large accounts. If it takes longer:
+1. Refresh the page
+2. Check **Setup → Installed Bundles** for status
+3. If still pending after 10 minutes, contact support
+
+### Script Deployments Not Visible
+
+After installation, deployments may take a few minutes to appear. Try:
+1. Logging out and back in
+2. Clearing your browser cache
+3. Checking in a different browser
+
+For additional help, see [Troubleshooting](/docs/gantry/troubleshooting) or contact support@fluxfornetsuite.com.

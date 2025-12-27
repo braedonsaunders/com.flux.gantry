@@ -1,0 +1,306 @@
+---
+title: "Revenue Intelligence"
+description: "Customer health scoring and segmentation analytics"
+order: 8
+icon: "users"
+---
+
+## Overview
+
+Revenue Intelligence provides deep insights into your customer base. It helps you understand:
+
+- Which customers are your most valuable?
+- Who is at risk of leaving?
+- Where should you focus retention efforts?
+- How healthy is your customer portfolio?
+
+This dashboard uses RFM analysis (Recency, Frequency, Monetary) combined with payment behavior to create actionable customer intelligence.
+
+## Intelligence Score
+
+### The Score
+
+The Intelligence Score (0-100) represents the overall health of your customer portfolio:
+
+| Score | Grade | Meaning |
+|-------|-------|---------|
+| 80-100 | A | Excellent customer health |
+| 70-79 | B | Good with minor concerns |
+| 60-69 | C | Fair, some at-risk customers |
+| 50-59 | D | Poor, significant churn risk |
+| Below 50 | F | Critical, customer base at risk |
+
+### Score Components
+
+The score considers:
+- Customer health distribution
+- Revenue concentration
+- At-risk customer revenue
+- Churn rate trends
+- New customer acquisition
+
+## Key Metrics
+
+### Header Metrics
+
+| Metric | Description |
+|--------|-------------|
+| **Intelligence Score** | Overall portfolio health |
+| **Active Customers** | Customers with recent activity |
+| **Total Revenue** | Revenue from analyzed period |
+| **Projected CLV** | Customer lifetime value projection |
+| **Champions** | High-value, engaged customers |
+| **At-Risk Count** | Customers showing churn signals |
+| **At-Risk Revenue** | Revenue at risk from churn |
+| **Retention Rate** | Customers retained period-over-period |
+| **New Customers** | Recently acquired customers |
+
+## Understanding RFM Analysis
+
+RFM is a proven customer segmentation method based on three factors:
+
+### Recency (R)
+**How recently did the customer purchase?**
+
+Recent buyers are more engaged. Long gaps signal disengagement.
+
+| Recency | Score | Meaning |
+|---------|-------|---------|
+| 0-30 days | 5 | Highly engaged |
+| 31-60 days | 4 | Active |
+| 61-90 days | 3 | Moderate |
+| 91-180 days | 2 | Cooling off |
+| 180+ days | 1 | At risk |
+
+### Frequency (F)
+**How often does the customer purchase?**
+
+Frequent buyers are loyal. Infrequent buyers may be transactional.
+
+| Frequency | Score | Meaning |
+|-----------|-------|---------|
+| 12+ per year | 5 | Monthly+ buyer |
+| 6-11 per year | 4 | Regular |
+| 3-5 per year | 3 | Quarterly |
+| 1-2 per year | 2 | Occasional |
+| Less than 1 | 1 | Rare |
+
+### Monetary (M)
+**How much does the customer spend?**
+
+Big spenders are high-value regardless of frequency.
+
+Scored relative to your customer base:
+- Top 20% = Score 5
+- 60-80% = Score 4
+- 40-60% = Score 3
+- 20-40% = Score 2
+- Bottom 20% = Score 1
+
+## Customer Segments
+
+Based on RFM scores, customers fall into segments:
+
+### Champions (RFM: 555, 554, 545, etc.)
+Your best customers:
+- Buy frequently
+- Spend heavily
+- Recently active
+
+**Action**: Reward and retain. They're VIPs.
+
+### Loyal Customers (RFM: 4-5 in F, varied R&M)
+Consistent buyers who may not be top spenders:
+- Regular purchase patterns
+- Moderate to high frequency
+- Stable relationships
+
+**Action**: Upsell and deepen relationship.
+
+### Potential Loyalists (RFM: High R, Low F&M)
+New or reactivated customers showing promise:
+- Recent purchase
+- Not yet established pattern
+- Potential for growth
+
+**Action**: Nurture into loyalty.
+
+### At-Risk (RFM: Low R, High F&M historically)
+Previously good customers now disengaging:
+- Used to buy frequently
+- Used to spend significantly
+- Haven't purchased recently
+
+**Action**: Win back before it's too late.
+
+### Hibernating (RFM: 1-2 across all)
+Inactive customers:
+- Long time since purchase
+- Low historical frequency
+- Low spend
+
+**Action**: Consider reactivation campaign or accept loss.
+
+## Customer Tiers
+
+Beyond RFM, customers are tiered by value:
+
+| Tier | Criteria | Treatment |
+|------|----------|-----------|
+| **Platinum** | Top 5% by revenue | White-glove service |
+| **Gold** | Next 15% by revenue | Priority support |
+| **Silver** | Next 30% by revenue | Standard+ service |
+| **Bronze** | Remaining customers | Efficient service |
+
+## Dashboard Sections
+
+### Customer Health Matrix
+
+Visual grid showing customers by RFM segment:
+- Size = Revenue
+- Color = Health (Green/Yellow/Red)
+- Click to see segment details
+
+### Top Customers
+
+Ranked list of highest-value customers:
+- Revenue (YTD and trend)
+- RFM scores
+- Health status
+- Days since last purchase
+
+### At-Risk Analysis
+
+Customers showing churn signals:
+- Revenue at risk
+- Last purchase date
+- Decline in activity
+- Suggested actions
+
+### Revenue Concentration
+
+- Pie chart of revenue by tier
+- HHI concentration index
+- Top customer dependency
+
+### Customer Lifetime Value
+
+Projected total value of customer relationships:
+- Average CLV
+- CLV by segment
+- Trend over time
+
+### Churn Analysis
+
+- Current churn rate
+- Churn by segment
+- Revenue impact of churn
+- Comparison to industry benchmarks
+
+## Using the Dashboard
+
+### Daily
+
+1. Check for any Champions becoming At-Risk
+2. Review new customer additions
+3. Monitor any active win-back campaigns
+
+### Weekly
+
+1. Review At-Risk customer list
+2. Check concentration risk
+3. Plan customer outreach
+
+### Monthly
+
+1. Analyze segment migrations (who moved up/down?)
+2. Review CLV projections
+3. Assess retention rate trends
+4. Plan segment-specific strategies
+
+### Quarterly
+
+1. Full segment review
+2. Adjust tier thresholds if needed
+3. Update customer strategies
+4. Set retention targets
+
+## Configuration Options
+
+Access via **Settings → Revenue Intelligence**:
+
+### RFM Weights
+
+| Weight | Purpose | Default |
+|--------|---------|---------|
+| **Recency Weight** | Importance of recency | 25% |
+| **Frequency Weight** | Importance of frequency | 25% |
+| **Monetary Weight** | Importance of spend | 30% |
+| **Payment Weight** | Payment behavior factor | 20% |
+
+### Recency Thresholds
+
+| Setting | Purpose | Default |
+|---------|---------|---------|
+| **Good Recency** | Days for "good" status | 30 |
+| **Warning Recency** | Days for "warning" | 90 |
+| **Critical Recency** | Days for "at-risk" | 180 |
+
+### Health Score Settings
+
+| Setting | Purpose | Default |
+|---------|---------|---------|
+| **Good Threshold** | Score for "good" | 80 |
+| **Warning Threshold** | Score for "warning" | 60 |
+| **Critical Threshold** | Score for "at-risk" | 40 |
+
+### CLV Settings
+
+| Setting | Purpose | Default |
+|---------|---------|---------|
+| **Projection Years** | How far to project CLV | 5 years |
+| **Discount Rate** | Time value of money | 10% |
+
+## Best Practices
+
+### Focus on At-Risk, Not Hibernating
+At-Risk customers (recently disengaged high-value) are worth saving. Hibernating customers may be gone forever — don't waste resources.
+
+### Don't Neglect Champions
+It costs more to acquire customers than retain them. Keep Champions happy.
+
+### Address Concentration Risk
+If one customer is 40% of revenue, that's dangerous. Actively diversify.
+
+### Make RFM Actionable
+Each segment should have a clear strategy. RFM without action is just academic.
+
+### Combine with Qualitative Data
+RFM is quantitative. Combine with what sales and service know about customers.
+
+## Common Questions
+
+### Why is a big customer scored low?
+RFM considers recency. A customer who spent $1M last year but nothing in six months scores lower than one spending $100K per quarter consistently.
+
+### How accurate are CLV projections?
+CLV uses historical patterns projected forward. It's most accurate for stable, established customers. Take projections for new customers with a grain of salt.
+
+### Can I customize segment definitions?
+Segment boundaries are fixed, but you can adjust the RFM thresholds that determine scores.
+
+### What's a good retention rate?
+Varies by industry:
+- B2B services: 90%+
+- B2B products: 80-90%
+- B2C subscription: 70-85%
+- B2C retail: varies widely
+
+### Should I worry about concentration?
+Yes, if any customer is more than 10-15% of revenue, or your top 5 customers are more than 40% of revenue, you have concentration risk.
+
+## Related Dashboards
+
+- **[Liquidity](/docs/gantry/modules/liquidity)** — Customer payment timing
+- **[Profitability](/docs/gantry/modules/profitability)** — Customer margin analysis
+- **[Sentinel](/docs/gantry/modules/sentinel)** — Unusual customer activity

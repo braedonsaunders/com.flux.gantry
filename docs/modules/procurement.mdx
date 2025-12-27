@@ -1,0 +1,292 @@
+---
+title: "Procurement"
+description: "Vendor performance scoring and spend analytics"
+order: 7
+icon: "handshake"
+---
+
+## Overview
+
+The Procurement dashboard provides intelligence about your vendor relationships and purchasing practices. It helps you answer critical questions:
+
+- Are vendors delivering on time and as promised?
+- Are we following our purchasing policies?
+- Are prices stable or creeping up?
+- Which vendors deserve more of our business?
+
+## Procurement Health Score
+
+### The Score
+
+The Procurement Health Score (0-100) measures the overall health of your procurement operations:
+
+| Score | Grade | Meaning |
+|-------|-------|---------|
+| 80-100 | A | Excellent procurement practices |
+| 70-79 | B | Good with minor improvements needed |
+| 60-69 | C | Fair, several areas need attention |
+| 50-59 | D | Poor, significant policy compliance issues |
+| Below 50 | F | Critical, procurement risk is high |
+
+### Score Components
+
+The score is a weighted average of:
+
+| Component | Weight | What It Measures |
+|-----------|--------|------------------|
+| OTIF | 35% | On-Time In-Full delivery |
+| PPV | 25% | Purchase Price Variance |
+| Maverick Spend | 25% | Bills without purchase orders |
+| Terms Compliance | 15% | Payment terms adherence |
+
+Weights are configurable in Settings.
+
+## Key Metrics
+
+### Header Metrics
+
+| Metric | Description |
+|--------|-------------|
+| **Health Score** | Overall procurement health |
+| **Total Vendors** | Number of active vendors |
+| **Total Spend** | Total purchases in period |
+| **Maverick Spend %** | Percentage of bills without POs |
+| **PO Compliance** | Purchases following proper process |
+| **OTIF Rate** | On-time, in-full delivery percentage |
+| **Cash Leakage %** | Early payments losing discount opportunity |
+| **PPV** | Price variance vs. purchase orders |
+| **HHI Index** | Vendor concentration risk |
+
+## Performance Metrics Explained
+
+### OTIF (On-Time In-Full)
+
+Measures whether vendors deliver what you ordered, when you ordered it.
+
+```
+OTIF = (Orders Delivered On Time AND In Full) ÷ Total Orders × 100
+```
+
+| OTIF Rate | Performance |
+|-----------|-------------|
+| 95%+ | Excellent |
+| 85-95% | Good |
+| 70-85% | Needs improvement |
+| Below 70% | Poor |
+
+**On-Time**: Delivered within the agreed delivery window (default: 3 days grace)
+**In-Full**: Correct quantity, no partial shipments or backorders
+
+### Maverick Spend
+
+Purchases made without a purchase order — circumventing approval processes.
+
+```
+Maverick Spend % = Bills Without POs ÷ Total Bill Amount × 100
+```
+
+| Maverick % | Status |
+|------------|--------|
+| Under 10% | Excellent compliance |
+| 10-20% | Acceptable |
+| 20-30% | Needs attention |
+| Over 30% | Serious policy problem |
+
+Why it matters:
+- Bypasses approval workflows
+- No price negotiation opportunity
+- May violate procurement policies
+- Harder to budget and forecast
+
+### Purchase Price Variance (PPV)
+
+Difference between what you agreed to pay (PO price) and what you actually paid (invoice).
+
+```
+PPV = (Invoice Price - PO Price) ÷ PO Price × 100
+```
+
+Positive PPV = paid more than agreed
+Negative PPV = paid less than agreed
+
+| PPV | Interpretation |
+|-----|----------------|
+| < -5% | Good savings, verify quality |
+| -5% to +5% | Normal variance |
+| > 5% | Investigate price increases |
+| > 10% | Urgent attention needed |
+
+### Cash Flow Leakage
+
+Money lost by paying too early (before terms require).
+
+```
+Leakage = Early Payments × (Days Early × Daily Interest Rate)
+```
+
+If you pay 15 days early on $100,000 with a 5% cost of capital:
+```
+Leakage = $100,000 × 15 × (0.05/365) = $205
+```
+
+This adds up across many transactions.
+
+### HHI Concentration Index
+
+The Herfindahl-Hirschman Index measures vendor concentration risk.
+
+| HHI | Concentration |
+|-----|---------------|
+| Under 1500 | Low (healthy diversity) |
+| 1500-2500 | Moderate |
+| Over 2500 | High (risky) |
+
+High concentration means you're dependent on a few vendors. If one fails, you're vulnerable.
+
+## Dashboard Sections
+
+### Vendor Scorecard
+
+Ranking of vendors by performance:
+
+| Column | Description |
+|--------|-------------|
+| **Vendor** | Vendor name |
+| **Total Spend** | Amount purchased |
+| **OTIF Score** | Delivery performance |
+| **PPV** | Price variance |
+| **Maverick %** | Purchases without POs |
+| **Overall Score** | Weighted performance |
+
+### Leverage Matrix
+
+Visual quadrant analysis of vendors:
+
+| Quadrant | Characteristics | Strategy |
+|----------|-----------------|----------|
+| **Strategic** | High spend, high complexity | Partner closely |
+| **Bottleneck** | Low spend, high complexity | Reduce risk |
+| **Leverage** | High spend, low complexity | Negotiate hard |
+| **Transactional** | Low spend, low complexity | Simplify/automate |
+
+### Concentration Analysis
+
+- Pie chart of spend distribution
+- HHI score and trend
+- Top vendors by percentage
+
+### Contract Renewal Tracker
+
+Upcoming contract expirations:
+- Vendor name
+- Contract end date
+- Auto-renewal flag (warning!)
+- Spend at risk
+
+## Using the Dashboard
+
+### Weekly Review
+
+1. Check overall health score
+2. Review any Critical vendor performance issues
+3. Check for upcoming contract renewals
+4. Monitor maverick spend trends
+
+### Monthly Analysis
+
+1. Deep-dive on OTIF performance
+2. Analyze PPV trends (are prices rising?)
+3. Review leverage matrix for strategic changes
+4. Assess concentration risk
+
+### Quarterly Strategic Review
+
+1. Evaluate vendor relationships
+2. Identify consolidation opportunities
+3. Plan contract negotiations
+4. Adjust scorecard weights if needed
+
+## Configuration Options
+
+Access via **Settings → Procurement**:
+
+### Scorecard Weights
+
+| Setting | Purpose | Default |
+|---------|---------|---------|
+| **OTIF Weight** | Importance of delivery | 35% |
+| **PPV Weight** | Importance of pricing | 25% |
+| **Maverick Weight** | Importance of compliance | 25% |
+| **Terms Weight** | Importance of terms | 15% |
+
+Weights must total 100%.
+
+### Performance Thresholds
+
+| Setting | Purpose | Default |
+|---------|---------|---------|
+| **Maverick Warning** | Yellow flag level | 15% |
+| **Maverick Critical** | Red flag level | 30% |
+| **PPV Threshold** | Alert on variance over | 10% |
+| **On-Time Window** | Grace days for delivery | 3 days |
+
+### Concentration Settings
+
+| Setting | Purpose | Default |
+|---------|---------|---------|
+| **HHI Warning** | Moderate concentration | 1500 |
+| **HHI Critical** | High concentration | 2500 |
+
+## Best Practices
+
+### Reduce Maverick Spend
+1. Make PO process easier
+2. Train requestors on policy
+3. Set up automated approvals for low amounts
+4. Require PO number on all invoices
+
+### Improve OTIF
+1. Share scores with underperforming vendors
+2. Include OTIF in contract terms
+3. Consider alternative vendors for chronic poor performers
+
+### Manage Concentration
+1. Actively develop backup vendors
+2. Don't let any vendor exceed 20% of category spend
+3. Consider multi-sourcing for critical items
+
+### Optimize Cash Flow
+1. Use payment terms (don't pay early without discount)
+2. Negotiate better terms with leverage vendors
+3. Automate payment scheduling
+
+## Common Questions
+
+### Why is my maverick spend so high?
+Common causes:
+- PO process is too slow or cumbersome
+- Employees don't understand the policy
+- Emergency purchases not converted to POs
+- Vendor doesn't require PO reference
+
+### How do I improve a vendor's score?
+Share the scorecard with them. Most vendors will improve when they see objective performance data and understand the impact on your relationship.
+
+### Should I drop low-scoring vendors?
+Not necessarily. Consider:
+- Can they improve?
+- Are alternatives available?
+- Is the relationship strategic?
+- What would switching cost?
+
+### What if a vendor has no POs (all maverick)?
+This vendor may be a candidate for:
+- Blanket PO (standing order)
+- Preferred vendor list (pre-approved)
+- Better P-card controls
+
+## Related Dashboards
+
+- **[Sentinel](/docs/gantry/modules/sentinel)** — Fraud detection for vendor payments
+- **[Liquidity](/docs/gantry/modules/liquidity)** — Cash impact of payment timing
+- **[Spend Velocity](/docs/gantry/modules/spend-velocity)** — Vendor spending trends

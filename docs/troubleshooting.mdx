@@ -1,0 +1,220 @@
+---
+title: "Troubleshooting"
+description: "Common issues and solutions for Gantry Financial Suite"
+order: 6
+icon: "life-buoy"
+---
+
+## Getting Help
+
+Before contacting support, check this guide for common solutions. If your issue isn't covered here, email support@fluxfornetsuite.com with:
+
+1. Your company name
+2. Description of the issue
+3. Steps to reproduce
+4. Any error messages (screenshots help)
+
+## Dashboard Issues
+
+### Dashboard Shows No Data
+
+**Symptoms**: Dashboard loads but displays "No data available" or shows all zeros.
+
+**Possible causes and solutions**:
+
+| Cause | Solution |
+|-------|----------|
+| Date range is empty | Select a date range that includes transactions |
+| Data still loading | Wait a few seconds; large accounts take longer |
+| Permissions issue | Verify your role has access to underlying records |
+| Feature not enabled | Some dashboards require specific NetSuite features |
+
+**For specific dashboards**:
+- **Billable IQ**: Requires Time Tracking feature in NetSuite
+- **Procurement**: Requires purchase orders in your workflow
+- **True Cost**: Requires time entries with associated projects
+
+### Dashboard Loads Slowly
+
+**Symptoms**: Dashboard takes more than 30 seconds to display data.
+
+**Solutions**:
+1. **Narrow the date range** — Analyzing 30 days is faster than 365 days
+2. **Check transaction volume** — Large accounts (100k+ transactions) need patience
+3. **Disable sparklines** — In Settings, turn off sparklines for faster loading
+4. **Clear browser cache** — Old cached data can slow performance
+
+### Charts Not Displaying
+
+**Symptoms**: Charts show blank areas or error icons.
+
+**Solutions**:
+1. **Refresh the page** — Browser rendering issues often resolve with a refresh
+2. **Try a different browser** — Chrome, Firefox, and Edge are fully supported
+3. **Disable browser extensions** — Ad blockers can interfere with chart libraries
+4. **Check zoom level** — Reset browser zoom to 100%
+
+## AI Advisor Issues
+
+### AI Advisor Not Responding
+
+**Symptoms**: You type a question but get no response or an error.
+
+**Possible causes**:
+
+| Cause | Solution |
+|-------|----------|
+| API key not configured | Go to Settings → AI Provider and enter your API key |
+| API key invalid | Verify your API key is correct and has credits |
+| Rate limit exceeded | Wait a few minutes and try again |
+| Network timeout | Check internet connection; try a shorter question |
+
+### AI Gives Incorrect Answers
+
+**Symptoms**: AI Advisor returns information that doesn't match your data.
+
+**Solutions**:
+1. **Be specific** — "What's revenue for customer ABC Inc in Q3?" is better than "What's ABC's revenue?"
+2. **Use exact names** — Match customer/vendor names exactly as they appear in NetSuite
+3. **Specify time periods** — Include dates when asking about amounts
+4. **Check the source** — AI provides references; verify against the actual dashboard
+
+### AI Says It Can't Find Data
+
+**Symptoms**: AI responds that it can't find a customer, vendor, or transaction.
+
+**Solutions**:
+1. Verify the entity exists in your NetSuite account
+2. Check spelling and use the complete name
+3. Try the entity ID instead of name
+4. Ensure the entity has transactions in the selected date range
+
+## License Issues
+
+### License Not Activating
+
+**Symptoms**: You enter the license key but it shows as invalid.
+
+**Checklist**:
+- [ ] Key entered exactly as provided (no extra spaces)
+- [ ] Using correct environment (production vs sandbox)
+- [ ] License hasn't expired
+- [ ] Account ID matches the licensed account
+
+If all checks pass, contact support@fluxfornetsuite.com.
+
+### "License Server Unavailable"
+
+**Symptoms**: Error message about being unable to reach the license server.
+
+**Solutions**:
+1. Check your internet connection
+2. Verify outbound HTTPS isn't blocked by firewall
+3. Wait — the 24-hour grace period allows continued use
+4. If persisting beyond 24 hours, contact support
+
+## Configuration Issues
+
+### Settings Not Saving
+
+**Symptoms**: You change a setting but it reverts or doesn't take effect.
+
+**Solutions**:
+1. **Wait for auto-save** — Most settings auto-save after a brief delay
+2. **Click Save button** — Some settings require explicit save
+3. **Refresh the page** — Verify the setting actually saved
+4. **Check permissions** — You may need admin rights for some settings
+
+### Configuration Reset Unexpectedly
+
+**Symptoms**: Your custom settings reverted to defaults.
+
+**Possible causes**:
+- Gantry was updated and migration failed
+- Another admin reset settings
+- Browser was using cached/old version
+
+**Solution**: Reconfigure settings. Consider documenting your preferences for future reference.
+
+## Performance Issues
+
+### Gantry Won't Load
+
+**Symptoms**: Blank page or perpetual loading spinner.
+
+**Solutions**:
+1. **Hard refresh** — Press Ctrl+Shift+R (Windows) or Cmd+Shift+R (Mac)
+2. **Clear browser cache** — Remove cached data for your NetSuite domain
+3. **Try incognito mode** — Rules out extension issues
+4. **Check NetSuite status** — Verify NetSuite itself is operational
+
+### Timeout Errors
+
+**Symptoms**: "Request timed out" or similar messages.
+
+**Solutions**:
+1. **Reduce date range** — Analyze smaller time periods
+2. **Try during off-peak hours** — Heavy NetSuite usage can cause timeouts
+3. **Simplify the query** — For AI Advisor, ask simpler questions
+4. **Wait and retry** — Temporary load spikes resolve themselves
+
+## Browser Compatibility
+
+### Supported Browsers
+
+Gantry works best with:
+- Google Chrome (recommended)
+- Mozilla Firefox
+- Microsoft Edge
+- Safari (macOS)
+
+### Unsupported Browsers
+
+Not recommended:
+- Internet Explorer (any version)
+- Outdated browser versions
+
+### Browser-Specific Issues
+
+**Chrome**: Clear site data if charts malfunction
+**Firefox**: Disable strict tracking protection if data doesn't load
+**Safari**: Enable JavaScript if features don't work
+**Edge**: Use Chromium-based Edge (not legacy Edge)
+
+## Data Accuracy
+
+### Numbers Don't Match NetSuite Reports
+
+**Symptoms**: Dashboard totals differ from native NetSuite reports.
+
+**Common reasons**:
+
+| Reason | Explanation |
+|--------|-------------|
+| Date range differs | Ensure you're comparing the same periods |
+| Posting status | Gantry may include/exclude pending transactions differently |
+| Subsidiary selection | Multi-subsidiary accounts may have different default views |
+| Currency conversion | Exchange rates may apply differently |
+| Record filters | Gantry may filter certain record types |
+
+**Solution**: Compare a specific transaction or customer to isolate the difference, then contact support if unexplained.
+
+### Data Seems Outdated
+
+**Symptoms**: Recent transactions aren't appearing.
+
+**Solutions**:
+1. **Refresh the dashboard** — Click refresh or reload the page
+2. **Check transaction status** — Only posted transactions may appear
+3. **Verify date range** — Ensure your range includes recent dates
+4. **Wait for sync** — Very recent entries may take a few minutes
+
+## Getting Support
+
+If you can't resolve an issue:
+
+1. **Email**: support@fluxfornetsuite.com
+2. **Include**: Company name, issue description, screenshots, steps to reproduce
+3. **Response time**: Typically within 1 business day
+
+For urgent production issues, note "URGENT" in your subject line.
