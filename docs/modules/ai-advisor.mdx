@@ -1,0 +1,207 @@
+---
+title: "AI Advisor"
+description: "Natural language financial insights powered by AI"
+order: 1
+icon: "sparkles"
+badge: "Pro"
+---
+
+## Overview
+
+The AI Advisor is your conversational interface to Gantry. Instead of navigating dashboards and running reports, simply ask questions in plain English and receive intelligent, data-driven answers.
+
+## Getting Started
+
+### Setting Up AI Advisor
+
+Before using the AI Advisor, you need to configure an AI provider:
+
+1. Open **Settings** from the Gantry navigation
+2. Go to the **AI Provider** tab
+3. Choose your AI mode:
+   - **Smart** — Balanced speed and capability
+   - **Max** — Most powerful, slower responses
+   - **Light** — Fastest, simpler queries
+   - **Custom** — Manual provider/model selection
+4. Select your provider (Google Gemini, Claude, OpenAI, etc.)
+5. Enter your API key for the selected provider
+6. Click **Save**
+
+> ℹ️ **Note**: You need an API key from your chosen AI provider. This is separate from your Gantry license.
+
+### AI Providers Supported
+
+| Provider | Best For | API Key Source |
+|----------|----------|----------------|
+| Google Gemini | General use, good balance | cloud.google.com |
+| Anthropic Claude | Complex analysis, detailed responses | anthropic.com |
+| OpenAI | Broad capabilities | platform.openai.com |
+| OpenRouter | Access to multiple models | openrouter.ai |
+
+## Using the AI Advisor
+
+### Asking Questions
+
+1. Click **Advisor** in the navigation
+2. Type your question in the chat box
+3. Press Enter or click Send
+4. Wait for the response (usually 5-15 seconds)
+
+### Effective Questions
+
+The AI Advisor works best with specific, clear questions:
+
+**Good questions:**
+- "What's our current cash position?"
+- "Which customers have invoices more than 60 days overdue?"
+- "How does this quarter's revenue compare to last quarter?"
+- "What's the gross margin for the Professional Services department?"
+- "Which vendors have the highest maverick spend?"
+
+**Less effective questions:**
+- "Tell me about our finances" (too broad)
+- "Is everything okay?" (too vague)
+- "What should I do?" (needs more context)
+
+### Question Categories
+
+The AI Advisor understands questions across all Gantry areas:
+
+| Category | Example Questions |
+|----------|-------------------|
+| **Cash** | "What's our cash runway?", "When do we need to collect receivables?" |
+| **Revenue** | "What's YTD revenue?", "Which customers are growing fastest?" |
+| **Expenses** | "What are our top expense categories?", "Has any vendor increased prices?" |
+| **Profitability** | "What's our gross margin?", "Which department is most profitable?" |
+| **Labor** | "What's our utilization rate?", "Which employees are under-utilized?" |
+| **Customers** | "Who are our at-risk customers?", "What's customer ABC's lifetime value?" |
+| **Vendors** | "How is vendor XYZ performing?", "Who has the best on-time delivery?" |
+| **Spend Patterns** | "Are any costs accelerating?", "Do we have zombie vendors?" |
+
+## Understanding Responses
+
+### Response Format
+
+AI Advisor responses typically include:
+
+1. **Direct answer** — The specific information you requested
+2. **Context** — Additional relevant details
+3. **Data source** — Which dashboard or data the answer came from
+4. **Suggestions** — Related questions you might want to ask
+
+### Example Conversation
+
+**You**: What's our current cash position?
+
+**AI Advisor**: Your current cash position is $1,247,500 as of today.
+
+Breaking that down:
+- Bank accounts: $1,247,500
+- Accounts receivable: $892,000
+- Accounts payable: ($445,000)
+- Net position: $1,694,500
+
+Your cash runway is approximately 14 weeks at your current burn rate of $89,000/week.
+
+*Data source: Liquidity dashboard*
+
+Would you like to know about upcoming large receivables or payables?
+
+### When AI Can't Answer
+
+Sometimes the AI Advisor will indicate it can't answer:
+
+- **Data not available** — The question refers to data Gantry doesn't have
+- **Entity not found** — A customer or vendor name wasn't recognized
+- **Outside scope** — The question is beyond financial analysis
+
+In these cases, try rephrasing or providing more specifics.
+
+## Advanced Features
+
+### Multi-Step Analysis
+
+The AI Advisor can perform complex analyses requiring multiple data lookups:
+
+"Compare our top 5 customers by revenue to their payment timeliness"
+
+This requires: identifying top customers → looking up revenue → analyzing payment history → comparing results.
+
+### Session Memory
+
+The AI Advisor remembers your conversation within a session:
+
+**You**: What's customer ABC's revenue?
+**AI**: Customer ABC's YTD revenue is $125,000...
+
+**You**: What about their payment history?
+**AI**: (Understands you mean ABC's payment history)
+
+### Suggested Queries
+
+The advisor suggests follow-up questions based on your conversation. Click any suggestion to ask it.
+
+## Best Practices
+
+### Be Specific
+Include relevant details: time periods, specific names, exact metrics.
+
+### Use Exact Names
+Match customer and vendor names exactly as they appear in NetSuite.
+
+### Specify Time Periods
+"Q3 revenue" is clearer than "recent revenue."
+
+### Ask Follow-ups
+Build on previous answers rather than starting new topics.
+
+### Verify Important Numbers
+For critical decisions, confirm numbers against the actual dashboards.
+
+## Configuration Options
+
+In **Settings → AI Provider**:
+
+| Setting | Description |
+|---------|-------------|
+| **AI Mode** | Balance between speed and capability |
+| **Provider** | Which AI service to use |
+| **Model** | Specific model version (in Custom mode) |
+| **Token Budget** | Limit response length to control costs |
+| **Timeout** | How long to wait for responses |
+| **Debug Mode** | Show detailed processing information |
+
+## Troubleshooting
+
+### No Response
+- Check that AI provider is configured
+- Verify API key is valid and has credits
+- Try a simpler question
+
+### Slow Responses
+- Switch to Light mode for faster responses
+- Reduce token budget
+- Ask simpler questions
+
+### Inaccurate Answers
+- Use exact entity names
+- Specify time periods
+- Try rephrasing the question
+
+### "Cannot Find" Errors
+- Verify the entity exists in NetSuite
+- Check spelling
+- Try using the entity ID instead of name
+
+## Privacy & Security
+
+- Your questions and data stay within your NetSuite environment
+- AI providers receive only the data needed to answer your question
+- No financial data is stored by AI providers
+- API communications are encrypted
+
+## Requirements
+
+- AI Advisor requires Professional tier license or higher
+- API key from supported AI provider
+- Internet connectivity to AI provider services

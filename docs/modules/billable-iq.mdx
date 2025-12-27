@@ -1,0 +1,256 @@
+---
+title: "Billable IQ"
+description: "Employee utilization and productivity tracking"
+order: 5
+icon: "clock"
+---
+
+## Overview
+
+The Billable IQ dashboard tracks how your team's time is spent, focusing on the balance between billable and non-billable hours. For service businesses, utilization is often the most important driver of profitability.
+
+> ℹ️ **Note**: This dashboard requires Time Tracking to be enabled in NetSuite. Without time entries, no data will appear.
+
+## What Is Utilization?
+
+Utilization measures what percentage of available time is spent on billable work:
+
+```
+Utilization Rate = Billable Hours ÷ Total Hours Worked × 100
+```
+
+**Example:**
+```
+40 hours worked
+28 hours billable
+Utilization = 28 ÷ 40 = 70%
+```
+
+A 70% utilization means for every hour worked, 42 minutes are billable and 18 minutes are non-billable.
+
+## Key Metrics
+
+### Header Metrics
+
+| Metric | Description |
+|--------|-------------|
+| **Total Hours** | All hours logged in the period |
+| **Billable Hours** | Hours that can be billed to clients |
+| **Non-Billable Hours** | Hours that cannot be billed |
+| **Utilization Rate** | Percentage of time that's billable |
+| **Non-Billable Cost** | Labor cost of non-billable hours |
+| **Cost Per Non-Billable Day** | Average daily non-billable labor cost |
+
+### Status Indicators
+
+| Utilization | Status | Meaning |
+|-------------|--------|---------|
+| 75%+ | Green | Excellent utilization |
+| 60-75% | Yellow | Acceptable, room for improvement |
+| Below 60% | Red | Low utilization, investigate |
+
+Your target is configurable in Settings.
+
+## Dashboard Sections
+
+### Utilization Overview
+
+Gauge chart showing company-wide utilization:
+- Current period utilization
+- Comparison to target
+- Trend arrow (improving/declining)
+
+### Department Breakdown
+
+Table showing utilization by department:
+
+| Column | Description |
+|--------|-------------|
+| **Department** | Department name |
+| **Employees** | Headcount |
+| **Total Hours** | Hours logged |
+| **Billable Hours** | Billable portion |
+| **Utilization** | Percentage |
+| **vs. Target** | Above/below target |
+
+Click any department to drill into employee details.
+
+### Department Heatmap
+
+Visual representation of utilization across departments:
+- **Dark green** — High utilization
+- **Light green** — Meeting target
+- **Yellow** — Below target
+- **Red** — Significantly below target
+
+### Employee Detail
+
+When you drill into a department:
+- Individual employee utilization
+- Time breakdown by project/client
+- Sparkline showing recent trend
+- Comparison to personal target
+
+### Service Item Profitability
+
+See how different service types perform:
+- Hours by service item
+- Revenue per service
+- Effective rate (revenue ÷ hours)
+- Contribution margin
+
+### Cost Spike Detection
+
+Automatic alerts when non-billable costs increase:
+- Which employees or departments
+- Magnitude of the spike
+- Time period of occurrence
+
+## How Time Is Classified
+
+### Billable Time
+
+Time entries marked as billable in NetSuite:
+- Client project work
+- Billable meetings
+- Billable travel
+- Any time included on invoices
+
+### Non-Billable Time
+
+Everything else:
+- Internal meetings
+- Training and professional development
+- Administrative tasks
+- Sales and business development
+- Non-billable project phases
+
+### Excluded Time
+
+Some time may be excluded from analysis:
+- PTO and holidays
+- Employees below minimum hours threshold
+- Hidden employees or departments
+
+## Reading the Data
+
+### Healthy Patterns
+
+- Consistent utilization week to week
+- Most employees near or above target
+- Non-billable hours concentrated in specific categories (training, BD)
+- Seasonal patterns explained by business cycles
+
+### Warning Signs
+
+- Declining utilization trend
+- Wide variance between employees
+- High non-billable hours without clear purpose
+- Cost spikes without explanation
+
+## Using the Dashboard
+
+### Daily/Weekly
+
+1. Check overall utilization trend
+2. Identify employees with unusually low utilization
+3. Review any cost spike alerts
+4. Confirm time is being logged
+
+### Monthly
+
+1. Analyze department-by-department performance
+2. Compare to targets
+3. Review service item profitability
+4. Adjust staffing or assignments if needed
+
+### Quarterly
+
+1. Review utilization trends over time
+2. Assess department targets (are they realistic?)
+3. Analyze non-billable time categories
+4. Plan hiring or reallocation
+
+## Configuration Options
+
+Access via **Settings → Billable IQ**:
+
+| Setting | Purpose | Default |
+|---------|---------|---------|
+| **Target Billable %** | Your utilization goal | 70% |
+| **Cost Spike Threshold** | Alert on non-billable cost increase | 25% |
+| **Minimum Hours** | Ignore employees with fewer hours | 20 |
+| **Labor Cost Field** | Where to find labor cost | Auto-detected |
+| **Hidden Employees** | Exclude specific people | None |
+| **Hidden Departments** | Exclude departments | None |
+| **Employee Types** | Filter by employee type | All |
+
+### Setting Realistic Targets
+
+| Business Type | Typical Target |
+|---------------|----------------|
+| Consulting | 65-75% |
+| Professional Services | 60-70% |
+| Agency | 55-65% |
+| Hybrid (products + services) | 50-60% |
+
+Remember: 100% utilization is not achievable or healthy. Allow time for training, meetings, and business development.
+
+## Understanding Non-Billable Time
+
+Not all non-billable time is bad. Categories include:
+
+### Necessary Non-Billable
+- Staff meetings
+- Training and development
+- Business development/sales
+- Company events
+
+### Concerning Non-Billable
+- Waiting for client decisions
+- Rework and corrections
+- Unutilized capacity
+- Excessive administration
+
+Track non-billable categories to distinguish healthy investment from waste.
+
+## Best Practices
+
+### Set Clear Expectations
+Employees should know their utilization targets and how they're measured.
+
+### Track Time Consistently
+Data is only as good as time entry compliance. Encourage prompt, accurate logging.
+
+### Analyze Trends, Not Snapshots
+Weekly utilization fluctuates. Look at rolling averages and monthly trends.
+
+### Connect to Revenue
+High utilization only matters if the work is profitable. Check effective rates.
+
+### Balance Utilization and Growth
+Some non-billable time (BD, training) is essential for long-term success.
+
+## Common Questions
+
+### Why is my utilization lower than expected?
+Common causes:
+- Time not being logged (compliance issue)
+- Heavy training or onboarding period
+- Between-project gaps
+- High administrative burden
+
+### What's a good target for new employees?
+New employees typically have lower utilization (training, ramp-up). Consider 50-60% for the first 3 months.
+
+### How do I handle part-time employees?
+Gantry uses hours logged, so part-time employees can have the same utilization percentage as full-time.
+
+### Why exclude employees with few hours?
+Employees with very few hours (vacations, new hires) can skew statistics. The minimum threshold ensures meaningful data.
+
+## Related Dashboards
+
+- **[True Cost](/docs/gantry/modules/true-cost)** — How utilization affects burden rates
+- **[Profitability](/docs/gantry/modules/profitability)** — Revenue per billable hour
+- **[Liquidity](/docs/gantry/modules/liquidity)** — Cash impact of utilization

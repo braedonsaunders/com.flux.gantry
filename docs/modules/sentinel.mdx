@@ -1,0 +1,289 @@
+---
+title: "Sentinel"
+description: "Fraud detection and transaction integrity monitoring"
+order: 6
+icon: "shield"
+badge: "Pro"
+---
+
+## Overview
+
+Sentinel is Gantry's fraud detection and transaction integrity dashboard. It uses multiple forensic analysis techniques to identify potentially fraudulent transactions, errors, and suspicious patterns in your financial data.
+
+Sentinel doesn't just find obvious problems — it detects subtle anomalies that humans often miss, from statistical irregularities to behavioral patterns.
+
+## Risk Score
+
+### Overall Risk Score
+
+Sentinel provides a Risk Score (0-100) representing your transaction integrity:
+
+| Score | Risk Level | Meaning |
+|-------|------------|---------|
+| 0-20 | Low | Excellent data integrity |
+| 21-40 | Moderate | Some items need review |
+| 41-60 | Elevated | Multiple concerning patterns |
+| 61-80 | High | Significant issues detected |
+| 81-100 | Critical | Immediate investigation required |
+
+Lower is better for this score.
+
+### Score Components
+
+The risk score considers:
+- Number of flagged transactions
+- Severity of detected anomalies
+- Breadth of issues (isolated vs. systemic)
+- Historical comparison
+
+## Detection Methods
+
+Sentinel uses seven specialized detection methods:
+
+### 1. Benford's Law Analysis
+
+**What It Is**: A mathematical principle stating that in natural datasets, the first digit "1" appears more often than "2", which appears more than "3", and so on.
+
+**How It Works**: Gantry analyzes the first digits of your transaction amounts. Significant deviation from the expected Benford distribution suggests manufactured (fraudulent) data.
+
+**What It Catches**:
+- Made-up expense amounts
+- Fabricated invoice numbers
+- Manipulated financial records
+
+**Visualization**: Bell curve showing expected vs. actual distribution.
+
+### 2. Duplicate Detection
+
+**What It Is**: Finds transactions that may be duplicates — same or similar amounts, dates, and vendors.
+
+**How It Works**: SQL-based analysis comparing transactions within configurable time windows. Handles large volumes (100,000+ transactions).
+
+**What It Catches**:
+- Double payments to vendors
+- Duplicate expense reimbursements
+- System glitches creating duplicate entries
+- Intentional double-billing
+
+**Flags When**:
+- Same vendor
+- Same or very similar amount
+- Within configurable time window (default: 7 days)
+- Above minimum threshold (default: $500)
+
+### 3. Relative Size Factor (RSF)
+
+**What It Is**: Identifies transactions that are unusually large compared to the typical transaction with that vendor.
+
+**How It Works**: For each vendor, Gantry calculates the typical transaction size and flags amounts significantly larger than normal.
+
+**What It Catches**:
+- Unusually large orders that might be mistakes
+- Price manipulation
+- Unauthorized purchases
+- Invoice padding
+
+**Example**: If typical orders from Vendor X are $500-$1,000 and suddenly there's a $15,000 charge, RSF flags it.
+
+### 4. Z-Score Analysis
+
+**What It Is**: Statistical analysis identifying transactions that deviate significantly from the expected pattern for that entity.
+
+**How It Works**: For each vendor/customer/account, Gantry calculates the mean and standard deviation. Transactions more than 2-3 standard deviations from the mean are flagged.
+
+**What It Catches**:
+- Unusual transaction sizes
+- Out-of-pattern purchases
+- Account activity anomalies
+- Potential misclassification
+
+### 5. Sequential Invoice Detection
+
+**What It Is**: Finds vendors with suspiciously sequential invoice numbers, which can indicate shell companies.
+
+**How It Works**: Real vendors typically have non-sequential invoice numbers (they have other customers). A vendor sending you invoices numbered 001, 002, 003, 004 may be a shell company created just to receive your payments.
+
+**What It Catches**:
+- Shell companies
+- Fictitious vendors
+- Internal collusion
+- Kickback schemes
+
+### 6. Ghost Vendor Detection
+
+**What It Is**: Identifies vendors whose addresses match employee addresses.
+
+**How It Works**: Compares vendor addresses to employee home addresses. A match may indicate a fraudulent vendor paying an employee.
+
+**What It Catches**:
+- Employees paying themselves through fake vendors
+- Family members receiving unauthorized payments
+- Post office boxes matching employee-controlled addresses
+
+### 7. Weekend Entry Monitoring
+
+**What It Is**: Tracks transactions entered on weekends or outside business hours.
+
+**How It Works**: Most legitimate transactions are entered during business hours. Unusual weekend entries may indicate unauthorized activity when no one is watching.
+
+**What It Catches**:
+- After-hours fraud attempts
+- Unauthorized adjustments
+- Entries made to avoid detection
+- Password sharing or unauthorized access
+
+## Dashboard Sections
+
+### Risk Overview
+
+Summary of overall risk level with breakdown by detection method.
+
+### Flagged Transactions
+
+Table showing all flagged transactions:
+
+| Column | Description |
+|--------|-------------|
+| **Date** | Transaction date |
+| **Type** | Transaction type |
+| **Vendor/Customer** | Entity name |
+| **Amount** | Transaction amount |
+| **Flag Reason** | Why it was flagged |
+| **Severity** | Risk level (Critical/High/Medium/Low) |
+
+Click any row for full transaction details.
+
+### Detection Method Details
+
+Expandable sections for each detection method showing:
+- Number of items flagged
+- Severity distribution
+- Specific flagged transactions
+- Visualization appropriate to method
+
+### Sankey Diagram
+
+Flow visualization showing:
+- Money flow from accounts to vendors
+- Unusual routing patterns
+- Concentration of payments
+
+### Risk Heatmap
+
+Visual representation of risk by:
+- Vendor
+- Account
+- Time period
+
+## Interpreting Results
+
+### Severity Levels
+
+| Level | Meaning | Recommended Action |
+|-------|---------|-------------------|
+| **Critical** | Strong fraud indicators | Investigate immediately |
+| **High** | Likely needs investigation | Review within 48 hours |
+| **Medium** | Potentially concerning | Review when convenient |
+| **Low** | Minor anomaly | Note for patterns |
+
+### False Positives
+
+Not every flag indicates fraud. Common legitimate explanations:
+- Annual payments (large RSF for annual contracts)
+- New vendors (limited baseline for Z-score)
+- Business address matching owner's home (small business)
+- Weekend work is normal for your industry
+
+Review flags with context before taking action.
+
+## Using the Dashboard
+
+### Daily Review
+1. Check overall risk score
+2. Review any new Critical or High flags
+3. Investigate and resolve or dismiss
+
+### Weekly Review
+1. Review all Medium flags
+2. Look for patterns across multiple flags
+3. Verify resolutions from prior week
+
+### Monthly Audit
+1. Analyze detection method trends
+2. Review whitelisted vendors (still appropriate?)
+3. Adjust thresholds if too many false positives
+4. Document and archive investigation findings
+
+## Configuration Options
+
+Access via **Settings → Sentinel**:
+
+### Detection Thresholds
+
+| Setting | Purpose | Default |
+|---------|---------|---------|
+| **Duplicate Time Window** | Days between potential duplicates | 7 days |
+| **Duplicate Minimum Amount** | Minimum to check for duplicates | $500 |
+| **Approval Threshold** | Flag all transactions above this | $10,000 |
+| **High Risk Amount** | Extra scrutiny threshold | $25,000 |
+
+### Benford's Law Settings
+
+| Setting | Purpose | Default |
+|---------|---------|---------|
+| **Alert Level** | Sensitivity (Marginal/Warning/Critical) | Warning |
+| **First Digit Only** | Use 1D vs. 2D analysis | 2D |
+
+### Monitoring Options
+
+| Setting | Purpose | Default |
+|---------|---------|---------|
+| **Weekend Entry Monitoring** | Flag weekend entries | On |
+| **Round Number Alerts** | Flag round amounts ($1,000, $5,000) | On |
+
+### Whitelists
+
+| Setting | Purpose |
+|---------|---------|
+| **Excluded Vendors** | Don't flag these vendors |
+| **Excluded Accounts** | Don't analyze these accounts |
+
+## Best Practices
+
+### Start with Defaults
+Default thresholds are based on industry best practices. Adjust after you understand your baseline.
+
+### Investigate Before Dismissing
+Even false positives should be investigated first. Document why you're dismissing.
+
+### Build Institutional Knowledge
+Record investigation findings. Patterns emerge over time.
+
+### Adjust for Your Business
+If legitimate weekend work is common, adjust that detector. If large transactions are normal, adjust RSF sensitivity.
+
+### Don't Ignore Low Severity
+Small anomalies can be the start of larger schemes. Review periodically.
+
+## Common Questions
+
+### Why are legitimate transactions being flagged?
+Every detection method will have some false positives. Use whitelists for known exceptions and adjust thresholds for your business patterns.
+
+### How do I whitelist a vendor?
+In Settings → Sentinel, add the vendor to Excluded Vendors. Future transactions with this vendor won't be flagged.
+
+### Can I see historical flags?
+Yes, use the date range selector to view flags from any period.
+
+### What should I do when I find actual fraud?
+Follow your organization's fraud response procedure. Preserve evidence, involve appropriate parties (legal, HR, auditors), and document everything.
+
+### How does this compare to an external audit?
+Sentinel provides continuous monitoring, while audits are periodic. They complement each other — Sentinel catches issues between audits.
+
+## Related Dashboards
+
+- **[Procurement](/docs/gantry/modules/procurement)** — Vendor performance and legitimacy
+- **[Profitability](/docs/gantry/modules/profitability)** — Impact of fraud on margins
+- **[Spend Velocity](/docs/gantry/modules/spend-velocity)** — Unusual spending patterns
