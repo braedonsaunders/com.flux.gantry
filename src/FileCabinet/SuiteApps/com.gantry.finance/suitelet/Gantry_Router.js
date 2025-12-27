@@ -11,6 +11,7 @@
 define([
     'N/log',
     'N/search',
+    'N/runtime',
     '../lib/Lib_Config',
     '../lib/Lib_Dashboard_Registry',
     '../lib/Lib_Permissions',
@@ -30,6 +31,7 @@ define([
 ], function(
     log,
     search,
+    runtime,
     ConfigLib,
     DashboardRegistry,
     Permissions,
@@ -81,7 +83,9 @@ define([
         'license_refresh',
         'roles',
         'models',
-        'openrouter_models'
+        'openrouter_models',
+        'health',
+        'installationVerify'
     ];
 
     /**
@@ -121,6 +125,91 @@ define([
     }
 
     /**
+     * Get health status for installation verification
+     * Used by fluxfornetsuite.com to verify SuiteApp installation
+     * @param {boolean} detailed - If true, includes component checks
+     * @returns {Object} Health status object
+     */
+    function getHealthStatus(detailed) {
+        const health = {
+            status: 'healthy',
+            version: '2.1.0',
+            product: 'gantry',
+            account: runtime.accountId,
+            environment: runtime.envType === runtime.EnvType.PRODUCTION ? 'PRODUCTION' : 'SANDBOX',
+            timestamp: new Date().toISOString()
+        };
+
+        // Basic license check (non-blocking)
+        try {
+            const licenseResult = LicenseGuard.validate();
+            health.license = {
+                valid: licenseResult && licenseResult.valid === true,
+                status: licenseResult ? licenseResult.status : 'unknown',
+                tier: licenseResult ? licenseResult.tier : null,
+                expires_at: licenseResult ? licenseResult.expires_at : null
+            };
+        } catch (e) {
+            health.license = { valid: false, status: 'error', message: e.message };
+        }
+
+        if (detailed) {
+            health.components = { records: {}, scripts: {} };
+
+            // Check main config record exists
+            try {
+                const configSearch = search.create({
+                    type: 'customrecord_gantry_config',
+                    columns: ['internalid'],
+                    filters: [['name', 'is', 'main']]
+                });
+                const results = configSearch.run().getRange({ start: 0, end: 1 });
+                health.components.records.gantry_config = {
+                    exists: results.length > 0,
+                    count: results.length
+                };
+            } catch (e) {
+                health.components.records.gantry_config = { exists: false, error: e.message };
+            }
+
+            // Check permissions config exists
+            try {
+                const permSearch = search.create({
+                    type: 'customrecord_gantry_config',
+                    columns: ['internalid'],
+                    filters: [['name', 'is', 'permissions']]
+                });
+                const permResults = permSearch.run().getRange({ start: 0, end: 1 });
+                health.components.records.permissions_config = {
+                    exists: permResults.length > 0
+                };
+            } catch (e) {
+                health.components.records.permissions_config = { exists: false, error: e.message };
+            }
+
+            // Router script is responding (self-check)
+            health.components.scripts.router = { exists: true, responding: true };
+
+            // Calculate overall installation status
+            health.installed = health.components.records.gantry_config &&
+                              health.components.records.gantry_config.exists;
+
+            // Add dashboard count for verification
+            try {
+                const dashboards = DashboardRegistry.getDataDashboards();
+                health.components.dashboards = {
+                    count: dashboards.length,
+                    ids: dashboards.map(function(d) { return d.id; })
+                };
+            } catch (e) {
+                health.components.dashboards = { count: 0, error: e.message };
+            }
+        }
+
+        return health;
+    }
+
+    /**
      * Handle GET requests
      */
     function doGet(context) {
@@ -135,6 +224,16 @@ define([
             // License refresh endpoint (always allowed)
             if (action === 'license_refresh') {
                 return LicenseGuard.refresh() ? LicenseGuard.getStatus() : LicenseGuard.getStatus();
+            }
+
+            // Health check endpoint (always allowed - for website verification)
+            if (action === 'health') {
+                return getHealthStatus(false);
+            }
+
+            // Installation verification endpoint (always allowed - detailed component check)
+            if (action === 'installationVerify') {
+                return getHealthStatus(true);
             }
 
             // Check license for protected actions
