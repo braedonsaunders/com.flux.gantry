@@ -1,0 +1,22 @@
+{
+  "name": "com.flux.gantry",
+  "version": "2.1.0",
+  "description": "Gantry Financial Suite for NetSuite",
+  "private": true,
+  "scripts": {
+    "sync": "node scripts/sync.js",
+    "sync:watch": "node scripts/sync.js --watch",
+    "sync:all": "node scripts/sync.js --all",
+    "build": "node scripts/build-distribution.js --clean",
+    "build:dev": "node scripts/build-distribution.js --no-obfuscate",
+    "build:quick": "node scripts/build-distribution.js"
+  },
+  "devDependencies": {
+    "javascript-obfuscator": "^4.1.1"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  },
+  "author": "Flux for NetSuite",
+  "license": "UNLICENSED"
+}
