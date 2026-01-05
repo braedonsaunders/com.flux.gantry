@@ -64,6 +64,7 @@ define([
      */
     const DATA_LIBS = {
         health: HealthData,
+        profitability: HealthData,  // Alias to avoid collision with system health check endpoint
         cashflow: CashflowData,
         time: TimeData,
         burden: BurdenData,
@@ -426,8 +427,8 @@ define([
                 return BurdenData.handleRequest(data);
             }
             
-            // Health sub-actions (account drilldowns, segments, forecasts, scenarios)
-            if (action === 'health') {
+            // Profitability sub-actions (account drilldowns, segments, forecasts, scenarios)
+            if (action === 'profitability') {
                 return HealthData.handleRequest(data);
             }
             

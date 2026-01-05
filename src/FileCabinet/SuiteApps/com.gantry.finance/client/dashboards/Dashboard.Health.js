@@ -988,7 +988,7 @@
             if (this.subsidiaryId) params.subsidiary = this.subsidiaryId;
             
             try {
-                var data = await API.get('health', params);
+                var data = await API.get('profitability', params);
                 this.latestData = data;
                 this.render(data);
             } catch (e) {
@@ -1846,7 +1846,7 @@
             }
             
             try {
-                var res = await API.post('health', {
+                var res = await API.post('profitability', {
                     subAction: 'price_volume_mix',
                     startDate: startDate,
                     endDate: endDate,
@@ -4619,7 +4619,7 @@
             if (bodyEl) bodyEl.innerHTML = '<tr><td colspan="6">' + Skeleton.render('table') + '</td></tr>';
             
             try {
-                var res = await API.post('health', {
+                var res = await API.post('profitability', {
                     subAction: 'budget_variance',
                     startDate: el('#healthStartDate').value,
                     endDate: el('#healthEndDate').value,
@@ -5318,10 +5318,10 @@
             try {
                 // Fetch all data in parallel
                 var [txnRes, vendorRes, empRes, trendRes] = await Promise.all([
-                    API.post('health', { subAction: 'account_transactions', accountId: accountId, startDate: startDate, endDate: endDate, subsidiaryId: subsidiaryId }),
-                    API.post('health', { subAction: 'account_by_vendor', accountId: accountId, startDate: startDate, endDate: endDate, subsidiaryId: subsidiaryId }),
-                    API.post('health', { subAction: 'account_by_employee', accountId: accountId, startDate: startDate, endDate: endDate, subsidiaryId: subsidiaryId }),
-                    API.post('health', { subAction: 'account_monthly_trend', accountId: accountId, months: 12, subsidiaryId: subsidiaryId })
+                    API.post('profitability', { subAction: 'account_transactions', accountId: accountId, startDate: startDate, endDate: endDate, subsidiaryId: subsidiaryId }),
+                    API.post('profitability', { subAction: 'account_by_vendor', accountId: accountId, startDate: startDate, endDate: endDate, subsidiaryId: subsidiaryId }),
+                    API.post('profitability', { subAction: 'account_by_employee', accountId: accountId, startDate: startDate, endDate: endDate, subsidiaryId: subsidiaryId }),
+                    API.post('profitability', { subAction: 'account_monthly_trend', accountId: accountId, months: 12, subsidiaryId: subsidiaryId })
                 ]);
                 
                 var transactions = (txnRes.status === 'success' && txnRes.transactions) ? txnRes.transactions : [];
