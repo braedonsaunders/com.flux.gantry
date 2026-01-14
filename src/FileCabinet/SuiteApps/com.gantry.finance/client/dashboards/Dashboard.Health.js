@@ -4281,14 +4281,15 @@
             var opInc = rangeM.opInc || 0;
             var headcount = metrics.headcount || 1;
             
-            // Estimates
+            // Estimates for ratios that require balance sheet data (not available)
             var estimatedAssets = revenue * 1.2;
             var estimatedEquity = revenue * 0.4;
             var estimatedDebt = revenue * 0.3;
             var estimatedDA = opex * 0.15;
-            var estimatedInterest = estimatedDebt * 0.05;
-            var estimatedTax = opInc > 0 ? opInc * 0.25 : 0;
-            var netIncome = opInc - estimatedInterest - estimatedTax;
+            var estimatedInterest = 0; // No actual interest data available
+            var estimatedTax = 0; // No actual tax data available
+            // Net income equals operating income since we only have P&L data (no interest/tax accounts)
+            var netIncome = opInc;
             var ebitda = opInc + estimatedDA;
             var investedCapital = estimatedEquity + estimatedDebt;
             
