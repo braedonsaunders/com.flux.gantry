@@ -4382,10 +4382,11 @@
             ];
             
             // Efficiency ratios
+            var assetTurnover = hasBalanceSheetData && totalAssets > 0 ? revenue / totalAssets : null;
             var efficiencyRatios = [
                 { id: 'rev_per_employee', value: metrics.revenuePerEmployee || 0, format: 'money', benchmark: 200000, calc: fmtMoney(revenue) + ' / ' + headcount + ' employees' },
                 { id: 'gp_per_employee', value: metrics.grossMarginPerEmployee || 0, format: 'money', benchmark: 80000, calc: fmtMoney(gm) + ' / ' + headcount + ' employees' },
-                { id: 'asset_turnover', value: estimatedAssets > 0 ? revenue / estimatedAssets : 0, format: 'num', benchmark: 1.0, calc: fmtMoney(revenue) + ' / ' + fmtMoney(estimatedAssets) }
+                { id: 'asset_turnover', value: assetTurnover, format: 'num', benchmark: 1.0, calc: assetTurnover !== null ? fmtMoney(revenue) + ' / ' + fmtMoney(totalAssets) : 'N/A', noData: !hasBalanceSheetData, noDataMsg: 'No balance sheet data available' }
             ];
             
             // Operating ratios - use config benchmarks
