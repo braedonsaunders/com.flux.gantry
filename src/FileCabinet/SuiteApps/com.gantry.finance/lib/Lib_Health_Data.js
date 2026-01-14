@@ -214,6 +214,16 @@ define(["N/search", "N/query", "N/log", "./Lib_Core", "./Lib_Config"], function 
             // 12. Top Movers (Drivers)
             const topMovers = calculateTopMovers(companyAccountsCurrent, companyAccountsPrior);
 
+            // 13. Balance Sheet Data (for ROA, ROE, ROIC, ROCE ratios)
+            const balanceSheet = fetchBalanceSheetData(context.subsidiary);
+
+            // 14. Depreciation & Amortization (for EBITDA)
+            const depreciationAmortization = fetchDepreciationAmortization(
+                Core.formatDateForQuery(rangeStart),
+                Core.formatDateForQuery(rangeEnd),
+                context.subsidiary
+            );
+
             return {
                 meta: {
                     fiscal: { 
@@ -246,7 +256,9 @@ define(["N/search", "N/query", "N/log", "./Lib_Core", "./Lib_Config"], function 
                 monthlyTrend: monthlyTrend,
                 anomalies: anomalies,
                 operatingMetrics: operatingMetrics,
-                topMovers: topMovers
+                topMovers: topMovers,
+                balanceSheet: balanceSheet,
+                depreciationAmortization: depreciationAmortization
             };
 
         } catch (e) {
@@ -409,7 +421,45 @@ define(["N/search", "N/query", "N/log", "./Lib_Core", "./Lib_Config"], function 
                         params.subsidiaryId
                     )
                 };
-            
+
+            case 'segment_monthly_trend':
+                return {
+                    status: 'success',
+                    data: getSegmentMonthlyTrend(
+                        params.segmentType || 'department',
+                        params.segmentId,
+                        params.months || 6,
+                        params.endDate,
+                        params.subsidiaryId
+                    )
+                };
+
+            case 'monthly_budget_variance':
+                return {
+                    status: 'success',
+                    data: getMonthlyBudgetVariance(
+                        params.months || 6,
+                        params.endDate,
+                        params.subsidiaryId
+                    )
+                };
+
+            case 'balance_sheet':
+                return {
+                    status: 'success',
+                    data: fetchBalanceSheetData(params.subsidiaryId)
+                };
+
+            case 'depreciation_amortization':
+                return {
+                    status: 'success',
+                    data: fetchDepreciationAmortization(
+                        params.startDate,
+                        params.endDate,
+                        params.subsidiaryId
+                    )
+                };
+
             default:
                 return { status: 'error', message: 'Unknown subAction: ' + subAction };
         }
@@ -2063,6 +2113,281 @@ define(["N/search", "N/query", "N/log", "./Lib_Core", "./Lib_Config"], function 
 
         const sortFn = (a,b) => b.amount - a.amount;
         return { revenueAccounts: rev.sort(sortFn), cogsAccounts: cogs.sort(sortFn), opexAccounts: opex.sort(sortFn) };
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // BALANCE SHEET DATA (for ROA, ROE, ROIC, ROCE calculations)
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Fetch balance sheet totals from account balances
+     * Uses current account balances (point-in-time snapshot)
+     */
+    function fetchBalanceSheetData(subsidiaryId) {
+        try {
+            const subFilter = subsidiaryId ? `AND a.subsidiary = ${subsidiaryId}` : '';
+
+            const sql = `
+                SELECT
+                    a.accttype,
+                    SUM(a.balance) AS balance
+                FROM
+                    Account a
+                WHERE
+                    a.isinactive = 'F'
+                    AND a.accttype IN (
+                        'Bank', 'AcctRec', 'OthCurrAsset', 'FixedAsset', 'OthAsset',
+                        'AcctPay', 'OthCurrLiab', 'CredCard', 'LongTermLiab',
+                        'Equity', 'RetainedEarnings'
+                    )
+                    ${subFilter}
+                GROUP BY
+                    a.accttype
+            `;
+
+            const rows = Core.runQuery(sql);
+
+            let totalAssets = 0;
+            let totalLiabilities = 0;
+            let totalEquity = 0;
+            let totalDebt = 0; // Long-term debt for ROIC calculation
+
+            rows.forEach(r => {
+                const bal = parseFloat(r.balance) || 0;
+                const type = r.accttype;
+
+                // Assets (normal debit balance)
+                if (['Bank', 'AcctRec', 'OthCurrAsset', 'FixedAsset', 'OthAsset'].includes(type)) {
+                    totalAssets += bal;
+                }
+                // Liabilities (normal credit balance - stored as negative in NetSuite)
+                else if (['AcctPay', 'OthCurrLiab', 'CredCard', 'LongTermLiab'].includes(type)) {
+                    totalLiabilities += Math.abs(bal);
+                    if (type === 'LongTermLiab') {
+                        totalDebt += Math.abs(bal);
+                    }
+                }
+                // Equity (normal credit balance - stored as negative in NetSuite)
+                else if (['Equity', 'RetainedEarnings'].includes(type)) {
+                    totalEquity += Math.abs(bal);
+                }
+            });
+
+            const hasData = rows.length > 0 && (totalAssets > 0 || totalEquity > 0);
+
+            return {
+                hasData: hasData,
+                totalAssets: Core.round2(totalAssets),
+                totalLiabilities: Core.round2(totalLiabilities),
+                totalEquity: Core.round2(totalEquity),
+                totalDebt: Core.round2(totalDebt),
+                investedCapital: Core.round2(totalEquity + totalDebt)
+            };
+        } catch (e) {
+            log.debug('fetchBalanceSheetData error', e.message);
+            return {
+                hasData: false,
+                totalAssets: 0,
+                totalLiabilities: 0,
+                totalEquity: 0,
+                totalDebt: 0,
+                investedCapital: 0
+            };
+        }
+    }
+
+    /**
+     * Fetch Depreciation & Amortization expenses for EBITDA calculation
+     * Looks for expense accounts with depreciation/amortization in the name
+     */
+    function fetchDepreciationAmortization(startDate, endDate, subsidiaryId) {
+        try {
+            const subFilter = subsidiaryId ? `AND t.subsidiary = ${subsidiaryId}` : '';
+
+            const sql = `
+                SELECT
+                    SUM(tal.amount) AS total_da
+                FROM
+                    Transaction t
+                    JOIN TransactionAccountingLine tal ON t.id = tal.transaction
+                    JOIN Account a ON tal.account = a.id
+                WHERE
+                    t.posting = 'T'
+                    AND tal.posting = 'T'
+                    AND a.accttype IN ('Expense', 'OthExpense')
+                    AND (
+                        LOWER(a.accountsearchdisplayname) LIKE '%depreciation%'
+                        OR LOWER(a.accountsearchdisplayname) LIKE '%amortization%'
+                        OR LOWER(a.acctnumber) LIKE '%depr%'
+                        OR LOWER(a.acctnumber) LIKE '%amort%'
+                    )
+                    AND t.trandate >= TO_DATE('${startDate}', 'YYYY-MM-DD')
+                    AND t.trandate <= TO_DATE('${endDate}', 'YYYY-MM-DD')
+                    ${subFilter}
+            `;
+
+            const rows = Core.runQuery(sql);
+            const totalDA = rows.length > 0 ? (parseFloat(rows[0].total_da) || 0) : 0;
+
+            return {
+                hasData: totalDA !== 0,
+                totalDA: Core.round2(totalDA)
+            };
+        } catch (e) {
+            log.debug('fetchDepreciationAmortization error', e.message);
+            return { hasData: false, totalDA: 0 };
+        }
+    }
+
+    /**
+     * Get monthly P&L trend data for a specific segment
+     * Returns actual monthly revenue and gross margin for segment flyout charts
+     */
+    function getSegmentMonthlyTrend(segmentType, segmentId, months, endDate, subsidiaryId) {
+        try {
+            let segmentField;
+            switch (segmentType) {
+                case 'class': segmentField = 'tl.class'; break;
+                case 'location': segmentField = 'tl.location'; break;
+                default: segmentField = 'tl.department';
+            }
+
+            const subFilter = subsidiaryId ? `AND t.subsidiary = ${subsidiaryId}` : '';
+            const baseDate = endDate ? parseLocalDate(endDate) : new Date();
+            const results = [];
+
+            for (let i = months - 1; i >= 0; i--) {
+                const monthEnd = new Date(baseDate.getFullYear(), baseDate.getMonth() - i + 1, 0);
+                const monthStart = new Date(monthEnd.getFullYear(), monthEnd.getMonth(), 1);
+
+                const sql = `
+                    SELECT
+                        a.accttype,
+                        SUM(tal.amount) AS amount
+                    FROM
+                        Transaction t
+                        JOIN TransactionAccountingLine tal ON t.id = tal.transaction
+                        JOIN TransactionLine tl ON t.id = tl.transaction AND tal.transactionline = tl.id
+                        JOIN Account a ON tal.account = a.id
+                    WHERE
+                        t.posting = 'T'
+                        AND tal.posting = 'T'
+                        AND ${segmentField} = ${segmentId}
+                        AND a.accttype IN ('Income', 'OthIncome', 'COGS', 'Expense', 'OthExpense')
+                        AND t.trandate >= TO_DATE('${Core.formatDateForQuery(monthStart)}', 'YYYY-MM-DD')
+                        AND t.trandate <= TO_DATE('${Core.formatDateForQuery(monthEnd)}', 'YYYY-MM-DD')
+                        ${subFilter}
+                    GROUP BY
+                        a.accttype
+                `;
+
+                const rows = Core.runQuery(sql);
+
+                let revenue = 0, cogs = 0;
+                rows.forEach(r => {
+                    const amt = parseFloat(r.amount) || 0;
+                    const type = r.accttype;
+                    if (type === 'Income') revenue += (amt * -1);
+                    else if (type === 'OthIncome') revenue += (amt * -1);
+                    else if (type === 'COGS') cogs += amt;
+                });
+
+                const grossMargin = revenue - cogs;
+
+                results.push({
+                    monthLabel: monthStart.toLocaleDateString('en-US', { month: 'short' }),
+                    revenue: Core.round2(revenue),
+                    grossMargin: Core.round2(grossMargin)
+                });
+            }
+
+            const hasData = results.some(r => r.revenue !== 0 || r.grossMargin !== 0);
+
+            return {
+                hasData: hasData,
+                months: results
+            };
+        } catch (e) {
+            log.debug('getSegmentMonthlyTrend error', e.message);
+            return { hasData: false, months: [] };
+        }
+    }
+
+    /**
+     * Get monthly budget vs actual variance data
+     * Returns actual variance percentages per month for trend chart
+     */
+    function getMonthlyBudgetVariance(months, endDate, subsidiaryId) {
+        try {
+            const subFilter = subsidiaryId ? `AND b.subsidiary = ${subsidiaryId}` : '';
+            const baseDate = endDate ? parseLocalDate(endDate) : new Date();
+            const results = [];
+
+            for (let i = months - 1; i >= 0; i--) {
+                const monthEnd = new Date(baseDate.getFullYear(), baseDate.getMonth() - i + 1, 0);
+                const monthStart = new Date(monthEnd.getFullYear(), monthEnd.getMonth(), 1);
+                const year = monthStart.getFullYear();
+                const month = monthStart.getMonth() + 1; // 1-indexed for NetSuite
+
+                // Query budget amounts for the month
+                const budgetSql = `
+                    SELECT
+                        SUM(b.amount) AS budget_amount
+                    FROM
+                        Budget b
+                        JOIN Account a ON b.account = a.id
+                    WHERE
+                        b.year = ${year}
+                        AND b.month = ${month}
+                        AND a.accttype IN ('Expense', 'OthExpense', 'COGS')
+                        ${subFilter}
+                `;
+
+                // Query actual expenses for the month
+                const actualSql = `
+                    SELECT
+                        SUM(tal.amount) AS actual_amount
+                    FROM
+                        Transaction t
+                        JOIN TransactionAccountingLine tal ON t.id = tal.transaction
+                        JOIN Account a ON tal.account = a.id
+                    WHERE
+                        t.posting = 'T'
+                        AND tal.posting = 'T'
+                        AND a.accttype IN ('Expense', 'OthExpense', 'COGS')
+                        AND t.trandate >= TO_DATE('${Core.formatDateForQuery(monthStart)}', 'YYYY-MM-DD')
+                        AND t.trandate <= TO_DATE('${Core.formatDateForQuery(monthEnd)}', 'YYYY-MM-DD')
+                        ${subsidiaryId ? `AND t.subsidiary = ${subsidiaryId}` : ''}
+                `;
+
+                const budgetRows = Core.runQuery(budgetSql);
+                const actualRows = Core.runQuery(actualSql);
+
+                const budget = budgetRows.length > 0 ? (parseFloat(budgetRows[0].budget_amount) || 0) : 0;
+                const actual = actualRows.length > 0 ? (parseFloat(actualRows[0].actual_amount) || 0) : 0;
+
+                const variance = actual - budget;
+                const variancePct = budget !== 0 ? variance / Math.abs(budget) : 0;
+
+                results.push({
+                    month: monthStart.toLocaleDateString('en-US', { month: 'short' }),
+                    budget: Core.round2(budget),
+                    actual: Core.round2(actual),
+                    variance: Core.round2(variance),
+                    variancePct: Core.round2(variancePct)
+                });
+            }
+
+            const hasData = results.some(r => r.budget !== 0 || r.actual !== 0);
+
+            return {
+                hasData: hasData,
+                months: results
+            };
+        } catch (e) {
+            log.debug('getMonthlyBudgetVariance error', e.message);
+            return { hasData: false, months: [] };
+        }
     }
 
     function chooseTargetGMPct(last, curr, ytd, config) {

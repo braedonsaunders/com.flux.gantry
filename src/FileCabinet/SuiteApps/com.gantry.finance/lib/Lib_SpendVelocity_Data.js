@@ -1603,11 +1603,17 @@ define(['N/query', 'N/log', './Lib_Core'], function(query, log, Core) {
         });
         
         fragments.sort(function(a, b) { return b.fragmentationScore - a.fragmentationScore; });
-        
+
+        // Calculate total fragmented spend (actual data, not estimated savings)
+        var totalFragmentedSpend = fragments.reduce(function(sum, f) { return sum + f.totalSpend; }, 0);
+
         return {
             summary: {
                 fragmentedCategories: fragments.length,
-                potentialSavings: Math.round(fragments.reduce(function(sum, f) { return sum + f.totalSpend * 0.05; }, 0)) // Estimate 5% savings potential
+                totalFragmentedSpend: Math.round(totalFragmentedSpend),
+                // Note: Savings potential varies significantly by category and vendor negotiation
+                // Rather than fabricate a percentage, we show the total spend that could be optimized
+                savingsNote: 'Consolidation savings vary by category. Review individual categories for optimization opportunities.'
             },
             categories: fragments.slice(0, 15)
         };

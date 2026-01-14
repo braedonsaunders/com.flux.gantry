@@ -2543,17 +2543,41 @@
                     '</div>'
                 ) : '');
             
+            // Store segment info for API call
+            var segmentType = type;
+            var segmentId = id;
+            var meta = this.latestData && this.latestData.meta ? this.latestData.meta : {};
+
             this.showFlyout(escapeHtml(name) + ' Details', flyoutHtml, function() {
                 if (typeof Plotly === 'undefined') return;
-                
-                // Generate mock monthly trend data
-                var months = ['Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-                var baseRev = seg.revenue / 6;
-                var revTrend = months.map(function(m, i) { return baseRev * (0.85 + i * 0.05 + Math.random() * 0.1); });
-                var gmTrend = revTrend.map(function(r) { return r * (seg.gmPct || 0.3) * (0.95 + Math.random() * 0.1); });
-                
-                // Revenue trend chart - full width
-                if (el('#segFlyoutTrend')) {
+
+                var trendContainer = el('#segFlyoutTrend');
+                if (!trendContainer) return;
+
+                // Show loading state
+                trendContainer.innerHTML = '<div class="text-center py-3"><div class="spinner-border spinner-border-sm text-primary"></div><span class="ml-2 small text-muted">Loading trend data...</span></div>';
+
+                // Fetch real monthly trend data from backend
+                API.post('health', {
+                    subAction: 'segment_monthly_trend',
+                    segmentType: segmentType,
+                    segmentId: segmentId,
+                    months: 6,
+                    endDate: meta.range ? meta.range.end : null,
+                    subsidiaryId: meta.subsidiaryId || null
+                }).then(function(res) {
+                    var trendData = res.data || {};
+
+                    if (!trendData.hasData || !trendData.months || trendData.months.length === 0) {
+                        trendContainer.innerHTML = '<div class="text-center py-3 text-muted small"><i class="fas fa-info-circle mr-1"></i>No monthly trend data available for this segment</div>';
+                        return;
+                    }
+
+                    var months = trendData.months.map(function(m) { return m.monthLabel; });
+                    var revTrend = trendData.months.map(function(m) { return m.revenue; });
+                    var gmTrend = trendData.months.map(function(m) { return m.grossMargin; });
+
+                    trendContainer.innerHTML = '';
                     Plotly.newPlot('segFlyoutTrend', [
                         { x: months, y: revTrend, type: 'scatter', mode: 'lines+markers', name: 'Revenue', line: { color: '#3b82f6', width: 2 }, marker: { size: 6 }, fill: 'tozeroy', fillcolor: 'rgba(59,130,246,0.1)' },
                         { x: months, y: gmTrend, type: 'scatter', mode: 'lines+markers', name: 'Gross Margin', line: { color: '#10b981', width: 2 }, marker: { size: 6 } }
@@ -2564,7 +2588,9 @@
                         legend: { orientation: 'h', y: 1.15, font: { size: 10 } },
                         paper_bgcolor: 'transparent', plot_bgcolor: 'transparent'
                     }, { responsive: true, displayModeBar: false });
-                }
+                }).catch(function(err) {
+                    trendContainer.innerHTML = '<div class="text-center py-3 text-warning small"><i class="fas fa-exclamation-triangle mr-1"></i>Unable to load trend data</div>';
+                });
             });
         },
 
@@ -4287,61 +4313,72 @@
             // Net income from actual P&L data (includes non-operating items)
             var netIncome = rangeM.netInc !== undefined ? rangeM.netInc : opInc;
 
-            // Estimates for ratios that require balance sheet data (not available from P&L)
-            var estimatedAssets = revenue * 1.2;
-            var estimatedEquity = revenue * 0.4;
-            var estimatedDebt = revenue * 0.3;
-            var estimatedDA = opex * 0.15;
-            var ebitda = opInc + estimatedDA;
-            var investedCapital = estimatedEquity + estimatedDebt;
+            // Balance sheet data from actual account balances
+            var bs = data.balanceSheet || {};
+            var hasBalanceSheetData = bs.hasData === true;
+            var totalAssets = bs.totalAssets || 0;
+            var totalEquity = bs.totalEquity || 0;
+            var totalDebt = bs.totalDebt || 0;
+            var investedCapital = bs.investedCapital || 0;
+
+            // Depreciation & Amortization from actual expense accounts
+            var daData = data.depreciationAmortization || {};
+            var hasDAData = daData.hasData === true;
+            var actualDA = daData.totalDA || 0;
+            var ebitda = opInc + actualDA;
             
             var priorRevenue = priorM.revenue || revenue;
             var revenueGrowth = priorRevenue > 0 ? (revenue - priorRevenue) / priorRevenue : 0;
             var priorOpInc = priorM.opInc || opInc;
             var opIncGrowth = priorOpInc !== 0 ? (opInc - priorOpInc) / Math.abs(priorOpInc) : 0;
             var operatingLeverage = revenueGrowth !== 0 ? opIncGrowth / revenueGrowth : 1;
-            
-            var roic = investedCapital > 0 ? (opInc * 0.75) / investedCapital : 0;
+
+            // Calculate ratios using actual balance sheet data
+            var roa = hasBalanceSheetData && totalAssets > 0 ? netIncome / totalAssets : null;
+            var roe = hasBalanceSheetData && totalEquity > 0 ? netIncome / totalEquity : null;
+            var roic = hasBalanceSheetData && investedCapital > 0 ? netIncome / investedCapital : null;
+            var roce = hasBalanceSheetData && investedCapital > 0 ? opInc / investedCapital : null;
             var ebitdaMargin = revenue > 0 ? ebitda / revenue : 0;
-            var rule40 = (revenueGrowth * 100) + ((opInc / revenue) * 100);
-            
+            var rule40 = (revenueGrowth * 100) + ((revenue > 0 ? opInc / revenue : 0) * 100);
+
             // Store for popup calculations
             this.benchmarkData = {
                 revenue: revenue, cogs: cogs, gm: gm, opex: opex, opInc: opInc,
                 netIncome: netIncome, ebitda: ebitda, headcount: headcount,
-                assets: estimatedAssets, equity: estimatedEquity, debt: estimatedDebt,
-                othIncome: othIncome, othExpense: othExpense
+                assets: totalAssets, equity: totalEquity, debt: totalDebt,
+                othIncome: othIncome, othExpense: othExpense,
+                hasBalanceSheetData: hasBalanceSheetData, hasDAData: hasDAData
             };
-            
+
             // Build KPIs
             var rule40Color = rule40 >= 40 ? 'green' : (rule40 >= 20 ? 'yellow' : 'red');
             var kpisContainer = el('#ppBenchmarkKPIs');
             if (kpisContainer) {
                 kpisContainer.innerHTML = this.buildKPIRow([
-                    { label: 'ROIC', value: fmtPct(roic), icon: 'percentage', color: 'blue', subtext: 'Return on Invested Capital' },
-                    { label: 'EBITDA Margin', value: fmtPct(ebitdaMargin), icon: 'chart-bar', color: 'green', subtext: 'Earnings Margin' },
+                    { label: 'ROIC', value: roic !== null ? fmtPct(roic) : 'N/A', icon: 'percentage', color: roic !== null ? 'blue' : 'gray', subtext: roic !== null ? 'Return on Invested Capital' : 'No balance sheet data' },
+                    { label: 'EBITDA Margin', value: fmtPct(ebitdaMargin), icon: 'chart-bar', color: 'green', subtext: hasDAData ? 'Earnings Margin' : 'No D&A accounts found' },
                     { label: 'Op Leverage', value: operatingLeverage.toFixed(2) + 'x', icon: 'balance-scale-right', color: 'purple', subtext: 'Sensitivity' },
                     { label: 'Rule of 40', value: rule40.toFixed(1), icon: 'tachometer-alt', color: rule40Color, subtext: 'Growth + Profit' }
                 ]);
             }
-            
+
             // Get benchmark targets from configuration (convert from % to decimal)
             var cfg = this.configData || {};
             var gmBenchmark = (cfg.gmTarget || 40) / 100;
             var opBenchmark = (cfg.opTarget || 15) / 100;
             var cogsBenchmark = 1 - gmBenchmark; // COGS benchmark is inverse of GM target
             var opexBenchmark = gmBenchmark - opBenchmark; // OpEx should be GM - Op margin
-            
-            // Profitability ratios - use config benchmarks
+
+            // Profitability ratios - use actual data with N/A when balance sheet unavailable
             var profitRatios = [
                 { id: 'gross_margin', value: rangeM.gmPct || 0, format: 'pct', benchmark: gmBenchmark, calc: fmtMoney(gm) + ' / ' + fmtMoney(revenue) },
                 { id: 'operating_margin', value: revenue > 0 ? opInc / revenue : 0, format: 'pct', benchmark: opBenchmark, calc: fmtMoney(opInc) + ' / ' + fmtMoney(revenue) },
-                { id: 'ebitda_margin', value: ebitdaMargin, format: 'pct', benchmark: opBenchmark + 0.05, calc: fmtMoney(ebitda) + ' / ' + fmtMoney(revenue) },
+                { id: 'ebitda_margin', value: ebitdaMargin, format: 'pct', benchmark: opBenchmark + 0.05, calc: fmtMoney(ebitda) + ' / ' + fmtMoney(revenue), noData: !hasDAData, noDataMsg: 'No depreciation/amortization accounts found' },
                 { id: 'net_margin', value: revenue > 0 ? netIncome / revenue : 0, format: 'pct', benchmark: opBenchmark * 0.67, calc: fmtMoney(netIncome) + ' / ' + fmtMoney(revenue) },
-                { id: 'roa', value: estimatedAssets > 0 ? netIncome / estimatedAssets : 0, format: 'pct', benchmark: 0.08, calc: fmtMoney(netIncome) + ' / ' + fmtMoney(estimatedAssets) },
-                { id: 'roe', value: estimatedEquity > 0 ? netIncome / estimatedEquity : 0, format: 'pct', benchmark: 0.15, calc: fmtMoney(netIncome) + ' / ' + fmtMoney(estimatedEquity) },
-                { id: 'roic', value: roic, format: 'pct', benchmark: 0.12, calc: fmtMoney(opInc * 0.75) + ' / ' + fmtMoney(investedCapital) },
-                { id: 'roce', value: investedCapital > 0 ? opInc / investedCapital : 0, format: 'pct', benchmark: 0.15, calc: fmtMoney(opInc) + ' / ' + fmtMoney(investedCapital) }
+                { id: 'roa', value: roa, format: 'pct', benchmark: 0.08, calc: roa !== null ? fmtMoney(netIncome) + ' / ' + fmtMoney(totalAssets) : 'N/A', noData: !hasBalanceSheetData, noDataMsg: 'No balance sheet data available' },
+                { id: 'roe', value: roe, format: 'pct', benchmark: 0.15, calc: roe !== null ? fmtMoney(netIncome) + ' / ' + fmtMoney(totalEquity) : 'N/A', noData: !hasBalanceSheetData, noDataMsg: 'No balance sheet data available' },
+                { id: 'roic', value: roic, format: 'pct', benchmark: 0.12, calc: roic !== null ? fmtMoney(netIncome) + ' / ' + fmtMoney(investedCapital) : 'N/A', noData: !hasBalanceSheetData, noDataMsg: 'No balance sheet data available' },
+                { id: 'roce', value: roce, format: 'pct', benchmark: 0.15, calc: roce !== null ? fmtMoney(opInc) + ' / ' + fmtMoney(investedCapital) : 'N/A', noData: !hasBalanceSheetData, noDataMsg: 'No balance sheet data available' }
             ];
             
             // Efficiency ratios
@@ -4370,22 +4407,38 @@
             
             // Render charts
             this.renderCostStructureChart(data);
-            this.renderDuPontChart(data, netIncome, revenue, estimatedAssets, estimatedEquity);
+            this.renderDuPontChart(data, netIncome, revenue, totalAssets, totalEquity, hasBalanceSheetData);
         },
 
         renderRatioGrid: function(selector, ratios) {
             var self = this;
             var container = el(selector);
             if (!container) return;
-            
+
             var html = '';
             ratios.forEach(function(r) {
                 var def = self.ratioDefinitions[r.id] || { label: r.id, formula: '', desc: '' };
-                var displayValue = r.format === 'pct' ? fmtPct(r.value) : 
-                                   r.format === 'money' ? fmtMoney(r.value) : 
+
+                // Handle missing data case
+                if (r.noData || r.value === null) {
+                    html += '<div class="col-md-3 col-sm-6 mb-2">' +
+                        '<div class="ratio-card bg-light p-2 rounded" title="' + (r.noDataMsg || 'Data not available') + '">' +
+                            '<div class="d-flex justify-content-between align-items-start">' +
+                                '<div class="small text-muted text-truncate" style="max-width:70%;">' + def.label + '</div>' +
+                                '<span class="badge badge-secondary">N/A</span>' +
+                            '</div>' +
+                            '<div class="font-weight-bold mt-1 text-muted">N/A</div>' +
+                            '<div class="small text-warning"><i class="fas fa-info-circle mr-1"></i>' + (r.noDataMsg || 'Data not available') + '</div>' +
+                        '</div>' +
+                    '</div>';
+                    return;
+                }
+
+                var displayValue = r.format === 'pct' ? fmtPct(r.value) :
+                                   r.format === 'money' ? fmtMoney(r.value) :
                                    r.format === 'raw' ? r.value.toFixed(1) :
                                    (r.value || 0).toFixed(2);
-                
+
                 // Calculate grade
                 var ratio = r.inverse ? r.benchmark / (Math.abs(r.value) || 0.001) : (r.value || 0) / r.benchmark;
                 var grade, gradeClass, gradeBg;
@@ -4394,7 +4447,7 @@
                 else if (ratio >= 0.8) { grade = 'C'; gradeClass = 'warning'; gradeBg = 'bg-warning-soft'; }
                 else if (ratio >= 0.6) { grade = 'D'; gradeClass = 'orange'; gradeBg = 'bg-orange-soft'; }
                 else { grade = 'F'; gradeClass = 'danger'; gradeBg = 'bg-danger-soft'; }
-                
+
                 html += '<div class="col-md-3 col-sm-6 mb-2">' +
                     '<div class="ratio-card ' + gradeBg + ' p-2 rounded cursor-pointer" onclick="HealthController.showRatioDetail(\'' + r.id + '\', ' + JSON.stringify(r).replace(/"/g, '&quot;') + ')">' +
                         '<div class="d-flex justify-content-between align-items-start">' +
@@ -4583,17 +4636,27 @@
             }, { responsive: true, displayModeBar: false });
         },
 
-        renderDuPontChart: function(data, netIncome, revenue, assets, equity) {
+        renderDuPontChart: function(data, netIncome, revenue, assets, equity, hasBalanceSheetData) {
             var container = el('#ppDuPontChart');
             if (!container || typeof Plotly === 'undefined') return;
-            
+
             ChartManager.clearContainer('ppDuPontChart');
-            
+
+            // Show info message if balance sheet data unavailable
+            if (!hasBalanceSheetData || assets === 0 || equity === 0) {
+                container.innerHTML = '<div class="text-center py-4">' +
+                    '<i class="fas fa-info-circle text-muted fa-2x mb-2"></i>' +
+                    '<p class="text-muted small mb-0">DuPont Analysis requires balance sheet data</p>' +
+                    '<p class="text-muted small">No asset or equity account balances found</p>' +
+                '</div>';
+                return;
+            }
+
             var profitMargin = revenue > 0 ? netIncome / revenue : 0;
             var assetTurnover = assets > 0 ? revenue / assets : 0;
             var equityMultiplier = equity > 0 ? assets / equity : 0;
             var roe = profitMargin * assetTurnover * equityMultiplier;
-            
+
             Plotly.newPlot('ppDuPontChart', [{
                 x: ['Profit Mgn', 'Asset Turn', 'Eq Mult', 'ROE'],
                 y: [profitMargin * 100, assetTurnover * 100, equityMultiplier * 100, roe * 100],
@@ -4730,29 +4793,33 @@
                 alertsEl.innerHTML = alertsHtml || '<div class="text-center text-muted py-4 small">No budget alerts</div>';
             }
             
-            // Monthly Variance Trend Chart
+            // Monthly Variance Trend Chart - fetch real data from backend
             if (typeof Plotly !== 'undefined' && el('#ppBudgetTrendChart')) {
-                var monthlyData = data.monthlyVariance || [];
-                
-                // Generate synthetic monthly data if not provided
-                if (monthlyData.length === 0 && accounts.length > 0) {
-                    var months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun'];
-                    var totalVar = accounts.reduce(function(sum, a) { return sum + (a.variance || 0); }, 0);
-                    var avgVariance = totalVar / 6;
-                    monthlyData = months.map(function(m, i) {
-                        return {
-                            month: m,
-                            variance: avgVariance * (0.7 + Math.random() * 0.6),
-                            variancePct: (0.05 + Math.random() * 0.1) * (Math.random() > 0.5 ? 1 : -1)
-                        };
-                    });
-                }
-                
-                if (monthlyData.length > 0) {
-                    var trendLabels = monthlyData.map(function(m) { return m.month || m.monthLabel; });
-                    var trendValues = monthlyData.map(function(m) { return (m.variancePct || 0) * 100; });
+                var trendChartEl = el('#ppBudgetTrendChart');
+                var meta = this.latestData && this.latestData.meta ? this.latestData.meta : {};
+
+                // Show loading state
+                trendChartEl.innerHTML = '<div class="text-center py-3"><div class="spinner-border spinner-border-sm text-primary"></div><span class="ml-2 small text-muted">Loading...</span></div>';
+
+                // Fetch real monthly budget variance data from backend
+                API.post('health', {
+                    subAction: 'monthly_budget_variance',
+                    months: 6,
+                    endDate: meta.range ? meta.range.end : null,
+                    subsidiaryId: meta.subsidiaryId || null
+                }).then(function(res) {
+                    var varianceData = res.data || {};
+
+                    if (!varianceData.hasData || !varianceData.months || varianceData.months.length === 0) {
+                        trendChartEl.innerHTML = '<div class="text-center text-muted py-3 small"><i class="fas fa-info-circle mr-1"></i>No budget data available for trend chart</div>';
+                        return;
+                    }
+
+                    var trendLabels = varianceData.months.map(function(m) { return m.month; });
+                    var trendValues = varianceData.months.map(function(m) { return (m.variancePct || 0) * 100; });
                     var trendColors = trendValues.map(function(v) { return v >= 0 ? '#10b981' : '#ef4444'; });
-                    
+
+                    trendChartEl.innerHTML = '';
                     Plotly.newPlot('ppBudgetTrendChart', [{
                         x: trendLabels,
                         y: trendValues,
@@ -4766,9 +4833,9 @@
                         paper_bgcolor: 'transparent',
                         plot_bgcolor: 'transparent'
                     }, { responsive: true, displayModeBar: false });
-                } else {
-                    el('#ppBudgetTrendChart').innerHTML = '<div class="text-center text-muted py-3 small">No monthly data</div>';
-                }
+                }).catch(function(err) {
+                    trendChartEl.innerHTML = '<div class="text-center text-warning py-3 small"><i class="fas fa-exclamation-triangle mr-1"></i>Unable to load budget trend</div>';
+                });
             }
             
             // Table

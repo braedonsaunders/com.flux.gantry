@@ -354,21 +354,20 @@
             var accelEl = el('#SV_AcceleratingCount');
             if (accelEl) accelEl.textContent = (summary.acceleratingCount || 0) + ' accelerating';
             
-            // Savings Potential - sum from all detectors
+            // Savings Potential - sum from detectors with quantifiable savings
+            // Note: Fragmentation spend is excluded as savings vary by category
             var savingsEl = el('#SV_SavingsPotential');
-            var savingsTotal = (boiling.totalAnnualizedCreep || 0) + 
-                              (fragmentation.potentialSavings || 0) +
+            var savingsTotal = (boiling.totalAnnualizedCreep || 0) +
                               (zombie.totalAnnualCost || 0);
             if (savingsEl) {
                 savingsEl.textContent = this.formatCurrency(savingsTotal);
                 savingsEl.className = 'kpi-value ' + (savingsTotal > 0 ? 'text-purple' : '');
             }
-            
+
             var savingsSourceEl = el('#SV_SavingsSource');
             if (savingsSourceEl) {
                 var sources = [];
                 if (boiling.totalAnnualizedCreep) sources.push('creep');
-                if (fragmentation.potentialSavings) sources.push('consolidation');
                 if (zombie.totalAnnualCost) sources.push('zombies');
                 savingsSourceEl.textContent = sources.length > 0 ? 'from ' + sources.join(', ') : 'no issues found';
             }
@@ -894,7 +893,7 @@
                 '<div><i class="fas fa-puzzle-piece text-orange mr-2"></i><strong>Fragmentation</strong></div>' +
                 '<span class="badge badge-' + (fragCount > 0 ? 'orange' : 'light') + '">' + fragCount + '</span></div>' +
                 '<div class="small text-muted mb-2">Many small purchases</div>' +
-                '<div class="sv-detector-metric"><span class="h4 mb-0">' + self.formatCurrency(this.detectorData.fragmentation.summary.potentialSavings || 0) + '</span><span class="small text-muted ml-1">savings potential</span></div>' +
+                '<div class="sv-detector-metric"><span class="h4 mb-0">' + self.formatCurrency(this.detectorData.fragmentation.summary.totalFragmentedSpend || 0) + '</span><span class="small text-muted ml-1">fragmented spend</span></div>' +
                 '</div></div></div>';
             
             // 7. Commitment Cliff
