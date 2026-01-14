@@ -4639,9 +4639,7 @@
 
         renderDuPontChart: function(data, netIncome, revenue, assets, equity, hasBalanceSheetData) {
             var container = el('#ppDuPontChart');
-            if (!container || typeof Plotly === 'undefined') return;
-
-            ChartManager.clearContainer('ppDuPontChart');
+            if (!container) return;
 
             // Show info message if balance sheet data unavailable
             if (!hasBalanceSheetData || assets === 0 || equity === 0) {
@@ -4658,19 +4656,65 @@
             var equityMultiplier = equity > 0 ? assets / equity : 0;
             var roe = profitMargin * assetTurnover * equityMultiplier;
 
-            Plotly.newPlot('ppDuPontChart', [{
-                x: ['Profit Mgn', 'Asset Turn', 'Eq Mult', 'ROE'],
-                y: [profitMargin * 100, assetTurnover * 100, equityMultiplier * 100, roe * 100],
-                type: 'bar',
-                marker: { color: ['#3b82f6', '#10b981', '#f59e0b', '#8b5cf6'] },
-                text: [fmtPct(profitMargin), assetTurnover.toFixed(2) + 'x', equityMultiplier.toFixed(2) + 'x', fmtPct(roe)],
-                textposition: 'outside', textfont: { size: 9 }
-            }], {
-                height: 160, margin: { t: 20, r: 10, b: 40, l: 30 },
-                yaxis: { ticksuffix: '%', tickfont: { size: 9 } },
-                xaxis: { tickfont: { size: 9 } },
-                paper_bgcolor: 'transparent', plot_bgcolor: 'transparent'
-            }, { responsive: true, displayModeBar: false });
+            // Determine ROE color based on value
+            var roeColor = roe >= 0.15 ? '#10b981' : (roe >= 0.08 ? '#f59e0b' : '#ef4444');
+
+            // Industry-standard DuPont tree visualization
+            container.innerHTML =
+                '<div style="height:160px;display:flex;flex-direction:column;font-size:11px;">' +
+                    // ROE Result - Top Level
+                    '<div style="text-align:center;padding:4px 0;">' +
+                        '<span style="background:' + roeColor + ';color:#fff;padding:3px 12px;border-radius:4px;font-weight:600;font-size:13px;">' +
+                            'ROE: ' + fmtPct(roe) +
+                        '</span>' +
+                    '</div>' +
+                    // Connector line down
+                    '<div style="text-align:center;color:#9ca3af;line-height:1;">│</div>' +
+                    // Multiplication formula
+                    '<div style="text-align:center;color:#6b7280;font-size:10px;margin:1px 0;">' +
+                        '<i class="fas fa-equals fa-xs"></i>' +
+                    '</div>' +
+                    // Three components row with connectors
+                    '<div style="display:flex;align-items:flex-start;justify-content:space-between;flex:1;padding:0 2px;">' +
+                        // Profit Margin
+                        '<div style="flex:1;text-align:center;max-width:32%;">' +
+                            '<div style="border-top:2px solid #9ca3af;margin:0 20%;"></div>' +
+                            '<div style="background:#3b82f6;color:#fff;padding:4px 2px;border-radius:3px;margin:4px 2px;font-weight:600;">' +
+                                fmtPct(profitMargin) +
+                            '</div>' +
+                            '<div style="color:#374151;font-weight:500;font-size:10px;">Net Margin</div>' +
+                            '<div style="color:#9ca3af;font-size:9px;margin-top:2px;">' +
+                                '<span style="white-space:nowrap;">Net Inc ÷ Rev</span>' +
+                            '</div>' +
+                        '</div>' +
+                        // Multiply symbol
+                        '<div style="color:#6b7280;font-size:13px;padding-top:18px;">×</div>' +
+                        // Asset Turnover
+                        '<div style="flex:1;text-align:center;max-width:32%;">' +
+                            '<div style="border-top:2px solid #9ca3af;margin:0 20%;"></div>' +
+                            '<div style="background:#10b981;color:#fff;padding:4px 2px;border-radius:3px;margin:4px 2px;font-weight:600;">' +
+                                assetTurnover.toFixed(2) + 'x' +
+                            '</div>' +
+                            '<div style="color:#374151;font-weight:500;font-size:10px;">Asset Turnover</div>' +
+                            '<div style="color:#9ca3af;font-size:9px;margin-top:2px;">' +
+                                '<span style="white-space:nowrap;">Rev ÷ Assets</span>' +
+                            '</div>' +
+                        '</div>' +
+                        // Multiply symbol
+                        '<div style="color:#6b7280;font-size:13px;padding-top:18px;">×</div>' +
+                        // Equity Multiplier
+                        '<div style="flex:1;text-align:center;max-width:32%;">' +
+                            '<div style="border-top:2px solid #9ca3af;margin:0 20%;"></div>' +
+                            '<div style="background:#f59e0b;color:#fff;padding:4px 2px;border-radius:3px;margin:4px 2px;font-weight:600;">' +
+                                equityMultiplier.toFixed(2) + 'x' +
+                            '</div>' +
+                            '<div style="color:#374151;font-weight:500;font-size:10px;">Equity Mult</div>' +
+                            '<div style="color:#9ca3af;font-size:9px;margin-top:2px;">' +
+                                '<span style="white-space:nowrap;">Assets ÷ Equity</span>' +
+                            '</div>' +
+                        '</div>' +
+                    '</div>' +
+                '</div>';
         },
 
         // ════════════════════════════════════════════════════════════════════════
