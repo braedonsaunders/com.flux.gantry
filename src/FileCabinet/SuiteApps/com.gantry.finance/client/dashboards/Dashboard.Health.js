@@ -4252,7 +4252,7 @@
             'gross_margin': { label: 'Gross Margin', formula: 'Gross Profit / Revenue', desc: 'Measures the percentage of revenue remaining after subtracting cost of goods sold. Higher is better.', interpret: 'Above 40% is excellent for most industries. Below 20% may indicate pricing pressure or high production costs.' },
             'operating_margin': { label: 'Operating Margin', formula: 'Operating Income / Revenue', desc: 'Shows what percentage of revenue is left after paying operating expenses. Indicates operational efficiency.', interpret: 'Above 15% is good. Negative margins indicate the business is not operationally profitable.' },
             'ebitda_margin': { label: 'EBITDA Margin', formula: '(EBIT + Depreciation + Amortization) / Revenue', desc: 'Measures operating profitability before non-cash expenses and financing costs.', interpret: 'Above 20% is healthy. Useful for comparing companies with different capital structures.' },
-            'net_margin': { label: 'Net Profit Margin', formula: 'Net Income / Revenue', desc: 'The ultimate profitability measure - what percentage of revenue becomes profit.', interpret: 'Above 10% is good for most industries. Tech companies often achieve 15-25%.' },
+            'net_margin': { label: 'Net Profit Margin', formula: 'Net Income / Revenue', desc: 'Operating Income plus Other Income minus Other Expenses (non-operating items like interest). Uses actual OthIncome and OthExpense account types.', interpret: 'Above 10% is good for most industries. If equal to Operating Margin, you have no non-operating items.' },
             'roa': { label: 'Return on Assets', formula: 'Net Income / Total Assets', desc: 'Measures how efficiently a company uses its assets to generate profit.', interpret: 'Above 8% is good. Asset-light businesses typically have higher ROA.' },
             'roe': { label: 'Return on Equity', formula: 'Net Income / Shareholders Equity', desc: 'Measures the return generated on shareholder investment.', interpret: 'Above 15% is good. Very high ROE may indicate high leverage or low equity.' },
             'roic': { label: 'Return on Invested Capital', formula: 'NOPAT / (Equity + Debt)', desc: 'Measures return on all capital invested in the business.', interpret: 'Above WACC (typically 8-12%) creates value. Best metric for capital allocation.' },
@@ -4263,7 +4263,7 @@
             'cogs_ratio': { label: 'COGS Ratio', formula: 'COGS / Revenue', desc: 'Direct cost as percentage of revenue.', interpret: 'Lower is better. Inverse of gross margin.' },
             'opex_ratio': { label: 'OpEx Ratio', formula: 'Operating Expenses / Revenue', desc: 'Operating overhead as percentage of revenue.', interpret: 'Lower is better, but cutting too much may hurt growth.' },
             'operating_leverage': { label: 'Operating Leverage', formula: '% Change in Op Inc / % Change in Revenue', desc: 'How sensitive operating income is to revenue changes.', interpret: 'Above 1x means profits grow faster than revenue. High leverage = high risk/reward.' },
-            'interest_coverage': { label: 'Interest Coverage', formula: 'EBIT / Interest Expense', desc: 'Ability to pay interest from operating profits.', interpret: 'Above 5x is comfortable. Below 2x may signal distress.' },
+            'interest_coverage': { label: 'Interest Coverage', formula: 'Operating Income / Other Expenses', desc: 'Ability to cover non-operating expenses (OthExpense account types) from operating profits. Shows 99 if no other expenses.', interpret: 'Above 5x is comfortable. Below 2x may signal distress. High value indicates low debt/interest burden.' },
             'rule_of_40': { label: 'Rule of 40', formula: 'Revenue Growth % + Profit Margin %', desc: 'SaaS metric balancing growth and profitability.', interpret: 'Above 40 is excellent. Companies can trade growth for profit or vice versa.' }
         },
 
@@ -4273,23 +4273,25 @@
             var rangeM = data.company && data.company.metrics && data.company.metrics.range ? data.company.metrics.range : {};
             var priorM = data.company && data.company.metrics && data.company.metrics.priorYearRange ? data.company.metrics.priorYearRange : {};
             
-            // Calculate all values
+            // Calculate all values from actual P&L data
             var revenue = rangeM.revenue || 0;
             var cogs = rangeM.cogs || 0;
             var gm = rangeM.gm || 0;
             var opex = rangeM.opex || 0;
             var opInc = rangeM.opInc || 0;
             var headcount = metrics.headcount || 1;
-            
-            // Estimates for ratios that require balance sheet data (not available)
+
+            // Non-operating items from actual account data (OthIncome/OthExpense account types)
+            var othIncome = rangeM.othIncome || 0;
+            var othExpense = rangeM.othExpense || 0;
+            // Net income from actual P&L data (includes non-operating items)
+            var netIncome = rangeM.netInc !== undefined ? rangeM.netInc : opInc;
+
+            // Estimates for ratios that require balance sheet data (not available from P&L)
             var estimatedAssets = revenue * 1.2;
             var estimatedEquity = revenue * 0.4;
             var estimatedDebt = revenue * 0.3;
             var estimatedDA = opex * 0.15;
-            var estimatedInterest = 0; // No actual interest data available
-            var estimatedTax = 0; // No actual tax data available
-            // Net income equals operating income since we only have P&L data (no interest/tax accounts)
-            var netIncome = opInc;
             var ebitda = opInc + estimatedDA;
             var investedCapital = estimatedEquity + estimatedDebt;
             
@@ -4307,7 +4309,8 @@
             this.benchmarkData = {
                 revenue: revenue, cogs: cogs, gm: gm, opex: opex, opInc: opInc,
                 netIncome: netIncome, ebitda: ebitda, headcount: headcount,
-                assets: estimatedAssets, equity: estimatedEquity, debt: estimatedDebt, interest: estimatedInterest
+                assets: estimatedAssets, equity: estimatedEquity, debt: estimatedDebt,
+                othIncome: othIncome, othExpense: othExpense
             };
             
             // Build KPIs
@@ -4353,7 +4356,7 @@
                 { id: 'cogs_ratio', value: metrics.cogsAsPercentOfRevenue || 0, format: 'pct', benchmark: cogsBenchmark, inverse: true, calc: fmtMoney(cogs) + ' / ' + fmtMoney(revenue) },
                 { id: 'opex_ratio', value: metrics.opexAsPercentOfRevenue || 0, format: 'pct', benchmark: opexBenchmark, inverse: true, calc: fmtMoney(opex) + ' / ' + fmtMoney(revenue) },
                 { id: 'operating_leverage', value: operatingLeverage, format: 'num', benchmark: 1.5, calc: fmtPct(opIncGrowth) + ' / ' + fmtPct(revenueGrowth) },
-                { id: 'interest_coverage', value: estimatedInterest > 0 ? opInc / estimatedInterest : 99, format: 'num', benchmark: 5.0, calc: fmtMoney(opInc) + ' / ' + fmtMoney(estimatedInterest) },
+                { id: 'interest_coverage', value: othExpense > 0 ? opInc / othExpense : 99, format: 'num', benchmark: 5.0, calc: fmtMoney(opInc) + ' / ' + fmtMoney(othExpense) },
                 { id: 'rule_of_40', value: rule40, format: 'raw', benchmark: 40, calc: fmtPct(revenueGrowth) + ' + ' + fmtPct(opInc / revenue) }
             ];
             

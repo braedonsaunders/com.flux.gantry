@@ -600,30 +600,35 @@ define(["N/search", "N/query", "N/log", "./Lib_Core", "./Lib_Config"], function 
         results.forEach(r => {
             const segId = r.segment_id || 'unassigned';
             const segName = r.segment_name || 'Unassigned';
-            
+
             if (!segments[segId]) {
-                segments[segId] = { id: segId, name: segName, revenue: 0, cogs: 0, opex: 0 };
+                segments[segId] = { id: segId, name: segName, revenue: 0, cogs: 0, opex: 0, othIncome: 0, othExpense: 0 };
             }
-            
+
             const amt = parseFloat(r.amount) || 0;
             const type = String(r.accttype);
-            
-            if (type === 'Income' || type === 'OthIncome') {
+
+            if (type === 'Income') {
                 segments[segId].revenue += (amt * -1);
+            } else if (type === 'OthIncome') {
+                segments[segId].othIncome += (amt * -1);
             } else if (type === 'COGS') {
                 segments[segId].cogs += amt;
-            } else if (type === 'Expense' || type === 'OthExpense') {
+            } else if (type === 'Expense') {
                 segments[segId].opex += amt;
+            } else if (type === 'OthExpense') {
+                segments[segId].othExpense += amt;
             }
         });
-        
+
         // Calculate metrics
         let totalRevenue = 0;
         const segmentList = Object.values(segments).map(s => {
             const gm = s.revenue - s.cogs;
             const opInc = gm - s.opex;
+            const netInc = opInc + s.othIncome - s.othExpense;
             totalRevenue += s.revenue;
-            
+
             return {
                 id: s.id,
                 name: s.name,
@@ -633,7 +638,11 @@ define(["N/search", "N/query", "N/log", "./Lib_Core", "./Lib_Config"], function 
                 gmPercent: s.revenue > 0 ? Core.round2(gm / s.revenue) : 0,
                 opex: Core.round2(s.opex),
                 operatingIncome: Core.round2(opInc),
-                opMarginPercent: s.revenue > 0 ? Core.round2(opInc / s.revenue) : 0
+                opMarginPercent: s.revenue > 0 ? Core.round2(opInc / s.revenue) : 0,
+                othIncome: Core.round2(s.othIncome),
+                othExpense: Core.round2(s.othExpense),
+                netIncome: Core.round2(netInc),
+                netMarginPercent: s.revenue > 0 ? Core.round2(netInc / s.revenue) : 0
             };
         });
         
@@ -1977,37 +1986,49 @@ define(["N/search", "N/query", "N/log", "./Lib_Core", "./Lib_Config"], function 
 
     function aggregatePLForScope(rows, accountMap, deptId) {
         let rev = 0, cogs = 0, opex = 0;
-        
+        let othIncome = 0, othExpense = 0;
+
         rows.forEach(row => {
             if (deptId && String(row.department) !== String(deptId)) return;
-            
+
             const amt = parseFloat(row.amount) || 0;
             if (amt === 0) return;
 
             const type = String(row.accounttype);
-            
-            if (type === 'Income' || type === 'OthIncome') {
+
+            if (type === 'Income') {
                 rev += (amt * -1);
+            } else if (type === 'OthIncome') {
+                // Other Income is non-operating (interest income, gains, etc.)
+                othIncome += (amt * -1);
             } else if (type === 'COGS') {
                 cogs += amt;
-            } else if (type === 'Expense' || type === 'OthExpense') {
+            } else if (type === 'Expense') {
                 opex += amt;
+            } else if (type === 'OthExpense') {
+                // Other Expense is non-operating (interest expense, losses, etc.)
+                othExpense += amt;
             }
         });
 
         const gm = rev - cogs;
         const opInc = gm - opex;
         const gmPct = rev !== 0 ? gm / rev : 0;
+        // Net Income = Operating Income + Other Income - Other Expenses
+        const netInc = opInc + othIncome - othExpense;
 
         // Keep full precision for intermediate calculations
         // Rounding should only happen at the API response/display layer
-        return { 
-            revenue: rev, 
-            cogs: cogs, 
-            opex: opex, 
-            gm: gm, 
-            opInc: opInc, 
-            gmPct: gmPct 
+        return {
+            revenue: rev,
+            cogs: cogs,
+            opex: opex,
+            gm: gm,
+            opInc: opInc,
+            gmPct: gmPct,
+            othIncome: othIncome,
+            othExpense: othExpense,
+            netInc: netInc
         };
     }
 
