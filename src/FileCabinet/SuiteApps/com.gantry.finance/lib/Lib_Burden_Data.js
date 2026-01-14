@@ -1309,12 +1309,22 @@ define(["N/query", "N/search", "N/log", "N/runtime", "./Lib_Core", "./Lib_Config
      */
     function calculateHeadcountCategoryData(cat, depts, allocationBases, config) {
         const hcFilters = cat.headcountFilters || {};
+        const avgSalary = config.avgSalary || 75000;
+        const usingDefaultSalary = !config.avgSalary;
+
         const result = {
             expense: {},
             burden: {},
-            headcount: 0
+            headcount: 0,
+            warnings: [],
+            avgSalaryUsed: avgSalary,
+            usingDefaultSalary: usingDefaultSalary
         };
-        
+
+        if (usingDefaultSalary) {
+            result.warnings.push('Using default average salary ($75,000). Configure avgSalary in settings for accurate calculations.');
+        }
+
         // Initialize dept values
         depts.forEach(d => {
             result.expense[d.id] = 0;
@@ -1322,31 +1332,29 @@ define(["N/query", "N/search", "N/log", "N/runtime", "./Lib_Core", "./Lib_Config
         });
         result.expense['Overall'] = 0;
         result.burden['Overall'] = 0;
-        
+
         // Use headcount allocation base
         const headcountData = allocationBases.headcount || { byDept: {}, total: 0 };
         const allocationBase = cat.allocationBase || 'headcount';
-        
+
         let totalHeadcount = 0;
         depts.forEach(d => {
             const hc = headcountData.byDept[d.id]?.value || 0;
             totalHeadcount += hc;
-            
-            // For headcount categories, expense is typically derived from salary data
-            // This is a simplified version
-            const avgSalary = config.avgSalary || 75000;
+
+            // For headcount categories, expense is derived from salary data
             const expense = hc * avgSalary;
-            
+
             result.expense[d.id] = expense;
             const base = getAllocationBaseValue(allocationBase, allocationBases, d.id);
             result.burden[d.id] = base > 0 ? expense / base : 0;
         });
-        
+
         result.headcount = totalHeadcount;
         result.expense['Overall'] = Object.values(result.expense).reduce((sum, v) => sum + (typeof v === 'number' ? v : 0), 0) - result.expense['Overall'];
         const totalBase = getAllocationBaseValue(allocationBase, allocationBases, 'Overall');
         result.burden['Overall'] = totalBase > 0 ? result.expense['Overall'] / totalBase : 0;
-        
+
         return result;
     }
 
@@ -5266,9 +5274,19 @@ define(["N/query", "N/search", "N/log", "N/runtime", "./Lib_Core", "./Lib_Config
         const currentExpense = summary.totalExpense || 0;
         const currentHours = allocationBases.hours?.totalBilled || 1;
         const currentRate = summary.compositeRate || 0;
-        const currentUtilization = allocationBases.hours?.totalBilled > 0 && allocationBases.hours?.total > 0
+
+        // Track warnings for fallback values
+        const warnings = [];
+        const hasHoursData = allocationBases.hours?.totalBilled > 0 && allocationBases.hours?.total > 0;
+        const currentUtilization = hasHoursData
             ? allocationBases.hours.totalBilled / allocationBases.hours.total
             : 0.75;
+        if (!hasHoursData) {
+            warnings.push('No utilization data available - using default 75%');
+        }
+
+        // Get configurable fringe rate (default 25%)
+        const fringeRate = config.fringeRate !== undefined ? config.fringeRate : 0.25;
 
         let impact = {
             currentRate,
@@ -5278,7 +5296,12 @@ define(["N/query", "N/search", "N/log", "N/runtime", "./Lib_Core", "./Lib_Config
             change: 0,
             changePercent: 0,
             insight: '',
-            breakdown: {}
+            breakdown: {},
+            warnings: warnings,
+            assumptions: {
+                fringeRate: fringeRate,
+                fringeRateIsDefault: config.fringeRate === undefined
+            }
         };
 
         switch (scenarioType) {
@@ -5289,18 +5312,19 @@ define(["N/query", "N/search", "N/log", "N/runtime", "./Lib_Core", "./Lib_Config
 
                 const newHours = count * utilization * 2080 / 12;
                 const projectedHours = currentHours + newHours;
-                const fringeCost = count * salary * 0.25 / 12;
+                const fringeCost = count * salary * fringeRate / 12;
                 const projectedExpense = currentExpense + fringeCost;
 
                 impact.projectedRate = Core.safeDiv(projectedExpense, projectedHours);
                 impact.change = impact.projectedRate - currentRate;
                 impact.changePercent = Core.safeDiv(impact.change, currentRate) * 100;
                 impact.insight = `Adding ${count} employee(s) at ${(utilization * 100).toFixed(0)}% utilization adds ${Core.round2(newHours)} monthly billable hours.`;
-                impact.breakdown = { 
-                    hoursChange: newHours, 
+                impact.breakdown = {
+                    hoursChange: newHours,
                     expenseChange: fringeCost,
-                    projectedHours, 
-                    projectedExpense 
+                    projectedHours,
+                    projectedExpense,
+                    fringeRateUsed: fringeRate
                 };
                 break;
             }
@@ -5313,18 +5337,19 @@ define(["N/query", "N/search", "N/log", "N/runtime", "./Lib_Core", "./Lib_Config
 
                 const lostHours = count * utilization * 2080 / 12;
                 const projectedHours = Math.max(currentHours - lostHours, 1);
-                const savingsFringe = count * salary * 0.25 / 12;
+                const savingsFringe = count * salary * fringeRate / 12;
                 const projectedExpense = currentExpense - savingsFringe;
 
                 impact.projectedRate = Core.safeDiv(projectedExpense, projectedHours);
                 impact.change = impact.projectedRate - currentRate;
                 impact.changePercent = Core.safeDiv(impact.change, currentRate) * 100;
                 impact.insight = `Reducing ${count} employee(s) saves $${Core.round2(savingsFringe)} in overhead but loses ${Core.round2(lostHours)} billable hours.`;
-                impact.breakdown = { 
-                    hoursChange: -lostHours, 
+                impact.breakdown = {
+                    hoursChange: -lostHours,
                     expenseChange: -savingsFringe,
-                    projectedHours, 
-                    projectedExpense 
+                    projectedHours,
+                    projectedExpense,
+                    fringeRateUsed: fringeRate
                 };
                 break;
             }
