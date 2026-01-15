@@ -3752,6 +3752,7 @@
                 if (res.status === 'success') {
                     showToast("Category Saved");
                     this.renderList();
+                    this.configFlyout.isNew = false; // Prevent closeConfigFlyout from removing the saved category
                     this.closeConfigFlyout();
                     CashflowController.loadData();
                 } else {
@@ -3789,6 +3790,7 @@
                 if (res.status === 'success') {
                     showToast("Group Saved");
                     this.renderList();
+                    this.configFlyout.isNew = false; // Prevent closeConfigFlyout from removing the saved group
                     this.closeConfigFlyout();
                     CashflowController.loadData();
                 } else {
