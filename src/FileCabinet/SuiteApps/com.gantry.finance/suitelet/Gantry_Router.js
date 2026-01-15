@@ -371,7 +371,7 @@ define([
             }
 
             if (action === 'save_config') {
-                return ConfigLib.save(data, 'cashflow');
+                return ConfigLib.save(data.config, data.configName || 'cashflow');
             }
 
             // Save permissions config (admin only)
