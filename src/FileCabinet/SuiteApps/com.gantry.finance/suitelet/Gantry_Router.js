@@ -351,7 +351,12 @@ define([
         const data = context.data;
 
         try {
-            // Save config
+            // Generic save_config action (uses nested data.config format)
+            if (action === 'save_config') {
+                return ConfigLib.save(data.config, data.configName || 'cashflow');
+            }
+
+            // Save config with embedded name (e.g., save_burden_config, save_cashflow_config)
             if (action.startsWith('save_') && action.endsWith('_config')) {
                 const configName = action.replace('save_', '').replace('_config', '');
                 const result = ConfigLib.save(data, configName);
@@ -368,10 +373,6 @@ define([
                 }
 
                 return result;
-            }
-
-            if (action === 'save_config') {
-                return ConfigLib.save(data.config, data.configName || 'cashflow');
             }
 
             // Save permissions config (admin only)
