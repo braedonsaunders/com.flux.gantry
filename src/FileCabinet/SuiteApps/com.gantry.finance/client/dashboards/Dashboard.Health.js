@@ -235,7 +235,7 @@
                                             '</div>' +
                                             // Cost Breakdown
                                             '<div class="card shadow-sm flex-fill">' +
-                                                '<div class="card-header py-2"><h6 class="mb-0"><i class="fas fa-chart-pie mr-2"></i>Cost Structure</h6></div>' +
+                                                '<div class="card-header py-2"><h6 class="mb-0"><i class="fas fa-chart-pie mr-2"></i>Revenue Allocation</h6></div>' +
                                                 '<div class="card-body p-2"><div id="ppCostBreakdownChart" style="height:120px;"></div></div>' +
                                             '</div>' +
                                         '</div>' +
@@ -696,10 +696,10 @@
                                                 '<div class="card-header py-2"><h6 class="mb-0"><i class="fas fa-sitemap mr-2"></i>DuPont Analysis</h6></div>' +
                                                 '<div class="card-body p-2"><div id="ppDuPontChart" style="height:160px;"></div></div>' +
                                             '</div>' +
-                                            // Cost Structure
+                                            // Revenue Allocation
                                             '<div class="card shadow-sm">' +
-                                                '<div class="card-header py-2"><h6 class="mb-0"><i class="fas fa-chart-pie mr-2"></i>Cost Structure</h6></div>' +
-                                                '<div class="card-body p-2"><div id="ppCostStructureChart" style="height:160px;"></div></div>' +
+                                                '<div class="card-header py-2"><h6 class="mb-0"><i class="fas fa-chart-pie mr-2"></i>Revenue Allocation</h6></div>' +
+                                                '<div class="card-body p-2"><div id="ppRevenueAllocationChart" style="height:160px;"></div></div>' +
                                             '</div>' +
                                         '</div>' +
                                     '</div>' +
@@ -2498,9 +2498,9 @@
                     '</div>' +
                 '</div>' +
                 
-                // Cost Structure with flexbox bars
+                // Revenue Allocation with flexbox bars
                 '<div class="mb-3">' +
-                    '<div class="card-header py-2 bg-light border rounded-top"><h6 class="mb-0 small font-weight-bold"><i class="fas fa-chart-pie mr-2 text-warning"></i>Cost Structure</h6></div>' +
+                    '<div class="card-header py-2 bg-light border rounded-top"><h6 class="mb-0 small font-weight-bold"><i class="fas fa-chart-pie mr-2 text-warning"></i>Revenue Allocation</h6></div>' +
                     '<div class="border border-top-0 rounded-bottom p-2">' +
                         '<div class="mb-2">' +
                             '<div style="display:flex;justify-content:space-between;margin-bottom:4px;"><span class="small">COGS</span><span class="small font-weight-bold">' + fmtPct(cogsRatio) + '</span></div>' +
@@ -4281,7 +4281,7 @@
             'net_margin': { label: 'Net Profit Margin', formula: 'Net Income / Revenue', desc: 'Operating Income plus Other Income minus Other Expenses (non-operating items like interest). Uses actual OthIncome and OthExpense account types.', interpret: 'Above 10% is good for most industries. If equal to Operating Margin, you have no non-operating items.' },
             'roa': { label: 'Return on Assets', formula: 'Net Income / Total Assets', desc: 'Measures how efficiently a company uses its assets to generate profit.', interpret: 'Above 8% is good. Asset-light businesses typically have higher ROA.' },
             'roe': { label: 'Return on Equity', formula: 'Net Income / Shareholders Equity', desc: 'Measures the return generated on shareholder investment.', interpret: 'Above 15% is good. Very high ROE may indicate high leverage or low equity.' },
-            'roic': { label: 'Return on Invested Capital', formula: 'NOPAT / (Equity + Debt)', desc: 'Measures return on all capital invested in the business.', interpret: 'Above WACC (typically 8-12%) creates value. Best metric for capital allocation.' },
+            'roic': { label: 'Return on Invested Capital', formula: 'NOPAT / Invested Capital', desc: 'Measures return on all capital invested in the business. NOPAT (Net Operating Profit After Tax) = Operating Income × (1 - 25% assumed tax rate). Invested Capital = Equity + Long-term Debt.', interpret: 'Above WACC (typically 8-12%) creates value. Best metric for capital allocation.' },
             'roce': { label: 'Return on Capital Employed', formula: 'EBIT / Capital Employed', desc: 'Measures efficiency and profitability of capital investments.', interpret: 'Above 15% is excellent. Shows how well capital is being deployed.' },
             'rev_per_employee': { label: 'Revenue per Employee', formula: 'Revenue / Headcount', desc: 'Measures workforce productivity.', interpret: 'Varies by industry. Tech often $200K+, services $100-150K.' },
             'gp_per_employee': { label: 'Gross Profit per Employee', formula: 'Gross Margin / Headcount', desc: 'Shows gross value added per employee.', interpret: 'Higher is better. Should cover fully-loaded employee costs.' },
@@ -4289,7 +4289,7 @@
             'cogs_ratio': { label: 'COGS Ratio', formula: 'COGS / Revenue', desc: 'Direct cost as percentage of revenue.', interpret: 'Lower is better. Inverse of gross margin.' },
             'opex_ratio': { label: 'OpEx Ratio', formula: 'Operating Expenses / Revenue', desc: 'Operating overhead as percentage of revenue.', interpret: 'Lower is better, but cutting too much may hurt growth.' },
             'operating_leverage': { label: 'Operating Leverage', formula: '% Change in Op Inc / % Change in Revenue', desc: 'How sensitive operating income is to revenue changes.', interpret: 'Above 1x means profits grow faster than revenue. High leverage = high risk/reward.' },
-            'interest_coverage': { label: 'Interest Coverage', formula: 'Operating Income / Other Expenses', desc: 'Ability to cover non-operating expenses (OthExpense account types) from operating profits. Shows 99 if no other expenses.', interpret: 'Above 5x is comfortable. Below 2x may signal distress. High value indicates low debt/interest burden.' },
+            'interest_coverage': { label: 'Interest Coverage', formula: 'Operating Income / Other Expenses', desc: 'Measures ability to cover non-operating expenses from operating profits. Uses NetSuite OthExpense account types (typically interest expense, bank fees, and other financing costs). Displays 99x when no other expenses exist.', interpret: 'Above 5x is comfortable. Below 2x may signal distress. Very high values (50x+) indicate minimal debt burden or no interest-bearing debt.' },
             'rule_of_40': { label: 'Rule of 40', formula: 'Revenue Growth % + Profit Margin %', desc: 'SaaS metric balancing growth and profitability.', interpret: 'Above 40 is excellent. Companies can trade growth for profit or vice versa.' }
         },
 
@@ -4336,7 +4336,10 @@
             // Calculate ratios using actual balance sheet data
             var roa = hasBalanceSheetData && totalAssets > 0 ? netIncome / totalAssets : null;
             var roe = hasBalanceSheetData && totalEquity > 0 ? netIncome / totalEquity : null;
-            var roic = hasBalanceSheetData && investedCapital > 0 ? netIncome / investedCapital : null;
+            // ROIC uses NOPAT (Net Operating Profit After Tax) = Operating Income × (1 - tax rate)
+            // Using 25% assumed tax rate as standard approximation
+            var nopat = opInc * 0.75;
+            var roic = hasBalanceSheetData && investedCapital > 0 ? nopat / investedCapital : null;
             var roce = hasBalanceSheetData && investedCapital > 0 ? opInc / investedCapital : null;
             var ebitdaMargin = revenue > 0 ? ebitda / revenue : 0;
             var rule40 = (revenueGrowth * 100) + ((revenue > 0 ? opInc / revenue : 0) * 100);
@@ -4344,9 +4347,9 @@
             // Store for popup calculations
             this.benchmarkData = {
                 revenue: revenue, cogs: cogs, gm: gm, opex: opex, opInc: opInc,
-                netIncome: netIncome, ebitda: ebitda, headcount: headcount,
+                netIncome: netIncome, nopat: nopat, ebitda: ebitda, headcount: headcount,
                 assets: totalAssets, equity: totalEquity, debt: totalDebt,
-                othIncome: othIncome, othExpense: othExpense,
+                investedCapital: investedCapital, othIncome: othIncome, othExpense: othExpense,
                 hasBalanceSheetData: hasBalanceSheetData, hasDAData: hasDAData
             };
 
@@ -4377,7 +4380,7 @@
                 { id: 'net_margin', value: revenue > 0 ? netIncome / revenue : 0, format: 'pct', benchmark: opBenchmark * 0.67, calc: fmtMoney(netIncome) + ' / ' + fmtMoney(revenue) },
                 { id: 'roa', value: roa, format: 'pct', benchmark: 0.08, calc: roa !== null ? fmtMoney(netIncome) + ' / ' + fmtMoney(totalAssets) : 'N/A', noData: !hasBalanceSheetData, noDataMsg: 'No balance sheet data available' },
                 { id: 'roe', value: roe, format: 'pct', benchmark: 0.15, calc: roe !== null ? fmtMoney(netIncome) + ' / ' + fmtMoney(totalEquity) : 'N/A', noData: !hasBalanceSheetData, noDataMsg: 'No balance sheet data available' },
-                { id: 'roic', value: roic, format: 'pct', benchmark: 0.12, calc: roic !== null ? fmtMoney(netIncome) + ' / ' + fmtMoney(investedCapital) : 'N/A', noData: !hasBalanceSheetData, noDataMsg: 'No balance sheet data available' },
+                { id: 'roic', value: roic, format: 'pct', benchmark: 0.12, calc: roic !== null ? fmtMoney(nopat) + ' (NOPAT) / ' + fmtMoney(investedCapital) : 'N/A', noData: !hasBalanceSheetData, noDataMsg: 'No balance sheet data available' },
                 { id: 'roce', value: roce, format: 'pct', benchmark: 0.15, calc: roce !== null ? fmtMoney(opInc) + ' / ' + fmtMoney(investedCapital) : 'N/A', noData: !hasBalanceSheetData, noDataMsg: 'No balance sheet data available' }
             ];
             
@@ -4407,7 +4410,7 @@
             this.renderHealthScore(profitRatios, efficiencyRatios, operatingRatios);
             
             // Render charts
-            this.renderCostStructureChart(data);
+            this.renderRevenueAllocationChart(data);
             this.renderDuPontChart(data, netIncome, revenue, totalAssets, totalEquity, hasBalanceSheetData);
         },
 
@@ -4615,11 +4618,11 @@
             }, { responsive: true, displayModeBar: false });
         },
 
-        renderCostStructureChart: function(data) {
-            var container = el('#ppCostStructureChart');
+        renderRevenueAllocationChart: function(data) {
+            var container = el('#ppRevenueAllocationChart');
             if (!container || typeof Plotly === 'undefined') return;
             
-            ChartManager.clearContainer('ppCostStructureChart');
+            ChartManager.clearContainer('ppRevenueAllocationChart');
             
             var rangeM = data.company && data.company.metrics && data.company.metrics.range ? data.company.metrics.range : {};
             
@@ -4627,7 +4630,7 @@
             var labels = ['COGS', 'OpEx', 'Op Inc'];
             var colors = ['#ef4444', '#f59e0b', '#10b981'];
             
-            Plotly.newPlot('ppCostStructureChart', [{
+            Plotly.newPlot('ppRevenueAllocationChart', [{
                 values: values, labels: labels, type: 'pie', hole: 0.5,
                 marker: { colors: colors }, textinfo: 'percent', textfont: { size: 10 }
             }], {
@@ -5954,7 +5957,7 @@
                 // Drivers Tab
                 'ppDriversWaterfall',
                 // Ratios Tab
-                'ppHealthGauge', 'ppCostStructureChart', 'ppDuPontChart',
+                'ppHealthGauge', 'ppRevenueAllocationChart', 'ppDuPontChart',
                 // Budget Tab
                 'ppBudgetChart', 'ppBudgetPieChart', 'ppBudgetTrendChart'
             ];
