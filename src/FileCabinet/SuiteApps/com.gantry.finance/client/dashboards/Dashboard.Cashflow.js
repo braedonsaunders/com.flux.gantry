@@ -1053,7 +1053,8 @@
             const visibleCats = keys.slice(0, maxVisibleTabs);
             const overflowCats = keys.slice(maxVisibleTabs);
 
-            let tabsHtml = '<div class="cf-category-tabs" id="cfCategoryTabs">';
+            let tabsHtml = '<div class="cf-category-tabs-wrapper">';
+            tabsHtml += '<div class="cf-category-tabs" id="cfCategoryTabs">';
             visibleCats.forEach((k, idx) => {
                 const conf = config.categories.find(c => c.id === k);
                 const name = conf ? conf.name : k;
@@ -1066,8 +1067,9 @@
                         <span class="tab-amount">${fmtMoney(total)}</span>
                     </div>`;
             });
+            tabsHtml += '</div>';
 
-            // "More" dropdown for overflow
+            // "More" dropdown for overflow - outside the scrollable area
             if (overflowCats.length > 0) {
                 tabsHtml += `
                     <div class="cf-category-more-btn" onclick="CashflowController.toggleCategoryMoreMenu(event)">
@@ -1079,7 +1081,7 @@
                     const catData = cats[k];
                     const total = catData ? catData.total : 0;
                     tabsHtml += `
-                        <div class="cf-category-more-item" onclick="CashflowController.selectCategoryTab('${k}')">
+                        <div class="cf-category-more-item" onclick="CashflowController.selectCategoryTab('${k}'); event.stopPropagation();">
                             <span>${escapeHtml(name)}</span>
                             <span style="color:#64748b;">${fmtMoney(total)}</span>
                         </div>`;
