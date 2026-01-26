@@ -566,6 +566,9 @@ define(["N/query", "N/log", "./Lib_Core", "./Lib_Config"], function (query, log,
      */
     function getScoreOnly() {
         try {
+            // Load configuration (matching getData logic)
+            var config = ConfigLib.getStoredConfiguration('time') || {};
+
             // Get last month's time data matching getData() logic
             var today = new Date();
             var endDate = new Date(today.getFullYear(), today.getMonth(), 0);

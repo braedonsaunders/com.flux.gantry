@@ -2722,8 +2722,8 @@ define(['N/query', 'N/log', './Lib_Core'], function(query, log, Core) {
             var today = new Date();
             var endDate = new Date(today.getFullYear(), today.getMonth(), 0); // End of last month
             var startDate = new Date(endDate.getFullYear(), endDate.getMonth() - 5, 1); // 6 months back
-            var start = formatDateYMD(startDate);
-            var end = formatDateYMD(endDate);
+            var start = Core.formatDateForQuery(startDate);
+            var end = Core.formatDateForQuery(endDate);
 
             var accountsWithHighVelocity = 0;
             var acceleratingAccounts = 0;
