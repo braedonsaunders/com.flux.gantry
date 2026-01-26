@@ -2424,7 +2424,7 @@ function(query, record, search, runtime, format, Core, Utils) {
         if (results.potentialDuplicates && results.potentialDuplicates.length > 10) {
             areas.push({ area: 'Duplicate Payments', severity: 'high', count: results.potentialDuplicates.length, message: `${results.potentialDuplicates.length} potential duplicates` });
         }
-        if (results.benford2DAnalysis && results.benford2DAnalysis.approvalLimitRisk) {
+        if (results.benford2DAnalysis && results.benford2DAnalysis.approvalLimitRisk && results.benford2DAnalysis.nineEndingAnomalies) {
             areas.push({ area: 'Approval Limit Avoidance', severity: 'high', count: results.benford2DAnalysis.nineEndingAnomalies.length, message: 'Unusual 9-ending amounts detected' });
         }
         return areas.sort((a, b) => ({ critical: 0, high: 1, medium: 2 }[a.severity] || 3) - ({ critical: 0, high: 1, medium: 2 }[b.severity] || 3));
@@ -2432,16 +2432,20 @@ function(query, record, search, runtime, format, Core, Utils) {
     
     function generateAIContext(results) {
         const recs = [];
+        const summary = results.summary || {};
+        const flagged = results.flaggedTransactions || [];
+
         if (results.ghostVendors && results.ghostVendors.length > 0) {
             recs.push({ priority: 'critical', title: 'Investigate Ghost Vendors', description: `${results.ghostVendors.length} vendor(s) share addresses with employees.` });
         }
         if (results.sequentialInvoices && results.sequentialInvoices.length > 0) {
             recs.push({ priority: 'high', title: 'Review Sequential Invoice Vendors', description: `${results.sequentialInvoices.length} vendor(s) with sequential invoices.` });
         }
-        if (results.summary.approvalLimitRisk) {
+        if (summary.approvalLimitRisk) {
             recs.push({ priority: 'high', title: 'Review Approval Limit Patterns', description: 'Unusual 9-ending amounts detected.' });
         }
-        return { recommendations: recs, summary: { totalFlags: results.flaggedTransactions.length, riskLevel: results.summary.overallRiskScore >= 70 ? 'HIGH' : results.summary.overallRiskScore >= 40 ? 'MEDIUM' : 'LOW' } };
+        const riskScore = summary.overallRiskScore || 0;
+        return { recommendations: recs, summary: { totalFlags: flagged.length, riskLevel: riskScore >= 70 ? 'HIGH' : riskScore >= 40 ? 'MEDIUM' : 'LOW' } };
     }
 
     // ==========================================
