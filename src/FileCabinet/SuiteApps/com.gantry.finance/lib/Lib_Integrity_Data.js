@@ -1135,19 +1135,31 @@ function(query, record, search, runtime, format, Core, Utils) {
                 subFilter + ' ' +
                 'ORDER BY TL.entity, ABS(COALESCE(T.foreigntotal, 0)) DESC';
 
-            var dateRangeResults = [];
+            var rawResults = [];
             try {
-                dateRangeResults = runSuiteQL(sqlDateRange) || [];
+                rawResults = runSuiteQL(sqlDateRange) || [];
             } catch (qe) {
-                log.error('Z-Score Query Error', qe.message);
+                log.error('Z-Score Query Error', String(qe.message || qe));
                 return [];
             }
 
-            Utils.auditLog('Z-Score Analysis', { phase: 'fetch_date_range', count: dateRangeResults.length });
+            Utils.auditLog('Z-Score Analysis', { phase: 'fetch_date_range', count: rawResults.length });
 
-            if (dateRangeResults.length < 5) return [];
+            if (rawResults.length < 5) return [];
 
-            // Extract unique vendor IDs - be very defensive
+            // CRITICAL: Sanitize results by converting through JSON
+            // This strips out ScriptNullObjectAdapter and converts to proper null
+            var dateRangeResults = [];
+            try {
+                dateRangeResults = JSON.parse(JSON.stringify(rawResults));
+            } catch (jsonErr) {
+                log.error('Z-Score JSON sanitize error', String(jsonErr.message || jsonErr));
+                return [];
+            }
+
+            Utils.auditLog('Z-Score Analysis', { phase: 'sanitized', count: dateRangeResults.length });
+
+            // Extract unique vendor IDs
             var vendorIds = [];
             var seenIds = {};
             for (var i = 0; i < dateRangeResults.length; i++) {
@@ -1155,15 +1167,17 @@ function(query, record, search, runtime, format, Core, Utils) {
                     var row = dateRangeResults[i];
                     if (!row) continue;
                     var eid = row.entityid;
-                    if (eid == null) continue;
+                    if (eid == null || eid === '') continue;
                     var eidStr = String(eid);
-                    if (!eidStr || eidStr === 'null' || eidStr === 'undefined' || eidStr.indexOf('ScriptNull') !== -1) continue;
+                    if (!eidStr || eidStr === 'null' || eidStr === 'undefined') continue;
                     if (!seenIds[eidStr]) {
                         seenIds[eidStr] = true;
                         vendorIds.push(eidStr);
                     }
                 } catch (ex) { /* skip */ }
             }
+
+            Utils.auditLog('Z-Score Analysis', { phase: 'vendors_extracted', count: vendorIds.length });
 
             if (vendorIds.length === 0) return [];
 
@@ -1211,8 +1225,9 @@ function(query, record, search, runtime, format, Core, Utils) {
                 try {
                     var row = dateRangeResults[i];
                     if (!row) continue;
-                    var vid = String(row.entityid || '');
-                    if (!vid || vid === 'null' || vid.indexOf('ScriptNull') !== -1) continue;
+                    var vid = row.entityid;
+                    if (vid == null || vid === '') continue;
+                    vid = String(vid);
                     if (!vendorGroups[vid]) {
                         vendorGroups[vid] = {
                             vendorId: vid,
