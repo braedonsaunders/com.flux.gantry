@@ -1148,12 +1148,21 @@ function(query, record, search, runtime, format, Core, Utils) {
             
             // Get baseline stats per vendor using SUM/COUNT (supported in SuiteQL)
             const vendorBaselines = {};
-            
+
+            log.debug('Z-Score Debug 6', 'Starting baseline loop');
+
             // Process in batches
             const batchSize = 30;
             for (let i = 0; i < vendorIds.length; i += batchSize) {
+                log.debug('Z-Score Debug 7', { batchIndex: i, batchSize: batchSize });
+
                 const batch = vendorIds.slice(i, i + batchSize);
+
+                log.debug('Z-Score Debug 8', { batchLength: batch.length, firstId: batch[0] });
+
                 const vendorIdList = batch.map(id => `'${id}'`).join(',');
+
+                log.debug('Z-Score Debug 9', { vendorIdListLength: vendorIdList.length });
                 
                 // Get sum, count, sum of squares per vendor for manual stddev calculation
                 const sqlStats = `
