@@ -356,9 +356,11 @@ function(query, record, search, runtime, format, Core, Utils) {
                     zscore: results.zScoreAnomalies.length
                 });
             } catch (e) {
-                diagnostics.errors.push({ phase: 'nameEnrichment', message: e.message });
+                if (diagnostics) {
+                    diagnostics.errors.push({ phase: 'nameEnrichment', message: e.message });
+                }
             }
-            
+
             // 9. Aggregate
             results.flaggedTransactions = aggregateFlaggedTransactions(results);
             
