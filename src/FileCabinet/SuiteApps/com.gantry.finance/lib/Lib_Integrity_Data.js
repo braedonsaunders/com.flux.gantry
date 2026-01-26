@@ -1117,11 +1117,19 @@ function(query, record, search, runtime, format, Core, Utils) {
             
             const dateRangeResults = runSuiteQL(sqlDateRange);
             Utils.auditLog('Z-Score Analysis', { phase: 'fetch_date_range', count: dateRangeResults ? dateRangeResults.length : 0 });
-            
-            if (!dateRangeResults || dateRangeResults.length < 5) return [];
-            
-            // Get unique vendor IDs
-            const vendorIds = [...new Set(dateRangeResults.map(r => r.entityid).filter(Boolean))];
+
+            // Validate we have a proper array
+            if (!dateRangeResults || !Array.isArray(dateRangeResults) || dateRangeResults.length < 5) return [];
+
+            // Get unique vendor IDs - safely extract entityid from each row
+            const vendorIdSet = {};
+            for (let i = 0; i < dateRangeResults.length; i++) {
+                const row = dateRangeResults[i];
+                if (row && row.entityid) {
+                    vendorIdSet[row.entityid] = true;
+                }
+            }
+            const vendorIds = Object.keys(vendorIdSet);
             if (vendorIds.length === 0) return [];
             
             // Get baseline stats per vendor using SUM/COUNT (supported in SuiteQL)
@@ -1183,10 +1191,12 @@ function(query, record, search, runtime, format, Core, Utils) {
             }
 
             Utils.auditLog('Z-Score Analysis', { phase: 'baselines_built', vendorCount: Object.keys(vendorBaselines).length });
-            
+
             // Group date range transactions by vendor
             const vendorGroups = {};
-            dateRangeResults.forEach(row => {
+            for (let i = 0; i < dateRangeResults.length; i++) {
+                const row = dateRangeResults[i];
+                if (!row) continue;
                 const vendorId = row.entityid || 'unknown';
                 if (!vendorGroups[vendorId]) {
                     vendorGroups[vendorId] = {
@@ -1204,8 +1214,8 @@ function(query, record, search, runtime, format, Core, Utils) {
                     createdById: row.createdbyid,
                     createdBy: row.createdby
                 });
-            });
-            
+            }
+
             const zScoreAnomalies = [];
             
             // Check each transaction against vendor's historical baseline
