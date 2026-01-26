@@ -716,20 +716,31 @@ define([
         
         // Call appropriate method based on data library
         let data;
-        if (dataLib.analyze) {
-            data = dataLib.analyze(params);
-        } else if (dataLib.getData) {
-            data = dataLib.getData(params);
-        } else {
-            return { error: 'No data method found for dashboard: ' + dashboardId };
+        try {
+            if (dataLib.analyze) {
+                data = dataLib.analyze(params);
+            } else if (dataLib.getData) {
+                data = dataLib.getData(params);
+            } else {
+                return { error: 'No data method found for dashboard: ' + dashboardId };
+            }
+        } catch (dataError) {
+            log.error('Dashboard Data Error', { dashboardId: dashboardId, error: dataError.message, stack: dataError.stack });
+            return { error: 'Failed to load dashboard data: ' + (dataError.message || 'Unknown error'), dashboardId: dashboardId };
         }
-        
+
+        // Ensure data is not null/undefined before adding metadata
+        if (!data) {
+            log.error('Dashboard Null Data', { dashboardId: dashboardId });
+            return { error: 'No data returned from dashboard: ' + dashboardId };
+        }
+
         // Add metadata
         data._meta = {
             dashboardId: dashboardId,
             dashboardName: dashboard ? dashboard.name : dashboardId
         };
-        
+
         return data;
     }
     
