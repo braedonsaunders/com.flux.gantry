@@ -1109,186 +1109,180 @@ function(query, record, search, runtime, format, Core, Utils) {
 
     // ==========================================
     // Z-SCORE ANALYSIS
-    // Uses batch queries per vendor to get historical data and calculate stats in JS
+    // Queries one vendor at a time (like RSF) to avoid ScriptNullObjectAdapter issues
     // ==========================================
-    
+
     function analyzeZScores(startDate, endDate, subsidiaryId) {
-        const subFilter = subsidiaryId ? `AND T.subsidiary = ${subsidiaryId}` : '';
-
+        // Wrap everything - never crash the dashboard
         try {
-            // Get transactions in the date range (what we'll potentially flag)
-            const sqlDateRange = `
-                SELECT T.id, T.tranid, TO_CHAR(T.trandate, 'MM/DD/YYYY') AS trandate, T.type,
-                    ABS(COALESCE(T.foreigntotal, 0)) AS amount,
-                    TL.entity AS entityid,
-                    BUILTIN.DF(TL.entity) AS entityname,
-                    T.createdby AS createdbyid,
-                    BUILTIN.DF(T.createdby) AS createdby
-                FROM Transaction T
-                LEFT JOIN TransactionLine TL ON T.id = TL.transaction AND TL.mainline = 'T'
-                WHERE T.type IN (${VENDOR_TRAN_TYPES})
-                    AND ABS(COALESCE(T.foreigntotal, 0)) > 0
-                    AND T.trandate >= TO_DATE('${startDate}', 'YYYY-MM-DD')
-                    AND T.trandate <= TO_DATE('${endDate}', 'YYYY-MM-DD')
-                    ${subFilter}
-                ORDER BY TL.entity, ABS(COALESCE(T.foreigntotal, 0)) DESC
-            `;
+            var subFilter = subsidiaryId ? 'AND T.subsidiary = ' + subsidiaryId : '';
 
-            const dateRangeResults = runSuiteQL(sqlDateRange);
-            Utils.auditLog('Z-Score Analysis', { phase: 'fetch_date_range', count: dateRangeResults ? dateRangeResults.length : 0 });
+            // Get transactions - filter NULL entities at database level
+            var sqlDateRange =
+                'SELECT T.id, T.tranid, TO_CHAR(T.trandate, \'MM/DD/YYYY\') AS trandate, T.type, ' +
+                'ABS(COALESCE(T.foreigntotal, 0)) AS amount, ' +
+                'TL.entity AS entityid, ' +
+                'BUILTIN.DF(TL.entity) AS entityname, ' +
+                'T.createdby AS createdbyid, ' +
+                'BUILTIN.DF(T.createdby) AS createdby ' +
+                'FROM Transaction T ' +
+                'LEFT JOIN TransactionLine TL ON T.id = TL.transaction AND TL.mainline = \'T\' ' +
+                'WHERE T.type IN (' + VENDOR_TRAN_TYPES + ') ' +
+                'AND ABS(COALESCE(T.foreigntotal, 0)) > 0 ' +
+                'AND TL.entity IS NOT NULL ' +
+                'AND T.trandate >= TO_DATE(\'' + startDate + '\', \'YYYY-MM-DD\') ' +
+                'AND T.trandate <= TO_DATE(\'' + endDate + '\', \'YYYY-MM-DD\') ' +
+                subFilter + ' ' +
+                'ORDER BY TL.entity, ABS(COALESCE(T.foreigntotal, 0)) DESC';
 
-            if (!dateRangeResults || dateRangeResults.length < 5) return [];
-
-            // Get unique vendor IDs - use safeEntityId to handle ScriptNullObjectAdapter
-            const vendorIdSet = {};
-            for (let i = 0; i < dateRangeResults.length; i++) {
-                const row = dateRangeResults[i];
-                if (!row) continue;
-                const entityId = safeEntityId(row.entityid);
-                if (entityId !== null) {
-                    vendorIdSet[entityId] = true;
-                }
+            var dateRangeResults = [];
+            try {
+                dateRangeResults = runSuiteQL(sqlDateRange) || [];
+            } catch (qe) {
+                log.error('Z-Score Query Error', qe.message);
+                return [];
             }
-            const vendorIds = Object.keys(vendorIdSet);
+
+            Utils.auditLog('Z-Score Analysis', { phase: 'fetch_date_range', count: dateRangeResults.length });
+
+            if (dateRangeResults.length < 5) return [];
+
+            // Extract unique vendor IDs - be very defensive
+            var vendorIds = [];
+            var seenIds = {};
+            for (var i = 0; i < dateRangeResults.length; i++) {
+                try {
+                    var row = dateRangeResults[i];
+                    if (!row) continue;
+                    var eid = row.entityid;
+                    if (eid == null) continue;
+                    var eidStr = String(eid);
+                    if (!eidStr || eidStr === 'null' || eidStr === 'undefined' || eidStr.indexOf('ScriptNull') !== -1) continue;
+                    if (!seenIds[eidStr]) {
+                        seenIds[eidStr] = true;
+                        vendorIds.push(eidStr);
+                    }
+                } catch (ex) { /* skip */ }
+            }
+
             if (vendorIds.length === 0) return [];
 
-            // Get baseline stats per vendor using SUM/COUNT (supported in SuiteQL)
-            const vendorBaselines = {};
-
-            // Process in batches
-            const batchSize = 30;
-            for (let i = 0; i < vendorIds.length; i += batchSize) {
-                const batch = vendorIds.slice(i, i + batchSize);
-                const vendorIdList = batch.map(id => `'${id}'`).join(',');
-
-                // Get sum, count, sum of squares per vendor for manual stddev calculation
-                const sqlStats = `
-                    SELECT TL.entity AS entityid,
-                        COUNT(*) AS txn_count,
-                        SUM(ABS(COALESCE(T.foreigntotal, 0))) AS sum_amount,
-                        SUM(ABS(COALESCE(T.foreigntotal, 0)) * ABS(COALESCE(T.foreigntotal, 0))) AS sum_sq
-                    FROM Transaction T
-                    LEFT JOIN TransactionLine TL ON T.id = TL.transaction AND TL.mainline = 'T'
-                    WHERE T.type IN (${VENDOR_TRAN_TYPES})
-                        AND ABS(COALESCE(T.foreigntotal, 0)) > 0
-                        AND TL.entity IN (${vendorIdList})
-                        AND T.trandate >= ADD_MONTHS(SYSDATE, -36)
-                        ${subFilter}
-                    GROUP BY TL.entity
-                    HAVING COUNT(*) >= 5
-                `;
-
+            // Build baselines - ONE vendor at a time (like RSF does)
+            var vendorBaselines = {};
+            for (var v = 0; v < vendorIds.length; v++) {
                 try {
-                    const statsResults = runSuiteQL(sqlStats);
+                    var vid = vendorIds[v];
+                    var sqlStats =
+                        'SELECT COUNT(*) AS txn_count, ' +
+                        'SUM(ABS(COALESCE(T.foreigntotal, 0))) AS sum_amount, ' +
+                        'SUM(ABS(COALESCE(T.foreigntotal, 0)) * ABS(COALESCE(T.foreigntotal, 0))) AS sum_sq ' +
+                        'FROM Transaction T ' +
+                        'LEFT JOIN TransactionLine TL ON T.id = TL.transaction AND TL.mainline = \'T\' ' +
+                        'WHERE T.type IN (' + VENDOR_TRAN_TYPES + ') ' +
+                        'AND ABS(COALESCE(T.foreigntotal, 0)) > 0 ' +
+                        'AND TL.entity = \'' + vid + '\' ' +
+                        'AND T.trandate >= ADD_MONTHS(SYSDATE, -36) ' +
+                        subFilter + ' ' +
+                        'HAVING COUNT(*) >= 5';
 
-                    if (statsResults && Array.isArray(statsResults)) {
-                        for (let r = 0; r < statsResults.length; r++) {
-                            const row = statsResults[r];
-                            if (!row) continue;
-
-                            const entityId = safeEntityId(row.entityid);
-                            if (entityId === null) continue;
-
-                            const n = parseInt(row.txn_count) || 0;
-                            const sum = parseFloat(row.sum_amount) || 0;
-                            const sumSq = parseFloat(row.sum_sq) || 0;
-
-                            if (n >= 5) {
-                                const avg = sum / n;
-                                // Variance = E[X²] - (E[X])² with Bessel's correction
-                                const variance = (sumSq / n - avg * avg) * n / (n - 1);
-                                const stdDev = Math.sqrt(Math.max(0, variance));
-
-                                // Only include if stdDev is meaningful (> $10 to avoid noise)
-                                if (stdDev > 10) {
-                                    vendorBaselines[entityId] = {
-                                        count: n,
-                                        avg: avg,
-                                        stdDev: stdDev
-                                    };
-                                }
+                    var statsRes = runSuiteQL(sqlStats);
+                    if (statsRes && statsRes.length > 0 && statsRes[0]) {
+                        var sr = statsRes[0];
+                        var n = parseInt(sr.txn_count) || 0;
+                        var sum = parseFloat(sr.sum_amount) || 0;
+                        var sumSq = parseFloat(sr.sum_sq) || 0;
+                        if (n >= 5) {
+                            var avg = sum / n;
+                            var variance = (sumSq / n - avg * avg) * n / (n - 1);
+                            var stdDev = Math.sqrt(Math.max(0, variance));
+                            if (stdDev > 10) {
+                                vendorBaselines[vid] = { count: n, avg: avg, stdDev: stdDev };
                             }
                         }
                     }
-                } catch (e) {
-                    Utils.debugLog('Z-Score batch query error', { batch: i, error: e.message });
-                }
+                } catch (ex) { /* skip vendor */ }
             }
 
             Utils.auditLog('Z-Score Analysis', { phase: 'baselines_built', vendorCount: Object.keys(vendorBaselines).length });
 
-            // Group date range transactions by vendor
-            const vendorGroups = {};
-            for (let i = 0; i < dateRangeResults.length; i++) {
-                const row = dateRangeResults[i];
-                if (!row) continue;
-
-                const vendorId = safeEntityId(row.entityid);
-                if (vendorId === null) continue;  // Skip rows with null entity
-
-                if (!vendorGroups[vendorId]) {
-                    vendorGroups[vendorId] = {
-                        vendorId: vendorId,
-                        vendorName: String(row.entityname || 'Unknown'),
-                        transactions: []
-                    };
-                }
-                vendorGroups[vendorId].transactions.push({
-                    id: row.id,
-                    tranId: row.tranid,
-                    tranDate: row.trandate,
-                    type: row.type,
-                    amount: parseFloat(row.amount) || 0,
-                    createdById: safeEntityId(row.createdbyid),
-                    createdBy: String(row.createdby || '')
-                });
+            // Group transactions by vendor
+            var vendorGroups = {};
+            for (var i = 0; i < dateRangeResults.length; i++) {
+                try {
+                    var row = dateRangeResults[i];
+                    if (!row) continue;
+                    var vid = String(row.entityid || '');
+                    if (!vid || vid === 'null' || vid.indexOf('ScriptNull') !== -1) continue;
+                    if (!vendorGroups[vid]) {
+                        vendorGroups[vid] = {
+                            vendorId: vid,
+                            vendorName: String(row.entityname || 'Unknown'),
+                            transactions: []
+                        };
+                    }
+                    vendorGroups[vid].transactions.push({
+                        id: row.id,
+                        tranId: String(row.tranid || ''),
+                        tranDate: String(row.trandate || ''),
+                        type: String(row.type || ''),
+                        amount: parseFloat(row.amount) || 0,
+                        createdById: row.createdbyid,
+                        createdBy: String(row.createdby || '')
+                    });
+                } catch (ex) { /* skip */ }
             }
 
-            const zScoreAnomalies = [];
+            // Find anomalies
+            var zScoreAnomalies = [];
+            var groupIds = Object.keys(vendorGroups);
+            for (var g = 0; g < groupIds.length; g++) {
+                try {
+                    var group = vendorGroups[groupIds[g]];
+                    var baseline = vendorBaselines[group.vendorId];
+                    if (!baseline) continue;
 
-            // Check each transaction against vendor's historical baseline
-            Object.values(vendorGroups).forEach(group => {
-                const baseline = vendorBaselines[group.vendorId];
-                if (!baseline) return;
+                    for (var t = 0; t < group.transactions.length; t++) {
+                        try {
+                            var txn = group.transactions[t];
+                            var zScore = (txn.amount - baseline.avg) / baseline.stdDev;
+                            if (Math.abs(zScore) >= Z_SCORE_THRESHOLD && Math.abs(zScore) < 50) {
+                                var score = 45;
+                                if (Math.abs(zScore) >= 5) score += 30;
+                                else if (Math.abs(zScore) >= 4) score += 20;
+                                if (txn.amount >= CRITICAL_RISK_AMOUNT) score += 15;
 
-                group.transactions.forEach(txn => {
-                    const zScore = (txn.amount - baseline.avg) / baseline.stdDev;
-
-                    // Sanity check: Z-score should be reasonable (< 50)
-                    if (Math.abs(zScore) >= Z_SCORE_THRESHOLD && Math.abs(zScore) < 50) {
-                        let score = 45;
-                        if (Math.abs(zScore) >= 5) score += 30;
-                        else if (Math.abs(zScore) >= 4) score += 20;
-                        if (txn.amount >= CRITICAL_RISK_AMOUNT) score += 15;
-
-                        zScoreAnomalies.push({
-                            id: txn.id,
-                            tranId: txn.tranId,
-                            tranDate: txn.tranDate,
-                            type: txn.type,
-                            amount: txn.amount,
-                            avgAmount: baseline.avg,
-                            stdDev: baseline.stdDev,
-                            zScore: zScore,
-                            vendorId: group.vendorId,
-                            vendorName: group.vendorName,
-                            entityId: group.vendorId,
-                            entityName: group.vendorName,
-                            createdById: txn.createdById,
-                            createdBy: txn.createdBy,
-                            vendorTxnCount: baseline.count,
-                            flagType: 'zscore',
-                            reason: `Z-Score ${Math.abs(zScore).toFixed(2)}σ vs ${group.vendorName} historical avg (${baseline.count} txns)`,
-                            riskScore: Math.min(100, score)
-                        });
+                                zScoreAnomalies.push({
+                                    id: txn.id,
+                                    tranId: txn.tranId,
+                                    tranDate: txn.tranDate,
+                                    type: txn.type,
+                                    amount: txn.amount,
+                                    avgAmount: baseline.avg,
+                                    stdDev: baseline.stdDev,
+                                    zScore: zScore,
+                                    vendorId: group.vendorId,
+                                    vendorName: group.vendorName,
+                                    entityId: group.vendorId,
+                                    entityName: group.vendorName,
+                                    createdById: txn.createdById,
+                                    createdBy: txn.createdBy,
+                                    vendorTxnCount: baseline.count,
+                                    flagType: 'zscore',
+                                    reason: 'Z-Score ' + Math.abs(zScore).toFixed(2) + ' vs ' + group.vendorName + ' avg (' + baseline.count + ' txns)',
+                                    riskScore: Math.min(100, score)
+                                });
+                            }
+                        } catch (ex) { /* skip txn */ }
                     }
-                });
-            });
+                } catch (ex) { /* skip group */ }
+            }
 
-            Utils.auditLog('Z-Score Analysis', { phase: 'complete', vendorGroups: Object.keys(vendorGroups).length, anomaliesFound: zScoreAnomalies.length });
-            return zScoreAnomalies.sort((a, b) => b.riskScore - a.riskScore).slice(0, 100);
+            Utils.auditLog('Z-Score Analysis', { phase: 'complete', vendorGroups: groupIds.length, anomaliesFound: zScoreAnomalies.length });
+            zScoreAnomalies.sort(function(a, b) { return b.riskScore - a.riskScore; });
+            return zScoreAnomalies.slice(0, 100);
+
         } catch (e) {
-            log.error('Z-Score Error', { message: e.message, name: e.name });
+            log.error('Z-Score Error', { message: String(e.message || e), name: String(e.name || 'Error') });
             return [];
         }
     }
