@@ -1182,7 +1182,9 @@ function(query, record, search, runtime, format, Core, Utils) {
                 `;
                 
                 try {
+                    log.debug('Z-Score Debug 10', { batch: i, action: 'before_query' });
                     const statsResults = runSuiteQL(sqlStats);
+                    log.debug('Z-Score Debug 11', { batch: i, action: 'after_query', isArray: Array.isArray(statsResults), count: statsResults ? statsResults.length : 'null' });
 
                     // Ensure we have a valid array before iterating
                     if (statsResults && Array.isArray(statsResults)) {
@@ -1208,11 +1210,14 @@ function(query, record, search, runtime, format, Core, Utils) {
                             }
                         });
                     }
+                    log.debug('Z-Score Debug 12', { batch: i, action: 'batch_complete' });
                 } catch (e) {
+                    log.debug('Z-Score Debug CATCH', { batch: i, error: e.message, errorName: e.name });
                     Utils.debugLog('Z-Score batch query error', { batch: i, error: e.message });
                 }
             }
 
+            log.debug('Z-Score Debug 13', 'Loop complete, building baselines');
             Utils.auditLog('Z-Score Analysis', { phase: 'baselines_built', vendorCount: Object.keys(vendorBaselines).length });
 
             // Group date range transactions by vendor
