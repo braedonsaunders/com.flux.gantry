@@ -1199,8 +1199,16 @@ function(query, record, search, runtime, format, Core, Utils) {
                         subFilter + ' ' +
                         'HAVING COUNT(*) >= 5';
 
-                    var statsRes = runSuiteQL(sqlStats);
-                    if (statsRes && statsRes.length > 0 && statsRes[0]) {
+                    var rawStats = runSuiteQL(sqlStats);
+                    // Sanitize stats results too
+                    var statsRes = [];
+                    try {
+                        if (rawStats && rawStats.length > 0) {
+                            statsRes = JSON.parse(JSON.stringify(rawStats));
+                        }
+                    } catch (je) { continue; }
+
+                    if (statsRes.length > 0 && statsRes[0]) {
                         var sr = statsRes[0];
                         var n = parseInt(sr.txn_count) || 0;
                         var sum = parseFloat(sr.sum_amount) || 0;
