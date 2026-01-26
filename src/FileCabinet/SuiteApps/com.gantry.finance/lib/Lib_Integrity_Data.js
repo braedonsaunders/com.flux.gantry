@@ -1118,8 +1118,16 @@ function(query, record, search, runtime, format, Core, Utils) {
             const dateRangeResults = runSuiteQL(sqlDateRange);
             Utils.auditLog('Z-Score Analysis', { phase: 'fetch_date_range', count: dateRangeResults ? dateRangeResults.length : 0 });
 
+            // DEBUG: Log array check
+            log.debug('Z-Score Debug 1', { isArray: Array.isArray(dateRangeResults), length: dateRangeResults ? dateRangeResults.length : 'null' });
+
             // Validate we have a proper array
-            if (!dateRangeResults || !Array.isArray(dateRangeResults) || dateRangeResults.length < 5) return [];
+            if (!dateRangeResults || !Array.isArray(dateRangeResults) || dateRangeResults.length < 5) {
+                log.debug('Z-Score Debug 2', 'Early return - invalid array');
+                return [];
+            }
+
+            log.debug('Z-Score Debug 3', 'Starting vendor ID extraction');
 
             // Get unique vendor IDs - safely extract entityid from each row
             const vendorIdSet = {};
@@ -1130,7 +1138,13 @@ function(query, record, search, runtime, format, Core, Utils) {
                 }
             }
             const vendorIds = Object.keys(vendorIdSet);
-            if (vendorIds.length === 0) return [];
+
+            log.debug('Z-Score Debug 4', { vendorIdCount: vendorIds.length });
+
+            if (vendorIds.length === 0) {
+                log.debug('Z-Score Debug 5', 'Early return - no vendor IDs');
+                return [];
+            }
             
             // Get baseline stats per vendor using SUM/COUNT (supported in SuiteQL)
             const vendorBaselines = {};
