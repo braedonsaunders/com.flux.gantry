@@ -404,14 +404,16 @@ function(query, record, search, runtime, format, Core, Utils) {
             `;
             const results = runSuiteQL(sql);
             const map = {};
-            (results || []).forEach(r => { map[r.id] = r.name; });
+            if (results && Array.isArray(results)) {
+                results.forEach(r => { map[r.id] = r.name; });
+            }
             return map;
         } catch (e) {
             Utils.debugLog('Vendor lookup failed', e.message);
             return {};
         }
     }
-    
+
     function lookupUserNames(userIds) {
         if (!userIds || userIds.length === 0) return {};
         // Deduplicate using object instead of Set
@@ -430,14 +432,16 @@ function(query, record, search, runtime, format, Core, Utils) {
             `;
             const results = runSuiteQL(sql);
             const map = {};
-            (results || []).forEach(r => { map[r.id] = r.name; });
+            if (results && Array.isArray(results)) {
+                results.forEach(r => { map[r.id] = r.name; });
+            }
             return map;
         } catch (e) {
             Utils.debugLog('User lookup failed', e.message);
             return {};
         }
     }
-    
+
     function enrichWithNames(items, vendorField, userField) {
         if (!items || items.length === 0) return items;
         
@@ -1148,28 +1152,31 @@ function(query, record, search, runtime, format, Core, Utils) {
                 
                 try {
                     const statsResults = runSuiteQL(sqlStats);
-                    
-                    (statsResults || []).forEach(row => {
-                        const n = parseInt(row.txn_count) || 0;
-                        const sum = parseFloat(row.sum_amount) || 0;
-                        const sumSq = parseFloat(row.sum_sq) || 0;
-                        
-                        if (n >= 5) {
-                            const avg = sum / n;
-                            // Variance = E[X²] - (E[X])² with Bessel's correction
-                            const variance = (sumSq / n - avg * avg) * n / (n - 1);
-                            const stdDev = Math.sqrt(Math.max(0, variance));
-                            
-                            // Only include if stdDev is meaningful (> $10 to avoid noise)
-                            if (stdDev > 10) {
-                                vendorBaselines[row.entityid] = {
-                                    count: n,
-                                    avg: avg,
-                                    stdDev: stdDev
-                                };
+
+                    // Ensure we have a valid array before iterating
+                    if (statsResults && Array.isArray(statsResults)) {
+                        statsResults.forEach(row => {
+                            const n = parseInt(row.txn_count) || 0;
+                            const sum = parseFloat(row.sum_amount) || 0;
+                            const sumSq = parseFloat(row.sum_sq) || 0;
+
+                            if (n >= 5) {
+                                const avg = sum / n;
+                                // Variance = E[X²] - (E[X])² with Bessel's correction
+                                const variance = (sumSq / n - avg * avg) * n / (n - 1);
+                                const stdDev = Math.sqrt(Math.max(0, variance));
+
+                                // Only include if stdDev is meaningful (> $10 to avoid noise)
+                                if (stdDev > 10) {
+                                    vendorBaselines[row.entityid] = {
+                                        count: n,
+                                        avg: avg,
+                                        stdDev: stdDev
+                                    };
+                                }
                             }
-                        }
-                    });
+                        });
+                    }
                 } catch (e) {
                     Utils.debugLog('Z-Score batch query error', { batch: i, error: e.message });
                 }
@@ -1520,18 +1527,20 @@ function(query, record, search, runtime, format, Core, Utils) {
         
         try {
             const results = runSuiteQL(sql);
-            
+
             // Deduplicate by vendor-employee pair using object instead of Set
             const seen = {};
             const unique = [];
-            (results || []).forEach(row => {
-                const key = row.vendor_id + '-' + row.employee_id;
-                if (!seen[key]) {
-                    seen[key] = true;
-                    unique.push(row);
-                }
-            });
-            
+            if (results && Array.isArray(results)) {
+                results.forEach(row => {
+                    const key = row.vendor_id + '-' + row.employee_id;
+                    if (!seen[key]) {
+                        seen[key] = true;
+                        unique.push(row);
+                    }
+                });
+            }
+
             return unique.map(row => ({
                 vendorId: row.vendor_id,
                 vendorName: row.vendor_name || row.companyname,
