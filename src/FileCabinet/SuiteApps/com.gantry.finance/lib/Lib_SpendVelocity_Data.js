@@ -2730,19 +2730,21 @@ define(['N/query', 'N/log', './Lib_Core'], function(query, log, Core) {
             var totalAccounts = 0;
 
             // Single query: Get expense growth metrics by account
+            // Use TL.expenseaccount and TL.netamount (SuiteQL-exposed fields) matching getMonthlyAccountSpend()
             try {
                 var sql = "SELECT " +
-                    "a.id as account_id, " +
-                    "SUM(CASE WHEN t.trandate >= ADD_MONTHS(TRUNC(SYSDATE), -3) THEN ABS(tl.amount) ELSE 0 END) as recent_spend, " +
-                    "SUM(CASE WHEN t.trandate < ADD_MONTHS(TRUNC(SYSDATE), -3) THEN ABS(tl.amount) ELSE 0 END) as prior_spend " +
-                    "FROM transactionline tl " +
-                    "JOIN transaction t ON t.id = tl.transaction " +
-                    "JOIN account a ON a.id = tl.account " +
-                    "WHERE a.accttype IN ('Expense', 'OthExpense') " +
-                    "AND t.trandate BETWEEN TO_DATE('" + start + "', 'YYYY-MM-DD') AND TO_DATE('" + end + "', 'YYYY-MM-DD') " +
-                    "AND t.posting = 'T' AND tl.mainline = 'F' " +
-                    "GROUP BY a.id " +
-                    "HAVING SUM(ABS(tl.amount)) > 1000";
+                    "TL.expenseaccount as account_id, " +
+                    "SUM(CASE WHEN T.trandate >= ADD_MONTHS(TRUNC(SYSDATE), -3) THEN ABS(TL.netamount) ELSE 0 END) as recent_spend, " +
+                    "SUM(CASE WHEN T.trandate < ADD_MONTHS(TRUNC(SYSDATE), -3) THEN ABS(TL.netamount) ELSE 0 END) as prior_spend " +
+                    "FROM TransactionLine TL " +
+                    "INNER JOIN Transaction T ON TL.transaction = T.id " +
+                    "INNER JOIN Account A ON A.id = TL.expenseaccount " +
+                    "WHERE A.accttype IN ('Expense', 'OthExpense') " +
+                    "AND T.type IN ('VendBill', 'VendCred', 'Check', 'ExpRept') AND T.voided = 'F' " +
+                    "AND T.trandate BETWEEN TO_DATE('" + start + "', 'YYYY-MM-DD') AND TO_DATE('" + end + "', 'YYYY-MM-DD') " +
+                    "AND TL.mainline = 'F' AND TL.expenseaccount IS NOT NULL " +
+                    "GROUP BY TL.expenseaccount " +
+                    "HAVING SUM(ABS(TL.netamount)) > 1000";
                 var results = safeQuery(sql, 'scoreVelocity');
 
                 if (!isQueryError(results)) {

@@ -5619,15 +5619,16 @@ define(["N/query", "N/search", "N/log", "N/runtime", "./Lib_Core", "./Lib_Config
             var end = Core.formatDateForQuery(endDate);
 
             // 1. Get total overhead expense (single query)
+            // Use TransactionAccountingLine (tal) which exposes amount field - matches fetchPLRange pattern
             var totalExpense = 0;
             try {
-                var expSql = "SELECT SUM(ABS(tl.amount)) as total " +
-                    "FROM transactionline tl " +
-                    "JOIN transaction t ON t.id = tl.transaction " +
-                    "JOIN account a ON a.id = tl.account " +
+                var expSql = "SELECT SUM(ABS(tal.amount)) as total " +
+                    "FROM Transaction t " +
+                    "JOIN TransactionAccountingLine tal ON t.id = tal.transaction " +
+                    "JOIN Account a ON tal.account = a.id " +
                     "WHERE a.accttype IN ('Expense', 'OthExpense') " +
                     "AND t.trandate BETWEEN TO_DATE('" + start + "', 'YYYY-MM-DD') AND TO_DATE('" + end + "', 'YYYY-MM-DD') " +
-                    "AND t.posting = 'T' AND tl.mainline = 'F'";
+                    "AND t.posting = 'T' AND tal.posting = 'T'";
                 var expResult = Core.runQuery(expSql);
                 if (expResult && expResult.length > 0) {
                     totalExpense = parseFloat(expResult[0].total) || 0;
@@ -5637,15 +5638,16 @@ define(["N/query", "N/search", "N/log", "N/runtime", "./Lib_Core", "./Lib_Config
             }
 
             // 2. Get burden applied (single query)
+            // Use TransactionAccountingLine (tal) which exposes amount field
             var burdenApplied = 0;
             try {
-                var applSql = "SELECT SUM(ABS(tl.amount)) as applied " +
-                    "FROM transactionline tl " +
-                    "JOIN transaction t ON t.id = tl.transaction " +
-                    "JOIN account a ON a.id = tl.account " +
+                var applSql = "SELECT SUM(ABS(tal.amount)) as applied " +
+                    "FROM Transaction t " +
+                    "JOIN TransactionAccountingLine tal ON t.id = tal.transaction " +
+                    "JOIN Account a ON tal.account = a.id " +
                     "WHERE a.accttype = 'DeferExpense' " +
                     "AND t.trandate BETWEEN TO_DATE('" + start + "', 'YYYY-MM-DD') AND TO_DATE('" + end + "', 'YYYY-MM-DD') " +
-                    "AND t.posting = 'T' AND tl.mainline = 'F'";
+                    "AND t.posting = 'T' AND tal.posting = 'T'";
                 var applResult = Core.runQuery(applSql);
                 if (applResult && applResult.length > 0) {
                     burdenApplied = parseFloat(applResult[0].applied) || 0;
