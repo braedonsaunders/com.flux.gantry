@@ -1188,27 +1188,34 @@ function(query, record, search, runtime, format, Core, Utils) {
 
                     // Ensure we have a valid array before iterating
                     if (statsResults && Array.isArray(statsResults)) {
-                        statsResults.forEach(row => {
-                            const n = parseInt(row.txn_count) || 0;
-                            const sum = parseFloat(row.sum_amount) || 0;
-                            const sumSq = parseFloat(row.sum_sq) || 0;
+                        for (let r = 0; r < statsResults.length; r++) {
+                            try {
+                                const row = statsResults[r];
+                                if (!row) continue;
 
-                            if (n >= 5) {
-                                const avg = sum / n;
-                                // Variance = E[X²] - (E[X])² with Bessel's correction
-                                const variance = (sumSq / n - avg * avg) * n / (n - 1);
-                                const stdDev = Math.sqrt(Math.max(0, variance));
+                                const n = parseInt(row.txn_count) || 0;
+                                const sum = parseFloat(row.sum_amount) || 0;
+                                const sumSq = parseFloat(row.sum_sq) || 0;
 
-                                // Only include if stdDev is meaningful (> $10 to avoid noise)
-                                if (stdDev > 10) {
-                                    vendorBaselines[row.entityid] = {
-                                        count: n,
-                                        avg: avg,
-                                        stdDev: stdDev
-                                    };
+                                if (n >= 5) {
+                                    const avg = sum / n;
+                                    // Variance = E[X²] - (E[X])² with Bessel's correction
+                                    const variance = (sumSq / n - avg * avg) * n / (n - 1);
+                                    const stdDev = Math.sqrt(Math.max(0, variance));
+
+                                    // Only include if stdDev is meaningful (> $10 to avoid noise)
+                                    if (stdDev > 10 && row.entityid) {
+                                        vendorBaselines[row.entityid] = {
+                                            count: n,
+                                            avg: avg,
+                                            stdDev: stdDev
+                                        };
+                                    }
                                 }
+                            } catch (rowErr) {
+                                log.debug('Z-Score Row Error', { batch: i, rowIndex: r, error: rowErr.message });
                             }
-                        });
+                        }
                     }
                     log.debug('Z-Score Debug 12', { batch: i, action: 'batch_complete' });
                 } catch (e) {
