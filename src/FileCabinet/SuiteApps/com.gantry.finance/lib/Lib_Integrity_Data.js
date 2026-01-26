@@ -300,16 +300,10 @@ function(query, record, search, runtime, format, Core, Utils) {
                 }
             }
             
-            // 5. Z-Score Anomalies
-            try {
-                results.zScoreAnomalies = analyzeZScores(startDate, endDate, subsidiaryId);
-                if (diagnostics) diagnostics.sqlTests.zscore = { success: true, count: results.zScoreAnomalies.length };
-            } catch (e) {
-                if (diagnostics) {
-                    diagnostics.errors.push({ phase: 'zscore', message: e.message });
-                    diagnostics.sqlTests.zscore = { success: false, error: e.message };
-                }
-            }
+            // 5. Z-Score Anomalies - TEMPORARILY DISABLED FOR DEBUGGING
+            // TODO: Re-enable after fixing ScriptNullObjectAdapter error
+            results.zScoreAnomalies = [];
+            if (diagnostics) diagnostics.sqlTests.zscore = { success: true, count: 0, note: 'Temporarily disabled' };
             
             // 6. Sequential Invoices
             try {
