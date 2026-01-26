@@ -1378,12 +1378,15 @@ function(query, record, search, runtime, format, log, Core, Utils) {
             var totalSpend = 0, topVendorSpend = 0;
 
             // 1. On-time payment analysis (single query)
+            // Note: Transaction table is header-level, mainline is only on TransactionLine
+            // Match pattern from getVendorSpendData() which queries Transaction directly
             try {
                 var otifSql = "SELECT " +
                     "COUNT(*) as total_bills, " +
                     "COUNT(CASE WHEN t.trandate > t.duedate AND t.duedate IS NOT NULL THEN 1 END) as late_bills " +
-                    "FROM transaction t " +
-                    "WHERE t.type = 'VendBill' AND t.mainline = 'T' " +
+                    "FROM Transaction t " +
+                    "WHERE t.type = 'VendBill' " +
+                    "AND (t.voided = 'F' OR t.voided IS NULL) " +
                     "AND t.trandate >= TO_DATE('" + startDate + "', 'YYYY-MM-DD')";
                 var otifResult = Core.runQuery(otifSql);
                 if (otifResult && otifResult.length > 0) {

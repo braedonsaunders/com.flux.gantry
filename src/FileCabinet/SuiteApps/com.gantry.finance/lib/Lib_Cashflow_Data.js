@@ -2298,6 +2298,8 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Core", "./Lib_Config"
       var currentCash = bank.balance || 0;
 
       // 2. Get AR aging buckets (single query)
+      // Note: Transaction table is header-level, no mainline filter needed (that's for TransactionLine)
+      // Match pattern from computeCombinedStats() which queries Transaction directly
       var arBuckets = { current: 0, overdue30: 0, overdue60: 0, overdue90: 0 };
       var arTotal = 0;
       try {
@@ -2307,8 +2309,8 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Core", "./Lib_Config"
           "SUM(CASE WHEN TRUNC(SYSDATE) - TRUNC(t.duedate) BETWEEN 31 AND 60 THEN t.foreignamountunpaid ELSE 0 END) as overdue_60, " +
           "SUM(CASE WHEN TRUNC(SYSDATE) - TRUNC(t.duedate) > 60 THEN t.foreignamountunpaid ELSE 0 END) as overdue_90, " +
           "SUM(t.foreignamountunpaid) as total " +
-          "FROM transaction t " +
-          "WHERE t.type = 'CustInvc' AND t.status != 'paidInFull' AND t.mainline = 'T' AND t.foreignamountunpaid > 0";
+          "FROM Transaction t " +
+          "WHERE t.type = 'CustInvc' AND t.status != 'paidInFull' AND t.foreignamountunpaid > 0";
         var arResult = query.runSuiteQL({ query: arSql }).asMappedResults();
         if (arResult && arResult.length > 0) {
           arBuckets.current = parseFloat(arResult[0].current_amt) || 0;
@@ -2322,13 +2324,14 @@ define(["N/search", "N/query", "N/format", "N/log", "./Lib_Core", "./Lib_Config"
       }
 
       // 3. Get AP total and monthly burn (single query)
+      // Note: Transaction table is header-level, no mainline filter needed
       var apTotal = 0;
       var monthlyBurn = 0;
       try {
         var apSql = "SELECT " +
-          "SUM(CASE WHEN t.type = 'VendBill' AND t.status != 'paidInFull' AND t.mainline = 'T' THEN ABS(t.foreignamountunpaid) ELSE 0 END) as ap_total, " +
-          "SUM(CASE WHEN t.type IN ('VendBill', 'Check') AND t.trandate >= ADD_MONTHS(TRUNC(SYSDATE), -1) AND t.mainline = 'T' THEN ABS(t.foreigntotal) ELSE 0 END) as monthly_outflow " +
-          "FROM transaction t " +
+          "SUM(CASE WHEN t.type = 'VendBill' AND t.status != 'paidInFull' THEN ABS(t.foreignamountunpaid) ELSE 0 END) as ap_total, " +
+          "SUM(CASE WHEN t.type IN ('VendBill', 'Check') AND t.trandate >= ADD_MONTHS(TRUNC(SYSDATE), -1) THEN ABS(t.foreigntotal) ELSE 0 END) as monthly_outflow " +
+          "FROM Transaction t " +
           "WHERE t.type IN ('VendBill', 'Check')";
         var apResult = query.runSuiteQL({ query: apSql }).asMappedResults();
         if (apResult && apResult.length > 0) {

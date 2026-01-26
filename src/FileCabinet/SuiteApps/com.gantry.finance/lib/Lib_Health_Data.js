@@ -2594,16 +2594,18 @@ define(["N/search", "N/query", "N/log", "./Lib_Core", "./Lib_Config"], function 
             var prevMonthGmPct = 0, currMonthGmPct = 0;
 
             try {
-                // Main range query
+                // Main range query - use TransactionAccountingLine (tal) which exposes amount field
+                // This matches the pattern used in fetchPLRange()
                 var sql = "SELECT " +
-                    "SUM(CASE WHEN a.accttype IN ('Income', 'OthIncome') THEN -tl.amount ELSE 0 END) as revenue, " +
-                    "SUM(CASE WHEN a.accttype = 'COGS' THEN tl.amount ELSE 0 END) as cogs, " +
-                    "SUM(CASE WHEN a.accttype IN ('Expense', 'OthExpense') THEN tl.amount ELSE 0 END) as opex " +
-                    "FROM transactionline tl " +
-                    "JOIN transaction t ON t.id = tl.transaction " +
-                    "JOIN account a ON a.id = tl.account " +
+                    "SUM(CASE WHEN a.accttype IN ('Income', 'OthIncome') THEN -tal.amount ELSE 0 END) as revenue, " +
+                    "SUM(CASE WHEN a.accttype = 'COGS' THEN tal.amount ELSE 0 END) as cogs, " +
+                    "SUM(CASE WHEN a.accttype IN ('Expense', 'OthExpense') THEN tal.amount ELSE 0 END) as opex " +
+                    "FROM Transaction t " +
+                    "JOIN TransactionAccountingLine tal ON t.id = tal.transaction " +
+                    "JOIN Account a ON tal.account = a.id " +
                     "WHERE t.trandate BETWEEN TO_DATE('" + start + "', 'YYYY-MM-DD') AND TO_DATE('" + end + "', 'YYYY-MM-DD') " +
-                    "AND t.posting = 'T' AND tl.mainline = 'F'";
+                    "AND t.posting = 'T' AND tal.posting = 'T' " +
+                    "AND a.accttype IN ('Income', 'OthIncome', 'COGS', 'Expense', 'OthExpense')";
                 var result = Core.runQuery(sql);
                 if (result && result.length > 0) {
                     revenue = parseFloat(result[0].revenue) || 0;
@@ -2615,13 +2617,14 @@ define(["N/search", "N/query", "N/log", "./Lib_Core", "./Lib_Config"], function 
                 var prevMonthEnd = new Date(endDate.getFullYear(), endDate.getMonth(), 0);
                 var prevMonthStart = new Date(prevMonthEnd.getFullYear(), prevMonthEnd.getMonth(), 1);
                 var prevSql = "SELECT " +
-                    "SUM(CASE WHEN a.accttype IN ('Income', 'OthIncome') THEN -tl.amount ELSE 0 END) as revenue, " +
-                    "SUM(CASE WHEN a.accttype = 'COGS' THEN tl.amount ELSE 0 END) as cogs " +
-                    "FROM transactionline tl " +
-                    "JOIN transaction t ON t.id = tl.transaction " +
-                    "JOIN account a ON a.id = tl.account " +
+                    "SUM(CASE WHEN a.accttype IN ('Income', 'OthIncome') THEN -tal.amount ELSE 0 END) as revenue, " +
+                    "SUM(CASE WHEN a.accttype = 'COGS' THEN tal.amount ELSE 0 END) as cogs " +
+                    "FROM Transaction t " +
+                    "JOIN TransactionAccountingLine tal ON t.id = tal.transaction " +
+                    "JOIN Account a ON tal.account = a.id " +
                     "WHERE t.trandate BETWEEN TO_DATE('" + Core.formatDateForQuery(prevMonthStart) + "', 'YYYY-MM-DD') AND TO_DATE('" + Core.formatDateForQuery(prevMonthEnd) + "', 'YYYY-MM-DD') " +
-                    "AND t.posting = 'T' AND tl.mainline = 'F'";
+                    "AND t.posting = 'T' AND tal.posting = 'T' " +
+                    "AND a.accttype IN ('Income', 'OthIncome', 'COGS')";
                 var prevResult = Core.runQuery(prevSql);
                 if (prevResult && prevResult.length > 0) {
                     var prevRev = parseFloat(prevResult[0].revenue) || 0;
@@ -2632,13 +2635,14 @@ define(["N/search", "N/query", "N/log", "./Lib_Core", "./Lib_Config"], function 
                 // Current month GM% (endDate month, which is last complete month)
                 var currMonthStart = new Date(endDate.getFullYear(), endDate.getMonth(), 1);
                 var currSql = "SELECT " +
-                    "SUM(CASE WHEN a.accttype IN ('Income', 'OthIncome') THEN -tl.amount ELSE 0 END) as revenue, " +
-                    "SUM(CASE WHEN a.accttype = 'COGS' THEN tl.amount ELSE 0 END) as cogs " +
-                    "FROM transactionline tl " +
-                    "JOIN transaction t ON t.id = tl.transaction " +
-                    "JOIN account a ON a.id = tl.account " +
+                    "SUM(CASE WHEN a.accttype IN ('Income', 'OthIncome') THEN -tal.amount ELSE 0 END) as revenue, " +
+                    "SUM(CASE WHEN a.accttype = 'COGS' THEN tal.amount ELSE 0 END) as cogs " +
+                    "FROM Transaction t " +
+                    "JOIN TransactionAccountingLine tal ON t.id = tal.transaction " +
+                    "JOIN Account a ON tal.account = a.id " +
                     "WHERE t.trandate BETWEEN TO_DATE('" + Core.formatDateForQuery(currMonthStart) + "', 'YYYY-MM-DD') AND TO_DATE('" + end + "', 'YYYY-MM-DD') " +
-                    "AND t.posting = 'T' AND tl.mainline = 'F'";
+                    "AND t.posting = 'T' AND tal.posting = 'T' " +
+                    "AND a.accttype IN ('Income', 'OthIncome', 'COGS')";
                 var currResult = Core.runQuery(currSql);
                 if (currResult && currResult.length > 0) {
                     var currRev = parseFloat(currResult[0].revenue) || 0;
