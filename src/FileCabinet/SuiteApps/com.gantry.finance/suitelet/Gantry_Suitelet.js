@@ -16,22 +16,68 @@ define([
     'N/url',
     'N/runtime',
     'N/log',
+    'N/search',
     '../lib/Lib_Permissions',
     '../lib/Lib_LicenseGuard'
-], function(file, serverWidget, url, runtime, log, Permissions, LicenseGuard) {
+], function(file, serverWidget, url, runtime, log, search, Permissions, LicenseGuard) {
     'use strict';
 
     /**
      * Configuration - uses string IDs for portability across NetSuite instances
      */
     const CONFIG = {
-        // Base path in File Cabinet
-        basePath: 'SuiteApps/com.gantry.finance',
-        
         // Router Restlet - MUST use these exact IDs when deploying
         routerScriptId: 'customscript_gantry_router',
         routerDeploymentId: 'customdeploy_gantry_router'
     };
+
+    // Cached base path (detected at runtime)
+    let _cachedBasePath = null;
+
+    /**
+     * Dynamically detect the base path by searching for a known file.
+     * This handles both SuiteApps installations and SuiteBundle installations.
+     * - SuiteApps: SuiteApps/com.gantry.finance
+     * - SuiteBundle: SuiteBundles/Bundle XXXXX/com.gantry.finance
+     */
+    function getBasePath() {
+        if (_cachedBasePath) {
+            return _cachedBasePath;
+        }
+
+        try {
+            // Search for gantry_index.html to find where the app is installed
+            const fileSearch = search.create({
+                type: search.Type.FILE,
+                filters: [
+                    ['name', 'is', 'gantry_index.html'],
+                    'AND',
+                    ['folder', 'contains', 'com.gantry.finance']
+                ],
+                columns: ['name']
+            });
+
+            const results = fileSearch.run().getRange({ start: 0, end: 1 });
+            if (results.length > 0) {
+                // Load the file to get its full path
+                const fileObj = file.load({ id: results[0].id });
+                // fileObj.path will be like '/SuiteApps/com.gantry.finance/App/gantry_index.html'
+                // or '/SuiteBundles/Bundle 590174/com.gantry.finance/App/gantry_index.html'
+                const fullPath = fileObj.path;
+                // Extract base path by removing leading slash and '/App/gantry_index.html'
+                _cachedBasePath = fullPath.replace(/^\//, '').replace(/\/App\/gantry_index\.html$/, '');
+                log.debug('Detected Base Path', _cachedBasePath);
+                return _cachedBasePath;
+            }
+        } catch (e) {
+            log.error('Base Path Detection Failed', e.message);
+        }
+
+        // Fallback to default SuiteApps path
+        _cachedBasePath = 'SuiteApps/com.gantry.finance';
+        log.debug('Using Fallback Base Path', _cachedBasePath);
+        return _cachedBasePath;
+    }
 
     /**
      * File manifest for dev mode - maps script keys to file paths
@@ -123,7 +169,7 @@ define([
         const fileUrls = resolveFileUrls();
 
         // 4. Load HTML Template
-        const htmlPath = CONFIG.basePath + '/App/gantry_index.html';
+        const htmlPath = getBasePath() + '/App/gantry_index.html';
         const htmlFile = file.load({ id: htmlPath });
         let htmlContent = htmlFile.getContents();
 
@@ -360,7 +406,7 @@ define([
         
         Object.keys(FILE_MANIFEST).forEach(function(key) {
             const relativePath = FILE_MANIFEST[key];
-            const fullPath = CONFIG.basePath + '/' + relativePath;
+            const fullPath = getBasePath() + '/' + relativePath;
             
             try {
                 const fileObj = file.load({ id: fullPath });
