@@ -35,7 +35,7 @@ define([
     let _cachedBasePath = null;
 
     /**
-     * Dynamically detect the base path by searching for a known file.
+     * Dynamically detect the base path by looking up the script's own file location.
      * This handles both SuiteApps installations and SuiteBundle installations.
      * - SuiteApps: SuiteApps/com.gantry.finance
      * - SuiteBundle: SuiteBundles/Bundle XXXXX/com.gantry.finance
@@ -45,43 +45,50 @@ define([
             return _cachedBasePath;
         }
 
+        // Method 1: Look up the current script's file to get the path
         try {
-            // Search for gantry_index.html files
-            const fileSearch = search.create({
-                type: search.Type.FILE,
-                filters: [
-                    ['name', 'is', 'gantry_index.html']
-                ],
-                columns: ['name']
+            const currentScript = runtime.getCurrentScript();
+            log.debug('Current Script ID', currentScript.id);
+
+            // Search for the script record to get its file
+            const scriptSearch = search.create({
+                type: search.Type.SCRIPT,
+                filters: [['scriptid', 'is', currentScript.id]],
+                columns: ['scriptfile']
             });
 
-            const results = fileSearch.run().getRange({ start: 0, end: 10 });
+            const scriptResults = scriptSearch.run().getRange({ start: 0, end: 1 });
+            if (scriptResults.length > 0) {
+                const scriptFileId = scriptResults[0].getValue('scriptfile');
+                log.debug('Script File ID', scriptFileId);
 
-            // Find the one that belongs to our app (contains com.gantry.finance in path)
-            for (let i = 0; i < results.length; i++) {
-                try {
-                    const fileObj = file.load({ id: results[i].id });
-                    const fullPath = fileObj.path;
+                const scriptFile = file.load({ id: scriptFileId });
+                const fullPath = scriptFile.path;
+                log.debug('Script File Path', fullPath);
 
-                    // Check if this is our app's file
-                    if (fullPath.indexOf('com.gantry.finance') !== -1) {
-                        // Extract base path by removing leading slash and '/App/gantry_index.html'
-                        _cachedBasePath = fullPath.replace(/^\//, '').replace(/\/App\/gantry_index\.html$/, '');
-                        log.debug('Detected Base Path', _cachedBasePath);
-                        return _cachedBasePath;
-                    }
-                } catch (loadErr) {
-                    // Skip files we can't load
-                    continue;
-                }
+                // Path will be like '/SuiteBundles/Bundle 590174/com.gantry.finance/suitelet/Gantry_Suitelet.js'
+                // Extract base path by removing '/suitelet/Gantry_Suitelet.js'
+                _cachedBasePath = fullPath.replace(/^\//, '').replace(/\/suitelet\/Gantry_Suitelet\.js$/i, '');
+                log.debug('Detected Base Path', _cachedBasePath);
+                return _cachedBasePath;
             }
         } catch (e) {
-            log.error('Base Path Detection Failed', e.message);
+            log.error('Script File Lookup Failed', { message: e.message, stack: e.stack });
         }
 
-        // Fallback to default SuiteApps path
+        // Method 2: Fallback - try direct file load to test SuiteApps path
+        try {
+            file.load({ id: 'SuiteApps/com.gantry.finance/App/gantry_index.html' });
+            _cachedBasePath = 'SuiteApps/com.gantry.finance';
+            log.debug('Using SuiteApps Path (verified)', _cachedBasePath);
+            return _cachedBasePath;
+        } catch (e) {
+            log.debug('SuiteApps path not found', e.message);
+        }
+
+        // Method 3: Final fallback
         _cachedBasePath = 'SuiteApps/com.gantry.finance';
-        log.debug('Using Fallback Base Path', _cachedBasePath);
+        log.audit('Using Fallback Base Path (unverified)', _cachedBasePath);
         return _cachedBasePath;
     }
 
