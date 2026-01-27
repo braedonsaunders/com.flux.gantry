@@ -16,10 +16,9 @@ define([
     'N/url',
     'N/runtime',
     'N/log',
-    'N/search',
     '../lib/Lib_Permissions',
     '../lib/Lib_LicenseGuard'
-], function(file, serverWidget, url, runtime, log, search, Permissions, LicenseGuard) {
+], function(file, serverWidget, url, runtime, log, Permissions, LicenseGuard) {
     'use strict';
 
     /**
@@ -35,60 +34,32 @@ define([
     let _cachedBasePath = null;
 
     /**
-     * Dynamically detect the base path by looking up the script's own file location.
+     * Dynamically detect the base path using runtime.getCurrentScript().bundleIds
      * This handles both SuiteApps installations and SuiteBundle installations.
      * - SuiteApps: SuiteApps/com.gantry.finance
      * - SuiteBundle: SuiteBundles/Bundle XXXXX/com.gantry.finance
+     *
+     * Reference: https://docs.oracle.com/en/cloud/saas/netsuite/ns-online-help/section_4439977567.html
      */
     function getBasePath() {
         if (_cachedBasePath) {
             return _cachedBasePath;
         }
 
-        // Method 1: Look up the current script's file to get the path
-        try {
-            const currentScript = runtime.getCurrentScript();
-            log.debug('Current Script ID', currentScript.id);
+        const currentScript = runtime.getCurrentScript();
+        const bundleIds = currentScript.bundleIds;
 
-            // Search for the script record to get its file
-            const scriptSearch = search.create({
-                type: search.Type.SCRIPT,
-                filters: [['scriptid', 'is', currentScript.id]],
-                columns: ['scriptfile']
-            });
+        log.debug('Bundle IDs', JSON.stringify(bundleIds));
 
-            const scriptResults = scriptSearch.run().getRange({ start: 0, end: 1 });
-            if (scriptResults.length > 0) {
-                const scriptFileId = scriptResults[0].getValue('scriptfile');
-                log.debug('Script File ID', scriptFileId);
-
-                const scriptFile = file.load({ id: scriptFileId });
-                const fullPath = scriptFile.path;
-                log.debug('Script File Path', fullPath);
-
-                // Path will be like '/SuiteBundles/Bundle 590174/com.gantry.finance/suitelet/Gantry_Suitelet.js'
-                // Extract base path by removing '/suitelet/Gantry_Suitelet.js'
-                _cachedBasePath = fullPath.replace(/^\//, '').replace(/\/suitelet\/Gantry_Suitelet\.js$/i, '');
-                log.debug('Detected Base Path', _cachedBasePath);
-                return _cachedBasePath;
-            }
-        } catch (e) {
-            log.error('Script File Lookup Failed', { message: e.message, stack: e.stack });
-        }
-
-        // Method 2: Fallback - try direct file load to test SuiteApps path
-        try {
-            file.load({ id: 'SuiteApps/com.gantry.finance/App/gantry_index.html' });
+        if (bundleIds && bundleIds.length > 0) {
+            // Script is part of a bundle - use SuiteBundles path
+            _cachedBasePath = 'SuiteBundles/Bundle ' + bundleIds[0] + '/com.gantry.finance';
+        } else {
+            // Script is not bundled - use SuiteApps path
             _cachedBasePath = 'SuiteApps/com.gantry.finance';
-            log.debug('Using SuiteApps Path (verified)', _cachedBasePath);
-            return _cachedBasePath;
-        } catch (e) {
-            log.debug('SuiteApps path not found', e.message);
         }
 
-        // Method 3: Final fallback
-        _cachedBasePath = 'SuiteApps/com.gantry.finance';
-        log.audit('Using Fallback Base Path (unverified)', _cachedBasePath);
+        log.debug('Using Base Path', _cachedBasePath);
         return _cachedBasePath;
     }
 
