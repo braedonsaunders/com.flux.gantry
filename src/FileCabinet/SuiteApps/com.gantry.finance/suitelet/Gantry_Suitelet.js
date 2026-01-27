@@ -46,28 +46,34 @@ define([
         }
 
         try {
-            // Search for gantry_index.html to find where the app is installed
+            // Search for gantry_index.html files
             const fileSearch = search.create({
                 type: search.Type.FILE,
                 filters: [
-                    ['name', 'is', 'gantry_index.html'],
-                    'AND',
-                    ['folder', 'contains', 'com.gantry.finance']
+                    ['name', 'is', 'gantry_index.html']
                 ],
                 columns: ['name']
             });
 
-            const results = fileSearch.run().getRange({ start: 0, end: 1 });
-            if (results.length > 0) {
-                // Load the file to get its full path
-                const fileObj = file.load({ id: results[0].id });
-                // fileObj.path will be like '/SuiteApps/com.gantry.finance/App/gantry_index.html'
-                // or '/SuiteBundles/Bundle 590174/com.gantry.finance/App/gantry_index.html'
-                const fullPath = fileObj.path;
-                // Extract base path by removing leading slash and '/App/gantry_index.html'
-                _cachedBasePath = fullPath.replace(/^\//, '').replace(/\/App\/gantry_index\.html$/, '');
-                log.debug('Detected Base Path', _cachedBasePath);
-                return _cachedBasePath;
+            const results = fileSearch.run().getRange({ start: 0, end: 10 });
+
+            // Find the one that belongs to our app (contains com.gantry.finance in path)
+            for (let i = 0; i < results.length; i++) {
+                try {
+                    const fileObj = file.load({ id: results[i].id });
+                    const fullPath = fileObj.path;
+
+                    // Check if this is our app's file
+                    if (fullPath.indexOf('com.gantry.finance') !== -1) {
+                        // Extract base path by removing leading slash and '/App/gantry_index.html'
+                        _cachedBasePath = fullPath.replace(/^\//, '').replace(/\/App\/gantry_index\.html$/, '');
+                        log.debug('Detected Base Path', _cachedBasePath);
+                        return _cachedBasePath;
+                    }
+                } catch (loadErr) {
+                    // Skip files we can't load
+                    continue;
+                }
             }
         } catch (e) {
             log.error('Base Path Detection Failed', e.message);
