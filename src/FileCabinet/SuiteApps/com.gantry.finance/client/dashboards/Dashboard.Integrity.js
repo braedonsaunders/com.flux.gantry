@@ -1464,7 +1464,7 @@
                 return '<tr class="clickable-row" onclick="IntegrityController.openEntityFlyout(\'vendor\', \'' + g.vendorId + '\', \'' + (g.vendorName || '').replace(/'/g, "\\'") + '\')">' +
                     '<td><strong>' + g.vendorName + '</strong></td>' +
                     '<td>' + (g.employeeName || 'Unknown') + '</td>' +
-                    '<td class="small text-truncate" style="max-width: 200px;" title="' + (g.matchedAddress || '') + '">' + (g.matchedAddress || 'Address match') + '</td>' +
+                    '<td class="small text-truncate" style="max-width: 200px;" title="' + (g.matchedAddress || '') + '">' + (g.matchedAddress || (g.matchType === 'name' ? 'Name match only' : 'Address match')) + '</td>' +
                     '<td class="text-center">' + (g.transactionCount || 0) + '</td>' +
                     '<td class="text-right font-weight-bold">' + fmtMoney(g.totalAmount || 0) + '</td>' +
                     '<td>' + self.renderFlagActions({ id: g.vendorId, flagType: 'ghost' }) + '</td>' +
@@ -1592,7 +1592,7 @@
             ]);
             
             // Apply sorting
-            var sort = this.tableSort && this.tableSort.weekend ? this.tableSort.weekend : { col: 'tranDate', dir: 'desc' };
+            var sort = this.tableSort && this.tableSort.weekend ? this.tableSort.weekend : { col: 'dateCreated', dir: 'desc' };
             var sortedEntries = entries.slice().sort(function(a, b) {
                 var aVal = a[sort.col], bVal = b[sort.col];
                 if (sort.col === 'amount' || sort.col === 'riskScore') {
@@ -1606,14 +1606,14 @@
             var rowsHtml = pageItems.map(function(e, idx) { 
                 var createdByDisplay = e.createdBy || (e.createdById ? 'User #' + e.createdById : '-'); 
                 var globalIdx = startIdx + idx;
-                return '<tr class="clickable-row" onclick="IntegrityController.openWeekendDetailFlyout(' + globalIdx + ')"><td>' + e.tranDate + '</td><td><span class="day-badge ' + e.dayType.toLowerCase() + '">' + e.dayType + '</span></td><td>' + getNsLink(e.tranId || 'N/A', e.id) + '</td><td>' + e.type + '</td><td class="text-right font-weight-bold">' + fmtMoney(e.amount, 2) + '</td><td>' + createdByDisplay + '</td><td><span class="severity-dot ' + self.getSeverityClass(e.riskScore) + '"></span> ' + Math.round(e.riskScore || 0) + '</td></tr>'; 
+                return '<tr class="clickable-row" onclick="IntegrityController.openWeekendDetailFlyout(' + globalIdx + ')"><td>' + (e.dateCreated || e.tranDate) + '</td><td><span class="day-badge ' + e.dayType.toLowerCase() + '">' + e.dayType + '</span></td><td>' + getNsLink(e.tranId || 'N/A', e.id) + '</td><td>' + e.type + '</td><td class="text-right font-weight-bold">' + fmtMoney(e.amount, 2) + '</td><td>' + createdByDisplay + '</td><td><span class="severity-dot ' + self.getSeverityClass(e.riskScore) + '"></span> ' + Math.round(e.riskScore || 0) + '</td></tr>';
             }).join('');
             var usersHtml = topUsers.map(function(u) { return '<div class="weekend-user-card clickable-row mr-2 mb-1" onclick="IntegrityController.openWeekendUserFlyout(\'' + u.id + '\', \'' + (u.name).replace(/'/g, "\\'") + '\')"><div class="wuc-avatar">' + self.getInitials(u.name) + '</div><div class="wuc-info"><div class="wuc-name">' + u.name + '</div><div class="wuc-stats">' + u.count + ' entries | ' + fmtMoney(u.amount, 2) + '</div></div></div>'; }).join('');
             
             container.innerHTML = kpiHtml + 
                 '<div class="alert alert-info py-2 mb-2"><i class="fas fa-calendar-week mr-2"></i><strong>Weekend Entry Analysis</strong> - Transactions created on Saturdays or Sundays may indicate unauthorized activity or control bypass.</div>' +
                 '<div class="mb-2"><small class="text-muted font-weight-bold"><i class="fas fa-users mr-1"></i>Top Weekend Users</small><div class="d-flex flex-wrap mt-1">' + usersHtml + '</div></div>' +
-                '<div class="table-responsive"><table class="table table-sm table-hover weekend-table"><thead><tr><th style="cursor:pointer" onclick="IntegrityController.sortTable(\'weekend\',\'tranDate\')">Date <i class="fas ' + sortIcon('tranDate') + '"></i></th><th style="cursor:pointer" onclick="IntegrityController.sortTable(\'weekend\',\'dayType\')">Day <i class="fas ' + sortIcon('dayType') + '"></i></th><th>Tran #</th><th style="cursor:pointer" onclick="IntegrityController.sortTable(\'weekend\',\'type\')">Type <i class="fas ' + sortIcon('type') + '"></i></th><th class="text-right" style="cursor:pointer" onclick="IntegrityController.sortTable(\'weekend\',\'amount\')">Amount <i class="fas ' + sortIcon('amount') + '"></i></th><th style="cursor:pointer" onclick="IntegrityController.sortTable(\'weekend\',\'createdBy\')">Created By <i class="fas ' + sortIcon('createdBy') + '"></i></th><th style="cursor:pointer" onclick="IntegrityController.sortTable(\'weekend\',\'riskScore\')">Risk <i class="fas ' + sortIcon('riskScore') + '"></i></th></tr></thead><tbody>' + rowsHtml + '</tbody></table></div>' + 
+                '<div class="table-responsive"><table class="table table-sm table-hover weekend-table"><thead><tr><th style="cursor:pointer" onclick="IntegrityController.sortTable(\'weekend\',\'dateCreated\')">Created Date <i class="fas ' + sortIcon('dateCreated') + '"></i></th><th style="cursor:pointer" onclick="IntegrityController.sortTable(\'weekend\',\'dayType\')">Day <i class="fas ' + sortIcon('dayType') + '"></i></th><th>Tran #</th><th style="cursor:pointer" onclick="IntegrityController.sortTable(\'weekend\',\'type\')">Type <i class="fas ' + sortIcon('type') + '"></i></th><th class="text-right" style="cursor:pointer" onclick="IntegrityController.sortTable(\'weekend\',\'amount\')">Amount <i class="fas ' + sortIcon('amount') + '"></i></th><th style="cursor:pointer" onclick="IntegrityController.sortTable(\'weekend\',\'createdBy\')">Created By <i class="fas ' + sortIcon('createdBy') + '"></i></th><th style="cursor:pointer" onclick="IntegrityController.sortTable(\'weekend\',\'riskScore\')">Risk <i class="fas ' + sortIcon('riskScore') + '"></i></th></tr></thead><tbody>' + rowsHtml + '</tbody></table></div>' +
                 this.renderPagination(entries.length, pag.page, pag.pageSize, 'weekend');
         },
         

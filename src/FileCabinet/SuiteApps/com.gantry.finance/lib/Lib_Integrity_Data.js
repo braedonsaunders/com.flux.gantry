@@ -881,14 +881,16 @@ function(query, record, search, runtime, format, Core, Utils) {
     
     function analyzeWeekendSQL(startDate, endDate, subsidiaryId) {
         const subFilter = subsidiaryId ? `AND T.subsidiary = ${subsidiaryId}` : '';
-        
-        // CORRECTED: Use numeric day (D format: 1=Sunday, 7=Saturday in Oracle default)
-        // Also keep name-based detection as fallback for different NLS settings
+
+        // Weekend detection keyed off datecreated (when the record was actually
+        // entered into the system) rather than trandate (the user-editable
+        // accounting date). This correctly flags records created on weekends.
         const sql = `
-            SELECT T.id, T.tranid, TO_CHAR(T.trandate, 'MM/DD/YYYY') AS trandate, T.type,
+            SELECT T.id, T.tranid, TO_CHAR(T.trandate, 'MM/DD/YYYY') AS trandate,
+                TO_CHAR(T.datecreated, 'MM/DD/YYYY') AS datecreated, T.type,
                 ABS(COALESCE(T.foreigntotal, 0)) AS amount,
-                UPPER(TRIM(TO_CHAR(T.trandate, 'DY'))) AS day_name,
-                TO_CHAR(T.trandate, 'D') AS day_num,
+                UPPER(TRIM(TO_CHAR(T.datecreated, 'DY'))) AS day_name,
+                TO_CHAR(T.datecreated, 'D') AS day_num,
                 T.createdby AS createdbyid,
                 BUILTIN.DF(T.createdby) AS createdby
             FROM Transaction T
@@ -896,15 +898,15 @@ function(query, record, search, runtime, format, Core, Utils) {
                 AND T.trandate <= TO_DATE('${endDate}', 'YYYY-MM-DD')
                 AND T.type IN (${VENDOR_TRAN_TYPES})
                 AND (
-                    TO_CHAR(T.trandate, 'D') IN ('1', '7')
-                    OR UPPER(TRIM(TO_CHAR(T.trandate, 'DY'))) IN ('SAT', 'SUN', 'SA', 'SO', 'SÁ', 'DO')
-                    OR UPPER(TRIM(TO_CHAR(T.trandate, 'DAY'))) LIKE '%SAT%'
-                    OR UPPER(TRIM(TO_CHAR(T.trandate, 'DAY'))) LIKE '%SUN%'
+                    TO_CHAR(T.datecreated, 'D') IN ('1', '7')
+                    OR UPPER(TRIM(TO_CHAR(T.datecreated, 'DY'))) IN ('SAT', 'SUN', 'SA', 'SO', 'SÁ', 'DO')
+                    OR UPPER(TRIM(TO_CHAR(T.datecreated, 'DAY'))) LIKE '%SAT%'
+                    OR UPPER(TRIM(TO_CHAR(T.datecreated, 'DAY'))) LIKE '%SUN%'
                 )
                 ${subFilter}
-            ORDER BY T.trandate DESC
+            ORDER BY T.datecreated DESC
         `;
-        
+
         try {
             const weekendResults = runSuiteQL(sql);
             const fetchedCount = weekendResults ? weekendResults.length : 0;
@@ -912,32 +914,33 @@ function(query, record, search, runtime, format, Core, Utils) {
                 phase: 'fetch',
                 fetchedCount: fetchedCount
             });
-            
+
             if (!weekendResults || weekendResults.length === 0) {
                 return [];
             }
-            
+
             return weekendResults.map(row => {
                 const amount = parseFloat(row.amount) || 0;
                 const dayNum = row.day_num;
                 const dayName = (row.day_name || '').toUpperCase();
-                
+
                 // Use numeric day as primary, fall back to name
                 const isSunday = dayNum === '1' || dayName.includes('SUN') || dayName === 'SO' || dayName === 'DO';
                 const dayType = isSunday ? 'Sunday' : 'Saturday';
-                
+
                 let score = 35;
                 if (amount >= CRITICAL_RISK_AMOUNT) score += 30;
                 else if (amount >= HIGH_RISK_AMOUNT) score += 20;
                 if (isSunday) score += 10;
-                
+
                 return {
-                    id: row.id, tranId: row.tranid, tranDate: row.trandate, type: row.type,
+                    id: row.id, tranId: row.tranid, tranDate: row.trandate,
+                    dateCreated: row.datecreated, type: row.type,
                     amount, dayType: dayType, dayName: row.day_name,
                     createdById: row.createdbyid,
                     createdBy: row.createdby || (row.createdbyid ? 'User #' + row.createdbyid : 'Unknown'),
                     flagType: 'weekend',
-                    reason: `Transaction on ${dayType}`,
+                    reason: `Created on ${dayType}`,
                     riskScore: Math.min(100, score)
                 };
             });
@@ -1560,53 +1563,136 @@ function(query, record, search, runtime, format, Core, Utils) {
     
     function detectGhostVendors(subsidiaryId) {
         const subFilter = subsidiaryId ? `AND v.subsidiary = ${subsidiaryId}` : '';
-        
-        // Simplified query - matches vendor names to employee names
-        // Note: Address-based matching disabled due to field availability issues
-        const sql = `
+
+        // --- Phase 1: Name matching (existing logic) ---
+        const nameSql = `
             SELECT v.id AS vendor_id, v.entityid AS vendor_name, v.companyname,
                 e.id AS employee_id, e.entityid AS employee_name
             FROM Vendor v
-            JOIN Employee e ON 
+            JOIN Employee e ON
                 (
                     UPPER(TRIM(v.entityid)) = UPPER(TRIM(e.entityid))
                     OR UPPER(TRIM(v.companyname)) = UPPER(TRIM(e.firstname || ' ' || e.lastname))
                     OR (v.companyname IS NOT NULL AND UPPER(TRIM(v.companyname)) = UPPER(TRIM(e.entityid)))
                 )
-            WHERE v.isinactive = 'F' 
-                AND e.isinactive = 'F' 
+            WHERE v.isinactive = 'F'
+                AND e.isinactive = 'F'
                 AND v.isperson = 'F'
                 ${subFilter}
             FETCH FIRST 50 ROWS ONLY
         `;
-        
-        try {
-            const results = runSuiteQL(sql);
 
-            // Deduplicate by vendor-employee pair using object instead of Set
+        // --- Phase 2: Fuzzy address matching via zip+city ---
+        // Joins VendorAddressbook and EmployeeAddressbook on normalized zip and city,
+        // which catches vendors registered at an employee's home address even when
+        // names are completely different.
+        const addrSql = `
+            SELECT v.id AS vendor_id, v.entityid AS vendor_name, v.companyname,
+                e.id AS employee_id, e.entityid AS employee_name,
+                TRIM(va.addr1) AS vendor_addr1, TRIM(va.city) AS vendor_city,
+                TRIM(va.zip) AS vendor_zip, TRIM(va.state) AS vendor_state,
+                TRIM(ea.addr1) AS employee_addr1, TRIM(ea.city) AS employee_city,
+                TRIM(ea.zip) AS employee_zip, TRIM(ea.state) AS employee_state
+            FROM Vendor v
+            JOIN VendorAddressbook va ON va.entity = v.id
+            JOIN EmployeeAddressbook ea ON (
+                UPPER(TRIM(REGEXP_REPLACE(va.zip, '[^0-9A-Za-z]', '')))
+                    = UPPER(TRIM(REGEXP_REPLACE(ea.zip, '[^0-9A-Za-z]', '')))
+                AND UPPER(TRIM(va.city)) = UPPER(TRIM(ea.city))
+            )
+            JOIN Employee e ON e.id = ea.entity
+            WHERE v.isinactive = 'F'
+                AND e.isinactive = 'F'
+                AND va.zip IS NOT NULL AND ea.zip IS NOT NULL
+                AND va.city IS NOT NULL AND ea.city IS NOT NULL
+                ${subFilter}
+            FETCH FIRST 50 ROWS ONLY
+        `;
+
+        try {
+            // Run both queries — address query is wrapped in its own try/catch so
+            // a missing table or permission issue doesn't break the entire check
+            const nameResults = runSuiteQL(nameSql);
+            var addrResults = [];
+            try {
+                addrResults = runSuiteQL(addrSql) || [];
+            } catch (addrErr) {
+                log.audit('Ghost Vendor Address Query Skipped', addrErr.message || String(addrErr));
+            }
+
+            // Deduplicate by vendor-employee pair, tracking match type
             const seen = {};
             const unique = [];
-            if (results && Array.isArray(results)) {
-                results.forEach(row => {
-                    const key = row.vendor_id + '-' + row.employee_id;
-                    if (!seen[key]) {
-                        seen[key] = true;
-                        unique.push(row);
+
+            function addRow(row, matchType) {
+                var key = row.vendor_id + '-' + row.employee_id;
+                if (!seen[key]) {
+                    seen[key] = matchType;
+                    row._matchType = matchType;
+                    unique.push(row);
+                } else if (matchType === 'name+address' && seen[key] !== 'name+address') {
+                    // Upgrade match type when both name and address match
+                    seen[key] = 'name+address';
+                    for (var i = 0; i < unique.length; i++) {
+                        if (unique[i].vendor_id === row.vendor_id && unique[i].employee_id === row.employee_id) {
+                            unique[i]._matchType = 'name+address';
+                            // Merge address fields from the address row
+                            unique[i].vendor_addr1 = row.vendor_addr1;
+                            unique[i].vendor_city = row.vendor_city;
+                            unique[i].vendor_zip = row.vendor_zip;
+                            unique[i].employee_addr1 = row.employee_addr1;
+                            unique[i].employee_city = row.employee_city;
+                            unique[i].employee_zip = row.employee_zip;
+                            break;
+                        }
                     }
+                }
+            }
+
+            if (nameResults && Array.isArray(nameResults)) {
+                nameResults.forEach(function(row) { addRow(row, 'name'); });
+            }
+
+            // Check which address matches also have name matches to upgrade
+            if (addrResults && Array.isArray(addrResults)) {
+                addrResults.forEach(function(row) {
+                    var key = row.vendor_id + '-' + row.employee_id;
+                    addRow(row, seen[key] === 'name' ? 'name+address' : 'address');
                 });
             }
 
-            return unique.map(row => ({
-                vendorId: row.vendor_id,
-                vendorName: row.vendor_name || row.companyname,
-                vendorAddress: '', // Address matching disabled
-                employeeId: row.employee_id,
-                employeeName: row.employee_name,
-                employeeAddress: '', // Address matching disabled
-                flagType: 'ghost',
-                reason: 'Vendor "' + (row.vendor_name || row.companyname) + '" name matches employee "' + row.employee_name + '"',
-                riskScore: 85
-            }));
+            return unique.map(function(row) {
+                var matchType = row._matchType || 'name';
+                var vendorAddr = row.vendor_addr1 ? [row.vendor_addr1, row.vendor_city, row.vendor_state, row.vendor_zip].filter(Boolean).join(', ') : '';
+                var employeeAddr = row.employee_addr1 ? [row.employee_addr1, row.employee_city, row.employee_state, row.employee_zip].filter(Boolean).join(', ') : '';
+                var matchedAddr = vendorAddr || employeeAddr;
+
+                // Graduate risk score: name+address (95) > address-only (90) > name-only (75)
+                var riskScore = matchType === 'name+address' ? 95 : (matchType === 'address' ? 90 : 75);
+
+                var reason;
+                if (matchType === 'name+address') {
+                    reason = 'Vendor "' + (row.vendor_name || row.companyname) + '" name AND address match employee "' + row.employee_name + '"';
+                } else if (matchType === 'address') {
+                    reason = 'Vendor "' + (row.vendor_name || row.companyname) + '" shares address with employee "' + row.employee_name + '" (' + matchedAddr + ')';
+                } else {
+                    reason = 'Vendor "' + (row.vendor_name || row.companyname) + '" name matches employee "' + row.employee_name + '"';
+                }
+
+                return {
+                    vendorId: row.vendor_id,
+                    vendorName: row.vendor_name || row.companyname,
+                    vendorAddress: vendorAddr,
+                    employeeId: row.employee_id,
+                    employeeName: row.employee_name,
+                    employeeAddress: employeeAddr,
+                    matchedAddress: matchedAddr,
+                    matchType: matchType,
+                    flagType: 'ghost',
+                    reason: reason,
+                    riskScore: riskScore
+                };
+            });
         } catch (e) {
             log.error('Ghost Vendor Error', e);
             return [];
@@ -2782,11 +2868,12 @@ function(query, record, search, runtime, format, Core, Utils) {
     function getWeekendUserEntries(userId, startDate, endDate, subsidiaryId) {
         if (!userId) return [];
         const subFilter = subsidiaryId ? `AND T.subsidiary = ${subsidiaryId}` : '';
-        
+
         const sql = `
-            SELECT T.id, T.tranid, TO_CHAR(T.trandate, 'MM/DD/YYYY') AS trandate, 
+            SELECT T.id, T.tranid, TO_CHAR(T.trandate, 'MM/DD/YYYY') AS trandate,
+                TO_CHAR(T.datecreated, 'MM/DD/YYYY') AS datecreated,
                 T.type, ABS(T.foreigntotal) AS amount,
-                UPPER(TRIM(TO_CHAR(T.trandate, 'DY'))) AS day_name,
+                UPPER(TRIM(TO_CHAR(T.datecreated, 'DY'))) AS day_name,
                 BUILTIN.DF(TL.entity) AS entityName,
                 BUILTIN.DF(T.createdby) AS createdBy
             FROM Transaction T
@@ -2794,13 +2881,13 @@ function(query, record, search, runtime, format, Core, Utils) {
             WHERE T.createdby = ${userId}
                 AND T.trandate >= TO_DATE('${startDate || getDefaultStartDate()}', 'YYYY-MM-DD')
                 AND T.trandate <= TO_DATE('${endDate || Core.getDefaultEndDate()}', 'YYYY-MM-DD')
-                AND (UPPER(TRIM(TO_CHAR(T.trandate, 'DY'))) IN ('SAT', 'SUN')
-                     OR UPPER(TRIM(TO_CHAR(T.trandate, 'DAY'))) IN ('SATURDAY', 'SUNDAY'))
+                AND (UPPER(TRIM(TO_CHAR(T.datecreated, 'DY'))) IN ('SAT', 'SUN')
+                     OR UPPER(TRIM(TO_CHAR(T.datecreated, 'DAY'))) IN ('SATURDAY', 'SUNDAY'))
                 ${subFilter}
-            ORDER BY T.trandate DESC
+            ORDER BY T.datecreated DESC
             FETCH FIRST 100 ROWS ONLY
         `;
-        
+
         try {
             const results = runSuiteQL(sql);
             return (results || []).map(row => {
@@ -2810,6 +2897,7 @@ function(query, record, search, runtime, format, Core, Utils) {
                     id: row.id,
                     tranId: row.tranid,
                     tranDate: row.trandate,
+                    dateCreated: row.datecreated,
                     type: row.type,
                     amount: parseFloat(row.amount) || 0,
                     dayType: isSunday ? 'Sunday' : 'Saturday',
