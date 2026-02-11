@@ -882,15 +882,15 @@ function(query, record, search, runtime, format, Core, Utils) {
     function analyzeWeekendSQL(startDate, endDate, subsidiaryId) {
         const subFilter = subsidiaryId ? `AND T.subsidiary = ${subsidiaryId}` : '';
 
-        // Weekend detection keyed off datecreated (when the record was actually
+        // Weekend detection keyed off createddate (when the record was actually
         // entered into the system) rather than trandate (the user-editable
         // accounting date). This correctly flags records created on weekends.
         const sql = `
             SELECT T.id, T.tranid, TO_CHAR(T.trandate, 'MM/DD/YYYY') AS trandate,
-                TO_CHAR(T.datecreated, 'MM/DD/YYYY') AS datecreated, T.type,
+                TO_CHAR(T.createddate, 'MM/DD/YYYY') AS createddate, T.type,
                 ABS(COALESCE(T.foreigntotal, 0)) AS amount,
-                UPPER(TRIM(TO_CHAR(T.datecreated, 'DY'))) AS day_name,
-                TO_CHAR(T.datecreated, 'D') AS day_num,
+                UPPER(TRIM(TO_CHAR(T.createddate, 'DY'))) AS day_name,
+                TO_CHAR(T.createddate, 'D') AS day_num,
                 T.createdby AS createdbyid,
                 BUILTIN.DF(T.createdby) AS createdby
             FROM Transaction T
@@ -898,13 +898,13 @@ function(query, record, search, runtime, format, Core, Utils) {
                 AND T.trandate <= TO_DATE('${endDate}', 'YYYY-MM-DD')
                 AND T.type IN (${VENDOR_TRAN_TYPES})
                 AND (
-                    TO_CHAR(T.datecreated, 'D') IN ('1', '7')
-                    OR UPPER(TRIM(TO_CHAR(T.datecreated, 'DY'))) IN ('SAT', 'SUN', 'SA', 'SO', 'SÁ', 'DO')
-                    OR UPPER(TRIM(TO_CHAR(T.datecreated, 'DAY'))) LIKE '%SAT%'
-                    OR UPPER(TRIM(TO_CHAR(T.datecreated, 'DAY'))) LIKE '%SUN%'
+                    TO_CHAR(T.createddate, 'D') IN ('1', '7')
+                    OR UPPER(TRIM(TO_CHAR(T.createddate, 'DY'))) IN ('SAT', 'SUN', 'SA', 'SO', 'SÁ', 'DO')
+                    OR UPPER(TRIM(TO_CHAR(T.createddate, 'DAY'))) LIKE '%SAT%'
+                    OR UPPER(TRIM(TO_CHAR(T.createddate, 'DAY'))) LIKE '%SUN%'
                 )
                 ${subFilter}
-            ORDER BY T.datecreated DESC
+            ORDER BY T.createddate DESC
         `;
 
         try {
@@ -935,7 +935,7 @@ function(query, record, search, runtime, format, Core, Utils) {
 
                 return {
                     id: row.id, tranId: row.tranid, tranDate: row.trandate,
-                    dateCreated: row.datecreated, type: row.type,
+                    dateCreated: row.createddate, type: row.type,
                     amount, dayType: dayType, dayName: row.day_name,
                     createdById: row.createdbyid,
                     createdBy: row.createdby || (row.createdbyid ? 'User #' + row.createdbyid : 'Unknown'),
@@ -1583,28 +1583,29 @@ function(query, record, search, runtime, format, Core, Utils) {
         `;
 
         // --- Phase 2: Fuzzy address matching via zip+city ---
-        // Joins VendorAddressbook and EmployeeAddressbook on normalized zip and city,
-        // which catches vendors registered at an employee's home address even when
-        // names are completely different.
+        // Joins VendorAddressbook → EntityAddress and EmployeeAddressbook → EntityAddress
+        // on normalized zip and city, catching vendors registered at an employee's home
+        // address even when names are completely different.
         const addrSql = `
             SELECT v.id AS vendor_id, v.entityid AS vendor_name, v.companyname,
                 e.id AS employee_id, e.entityid AS employee_name,
-                TRIM(va.addr1) AS vendor_addr1, TRIM(va.city) AS vendor_city,
-                TRIM(va.zip) AS vendor_zip, TRIM(va.state) AS vendor_state,
-                TRIM(ea.addr1) AS employee_addr1, TRIM(ea.city) AS employee_city,
-                TRIM(ea.zip) AS employee_zip, TRIM(ea.state) AS employee_state
+                TRIM(vaAddr.addr1) AS vendor_addr1, TRIM(vaAddr.city) AS vendor_city,
+                TRIM(vaAddr.zip) AS vendor_zip, TRIM(vaAddr.state) AS vendor_state,
+                TRIM(eaAddr.addr1) AS employee_addr1, TRIM(eaAddr.city) AS employee_city,
+                TRIM(eaAddr.zip) AS employee_zip, TRIM(eaAddr.state) AS employee_state
             FROM Vendor v
-            JOIN VendorAddressbook va ON va.entity = v.id
-            JOIN EmployeeAddressbook ea ON (
-                UPPER(TRIM(REGEXP_REPLACE(va.zip, '[^0-9A-Za-z]', '')))
-                    = UPPER(TRIM(REGEXP_REPLACE(ea.zip, '[^0-9A-Za-z]', '')))
-                AND UPPER(TRIM(va.city)) = UPPER(TRIM(ea.city))
-            )
-            JOIN Employee e ON e.id = ea.entity
+            JOIN VendorAddressbook vab ON vab.entity = v.id
+            JOIN EntityAddress vaAddr ON vaAddr.nkey = vab.addressbookaddress
+            JOIN EmployeeAddressbook eab ON 1=1
+            JOIN EntityAddress eaAddr ON eaAddr.nkey = eab.addressbookaddress
+                AND UPPER(TRIM(REGEXP_REPLACE(vaAddr.zip, '[^0-9A-Za-z]', '')))
+                    = UPPER(TRIM(REGEXP_REPLACE(eaAddr.zip, '[^0-9A-Za-z]', '')))
+                AND UPPER(TRIM(vaAddr.city)) = UPPER(TRIM(eaAddr.city))
+            JOIN Employee e ON e.id = eab.entity
             WHERE v.isinactive = 'F'
                 AND e.isinactive = 'F'
-                AND va.zip IS NOT NULL AND ea.zip IS NOT NULL
-                AND va.city IS NOT NULL AND ea.city IS NOT NULL
+                AND vaAddr.zip IS NOT NULL AND eaAddr.zip IS NOT NULL
+                AND vaAddr.city IS NOT NULL AND eaAddr.city IS NOT NULL
                 ${subFilter}
             FETCH FIRST 50 ROWS ONLY
         `;
@@ -2871,9 +2872,9 @@ function(query, record, search, runtime, format, Core, Utils) {
 
         const sql = `
             SELECT T.id, T.tranid, TO_CHAR(T.trandate, 'MM/DD/YYYY') AS trandate,
-                TO_CHAR(T.datecreated, 'MM/DD/YYYY') AS datecreated,
+                TO_CHAR(T.createddate, 'MM/DD/YYYY') AS createddate,
                 T.type, ABS(T.foreigntotal) AS amount,
-                UPPER(TRIM(TO_CHAR(T.datecreated, 'DY'))) AS day_name,
+                UPPER(TRIM(TO_CHAR(T.createddate, 'DY'))) AS day_name,
                 BUILTIN.DF(TL.entity) AS entityName,
                 BUILTIN.DF(T.createdby) AS createdBy
             FROM Transaction T
@@ -2881,10 +2882,10 @@ function(query, record, search, runtime, format, Core, Utils) {
             WHERE T.createdby = ${userId}
                 AND T.trandate >= TO_DATE('${startDate || getDefaultStartDate()}', 'YYYY-MM-DD')
                 AND T.trandate <= TO_DATE('${endDate || Core.getDefaultEndDate()}', 'YYYY-MM-DD')
-                AND (UPPER(TRIM(TO_CHAR(T.datecreated, 'DY'))) IN ('SAT', 'SUN')
-                     OR UPPER(TRIM(TO_CHAR(T.datecreated, 'DAY'))) IN ('SATURDAY', 'SUNDAY'))
+                AND (UPPER(TRIM(TO_CHAR(T.createddate, 'DY'))) IN ('SAT', 'SUN')
+                     OR UPPER(TRIM(TO_CHAR(T.createddate, 'DAY'))) IN ('SATURDAY', 'SUNDAY'))
                 ${subFilter}
-            ORDER BY T.datecreated DESC
+            ORDER BY T.createddate DESC
             FETCH FIRST 100 ROWS ONLY
         `;
 
@@ -2897,7 +2898,7 @@ function(query, record, search, runtime, format, Core, Utils) {
                     id: row.id,
                     tranId: row.tranid,
                     tranDate: row.trandate,
-                    dateCreated: row.datecreated,
+                    dateCreated: row.createddate,
                     type: row.type,
                     amount: parseFloat(row.amount) || 0,
                     dayType: isSunday ? 'Sunday' : 'Saturday',
