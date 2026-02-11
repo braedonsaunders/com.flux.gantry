@@ -1582,10 +1582,11 @@ function(query, record, search, runtime, format, Core, Utils) {
             FETCH FIRST 50 ROWS ONLY
         `;
 
-        // --- Phase 2: Fuzzy address matching via zip+city ---
-        // Joins VendorAddressbook → EntityAddress and EmployeeAddressbook → EntityAddress
-        // on normalized zip and city, catching vendors registered at an employee's home
-        // address even when names are completely different.
+        // --- Phase 2: Fuzzy address matching via addr1+zip ---
+        // Joins VendorAddressbook → EntityAddress and EmployeeAddressbook → EntityAddress.
+        // Requires normalized addr1 match (strips periods, extra spaces) plus zip match
+        // to catch vendors registered at an employee's home address.
+        // Zip+city alone is too broad — it flags everyone in the same small town.
         const addrSql = `
             SELECT v.id AS vendor_id, v.entityid AS vendor_name, v.companyname,
                 e.id AS employee_id, e.entityid AS employee_name,
@@ -1600,12 +1601,13 @@ function(query, record, search, runtime, format, Core, Utils) {
             JOIN EntityAddress eaAddr ON eaAddr.nkey = eab.addressbookaddress
                 AND UPPER(TRIM(REGEXP_REPLACE(vaAddr.zip, '[^0-9A-Za-z]', '')))
                     = UPPER(TRIM(REGEXP_REPLACE(eaAddr.zip, '[^0-9A-Za-z]', '')))
-                AND UPPER(TRIM(vaAddr.city)) = UPPER(TRIM(eaAddr.city))
+                AND UPPER(TRIM(REGEXP_REPLACE(vaAddr.addr1, '[^0-9A-Za-z ]', '')))
+                    = UPPER(TRIM(REGEXP_REPLACE(eaAddr.addr1, '[^0-9A-Za-z ]', '')))
             JOIN Employee e ON e.id = eab.entity
             WHERE v.isinactive = 'F'
                 AND e.isinactive = 'F'
                 AND vaAddr.zip IS NOT NULL AND eaAddr.zip IS NOT NULL
-                AND vaAddr.city IS NOT NULL AND eaAddr.city IS NOT NULL
+                AND vaAddr.addr1 IS NOT NULL AND eaAddr.addr1 IS NOT NULL
                 ${subFilter}
             FETCH FIRST 50 ROWS ONLY
         `;
