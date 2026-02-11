@@ -1564,7 +1564,9 @@ function(query, record, search, runtime, format, Core, Utils) {
     function detectGhostVendors(subsidiaryId) {
         const subFilter = subsidiaryId ? `AND v.subsidiary = ${subsidiaryId}` : '';
 
-        // --- Phase 1: Name matching (existing logic) ---
+        // --- Phase 1: Name matching ---
+        // Exact matches plus fuzzy: checks if employee full name appears within
+        // vendor name/companyname (catches "Chad Boutin (Lamacoid Printing)" containing "Chad Boutin")
         const nameSql = `
             SELECT v.id AS vendor_id, v.entityid AS vendor_name, v.companyname,
                 e.id AS employee_id, e.entityid AS employee_name
@@ -1574,6 +1576,9 @@ function(query, record, search, runtime, format, Core, Utils) {
                     UPPER(TRIM(v.entityid)) = UPPER(TRIM(e.entityid))
                     OR UPPER(TRIM(v.companyname)) = UPPER(TRIM(e.firstname || ' ' || e.lastname))
                     OR (v.companyname IS NOT NULL AND UPPER(TRIM(v.companyname)) = UPPER(TRIM(e.entityid)))
+                    OR (e.firstname IS NOT NULL AND e.lastname IS NOT NULL
+                        AND (UPPER(v.entityid) LIKE '%' || UPPER(TRIM(e.firstname)) || ' ' || UPPER(TRIM(e.lastname)) || '%'
+                             OR UPPER(v.companyname) LIKE '%' || UPPER(TRIM(e.firstname)) || ' ' || UPPER(TRIM(e.lastname)) || '%'))
                 )
             WHERE v.isinactive = 'F'
                 AND e.isinactive = 'F'
@@ -1582,11 +1587,23 @@ function(query, record, search, runtime, format, Core, Utils) {
             FETCH FIRST 50 ROWS ONLY
         `;
 
-        // --- Phase 2: Fuzzy address matching via addr1+zip ---
+        // --- Phase 2: Fuzzy address matching via normalized addr1+zip ---
         // Joins VendorAddressbook → EntityAddress and EmployeeAddressbook → EntityAddress.
-        // Requires normalized addr1 match (strips periods, extra spaces) plus zip match
-        // to catch vendors registered at an employee's home address.
-        // Zip+city alone is too broad — it flags everyone in the same small town.
+        // Normalizes addr1 by stripping punctuation and expanding/collapsing common
+        // abbreviations (West↔W, Street↔St, Avenue↔Ave, etc.) before comparing.
+        // Requires normalized addr1 + zip match.
+        //
+        // Normalization helper applied to addr1 before comparison:
+        //   1. Strip punctuation (keep alphanumeric + spaces)
+        //   2. Replace full directional/street-type words with abbreviations
+        //      so "21 Fourteenth St. West" and "21 Fourteenth St. W." both become
+        //      "21 FOURTEENTH ST W"
+        const normalizeAddr = function(col) {
+            return `REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
+                UPPER(TRIM(REGEXP_REPLACE(${col}, '[^0-9A-Za-z ]', ''))),
+                ' WEST', ' W'), ' EAST', ' E'), ' NORTH', ' N'), ' SOUTH', ' S'),
+                ' STREET', ' ST'), ' AVENUE', ' AVE'), ' DRIVE', ' DR'), ' ROAD', ' RD')`;
+        };
         const addrSql = `
             SELECT v.id AS vendor_id, v.entityid AS vendor_name, v.companyname,
                 e.id AS employee_id, e.entityid AS employee_name,
@@ -1601,8 +1618,8 @@ function(query, record, search, runtime, format, Core, Utils) {
             JOIN EntityAddress eaAddr ON eaAddr.nkey = eab.addressbookaddress
                 AND UPPER(TRIM(REGEXP_REPLACE(vaAddr.zip, '[^0-9A-Za-z]', '')))
                     = UPPER(TRIM(REGEXP_REPLACE(eaAddr.zip, '[^0-9A-Za-z]', '')))
-                AND UPPER(TRIM(REGEXP_REPLACE(vaAddr.addr1, '[^0-9A-Za-z ]', '')))
-                    = UPPER(TRIM(REGEXP_REPLACE(eaAddr.addr1, '[^0-9A-Za-z ]', '')))
+                AND ${normalizeAddr('vaAddr.addr1')}
+                    = ${normalizeAddr('eaAddr.addr1')}
             JOIN Employee e ON e.id = eab.entity
             WHERE v.isinactive = 'F'
                 AND e.isinactive = 'F'
