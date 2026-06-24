@@ -832,8 +832,21 @@ define([
      */
     function getOpenRouterModels(apiKey) {
         try {
+            // The client passes a redacted key (secrets are masked for the UI), so the
+            // live fetch can't authenticate and falls back to the stale curated list.
+            // Resolve the real stored key, and force a fresh fetch so refresh refreshes.
+            var realKey = apiKey;
+            var looksRedacted = !realKey || String(realKey).length < 20 ||
+                String(realKey).indexOf('•') !== -1 ||
+                String(realKey).toLowerCase().indexOf('configured') !== -1;
+            if (looksRedacted) {
+                try {
+                    var cfg = ConfigLib.getStoredConfiguration('main') || {};
+                    if (cfg.openrouterApiKey) realKey = cfg.openrouterApiKey;
+                } catch (e) { /* keep whatever the client passed */ }
+            }
             if (ModelRegistry.getOpenRouterModelsForSettings) {
-                return ModelRegistry.getOpenRouterModelsForSettings(apiKey);
+                return ModelRegistry.getOpenRouterModelsForSettings(realKey, true);
             }
             // Fallback to curated list
             return {

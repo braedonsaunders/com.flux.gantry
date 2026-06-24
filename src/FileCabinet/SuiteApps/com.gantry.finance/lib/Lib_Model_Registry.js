@@ -455,25 +455,27 @@ define(['N/log', 'N/https', 'N/cache', './advisor/Lib_Advisor_Utils'], function(
      * @param {string} apiKey - OpenRouter API key
      * @returns {Array} List of available models
      */
-    function fetchOpenRouterModels(apiKey) {
+    function fetchOpenRouterModels(apiKey, forceRefresh) {
         if (!apiKey) {
             Utils.debugLog('No OpenRouter API key provided, returning curated list');
             return getCuratedOpenRouterModels();
         }
-        
+
         try {
-            // Try to get from cache first
+            // Try to get from cache first (skip when a refresh was requested)
             const modelCache = cache.getCache({
                 name: 'GantryOpenRouterModels',
                 scope: cache.Scope.PROTECTED
             });
-            
-            const cached = modelCache.get({ key: OPENROUTER_CACHE_KEY });
-            if (cached) {
-                try {
-                    return JSON.parse(cached);
-                } catch (e) {
-                    Utils.debugLog('Cache parse error, fetching fresh');
+
+            if (!forceRefresh) {
+                const cached = modelCache.get({ key: OPENROUTER_CACHE_KEY });
+                if (cached) {
+                    try {
+                        return JSON.parse(cached);
+                    } catch (e) {
+                        Utils.debugLog('Cache parse error, fetching fresh');
+                    }
                 }
             }
             
@@ -1306,8 +1308,8 @@ define(['N/log', 'N/https', 'N/cache', './advisor/Lib_Advisor_Utils'], function(
      * @param {string} apiKey - OpenRouter API key (optional)
      * @returns {Object} { models: Array, cached: boolean }
      */
-    function getOpenRouterModelsForSettings(apiKey) {
-        var models = fetchOpenRouterModels(apiKey);
+    function getOpenRouterModelsForSettings(apiKey, forceRefresh) {
+        var models = fetchOpenRouterModels(apiKey, forceRefresh);
         var tierLabels = { 1: 'T1 Fast', 2: 'T2 Balanced', 3: 'T3 Premium' };
         
         return {

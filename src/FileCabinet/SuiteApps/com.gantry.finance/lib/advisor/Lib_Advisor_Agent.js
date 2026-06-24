@@ -19,15 +19,20 @@ define([
     'use strict';
 
     /**
-     * Whether the native tool-use loop is enabled. Default: ON (Phase 3 cutover).
-     * The legacy phase machine remains available as an instant fallback — set
-     * `useNativeToolLoop: false` in the main config to switch back with no redeploy.
-     * On a config read failure we fall back to the legacy loop (safe default).
+     * Whether the native tool-use loop is enabled. Default: ON for the real-API
+     * providers (Anthropic, OpenAI, Gemini, OpenRouter, Grok). NetSuite's built-in
+     * N/llm (Cohere) does not round-trip native multi-turn tool calls reliably, so it
+     * stays on the proven legacy loop. Set `useNativeToolLoop: false` in the main
+     * config to force the legacy loop for every provider (no redeploy). On a config
+     * read failure we fall back to the legacy loop (safe default).
      */
     function isEnabled() {
         try {
             const cfg = Config.getStoredConfiguration('main') || {};
-            return cfg.useNativeToolLoop !== false && cfg.useNativeToolLoop !== 'false';
+            if (cfg.useNativeToolLoop === false || cfg.useNativeToolLoop === 'false') return false;
+            const provider = cfg.aiProvider || 'netsuite';
+            if (provider === 'netsuite') return false;
+            return true;
         } catch (e) {
             return false;
         }

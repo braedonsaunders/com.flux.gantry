@@ -91,6 +91,16 @@ define([
      * @param {Object} params - The parameters object to sanitize
      * @returns {Object} - Sanitized parameters with empty enum values removed
      */
+    // JSON-Schema keywords Gemini's functionDeclarations Schema (an OpenAPI 3.0 subset)
+    // rejects — sending any of them 400s the entire tools batch. Dropping them is safe:
+    // argument validation runs server-side in validateAndNormalizeArgs, not via the
+    // model-facing schema.
+    const GEMINI_UNSUPPORTED_SCHEMA_KEYS = {
+        default: true, additionalProperties: true, $schema: true, $ref: true, $id: true,
+        $defs: true, definitions: true, examples: true, example: true, const: true,
+        oneOf: true, allOf: true, not: true, patternProperties: true
+    };
+
     function sanitizeParametersForGemini(params) {
         if (!params || typeof params !== 'object') {
             return params;
@@ -100,6 +110,11 @@ define([
 
         for (const key in params) {
             if (!params.hasOwnProperty(key)) continue;
+
+            // Drop keywords Gemini doesn't accept in a function-declaration schema.
+            if (!Array.isArray(params) && GEMINI_UNSUPPORTED_SCHEMA_KEYS[key]) {
+                continue;
+            }
 
             const value = params[key];
 
