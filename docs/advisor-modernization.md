@@ -3,6 +3,29 @@
 > Internal engineering plan. Tracks the migration of the AI advisor from a handrolled
 > JSON-action agent loop to native provider tool-calling.
 
+## Implementation status
+
+All five phases are **implemented and merged on `advisor-modernization`**, verified by
+`node --check` on every edited file and the `npm test` harness (`verify-production-readiness.js`
++ `verify-advisor-harness.js`, which now also locks the native loop, the orchestrator dispatch,
+and `run_suiteql`).
+
+| Phase | Status | Notes |
+|---|---|---|
+| 0 — models + normalize + retry | ✅ done | Anthropic catalog → Opus 4.8 / Sonnet 4.6 / Haiku 4.5; fixed the retired BALANCED tier; `stopReason`+`usage` on every response; 429/5xx backoff. |
+| 1 — provider transport (5 providers) | ✅ done | Provider-neutral `messages` round-tripping `tool_use`/`tool_result` for Anthropic, OpenAI, OpenRouter, Grok, Gemini (id-synthesis), N/llm (text best-effort); Anthropic `cache_control`. |
+| 2 — native loop behind flag | ✅ done | `Lib_Advisor_Agent.js` facade + `runStepNative`/`executeReasonActNativePhase`; reuses INTENT / `executeToolForReasonAct` / RESPOND / `buildFinalResponse`; `run_suiteql` tool replaces SYNTHESIZE. |
+| 3 — cutover | ✅ default ON | `Agent.isEnabled()` defaults to native; legacy phase machine retained as the flag-off fallback (`useNativeToolLoop: false`). |
+| 4 — adaptive thinking/effort | ✅ done (opt-in) | Anthropic adaptive thinking + bounded effort via `advisorThinking`/`advisorEffort` config (default OFF — `N/https` is blocking). Structured-output final formatting intentionally skipped: the markdown-directive path already works. |
+
+> ⚠️ **Remaining gate — runtime validation.** This was built and statically verified without a
+> live NetSuite/provider environment. Before relying on it in production, run real questions per
+> provider in a sandbox (confirm `tool_use`→`tool_result` round-trips, `richContent` directives,
+> Anthropic prompt-cache hits, 429 backoff, governance headroom, and non-admin gating). **Instant
+> rollback:** set `useNativeToolLoop: false` in the main config — no redeploy. The physical removal
+> of the now-dead legacy FSM (`parseJsonResponse`, `SELECT/INVOKE/REFLECT`, circuit breakers) is
+> deliberately deferred until that sandbox parity is confirmed, per "delete after parity" below.
+
 ## Context
 
 The Gantry advisor is a ~26k-line handrolled multi-provider agent (`src/FileCabinet/SuiteApps/com.gantry.finance/lib/advisor/`). Its provider layer (`Lib_Advisor_AIProviders.js`) already implements **native** function-calling for all six backends (Anthropic, OpenAI, Gemini, OpenRouter, Grok, NetSuite `N/llm`) — it sends a `tools` array and parses `tool_use`/`tool_calls` into a normalized `{type:'tool_call', toolCalls:[{id,name,arguments}]}`. But the agent loop (`Lib_Advisor_StreamingAgent.js`, 10.3k lines) **bypasses that path**: it prompts each model to emit a custom JSON action (`{"action":"GET_DATA",...}`) and hand-parses the model's *text* with `parseJsonResponse()` at **13 sites** (vs. 1 native `toolCalls` read). The 65 tools (`Lib_Advisor_Tools.js`) already carry proper JSON-Schema `parameters`, so ~90% of native tool-calling exists and is routed around.

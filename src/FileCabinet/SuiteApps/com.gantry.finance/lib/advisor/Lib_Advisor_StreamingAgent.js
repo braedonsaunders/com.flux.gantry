@@ -42,8 +42,9 @@ define([
     './Lib_Advisor_Tools',
     './Lib_Advisor_Cache',
     './Lib_Advisor_Utils',
-    '../Lib_Dashboard_Registry'
-], function(log, AIProviders, Tools, Cache, Utils, DashboardRegistry) {
+    '../Lib_Dashboard_Registry',
+    '../Lib_Config'
+], function(log, AIProviders, Tools, Cache, Utils, DashboardRegistry, ConfigLib) {
     'use strict';
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -10082,6 +10083,24 @@ Reply JSON only: {"tools": ["tool1", "tool2"], "reasoning": "brief explanation"}
         let text = lines.join('\n') || 'Done.';
         if (text.length > 4000) text = text.substring(0, 4000) + '\n...(truncated)';
         return text;
+    }
+
+    /**
+     * Config-gated Anthropic adaptive thinking + effort for the native loop (Phase 4).
+     * Default OFF: N/https is blocking, so thinking adds RESTlet latency. When enabled,
+     * effort is bounded (default 'low') to stay within the per-poll request timeout.
+     * Returns null when disabled/unreadable. Ignored by non-Anthropic providers.
+     */
+    function getNativeThinkingOption() {
+        try {
+            const cfg = ConfigLib.getStoredConfiguration('main') || {};
+            if (cfg.advisorThinking === true || cfg.advisorThinking === 'true') {
+                const allowed = { low: true, medium: true, high: true };
+                const effort = allowed[cfg.advisorEffort] ? cfg.advisorEffort : 'low';
+                return { thinking: { type: 'adaptive' }, effort: effort };
+            }
+        } catch (e) { /* ignore — thinking is optional */ }
+        return null;
     }
 
     /**

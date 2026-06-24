@@ -19,13 +19,15 @@ define([
     'use strict';
 
     /**
-     * Whether the native tool-use loop is enabled. Phase 2 default: OFF (opt-in)
-     * so the legacy loop remains the safety net until runtime parity is validated.
+     * Whether the native tool-use loop is enabled. Default: ON (Phase 3 cutover).
+     * The legacy phase machine remains available as an instant fallback — set
+     * `useNativeToolLoop: false` in the main config to switch back with no redeploy.
+     * On a config read failure we fall back to the legacy loop (safe default).
      */
     function isEnabled() {
         try {
             const cfg = Config.getStoredConfiguration('main') || {};
-            return cfg.useNativeToolLoop === true || cfg.useNativeToolLoop === 'true';
+            return cfg.useNativeToolLoop !== false && cfg.useNativeToolLoop !== 'false';
         } catch (e) {
             return false;
         }
