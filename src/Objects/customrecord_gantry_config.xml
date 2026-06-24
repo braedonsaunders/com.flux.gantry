@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<customrecordtype scriptid="customrecord_gantry_config">
+    <recordname>Gantry Configuration</recordname>
+    <description>Stores configuration data for Gantry dashboards including dashboard settings and per-module configurations.</description>
+    <includename>F</includename>
+    <showid>F</showid>
+    <shownotes>F</shownotes>
+    <allowattachments>F</allowattachments>
+    <allowinlineediting>F</allowinlineediting>
+    <allowinlinedeleting>F</allowinlinedeleting>
+    <allowquickadd>F</allowquickadd>
+    <allowquicksearch>F</allowquicksearch>
+    <enabledle>F</enabledle>
+    <enablekeywords>F</enablekeywords>
+    <enablemailmerge>F</enablemailmerge>
+    <enablenumbering>F</enablenumbering>
+    <isinactive>F</isinactive>
+    <isordered>F</isordered>
+    <showcreationdate>F</showcreationdate>
+    <showcreationdateonlist>F</showcreationdateonlist>
+    <showlastmodified>F</showlastmodified>
+    <showlastmodifiedonlist>F</showlastmodifiedonlist>
+    <showowner>F</showowner>
+    <showownertononadmins>F</showownertononadmins>
+    <customrecordcustomfields>
+        <customrecordcustomfield scriptid="custrecord_gantry_config_json">
+            <label>Configuration JSON</label>
+            <description>JSON-encoded configuration data for this configuration type</description>
+            <fieldtype>TEXTAREA</fieldtype>
+            <displaytype>NORMAL</displaytype>
+            <displayheight>10</displayheight>
+            <displaywidth>80</displaywidth>
+            <isformula>F</isformula>
+            <ismandatory>F</ismandatory>
+            <maxlength>1000000</maxlength>
+            <storevalue>T</storevalue>
+        </customrecordcustomfield>
+    </customrecordcustomfields>
+    <permissions>
+        <permission>
+            <permittedrole>ADMINISTRATOR</permittedrole>
+            <permittedlevel>FULL</permittedlevel>
+        </permission>
+    </permissions>
+</customrecordtype>

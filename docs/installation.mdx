@@ -1,0 +1,135 @@
+---
+title: "Installation"
+description: "How to install Gantry Financial Suite in your NetSuite account"
+order: 1
+icon: "download"
+---
+
+## Before You Begin
+
+Installing Gantry takes just a few minutes. Before you start, make sure you have:
+
+- **Administrator access** to your NetSuite account
+- **SuiteScript 2.1** enabled
+- The **SuiteCloud CLI** configured for your account (used to deploy the SDF project)
+
+> ℹ️ **Tip**: Gantry is open source and deploys with the SuiteCloud Development Framework (SDF). The same steps work for a Sandbox account — no license key is required.
+
+## Installation Steps
+
+### Step 1: Clone the Repository
+
+```bash
+git clone https://github.com/braedonsaunders/com.flux.gantry.git
+cd com.flux.gantry
+npm install
+```
+
+### Step 2: Authenticate SuiteCloud CLI
+
+```bash
+npx suitecloud account:setup
+```
+
+### Step 3: Deploy the SDF Project
+
+```bash
+npm run sync
+```
+
+This deploys the `com.gantry.finance` SuiteApp (Suitelet, Router RESTlet, libraries, and configuration record) to your account.
+
+### Step 4: Verify Installation
+
+After deployment completes:
+
+1. Navigate to **Customization → Scripting → Script Deployments**
+2. Search for "Gantry"
+3. You should see two deployments:
+   - **Gantry Suitelet** — The main application
+   - **Gantry Router** — The API backend
+
+Both should show a status of **Released**.
+
+### Step 5: Access Gantry
+
+There are several ways to access Gantry after installation:
+
+**Option A: Direct Link**
+1. Go to **Script Deployments** (as above)
+2. Find **Gantry Suitelet**
+3. Click the **URL** link to open Gantry
+
+**Option B: Add to Navigation**
+1. Navigate to **Customization → Centers and Tabs → Center Links**
+2. Create a new link pointing to the Gantry Suitelet URL
+3. Add it to your preferred center (e.g., Financial under Reports)
+
+**Option C: Create a Shortcut**
+1. Open Gantry using the direct link
+2. Bookmark the URL in your browser for quick access
+
+## Post-Installation Setup
+
+### Automatic Configuration
+
+When you first open Gantry, the system automatically:
+
+- **Detects your fiscal calendar** from your NetSuite accounting periods
+- **Creates default configurations** for all dashboards
+- **Enables all dashboards** for all users (can be restricted later)
+
+No activation step is required — open the app and start using it.
+
+### Configure AI Advisor (Optional)
+
+To enable the AI Advisor:
+
+1. In Settings, go to the **AI Provider** tab
+2. Choose your preferred AI provider (Google Gemini, Claude, OpenAI, etc.)
+3. Enter the API key for your chosen provider
+4. Select your preferred model settings
+
+See [AI Advisor](/docs/gantry/modules/ai-advisor) for setup details.
+
+## What Gets Installed
+
+Gantry installs the following components in your NetSuite account:
+
+| Component | Purpose |
+|-----------|---------|
+| Gantry Suitelet | Main application interface |
+| Gantry Router | API backend for data requests |
+| Gantry Config Record | Stores your configuration settings |
+
+Gantry does **not** modify any of your existing records, transactions, or data. It only reads information for analysis and stores its own configuration separately.
+
+## Updating Gantry
+
+To update to a newer version:
+
+1. Pull the latest changes: `git pull`
+2. Redeploy: `npm run sync`
+
+Your configuration settings are preserved during updates.
+
+## Uninstalling
+
+To remove Gantry, delete its script deployments, scripts, and the `customrecord_gantry_config` record type from your account.
+
+> ⚠️ **Warning**: Removing the configuration record deletes all Gantry settings. If you plan to reinstall later, export your settings first.
+
+## Troubleshooting Installation
+
+### "Insufficient Privileges" Error
+
+You need the Administrator role or a role with SDF deployment permissions. Contact your NetSuite administrator.
+
+### Script Deployments Not Visible
+
+After deployment, scripts may take a few minutes to appear. Try:
+1. Logging out and back in
+2. Clearing your browser cache
+3. Checking in a different browser
+
+For additional help, see [Troubleshooting](/docs/gantry/troubleshooting) or open an issue on [GitHub](https://github.com/braedonsaunders/com.flux.gantry/issues).

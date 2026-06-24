@@ -1,0 +1,27 @@
+---
+title: "Open Source License"
+description: "How Gantry is licensed as open source software"
+order: 4
+icon: "scale"
+---
+
+Gantry Financial Suite is released under the MIT License. You can use, copy, modify, and distribute the project under the terms in the repository's `LICENSE` file.
+
+## NetSuite Compatibility Note
+
+SuiteCloud projects can be managed as normal file-based software projects. However, the SuiteCloud Terms of Service include restrictions around certain open source licenses.
+
+For deployed SuiteApp code, avoid adding AGPL, GPL, LGPL, or similar copyleft dependencies unless you have reviewed the SuiteCloud terms and your own Oracle/NetSuite agreements.
+
+## No Activation Required
+
+The open source version of Gantry does not require a license key or product activation. After deploying the SuiteApp, open it and configure your dashboards, thresholds, and (optionally) an AI provider from Settings.
+
+## Contributor Guidance
+
+When contributing:
+
+1. Keep deployed SuiteScript dependencies permissively licensed
+2. Do not include customer data, account credentials, private keys, or screenshots with sensitive NetSuite information
+3. Document any new external service dependency clearly
+4. Keep features configurable so they work across customized NetSuite accounts

@@ -1,0 +1,31 @@
+<suitelet scriptid="customscript_gantry_suitelet">
+    <name>Gantry Financial Suite</name>
+    <scriptfile>[/SuiteApps/com.gantry.finance/suitelet/Gantry_Suitelet.js]</scriptfile>
+    <description>Main Suitelet for Gantry Financial Dashboard</description>
+    <isinactive>F</isinactive>
+    <notifyadmins>F</notifyadmins>
+    <notifyemails></notifyemails>
+    <notifyowner>T</notifyowner>
+    <scriptdeployments>
+        <scriptdeployment scriptid="customdeploy_gantry_suitelet">
+            <status>RELEASED</status>
+            <title>Gantry Financial Suite</title>
+            <isdeployed>T</isdeployed>
+            <isonline>F</isonline>
+            <loglevel>ERROR</loglevel>
+            <allemployees>T</allemployees>
+            <allpartners>F</allpartners>
+            <allroles>F</allroles>
+            <audslctrole></audslctrole>
+            <runasrole>ADMINISTRATOR</runasrole>
+        </scriptdeployment>
+    </scriptdeployments>
+    <libraries>
+        <library>
+            <scriptfile>[/SuiteApps/com.gantry.finance/lib/Lib_Core.js]</scriptfile>
+        </library>
+        <library>
+            <scriptfile>[/SuiteApps/com.gantry.finance/lib/Lib_Config.js]</scriptfile>
+        </library>
+    </libraries>
+</suitelet>

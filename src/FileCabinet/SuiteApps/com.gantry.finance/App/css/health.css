@@ -1,0 +1,1901 @@
+/**
+ * health.css
+ * PROFITABILITY PULSE 2.0 - World-Class Financial Health Dashboard
+ * Dedicated stylesheet
+ */
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   DASHBOARD CONTAINER
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.health-dashboard,
+.pp-dashboard {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   KPI ROW - ENHANCED STYLING
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.pp-dashboard .cf-kpi-card {
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.pp-dashboard .cf-kpi-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+/* Icon wrapper colors */
+.pp-dashboard .bg-orange-soft {
+    background-color: rgba(249, 115, 22, 0.12);
+}
+
+.pp-dashboard .text-orange {
+    color: #f97316;
+}
+
+.pp-dashboard .bg-teal-soft {
+    background-color: rgba(20, 184, 166, 0.12);
+}
+
+.pp-dashboard .text-teal {
+    color: #14b8a6;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   SECTIONS
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.pp-section {
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.pp-section-header {
+    padding: 12px 16px;
+    background: #f9fafb;
+    border-bottom: 1px solid #e5e7eb;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.pp-section-header h6 {
+    margin: 0;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: #374151;
+}
+
+.pp-section-header small {
+    font-size: 0.75rem;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   TABLES - World Class Modern Styling
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.pp-table {
+    font-size: 0.85rem;
+    margin-bottom: 0;
+    border-collapse: separate;
+    border-spacing: 0;
+}
+
+.pp-table thead th {
+    background: linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%);
+    border-top: none;
+    font-weight: 600;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: #475569;
+    padding: 12px 14px;
+    white-space: nowrap;
+    border-bottom: 2px solid #e2e8f0;
+}
+
+.pp-table tbody tr {
+    transition: background-color 0.15s ease;
+}
+
+.pp-table tbody tr:hover {
+    background-color: rgba(59, 130, 246, 0.04);
+}
+
+.pp-table tbody td {
+    padding: 11px 14px;
+    vertical-align: middle;
+    border-bottom: 1px solid #f1f5f9;
+    font-size: 13px;
+}
+
+/* Bottom line - Operating Income emphasis */
+.pp-table tbody tr:last-child td {
+    border-top: 2px solid #cbd5e1;
+    border-bottom: 3px double #1e293b;
+    font-weight: 700;
+    font-size: 14px;
+    background: linear-gradient(180deg, #f8fafc 0%, #eef2f6 100%);
+    padding: 14px;
+}
+
+.pp-table tbody tr:last-child td.text-success {
+    color: #059669 !important;
+}
+
+.pp-table tbody tr:last-child td.text-danger {
+    color: #dc2626 !important;
+}
+
+.pp-table .font-weight-medium {
+    font-weight: 500;
+}
+
+/* Clickable rows */
+.pp-table .clickable-row,
+.clickable-row {
+    cursor: pointer;
+    transition: background-color 0.15s ease;
+}
+
+.pp-table .clickable-row:hover,
+.clickable-row:hover {
+    background-color: #f0f9ff !important;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   ALERT LISTS
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.pp-alert-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.pp-alert-list li {
+    padding: 10px 16px;
+    border-bottom: 1px solid #f3f4f6;
+    font-size: 0.82rem;
+    line-height: 1.5;
+}
+
+.pp-alert-list li:last-child {
+    border-bottom: none;
+}
+
+.pp-alert-list li.text-muted {
+    color: #9ca3af;
+    font-style: italic;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   MARGIN METRICS GRID
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.pp-metric-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px;
+    padding: 16px;
+}
+
+.pp-metric {
+    display: flex;
+    flex-direction: column;
+    padding: 12px;
+    background: #f9fafb;
+    border-radius: 6px;
+}
+
+.pp-metric-label {
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.025em;
+    color: #6b7280;
+    margin-bottom: 4px;
+}
+
+.pp-metric-value {
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: #111827;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   SCENARIO MODELER
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+#ppScenarioModeler {
+    padding: 16px;
+}
+
+#ppScenarioModeler .form-group {
+    margin-bottom: 12px;
+}
+
+#ppScenarioModeler .form-group label {
+    display: block;
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: #374151;
+    margin-bottom: 4px;
+}
+
+.pp-scenario-results {
+    padding: 12px;
+    background: #f0fdf4;
+    border-radius: 6px;
+}
+
+.pp-scenario-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 0;
+    border-bottom: 1px solid #dcfce7;
+    font-size: 0.82rem;
+}
+
+.pp-scenario-item:last-child {
+    border-bottom: none;
+}
+
+.pp-scenario-item span {
+    color: #374151;
+}
+
+.pp-scenario-item strong {
+    font-weight: 600;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   FLYOUT PANEL
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.pp-flyout {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 1050;
+    pointer-events: none;
+    visibility: hidden;
+}
+
+.pp-flyout.open {
+    pointer-events: auto;
+    visibility: visible;
+}
+
+.pp-flyout .flyout-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.4);
+    opacity: 0;
+    transition: opacity 0.3s ease;
+}
+
+.pp-flyout.open .flyout-overlay {
+    opacity: 1;
+}
+
+.pp-flyout .flyout-panel {
+    position: absolute;
+    top: 0;
+    right: -500px;
+    width: 500px;
+    height: 100%;
+    background: #fff;
+    box-shadow: -4px 0 24px rgba(0, 0, 0, 0.15);
+    display: flex;
+    flex-direction: column;
+    transition: right 0.3s ease;
+}
+
+.pp-flyout.open .flyout-panel {
+    right: 0;
+}
+
+.pp-flyout .flyout-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    padding: 20px;
+    border-bottom: 1px solid #e5e7eb;
+    background: #f9fafb;
+}
+
+.pp-flyout .flyout-title-area {
+    flex: 1;
+    min-width: 0;
+}
+
+.pp-flyout .flyout-title-area h5 {
+    margin: 0 0 4px 0;
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: #111827;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.pp-flyout .flyout-close {
+    background: none;
+    border: none;
+    font-size: 1.25rem;
+    color: #6b7280;
+    cursor: pointer;
+    padding: 4px 8px;
+    margin: -4px -8px 0 12px;
+    border-radius: 4px;
+    transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.pp-flyout .flyout-close:hover {
+    background-color: #f3f4f6;
+    color: #111827;
+}
+
+.pp-flyout .flyout-stats {
+    display: flex;
+    gap: 24px;
+    padding: 16px 20px;
+    background: #fff;
+    border-bottom: 1px solid #e5e7eb;
+}
+
+.pp-flyout .flyout-stats:empty {
+    display: none;
+}
+
+.pp-flyout .flyout-stat {
+    display: flex;
+    flex-direction: column;
+}
+
+.pp-flyout .flyout-stat .fs-value {
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: #111827;
+    line-height: 1.2;
+}
+
+.pp-flyout .flyout-stat .fs-label {
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.025em;
+    color: #6b7280;
+    margin-top: 2px;
+}
+
+.pp-flyout .flyout-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px;
+}
+
+/* Flyout table */
+.flyout-table {
+    font-size: 0.8rem;
+}
+
+.flyout-table thead th {
+    background: #f9fafb;
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.025em;
+    color: #6b7280;
+    padding: 8px 10px;
+    position: sticky;
+    top: 0;
+    z-index: 1;
+}
+
+.flyout-table tbody td {
+    padding: 8px 10px;
+    border-color: #f3f4f6;
+    vertical-align: middle;
+}
+
+.flyout-table tbody tr:hover td {
+    background-color: #f9fafb;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   SEGMENT BUTTONS
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+#ppSegmentTypeGroup .btn {
+    font-size: 0.8rem;
+    padding: 6px 14px;
+}
+
+#ppSegmentTypeGroup .btn.active {
+    font-weight: 600;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   CHARTS
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+#ppTrendChart,
+#ppWaterfallChart,
+#ppForecastChart,
+#ppCostStructureChart {
+    width: 100%;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   RESPONSIVE
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+@media (min-width: 992px) {
+    .pp-flyout .flyout-panel {
+        width: 550px;
+        right: -550px;
+    }
+}
+
+@media (min-width: 1400px) {
+    .pp-flyout .flyout-panel {
+        width: 650px;
+        right: -650px;
+    }
+}
+
+@media (max-width: 767px) {
+    .pp-flyout .flyout-panel {
+        width: 100%;
+        right: -100%;
+    }
+    
+    .pp-metric-grid {
+        grid-template-columns: 1fr;
+    }
+    
+    .pp-flyout .flyout-stats {
+        flex-wrap: wrap;
+        gap: 16px;
+    }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   DARK MODE SUPPORT
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.dark-mode .pp-section {
+    background: #1f2937;
+    border-color: #374151;
+}
+
+.dark-mode .pp-section-header {
+    background: #111827;
+    border-color: #374151;
+}
+
+.dark-mode .pp-section-header h6 {
+    color: #f3f4f6;
+}
+
+.dark-mode .pp-table thead th {
+    background: linear-gradient(180deg, #1e293b 0%, #0f172a 100%);
+    color: #94a3b8;
+    border-color: #334155;
+}
+
+.dark-mode .pp-table tbody td {
+    border-color: #334155;
+    color: #e5e7eb;
+}
+
+.dark-mode .pp-table tbody tr:last-child td {
+    border-top-color: #475569;
+    border-bottom-color: #94a3b8;
+    background: linear-gradient(180deg, #1e293b 0%, #0f172a 100%);
+}
+
+.dark-mode .pp-table tbody tr:hover {
+    background-color: rgba(59, 130, 246, 0.1);
+}
+
+.dark-mode .pp-table .clickable-row:hover,
+.dark-mode .clickable-row:hover {
+    background-color: #1e3a5f !important;
+}
+
+.dark-mode .pp-alert-list li {
+    border-color: #374151;
+}
+
+.dark-mode .pp-metric {
+    background: #111827;
+}
+
+.dark-mode .pp-metric-value {
+    color: #f3f4f6;
+}
+
+.dark-mode .pp-flyout .flyout-panel {
+    background: #1f2937;
+}
+
+.dark-mode .pp-flyout .flyout-header {
+    background: #111827;
+    border-color: #374151;
+}
+
+.dark-mode .pp-flyout .flyout-title-area h5 {
+    color: #f3f4f6;
+}
+
+.dark-mode .pp-flyout .flyout-close {
+    color: #9ca3af;
+}
+
+.dark-mode .pp-flyout .flyout-close:hover {
+    background-color: #374151;
+    color: #f3f4f6;
+}
+
+.dark-mode .pp-flyout .flyout-stats {
+    border-color: #374151;
+}
+
+.dark-mode .pp-flyout .flyout-stat .fs-value {
+    color: #f3f4f6;
+}
+
+.dark-mode .flyout-table thead th {
+    background: #111827;
+    color: #9ca3af;
+}
+
+.dark-mode .flyout-table tbody td {
+    border-color: #374151;
+    color: #e5e7eb;
+}
+
+.dark-mode .flyout-table tbody tr:hover td {
+    background-color: #374151;
+}
+
+.dark-mode .pp-scenario-results {
+    background: #064e3b;
+}
+
+.dark-mode .pp-scenario-item {
+    border-color: #065f46;
+}
+
+.dark-mode .pp-scenario-item span {
+    color: #d1fae5;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   UTILITY CLASSES
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+body.flyout-open {
+    overflow: hidden;
+}
+
+.cursor-pointer {
+    cursor: pointer;
+}
+
+/* Animation for loading states */
+@keyframes pulse-pp {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}
+
+.pp-loading {
+    animation: pulse-pp 1.5s ease-in-out infinite;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   FLYOUT TABS & ENHANCEMENTS
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.flyout-actions {
+    display: flex;
+    align-items: center;
+}
+
+.flyout-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+}
+
+#flyoutTabs {
+    border-bottom: 1px solid #e5e7eb;
+    margin-bottom: 1rem;
+}
+
+#flyoutTabs .nav-item {
+    margin-bottom: -1px;
+}
+
+#flyoutTabs .nav-link {
+    padding: 0.4rem 0.8rem;
+    font-size: 0.8rem;
+    color: #6b7280;
+    border: 1px solid transparent;
+    border-radius: 0.25rem 0.25rem 0 0;
+}
+
+#flyoutTabs .nav-link:hover {
+    color: #3b82f6;
+    border-color: #e5e7eb #e5e7eb transparent;
+}
+
+#flyoutTabs .nav-link.active {
+    color: #3b82f6;
+    background: #fff;
+    border-color: #e5e7eb #e5e7eb #fff;
+}
+
+.dark-mode #flyoutTabs {
+    border-color: #374151;
+}
+
+.dark-mode #flyoutTabs .nav-link {
+    color: #9ca3af;
+}
+
+.dark-mode #flyoutTabs .nav-link.active {
+    color: #60a5fa;
+    background: #1f2937;
+    border-color: #374151 #374151 #1f2937;
+}
+
+/* Sticky table header in flyout */
+#flyoutTabContent .sticky-top {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   SORTABLE TABLES
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.pp-sortable th.sortable {
+    cursor: pointer;
+    user-select: none;
+    position: relative;
+    padding-right: 1.5rem;
+}
+
+.pp-sortable th.sortable:hover {
+    background: #f3f4f6;
+}
+
+.pp-sortable th.sortable::after {
+    content: '⇅';
+    position: absolute;
+    right: 0.5rem;
+    color: #9ca3af;
+    font-size: 0.7rem;
+}
+
+.pp-sortable th.sortable.sort-asc::after {
+    content: '↑';
+    color: #3b82f6;
+}
+
+.pp-sortable th.sortable.sort-desc::after {
+    content: '↓';
+    color: #3b82f6;
+}
+
+.dark-mode .pp-sortable th.sortable:hover {
+    background: #374151;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   BUDGET TAB STYLES
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+#ppBudgetSummary .pp-metric-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 0.75rem;
+}
+
+#ppBudgetSummary .pp-metric {
+    padding: 0.75rem;
+    background: #f9fafb;
+    border-radius: 0.375rem;
+    border: 1px solid #e5e7eb;
+}
+
+#ppBudgetSummary .pp-metric-label {
+    font-size: 0.7rem;
+    color: #6b7280;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+#ppBudgetSummary .pp-metric-value {
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: #111827;
+}
+
+.dark-mode #ppBudgetSummary .pp-metric {
+    background: #374151;
+    border-color: #4b5563;
+}
+
+.dark-mode #ppBudgetSummary .pp-metric-value {
+    color: #f3f4f6;
+}
+
+/* Budget variance badges */
+#ppBudgetBody .badge {
+    font-size: 0.65rem;
+    padding: 0.2em 0.5em;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   EXPORT BUTTON STYLES
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.pp-section-header .btn-export {
+    font-size: 0.75rem;
+    padding: 0.2rem 0.5rem;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   BENCHMARKS TAB ENHANCEMENTS
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.pp-benchmark-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.5rem 0;
+    border-bottom: 1px solid #e5e7eb;
+}
+
+.pp-benchmark-row:last-child {
+    border-bottom: none;
+}
+
+.pp-benchmark-label {
+    color: #6b7280;
+    font-size: 0.875rem;
+}
+
+.pp-benchmark-value {
+    font-weight: 600;
+    font-size: 1rem;
+}
+
+.pp-benchmark-grade {
+    display: inline-block;
+    padding: 0.1rem 0.4rem;
+    border-radius: 0.25rem;
+    font-size: 0.7rem;
+    font-weight: 600;
+}
+
+.pp-benchmark-grade.grade-a { background: #d1fae5; color: #065f46; }
+.pp-benchmark-grade.grade-b { background: #dbeafe; color: #1e40af; }
+.pp-benchmark-grade.grade-c { background: #fef3c7; color: #92400e; }
+.pp-benchmark-grade.grade-d { background: #fed7aa; color: #9a3412; }
+.pp-benchmark-grade.grade-f { background: #fee2e2; color: #991b1b; }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   SEGMENT COMPARISON VIEW
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.pp-segment-comparison {
+    display: flex;
+    gap: 1rem;
+    overflow-x: auto;
+}
+
+.pp-segment-card {
+    flex: 0 0 200px;
+    padding: 1rem;
+    background: #f9fafb;
+    border-radius: 0.5rem;
+    border: 1px solid #e5e7eb;
+}
+
+.pp-segment-card.best {
+    border-color: #10b981;
+    background: #ecfdf5;
+}
+
+.pp-segment-card.worst {
+    border-color: #ef4444;
+    background: #fef2f2;
+}
+
+.dark-mode .pp-segment-card {
+    background: #374151;
+    border-color: #4b5563;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   MARGIN BRIDGE STYLES
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.pp-bridge-summary {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1rem;
+    margin-bottom: 1rem;
+}
+
+.pp-bridge-item {
+    text-align: center;
+    padding: 0.75rem;
+    background: #f9fafb;
+    border-radius: 0.375rem;
+}
+
+.pp-bridge-item .label {
+    font-size: 0.75rem;
+    color: #6b7280;
+}
+
+.pp-bridge-item .value {
+    font-size: 1.25rem;
+    font-weight: 600;
+}
+
+.pp-bridge-item .change {
+    font-size: 0.8rem;
+}
+
+.pp-bridge-item .change.positive { color: #10b981; }
+.pp-bridge-item .change.negative { color: #ef4444; }
+
+.dark-mode .pp-bridge-item {
+    background: #374151;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   ANOMALY INDICATORS
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.pp-anomaly-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.2rem 0.5rem;
+    border-radius: 9999px;
+    font-size: 0.7rem;
+    font-weight: 500;
+}
+
+.pp-anomaly-badge.spike {
+    background: #fee2e2;
+    color: #991b1b;
+}
+
+.pp-anomaly-badge.drop {
+    background: #dbeafe;
+    color: #1e40af;
+}
+
+.pp-anomaly-badge.critical {
+    background: #ef4444;
+    color: white;
+}
+
+.pp-z-score {
+    font-size: 0.65rem;
+    color: #9ca3af;
+    margin-left: 0.25rem;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   SPARKLINES
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.pp-sparkline {
+    vertical-align: middle;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   FLYOUT INLINE TREND
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.flyout-stats {
+    display: flex;
+    gap: 1rem;
+    padding: 0.75rem 1rem;
+    background: #f9fafb;
+    border-bottom: 1px solid #e5e7eb;
+    flex-wrap: wrap;
+    align-items: center;
+}
+
+.flyout-stat-chart {
+    flex: 1;
+    min-width: 100px;
+    display: flex;
+    justify-content: flex-end;
+}
+
+.flyout-trend-inline {
+    min-width: 120px;
+    height: 40px;
+}
+
+.dark-mode .flyout-stats {
+    background: #1f2937;
+    border-color: #374151;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   PRICE/VOLUME/MIX ANALYSIS
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.bg-success-light {
+    background-color: #ecfdf5 !important;
+}
+
+.bg-danger-light {
+    background-color: #fef2f2 !important;
+}
+
+.dark-mode .bg-success-light {
+    background-color: rgba(16, 185, 129, 0.2) !important;
+}
+
+.dark-mode .bg-danger-light {
+    background-color: rgba(239, 68, 68, 0.2) !important;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   PAGINATION STYLES
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.pagination-sm .page-link {
+    padding: 0.2rem 0.5rem;
+    font-size: 0.75rem;
+}
+
+.pagination-sm .page-item.active .page-link {
+    background-color: #3b82f6;
+    border-color: #3b82f6;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   BUDGET ALERTS LIST
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+#ppBudgetAlerts .list-group-item {
+    padding: 0.5rem 1rem;
+    font-size: 0.85rem;
+    border-left: 3px solid #ef4444;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   STICKY TABLE HEADERS
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.table-responsive .sticky-top {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: #f8f9fa;
+}
+
+.dark-mode .table-responsive .sticky-top {
+    background: #374151;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   TABLE TEXT TRUNCATION
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.text-truncate {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   CARD FOOTER FOR PAGINATION
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.card-footer {
+    background: #f8f9fa;
+    border-top: 1px solid #e5e7eb;
+}
+
+.dark-mode .card-footer {
+    background: #1f2937;
+    border-color: #374151;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   NAV TABS SMALL
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.nav-sm .nav-link {
+    padding: 0.35rem 0.75rem;
+    font-size: 0.8rem;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   RATIO CARDS (Benchmarks Tab)
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.ratio-card {
+    transition: all 0.2s ease;
+    border: 1px solid transparent;
+}
+
+.ratio-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    border-color: rgba(59, 130, 246, 0.3);
+}
+
+.bg-success-soft { background-color: rgba(16, 185, 129, 0.12); }
+.bg-info-soft { background-color: rgba(59, 130, 246, 0.12); }
+.bg-warning-soft { background-color: rgba(245, 158, 11, 0.12); }
+.bg-orange-soft { background-color: rgba(249, 115, 22, 0.12); }
+.bg-danger-soft { background-color: rgba(239, 68, 68, 0.12); }
+
+.dark-mode .bg-success-soft { background-color: rgba(16, 185, 129, 0.2); }
+.dark-mode .bg-info-soft { background-color: rgba(59, 130, 246, 0.2); }
+.dark-mode .bg-warning-soft { background-color: rgba(245, 158, 11, 0.2); }
+.dark-mode .bg-orange-soft { background-color: rgba(249, 115, 22, 0.2); }
+.dark-mode .bg-danger-soft { background-color: rgba(239, 68, 68, 0.2); }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   SEGMENT CARDS (Expandable)
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.segment-card .card-header {
+    cursor: pointer;
+    transition: background-color 0.2s ease;
+}
+
+.segment-card .card-header:hover {
+    background-color: rgba(59, 130, 246, 0.05);
+}
+
+.segment-expand-icon {
+    transition: transform 0.3s ease;
+}
+
+.segment-card .collapse.show + .segment-expand-icon,
+.segment-card .collapsing + .segment-expand-icon {
+    transform: rotate(180deg);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   CURSOR UTILITIES
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.cursor-pointer { cursor: pointer; }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   HEALTH SCORE GAUGE
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+#ppHealthScoreGauge .main-svg {
+    overflow: visible;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   MODAL IMPROVEMENTS
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+#ppRatioModal .modal-header {
+    background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);
+    color: white;
+}
+
+#ppRatioModal .modal-header .close {
+    color: white;
+    opacity: 0.8;
+}
+
+#ppRatioModal code {
+    background: #e5e7eb;
+    padding: 0.5rem;
+    border-radius: 4px;
+    display: block;
+    font-size: 0.85rem;
+}
+
+.dark-mode #ppRatioModal code {
+    background: #374151;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   P/V/M TAB STYLES
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.pvm-effect-card {
+    border-radius: 8px;
+    padding: 1rem;
+    text-align: center;
+}
+
+.pvm-effect-card.positive { background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.3); }
+.pvm-effect-card.negative { background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3); }
+.pvm-effect-card.neutral { background: rgba(107, 114, 128, 0.1); border: 1px solid rgba(107, 114, 128, 0.3); }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   SCENARIO TAB STYLES
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+#ppScenarioChart .js-plotly-plot {
+    border-radius: 4px;
+}
+
+.scenario-template-badge {
+    font-size: 0.7rem;
+    padding: 0.2rem 0.4rem;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   RESPONSIVE FIXES
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+@media (max-width: 768px) {
+    .ratio-card {
+        margin-bottom: 0.5rem;
+    }
+    
+    .segment-card .card-header {
+        flex-direction: column;
+        align-items: flex-start !important;
+    }
+    
+    .segment-card .card-header > div:last-child {
+        margin-top: 0.5rem;
+    }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   ENHANCED SEGMENT FLYOUT
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.segment-flyout-header {
+    background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+    margin: -1rem -1rem 1rem -1rem;
+    padding: 1.5rem 1rem;
+    border-radius: 0;
+}
+
+.segment-health-ring {
+    filter: drop-shadow(0 2px 4px rgba(0,0,0,0.1));
+}
+
+.segment-kpi-card {
+    border: 1px solid #e5e7eb;
+    transition: all 0.2s ease;
+}
+
+.segment-kpi-card:hover {
+    border-color: #3b82f6;
+    box-shadow: 0 2px 8px rgba(59,130,246,0.15);
+}
+
+.sparkline-container {
+    opacity: 0.8;
+}
+
+.segment-kpi-card:hover .sparkline-container {
+    opacity: 1;
+}
+
+/* Flyout card styles */
+.pp-flyout .card {
+    border: 1px solid #e5e7eb;
+    overflow: hidden;
+}
+
+.pp-flyout .card-header {
+    background: #f8fafc;
+    border-bottom: 1px solid #e5e7eb;
+}
+
+.pp-flyout .progress {
+    background-color: #e5e7eb;
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.pp-flyout .progress-bar {
+    transition: width 0.6s ease;
+}
+
+/* Badge improvements */
+.badge-lg {
+    font-size: 0.875rem;
+    padding: 0.5rem 0.75rem;
+}
+
+/* Text color for purple */
+.text-purple {
+    color: #8b5cf6 !important;
+}
+
+.bg-purple {
+    background-color: #8b5cf6 !important;
+}
+
+/* Dark mode segment flyout */
+.dark-mode .segment-flyout-header {
+    background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+}
+
+.dark-mode .segment-kpi-card {
+    background-color: #1e293b !important;
+    border-color: #334155;
+}
+
+.dark-mode .segment-kpi-card:hover {
+    border-color: #3b82f6;
+}
+
+.dark-mode .pp-flyout .card {
+    background-color: #1e293b;
+    border-color: #334155;
+}
+
+.dark-mode .pp-flyout .card-header {
+    background-color: #0f172a;
+    border-color: #334155;
+}
+
+.dark-mode .pp-flyout .progress {
+    background-color: #334155;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   HEALTH RISK METER KPI (matches integrity style)
+═══════════════════════════════════════════════════════════════════════════ */
+
+.risk-meter-kpi {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 12px;
+}
+
+.risk-meter-gauge {
+    flex-shrink: 0;
+}
+
+.risk-meter-info {
+    display: flex;
+    flex-direction: column;
+}
+
+.risk-meter-value {
+    font-size: 1.5rem;
+    font-weight: 700;
+    line-height: 1.1;
+}
+
+.risk-meter-label {
+    font-size: 0.65rem;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+}
+
+.health-gauge-semi {
+    display: block;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   EQUAL HEIGHT ROWS
+═══════════════════════════════════════════════════════════════════════════ */
+
+.pp-equal-height-row {
+    display: flex;
+    flex-wrap: wrap;
+}
+
+.pp-equal-height-row > [class*='col-'] {
+    display: flex;
+    flex-direction: column;
+}
+
+.pp-equal-height-row .card {
+    flex: 1;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   MARGIN FLOW VISUALIZATION
+═══════════════════════════════════════════════════════════════════════════ */
+
+.margin-flow-container {
+    min-height: 180px;
+}
+
+.margin-flow {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 0;
+}
+
+.flow-stage {
+    flex: 0 0 28%;
+    background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+    border: 2px solid #e2e8f0;
+    border-radius: 12px;
+    padding: 16px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    position: relative;
+}
+
+.flow-stage:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 8px 25px rgba(0,0,0,0.1);
+}
+
+.flow-stage.flow-healthy {
+    border-color: #10b981;
+    background: linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%);
+}
+
+.flow-stage.flow-warning {
+    border-color: #f59e0b;
+    background: linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%);
+}
+
+.flow-stage.flow-danger {
+    border-color: #ef4444;
+    background: linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%);
+}
+
+.flow-stage-icon {
+    width: 40px;
+    height: 40px;
+    margin: 0 auto 8px;
+    background: #fff;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    color: #64748b;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+}
+
+.flow-stage.flow-healthy .flow-stage-icon { color: #10b981; }
+.flow-stage.flow-warning .flow-stage-icon { color: #f59e0b; }
+.flow-stage.flow-danger .flow-stage-icon { color: #ef4444; }
+
+.flow-stage-label {
+    font-size: 11px;
+    font-weight: 600;
+    color: #64748b;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 4px;
+}
+
+.flow-stage-value {
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: #1e293b;
+    line-height: 1.2;
+}
+
+.flow-stage-pct {
+    font-size: 13px;
+    color: #64748b;
+    font-weight: 500;
+}
+
+.flow-arrow {
+    flex: 0 0 8%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    position: relative;
+}
+
+.flow-arrow-line {
+    width: 100%;
+    height: 3px;
+    background: linear-gradient(90deg, #e2e8f0 0%, #cbd5e1 50%, #e2e8f0 100%);
+    position: relative;
+}
+
+.flow-arrow-line::after {
+    content: '';
+    position: absolute;
+    right: -6px;
+    top: 50%;
+    transform: translateY(-50%);
+    border-left: 8px solid #cbd5e1;
+    border-top: 5px solid transparent;
+    border-bottom: 5px solid transparent;
+}
+
+.flow-arrow-loss {
+    margin-top: 6px;
+    text-align: center;
+    line-height: 1.2;
+}
+
+.flow-arrow-loss span {
+    display: block;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.flow-arrow-loss small {
+    display: block;
+    font-size: 10px;
+    color: #94a3b8;
+}
+
+.margin-flow-metrics {
+    border-top: 1px solid #e2e8f0;
+    padding-top: 12px;
+}
+
+.metric-mini {
+    padding: 8px;
+}
+
+.metric-mini-value {
+    display: block;
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: #1e293b;
+}
+
+.metric-mini-label {
+    display: block;
+    font-size: 10px;
+    color: #64748b;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   SCENARIO TAB ENHANCEMENTS
+═══════════════════════════════════════════════════════════════════════════ */
+
+.scenario-section {
+    padding: 12px 16px;
+    border-bottom: 1px solid #e2e8f0;
+}
+
+.scenario-section:last-child {
+    border-bottom: none;
+}
+
+.scenario-section-title {
+    font-size: 11px;
+    font-weight: 700;
+    color: #64748b;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 10px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.scenario-section-title i {
+    font-size: 12px;
+}
+
+.scenario-input-row {
+    display: flex;
+    align-items: center;
+    margin-bottom: 8px;
+}
+
+.scenario-input-row:last-child {
+    margin-bottom: 0;
+}
+
+.scenario-input-label {
+    flex: 1;
+    font-size: 13px;
+    color: #475569;
+}
+
+.scenario-input-field {
+    width: 80px;
+    text-align: right;
+}
+
+.scenario-results-card {
+    background: linear-gradient(180deg, #f8fafc 0%, #fff 100%);
+}
+
+.scenario-impact-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px;
+}
+
+.scenario-impact-item {
+    background: #fff;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    padding: 12px;
+    text-align: center;
+}
+
+.scenario-impact-value {
+    font-size: 1.25rem;
+    font-weight: 700;
+}
+
+.scenario-impact-label {
+    font-size: 11px;
+    color: #64748b;
+    text-transform: uppercase;
+}
+
+/* Dark mode support */
+.dark-mode .flow-stage {
+    background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+    border-color: #334155;
+}
+
+.dark-mode .flow-stage-value,
+.dark-mode .metric-mini-value {
+    color: #f1f5f9;
+}
+
+.dark-mode .flow-stage-icon {
+    background: #334155;
+}
+
+.dark-mode .flow-arrow-line {
+    background: linear-gradient(90deg, #334155 0%, #475569 50%, #334155 100%);
+}
+
+.dark-mode .margin-flow-metrics {
+    border-color: #334155;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   SPARKLINE ROW (Overview Tab)
+═══════════════════════════════════════════════════════════════════════════ */
+
+.pp-sparkline-row {
+    display: flex;
+    gap: 16px;
+}
+
+.pp-sparkline-card {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 16px;
+    background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+    border-radius: 10px;
+    border: 1px solid #e2e8f0;
+}
+
+.pp-sparkline-label {
+    font-size: 12px;
+    font-weight: 600;
+    color: #475569;
+}
+
+.pp-sparkline-chart {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.pp-spark-trend {
+    font-weight: 700;
+    font-size: 16px;
+}
+
+/* Insight Sections - Equal height with scroll */
+.card-body.d-flex.flex-column.h-100 {
+    height: 100%;
+}
+
+.pp-insight-section {
+    flex: 1 1 0%;
+    display: flex;
+    flex-direction: column;
+    padding: 12px 14px;
+    border-bottom: 1px solid #e2e8f0;
+    min-height: 0;
+    max-height: 33.34%;
+    overflow: hidden;
+}
+
+.pp-insight-section:last-child {
+    border-bottom: none;
+}
+
+.pp-insight-title {
+    font-size: 13px;
+    font-weight: 600;
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+}
+
+.pp-insight-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    flex: 1 1 auto;
+    overflow-y: auto;
+    min-height: 0;
+}
+
+.pp-insight-list li {
+    padding: 6px 0;
+    font-size: 12px;
+    border-bottom: 1px solid #f1f5f9;
+    line-height: 1.4;
+}
+
+.pp-insight-list li:last-child {
+    border-bottom: none;
+}
+
+/* Insights Panel */
+/* Insight section dark mode handled in main dark mode section */
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   BUDGET ALERTS
+═══════════════════════════════════════════════════════════════════════════ */
+
+.pp-budget-alerts {
+    padding: 0;
+}
+
+.pp-budget-alert-item {
+    padding: 10px 14px;
+    border-bottom: 1px solid #f1f5f9;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.pp-budget-alert-item:last-child {
+    border-bottom: none;
+}
+
+.pp-budget-alert-icon {
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+}
+
+.pp-budget-alert-content {
+    flex: 1;
+}
+
+.pp-budget-alert-name {
+    font-weight: 600;
+    font-size: 13px;
+}
+
+.pp-budget-alert-variance {
+    font-size: 11px;
+    color: #64748b;
+}
+
+.pp-budget-table tbody tr:hover {
+    background: #f8fafc;
+}
+
+.bg-gradient-danger {
+    background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%) !important;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   COMPARISON BARS (Item Flyout)
+═══════════════════════════════════════════════════════════════════════════ */
+
+.comparison-bars {
+    padding: 16px;
+    background: #f8fafc;
+    border-radius: 10px;
+}
+
+.comparison-bars .comparison-label {
+    font-size: 13px;
+}
+
+.comparison-bars .comparison-value {
+    font-size: 14px;
+}
+
+.dark-mode .comparison-bars {
+    background: #1e293b;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   PVM DECOMPOSITION FLEXBOX
+═══════════════════════════════════════════════════════════════════════════ */
+
+.pvm-decomposition {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.pvm-effect-card {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 16px;
+    background: #f8fafc;
+    border-radius: 10px;
+    transition: all 0.2s ease;
+}
+
+.pvm-effect-card:hover {
+    background: #f1f5f9;
+}
+
+.pvm-effect-icon {
+    width: 36px;
+    height: 36px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    flex-shrink: 0;
+}
+
+.pvm-effect-content {
+    flex: 1;
+}
+
+.pvm-effect-label {
+    font-size: 11px;
+    color: #64748b;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+}
+
+.pvm-effect-value {
+    font-size: 1.1rem;
+    font-weight: 700;
+}
+
+.pvm-effect-pct {
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: #64748b;
+    min-width: 50px;
+    text-align: right;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   SAVED SCENARIOS
+═══════════════════════════════════════════════════════════════════════════ */
+
+.pp-saved-scenarios {
+    padding: 0;
+}
+
+.pp-saved-scenario-item {
+    padding: 12px 14px;
+    border-bottom: 1px solid #f1f5f9;
+    cursor: pointer;
+    transition: background 0.2s ease;
+}
+
+.pp-saved-scenario-item:hover {
+    background: #f8fafc;
+}
+
+.pp-saved-scenario-item:last-child {
+    border-bottom: none;
+}
+
+.pp-saved-scenario-name {
+    font-weight: 600;
+    font-size: 13px;
+    margin-bottom: 4px;
+}
+
+.pp-saved-scenario-meta {
+    display: flex;
+    gap: 12px;
+    font-size: 11px;
+    color: #64748b;
+}
+
+.pp-saved-scenario-actions {
+    float: right;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   DARK MODE SUPPORT FOR NEW COMPONENTS
+═══════════════════════════════════════════════════════════════════════════ */
+
+.dark-mode .pp-sparkline-card {
+    background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+    border-color: #334155;
+}
+
+.dark-mode .pp-sparkline-label {
+    color: #94a3b8;
+}
+
+.dark-mode .pp-insight-section {
+    border-color: #334155;
+}
+
+.dark-mode .pp-insight-list li {
+    border-color: #334155;
+}
+
+.dark-mode .pvm-effect-card {
+    background: #1e293b;
+}
+
+.dark-mode .pvm-effect-card:hover {
+    background: #334155;
+}
+
+.dark-mode .pp-saved-scenario-item {
+    border-color: #334155;
+}
+
+.dark-mode .pp-saved-scenario-item:hover {
+    background: #1e293b;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   UTILITY CLASSES - SOFT BACKGROUNDS
+═══════════════════════════════════════════════════════════════════════════ */
+
+.bg-blue-soft { background-color: rgba(59, 130, 246, 0.1); }
+.bg-green-soft { background-color: rgba(16, 185, 129, 0.1); }
+.bg-purple-soft { background-color: rgba(139, 92, 246, 0.1); }
+.bg-yellow-soft { background-color: rgba(245, 158, 11, 0.1); }
+.bg-red-soft { background-color: rgba(239, 68, 68, 0.1); }
+.bg-danger-soft { background-color: rgba(239, 68, 68, 0.1); }
+.bg-warning-soft { background-color: rgba(245, 158, 11, 0.1); }
+
+.text-blue { color: #3b82f6; }
+.text-green { color: #10b981; }
+.text-purple { color: #8b5cf6; }
+.text-yellow { color: #f59e0b; }
+.text-orange { color: #f97316; }
+
+.font-weight-medium { font-weight: 500; }

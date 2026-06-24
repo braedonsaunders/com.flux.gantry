@@ -1,0 +1,193 @@
+---
+title: "Liquidity"
+description: "Cash position analysis and liquidity forecasting"
+order: 2
+icon: "dollar-sign"
+---
+
+## Overview
+
+The Liquidity dashboard gives you a complete picture of your cash position and future cash flow. Know exactly where you stand today and project where you'll be in the coming weeks.
+
+This is often the first dashboard finance leaders check each day.
+
+## Key Metrics
+
+### Header Metrics
+
+| Metric | What It Shows |
+|--------|---------------|
+| **Total Cash** | Sum of all bank account balances right now |
+| **Accounts Receivable** | Total outstanding customer invoices |
+| **Accounts Payable** | Total outstanding vendor bills |
+| **Net Position** | Cash + AR - AP (your true liquidity) |
+| **Cash Runway** | Weeks you can operate at current burn rate |
+| **Weekly Burn Rate** | Average weekly cash outflow |
+
+### Runway Status Indicators
+
+| Status | Meaning | Action |
+|--------|---------|--------|
+| **Healthy** (Green) | 8+ weeks runway | Normal operations |
+| **Warning** (Yellow) | 4-8 weeks runway | Monitor closely, prioritize collections |
+| **Critical** (Red) | Under 4 weeks | Immediate action required |
+| **Sustainable** (Blue) | Cash flow positive | No runway concern |
+
+## Dashboard Sections
+
+### Cash Position Summary
+
+The top section shows your current cash position with:
+- Total cash across all bank accounts
+- Breakdown by individual bank account
+- Comparison to prior periods
+
+### Weekly Cash Flow Forecast
+
+The main chart projects your cash position week by week:
+
+- **Blue bars** — Projected cash inflows (collections)
+- **Red bars** — Projected cash outflows (payments)
+- **Line** — Running cash balance
+
+The forecast uses multiple prediction methods:
+- Historical payment patterns by customer
+- Vendor payment schedules
+- Recurring transactions
+- Seasonality adjustments
+
+### Accounts Receivable Aging
+
+See outstanding receivables organized by age:
+
+| Bucket | Description |
+|--------|-------------|
+| Current | Not yet due |
+| 1-30 days | Recently past due |
+| 31-60 days | Moderately past due |
+| 61-90 days | Significantly past due |
+| 90+ days | Severely past due |
+
+Click any bucket to see the specific invoices.
+
+### Accounts Payable Aging
+
+Similar breakdown for vendor bills:
+- See what's due now vs. upcoming
+- Identify opportunities to optimize payment timing
+- Spot vendors requiring immediate attention
+
+### Top Customers and Vendors
+
+Quick view of:
+- Largest outstanding receivables
+- Largest outstanding payables
+- Click any name to see details
+
+## How Forecasting Works
+
+Gantry predicts future cash flow using several methods:
+
+### For Receivables
+1. **Historical patterns** — When does this customer typically pay?
+2. **Invoice terms** — What payment terms apply?
+3. **Recent behavior** — Any change in payment timing?
+4. **Weighted average** — Combines methods based on reliability
+
+### For Payables
+1. **Scheduled payments** — Bills you've already scheduled
+2. **Vendor patterns** — Your typical payment timing with each vendor
+3. **Terms optimization** — Suggests optimal payment dates
+
+### Accuracy Improvement
+Forecasts become more accurate over time as Gantry learns your patterns. New customers/vendors use industry defaults until enough history accumulates.
+
+## Using the Dashboard
+
+### Daily Review
+1. Check current cash position
+2. Review any new critical receivables
+3. Confirm upcoming payments are appropriate
+4. Note forecast trend direction
+
+### Weekly Analysis
+1. Review weekly forecast for the next 4-6 weeks
+2. Identify any projected cash shortfalls
+3. Prioritize collection calls based on AR aging
+4. Adjust vendor payment timing if needed
+
+### Monthly Planning
+1. Compare actual vs. forecast from prior month
+2. Adjust payment priorities based on runway
+3. Identify customers consistently paying late
+4. Review vendor payment terms for optimization
+
+## Configuration Options
+
+Access via **Settings → Liquidity**:
+
+### Bank Accounts
+Select which accounts to include in cash analysis. Exclude accounts used for restricted purposes.
+
+### Payment Forecasting
+
+| Setting | Purpose |
+|---------|---------|
+| **Volatility Threshold** | When to flag uncertain forecasts (default: 15% variance) |
+| **Overdue Push Days** | How far to push overdue AR in forecasts (default: 30 days) |
+| **History Lookback** | How much history to analyze (default: 12 months) |
+| **Default Days-to-Pay** | Assumption for new customers (default: 30 days) |
+
+### Preservation Mode
+
+When enabled, Preservation Mode helps during cash crunches:
+- Flags all non-essential payments
+- Highlights vendor prioritization
+- Suggests payment deferrals
+- Enables weekly payment caps
+
+Activate via toggle in Settings when cash is tight.
+
+### Payment Categories
+
+Organize vendors into categories for better analysis:
+- Essential (utilities, rent, payroll)
+- Strategic (key vendors, growth investments)
+- Deferrable (can be pushed if needed)
+
+## Best Practices
+
+### Monitor Daily
+Cash position can change quickly. Make the Liquidity dashboard part of your daily routine.
+
+### Set Realistic Targets
+Configure thresholds based on your industry and business cycle. What's critical for one business may be normal for another.
+
+### Act on Aging
+Receivables aging is an early warning system. Follow up on 30+ day items before they become 90+ day problems.
+
+### Optimize Timing
+Don't pay early if you don't need to. Use Gantry's insights to optimize payment timing while maintaining vendor relationships.
+
+### Review Forecast Accuracy
+Periodically compare forecasts to actuals. If consistently off, adjust your configuration settings.
+
+## Common Questions
+
+### Why doesn't my cash match my bank statement?
+Gantry may include pending transactions or exclude certain account types. Check your bank account configuration in Settings.
+
+### Why is a customer showing as "Current" when they're late?
+The aging is based on invoice due dates. Check if the invoice has the correct terms applied.
+
+### Can I forecast beyond 6 weeks?
+Yes, but accuracy decreases over time. Short-term forecasts are most reliable.
+
+### How do I handle expected one-time receipts?
+Large expected payments (loans, investments, etc.) aren't automatically predicted. Factor these into your planning manually.
+
+## Related Dashboards
+
+- **[Profitability](/docs/gantry/modules/profitability)** — Understand what's driving cash flow
+- **[Revenue Intelligence](/docs/gantry/modules/revenue-intelligence)** — Customer payment behavior analysis
+- **[Procurement](/docs/gantry/modules/procurement)** — Vendor payment optimization

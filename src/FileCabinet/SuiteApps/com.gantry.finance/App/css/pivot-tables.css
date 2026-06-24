@@ -1,0 +1,661 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   PIVOT-TABLES - Modern Overhaul & Risk Analysis Components
+   Part of Gantry Financial Suite CSS
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   1. PIVOT TABLE WRAPPER & STATES
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.advisor-pivot-wrapper {
+    background: #ffffff;
+    border-radius: 12px;
+    border: 1px solid #e2e8f0;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
+    padding: 20px;
+    margin: 16px 0;
+    overflow: hidden; /* Contains the drag-drop UI */
+    font-family: "Inter", system-ui, -apple-system, sans-serif;
+}
+
+.pivot-loading {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 300px;
+    color: #64748b;
+    gap: 12px;
+    font-weight: 500;
+    background: #f8fafc;
+    border-radius: 8px;
+}
+
+.pivot-loading i {
+    font-size: 24px;
+    color: var(--primary, #3b82f6);
+    animation: pivot-spin 1s linear infinite;
+}
+
+@keyframes pivot-spin {
+    100% { transform: rotate(360deg); }
+}
+
+.pivot-error {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 200px;
+    color: #ef4444;
+    background: #fef2f2;
+    border: 1px dashed #fecaca;
+    border-radius: 8px;
+    font-weight: 500;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   2. MODERN PIVOTTABLE.JS OVERRIDES (The "World Class" Upgrade)
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* --- Main Grid Layout --- */
+.pvtUi {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+}
+
+/* The Control Areas (Top/Left) */
+.pvtUi > tbody > tr > td.pvtUiCell {
+    background: #f8fafc;
+    padding: 12px;
+    border: 1px solid #e2e8f0;
+    vertical-align: top;
+}
+
+/* Top-Left Corner (Renderer/Aggregator Selectors) */
+.pvtUi > tbody > tr > td.pvtUiCell:first-child {
+    border-radius: 8px 0 0 0;
+    width: 250px; /* Give it room */
+    background: #ffffff;
+    border-right: 2px solid #e2e8f0; /* Clear separation from data */
+}
+
+/* Top-Right (Columns Drop Zone) */
+.pvtUi > tbody > tr > td.pvtUiCell:last-child {
+    border-radius: 0 8px 0 0;
+    border-left: none;
+    background: #f1f5f9;
+}
+
+/* Bottom-Left (Rows Drop Zone) */
+.pvtUi > tbody > tr:last-child > td.pvtUiCell:first-child {
+    border-radius: 0 0 0 8px;
+    background: #f1f5f9;
+    border-right: 2px solid #e2e8f0;
+    border-top: none;
+}
+
+/* Bottom-Right (The Actual Table Render Area) */
+.pvtRendererArea {
+    padding: 0;
+    border-radius: 0 0 8px 0;
+    overflow-x: auto;
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    border-top: none;
+    border-left: none;
+}
+
+/* --- Dropdowns (Renderers & Aggregators) --- */
+.pvtRenderer, .pvtAggregator, .pvtAttrDropdown {
+    appearance: none;
+    -webkit-appearance: none;
+    width: 100%;
+    margin-bottom: 8px;
+    padding: 8px 12px;
+    font-size: 13px;
+    font-weight: 500;
+    color: #334155;
+    background-color: #ffffff;
+    border: 1px solid #cbd5e1;
+    border-radius: 6px;
+    cursor: pointer;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%2364748b'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'%3E%3C/path%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 10px center;
+    background-size: 14px;
+    transition: all 0.2s ease;
+}
+
+.pvtRenderer:hover, .pvtAggregator:hover {
+    border-color: #94a3b8;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+}
+
+.pvtRenderer:focus, .pvtAggregator:focus {
+    outline: none;
+    border-color: var(--primary, #3b82f6);
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
+}
+
+/* --- Draggable Attribute "Chips" --- */
+.pvtAxisContainer li span.pvtAttr {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    border-radius: 20px; /* Pill shape */
+    padding: 6px 12px;
+    font-size: 12px;
+    font-weight: 600;
+    color: #475569;
+    cursor: grab;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    white-space: nowrap;
+}
+
+.pvtAxisContainer li span.pvtAttr:hover {
+    background: #f8fafc;
+    border-color: #cbd5e1;
+    transform: translateY(-1px);
+    box-shadow: 0 3px 6px rgba(0,0,0,0.08);
+    color: var(--primary, #3b82f6);
+}
+
+.pvtAxisContainer li span.pvtAttr:active {
+    cursor: grabbing;
+    transform: scale(0.98);
+}
+
+/* Sort Icon (Triangle) */
+.pvtTriangle {
+    font-size: 10px;
+    color: #94a3b8;
+    margin-left: 4px;
+    transition: color 0.2s;
+}
+
+.pvtAttr:hover .pvtTriangle {
+    color: var(--primary, #3b82f6);
+}
+
+/* --- Drop Zones (Axis Containers) --- */
+.pvtAxisContainer {
+    border: 2px dashed #e2e8f0;
+    border-radius: 8px;
+    background: #f8fafc;
+    padding: 8px;
+    min-height: 44px;
+    transition: background 0.2s ease, border-color 0.2s ease;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    align-items: center;
+}
+
+/* Highlight drop zones when dragging */
+.pvtAxisContainer.ui-sortable-helper {
+    background: #f0f9ff;
+    border-color: #bae6fd;
+}
+
+/* Unused Attributes Area (Top horizontal list) */
+td.pvtUiCell.pvtUnused .pvtAxisContainer {
+    background: transparent;
+    border: none;
+    padding: 4px 0;
+}
+
+/* --- Filter Popover Box --- */
+.pvtFilterBox {
+    z-index: 1000;
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+    padding: 16px;
+    min-width: 280px;
+}
+
+.pvtFilterBox h4 {
+    font-size: 13px;
+    font-weight: 600;
+    color: #1e293b;
+    margin: 0 0 12px 0;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.pvtFilterBox .pvtSearch {
+    width: 100%;
+    padding: 8px 12px;
+    border: 1px solid #e2e8f0;
+    border-radius: 6px;
+    font-size: 13px;
+    margin-bottom: 12px;
+}
+
+.pvtFilterBox .pvtCheckContainer {
+    max-height: 200px;
+    overflow-y: auto;
+    border: 1px solid #f1f5f9;
+    border-radius: 6px;
+    padding: 4px;
+    margin-bottom: 12px;
+}
+
+.pvtFilterBox .pvtCheckContainer p {
+    margin: 0;
+    padding: 6px 8px;
+    font-size: 12px;
+    color: #475569;
+    border-radius: 4px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.pvtFilterBox .pvtCheckContainer p:hover {
+    background: #f1f5f9;
+}
+
+/* Filter Buttons */
+.pvtFilterBox button {
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    color: #475569;
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    margin-right: 8px;
+    transition: all 0.15s ease;
+}
+
+.pvtFilterBox button:hover {
+    background: #e2e8f0;
+    color: #1e293b;
+}
+
+/* --- The Result Table (Pivot Table) --- */
+table.pvtTable {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+    text-align: left;
+    border: none;
+}
+
+/* Header Cells */
+table.pvtTable thead tr th, 
+table.pvtTable tbody tr th {
+    background-color: #f8fafc;
+    border: 1px solid #e2e8f0;
+    color: #475569;
+    font-weight: 600;
+    padding: 10px 12px;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+
+/* Data Cells */
+table.pvtTable tbody tr td {
+    color: #334155;
+    padding: 10px 12px;
+    background-color: #fff;
+    border: 1px solid #f1f5f9;
+    font-variant-numeric: tabular-nums; /* Align numbers beautifully */
+    transition: background 0.1s;
+}
+
+/* Hover Effects */
+table.pvtTable tbody tr:hover td {
+    background-color: #f8fafc !important;
+}
+
+/* Totals Styling */
+table.pvtTable .pvtTotalLabel {
+    background-color: #f1f5f9;
+    font-weight: 700;
+    color: #1e293b;
+}
+
+table.pvtTable .pvtTotal,
+table.pvtTable .pvtGrandTotal {
+    background-color: #f8fafc;
+    font-weight: 700;
+    color: #0f172a;
+    border-bottom: 2px solid #e2e8f0;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   3. INTEGRITY DASHBOARD COMPONENTS (Risk, Heatmaps, Gauges)
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* --- Risk Gauge --- */
+.integrity-gauge {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 10px;
+}
+
+.integrity-gauge .gauge-value {
+    font-size: 2.5rem;
+    font-weight: 800;
+    color: #1e293b;
+    line-height: 1;
+    margin-top: -15px;
+}
+
+.integrity-gauge .gauge-label {
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: #64748b;
+    margin-top: 8px;
+}
+
+/* --- Heatmap Calendar --- */
+.heatmap-container {
+    background: #fff;
+    border-radius: 8px;
+    padding: 16px;
+}
+
+.heatmap-header {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 6px;
+    margin-bottom: 8px;
+    text-align: center;
+    font-size: 10px;
+    font-weight: 700;
+    color: #94a3b8;
+    text-transform: uppercase;
+}
+
+.heatmap-grid {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 6px;
+}
+
+.heatmap-cell {
+    aspect-ratio: 1;
+    border-radius: 6px;
+    background: #f1f5f9; /* Default empty state */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    cursor: default;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.heatmap-cell:not(.empty) {
+    cursor: pointer;
+}
+
+.heatmap-cell:not(.empty):hover {
+    transform: scale(1.15);
+    z-index: 10;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    border: 1px solid rgba(255,255,255,0.5);
+}
+
+.heatmap-day {
+    font-size: 10px;
+    font-weight: 600;
+    color: rgba(0, 0, 0, 0.4);
+    pointer-events: none;
+}
+
+/* Heatmap Colors - Semantic Risk Levels */
+.heatmap-cell[data-level="0"] { background-color: #ecfdf5; } /* Safe */
+.heatmap-cell[data-level="1"] { background-color: #d1fae5; }
+.heatmap-cell[data-level="2"] { background-color: #6ee7b7; }
+.heatmap-cell[data-level="3"] { background-color: #34d399; }
+.heatmap-cell[data-level="4"] { background-color: #fbbf24; } /* Warning */
+.heatmap-cell[data-level="5"] { background-color: #f59e0b; }
+.heatmap-cell[data-level="6"] { background-color: #f87171; } /* Danger */
+.heatmap-cell[data-level="7"] { background-color: #ef4444; }
+.heatmap-cell[data-level="8"] { background-color: #dc2626; }
+.heatmap-cell[data-level="9"] { background-color: #b91c1c; color: white; }
+
+/* Weekend styling */
+.weekend-highlight {
+    border: 1px dashed #cbd5e1;
+}
+
+/* Legend */
+.heatmap-legend {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-top: 12px;
+    gap: 12px;
+}
+
+.heatmap-legend .legend-label {
+    font-size: 10px;
+    color: #64748b;
+    font-weight: 500;
+}
+
+.heatmap-legend .legend-gradient {
+    width: 100px;
+    height: 6px;
+    border-radius: 3px;
+    background: linear-gradient(to right, #ecfdf5, #34d399, #f59e0b, #ef4444);
+}
+
+/* --- Risk Score Pills --- */
+.risk-score-pill {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: 24px;
+    padding: 0 10px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+}
+
+.risk-score-pill.high {
+    background: #fef2f2;
+    color: #b91c1c;
+    border: 1px solid #fecaca;
+}
+
+.risk-score-pill.medium {
+    background: #fffbeb;
+    color: #b45309;
+    border: 1px solid #fde68a;
+}
+
+.risk-score-pill.low {
+    background: #ecfdf5;
+    color: #047857;
+    border: 1px solid #a7f3d0;
+}
+
+/* --- Flag Badges --- */
+.integrity-flag-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 8px;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 600;
+    background: #f1f5f9;
+    color: #475569;
+    border: 1px solid #e2e8f0;
+}
+
+.integrity-flag-badge i {
+    font-size: 10px;
+}
+
+/* --- Confidence Bars --- */
+.confidence-bar {
+    width: 80px;
+    height: 6px;
+    background: #e2e8f0;
+    border-radius: 3px;
+    overflow: hidden;
+    display: inline-block;
+    vertical-align: middle;
+}
+
+.confidence-bar-fill {
+    height: 100%;
+    border-radius: 3px;
+    transition: width 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.confidence-bar-fill.high { background: #10b981; }
+.confidence-bar-fill.medium { background: #f59e0b; }
+.confidence-bar-fill.low { background: #ef4444; }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   4. DARK MODE SUPPORT (Seamless Integration)
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+body.dark-mode .advisor-pivot-wrapper {
+    background: #1e293b; /* Slate-800 */
+    border-color: #334155;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3);
+}
+
+body.dark-mode .pivot-loading {
+    background: #0f172a; /* Slate-900 */
+    color: #94a3b8;
+}
+
+body.dark-mode .pvtUi > tbody > tr > td.pvtUiCell {
+    background: #0f172a;
+    border-color: #334155;
+}
+
+body.dark-mode .pvtUi > tbody > tr > td.pvtUiCell:first-child,
+body.dark-mode .pvtUi > tbody > tr > td.pvtUiCell:last-child,
+body.dark-mode .pvtUi > tbody > tr:last-child > td.pvtUiCell:first-child,
+body.dark-mode .pvtRendererArea {
+    background: #1e293b;
+    border-color: #334155;
+}
+
+body.dark-mode .pvtRenderer, 
+body.dark-mode .pvtAggregator, 
+body.dark-mode .pvtAttrDropdown {
+    background-color: #0f172a;
+    border-color: #334155;
+    color: #f1f5f9;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%2394a3b8'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'%3E%3C/path%3E%3C/svg%3E");
+}
+
+body.dark-mode .pvtAxisContainer {
+    background: #0f172a;
+    border-color: #334155;
+}
+
+body.dark-mode .pvtAxisContainer li span.pvtAttr {
+    background: #334155;
+    border-color: #475569;
+    color: #e2e8f0;
+}
+
+body.dark-mode .pvtAxisContainer li span.pvtAttr:hover {
+    background: #475569;
+    color: #fff;
+}
+
+body.dark-mode .pvtFilterBox {
+    background: #1e293b;
+    border-color: #334155;
+}
+
+body.dark-mode .pvtFilterBox h4 {
+    color: #f1f5f9;
+}
+
+body.dark-mode .pvtFilterBox .pvtSearch {
+    background: #0f172a;
+    border-color: #334155;
+    color: #fff;
+}
+
+body.dark-mode .pvtFilterBox .pvtCheckContainer {
+    border-color: #334155;
+}
+
+body.dark-mode .pvtFilterBox .pvtCheckContainer p:hover {
+    background: #334155;
+}
+
+body.dark-mode .pvtFilterBox button {
+    background: #0f172a;
+    border-color: #334155;
+    color: #cbd5e1;
+}
+
+body.dark-mode table.pvtTable thead tr th,
+body.dark-mode table.pvtTable tbody tr th {
+    background-color: #0f172a;
+    border-color: #334155;
+    color: #94a3b8;
+}
+
+body.dark-mode table.pvtTable tbody tr td {
+    background-color: #1e293b;
+    border-color: #334155;
+    color: #f1f5f9;
+}
+
+body.dark-mode table.pvtTable tbody tr:hover td {
+    background-color: #334155 !important;
+}
+
+body.dark-mode table.pvtTable .pvtTotalLabel,
+body.dark-mode table.pvtTable .pvtTotal,
+body.dark-mode table.pvtTable .pvtGrandTotal {
+    background-color: #0f172a;
+    color: #f1f5f9;
+    border-color: #334155;
+}
+
+/* Integrity Dark Mode */
+body.dark-mode .integrity-gauge .gauge-value { color: #f1f5f9; }
+body.dark-mode .integrity-gauge .gauge-label { color: #94a3b8; }
+
+body.dark-mode .heatmap-container {
+    background: #1e293b;
+}
+
+body.dark-mode .heatmap-cell.empty {
+    background: #334155;
+    opacity: 0.3;
+}
+
+body.dark-mode .risk-score-pill.high { background: rgba(239, 68, 68, 0.2); color: #fca5a5; border-color: rgba(239, 68, 68, 0.4); }
+body.dark-mode .risk-score-pill.medium { background: rgba(245, 158, 11, 0.2); color: #fcd34d; border-color: rgba(245, 158, 11, 0.4); }
+body.dark-mode .risk-score-pill.low { background: rgba(16, 185, 129, 0.2); color: #6ee7b7; border-color: rgba(16, 185, 129, 0.4); }
+
+body.dark-mode .confidence-bar { background: #334155; }
+
+body.dark-mode .integrity-flag-badge {
+    background: #334155;
+    color: #e2e8f0;
+    border-color: #475569;
+}

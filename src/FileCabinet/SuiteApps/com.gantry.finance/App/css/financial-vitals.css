@@ -1,0 +1,515 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   FINANCIAL-VITALS - Financial vitals and transaction components
+   Part of Gantry Financial Suite CSS
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ===========================================
+   FINANCIAL VITALS - COMPACT LAYOUT
+   =========================================== */
+
+.cf-vitals-compact {
+    font-size: 13px;
+}
+
+.cf-vitals-compact .vitals-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 6px 0;
+}
+
+.cf-vitals-compact .vitals-row + .vitals-row {
+    border-top: 1px solid #e2e8f0;
+}
+
+body.dark-mode .cf-vitals-compact .vitals-row + .vitals-row {
+    border-top-color: #334155;
+}
+
+.cf-vitals-compact .vitals-label {
+    color: #64748b;
+    font-size: 12px;
+}
+
+body.dark-mode .cf-vitals-compact .vitals-label {
+    color: #94a3b8;
+}
+
+.cf-vitals-compact .vitals-value {
+    font-weight: 600;
+    color: #1e293b;
+}
+
+body.dark-mode .cf-vitals-compact .vitals-value {
+    color: #f1f5f9;
+}
+
+/* Chart container heights - more compact */
+.chart-container-sm {
+    height: 160px;
+}
+
+.chart-container-md {
+    height: 200px;
+}
+
+/* Executive summary row - tighter spacing */
+.exec-summary-row {
+    min-height: 220px;
+}
+
+.exec-summary-row .bg-light {
+    padding: 12px !important;
+}
+
+.exec-summary-row .cf-section-header {
+    margin-bottom: 8px !important;
+    font-size: 13px;
+}
+
+/* Fix for KPI main row (sparkline container) */
+.kpi-main-row {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+}
+
+/* ==========================================
+   TRANSACTION CARD - Single Transaction Display
+   ========================================== */
+.transaction-card {
+    background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);
+    border: 1px solid #e2e8f0;
+    border-radius: 16px;
+    padding: 24px;
+    margin: 12px 0;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
+    max-width: 500px;
+}
+
+body.dark-mode .transaction-card {
+    background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+    border-color: #334155;
+}
+
+.transaction-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid #e2e8f0;
+}
+
+body.dark-mode .transaction-card-header {
+    border-bottom-color: #334155;
+}
+
+.transaction-type-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+    color: white;
+    padding: 6px 14px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.transaction-type-badge i {
+    font-size: 11px;
+}
+
+.transaction-number {
+    font-size: 14px;
+    color: #64748b;
+    font-family: "SF Mono", Monaco, monospace;
+}
+
+body.dark-mode .transaction-number {
+    color: #94a3b8;
+}
+
+.transaction-card-primary {
+    text-align: center;
+    margin-bottom: 24px;
+}
+
+.transaction-entity {
+    font-size: 20px;
+    font-weight: 600;
+    color: #1e293b;
+    margin-bottom: 8px;
+}
+
+body.dark-mode .transaction-entity {
+    color: #f1f5f9;
+}
+
+.transaction-amount {
+    font-size: 36px;
+    font-weight: 700;
+    color: #0f172a;
+    letter-spacing: -1px;
+}
+
+body.dark-mode .transaction-amount {
+    color: #ffffff;
+}
+
+.transaction-card-details {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 16px;
+    padding: 20px;
+    background: #f8fafc;
+    border-radius: 12px;
+    margin-bottom: 16px;
+}
+
+body.dark-mode .transaction-card-details {
+    background: rgba(255, 255, 255, 0.03);
+}
+
+.transaction-detail {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.transaction-detail.full-width {
+    grid-column: 1 / -1;
+}
+
+.detail-label {
+    font-size: 11px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: #64748b;
+}
+
+body.dark-mode .detail-label {
+    color: #94a3b8;
+}
+
+.detail-value {
+    font-size: 14px;
+    font-weight: 500;
+    color: #1e293b;
+}
+
+body.dark-mode .detail-value {
+    color: #e2e8f0;
+}
+
+/* Status badges */
+.status-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.status-badge.status-success {
+    background: #dcfce7;
+    color: #166534;
+}
+
+body.dark-mode .status-badge.status-success {
+    background: rgba(34, 197, 94, 0.2);
+    color: #4ade80;
+}
+
+.status-badge.status-warning {
+    background: #fef3c7;
+    color: #92400e;
+}
+
+body.dark-mode .status-badge.status-warning {
+    background: rgba(251, 191, 36, 0.2);
+    color: #fbbf24;
+}
+
+.status-badge.status-error {
+    background: #fecaca;
+    color: #991b1b;
+}
+
+body.dark-mode .status-badge.status-error {
+    background: rgba(239, 68, 68, 0.2);
+    color: #f87171;
+}
+
+.status-badge.status-neutral {
+    background: #e2e8f0;
+    color: #475569;
+}
+
+body.dark-mode .status-badge.status-neutral {
+    background: rgba(148, 163, 184, 0.2);
+    color: #94a3b8;
+}
+
+.transaction-card-footer {
+    text-align: right;
+    padding-top: 12px;
+    border-top: 1px solid #e2e8f0;
+}
+
+body.dark-mode .transaction-card-footer {
+    border-top-color: #334155;
+}
+
+.transaction-id {
+    font-size: 11px;
+    color: #94a3b8;
+    font-family: "SF Mono", Monaco, monospace;
+}
+
+/* Transaction card link */
+.transaction-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: #3b82f6;
+    text-decoration: none;
+    font-size: 13px;
+    font-weight: 500;
+    padding: 6px 12px;
+    background: rgba(59, 130, 246, 0.1);
+    border-radius: 6px;
+    transition: all 0.2s ease;
+}
+
+.transaction-link:hover {
+    background: rgba(59, 130, 246, 0.2);
+    color: #2563eb;
+}
+
+.transaction-link i {
+    font-size: 11px;
+}
+
+body.dark-mode .transaction-link {
+    color: #60a5fa;
+    background: rgba(96, 165, 250, 0.15);
+}
+
+body.dark-mode .transaction-link:hover {
+    background: rgba(96, 165, 250, 0.25);
+    color: #93c5fd;
+}
+
+.transaction-card-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding-top: 12px;
+    border-top: 1px solid #e2e8f0;
+}
+
+body.dark-mode .transaction-card-footer {
+    border-top-color: #334155;
+}
+
+/* Prefill mode query buttons */
+.query-panel-item.prefill-mode {
+    border-style: dashed;
+}
+
+.query-panel-item.prefill-mode i {
+    color: #64748b;
+}
+
+body.dark-mode .query-panel-item.prefill-mode i {
+    color: #94a3b8;
+}
+
+/* Metric row responsive - stack on small screens */
+@media (max-width: 600px) {
+    .message-rich .metric-row {
+        flex-wrap: wrap;
+    }
+    
+    .message-rich .metric-row .metric-card {
+        flex: 1 1 calc(50% - 6px);
+        min-width: calc(50% - 6px);
+    }
+    
+    .metric-card .metric-value {
+        font-size: 1.25rem;
+    }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   ENHANCED TABLE SYSTEM - Grouped, Financial Statement, Pivot
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Table Container */
+.advisor-table-container {
+    margin: 12px 0;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    overflow: hidden;
+    background: var(--card-bg);
+}
+
+/* Table wrapper - enables horizontal scrolling */
+.advisor-table-wrapper {
+    overflow-x: auto;
+    overflow-y: visible;
+    max-width: 100%;
+    -webkit-overflow-scrolling: touch;
+}
+
+/* Scrollbar styling */
+.advisor-table-wrapper::-webkit-scrollbar {
+    height: 8px;
+}
+
+.advisor-table-wrapper::-webkit-scrollbar-track {
+    background: #f1f5f9;
+    border-radius: 4px;
+}
+
+.advisor-table-wrapper::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+    border-radius: 4px;
+}
+
+.advisor-table-wrapper::-webkit-scrollbar-thumb:hover {
+    background: #94a3b8;
+}
+
+.advisor-table-empty {
+    padding: 24px;
+    text-align: center;
+    color: var(--text-muted);
+    font-style: italic;
+}
+
+/* Table Toolbar */
+.table-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 12px;
+    background: #f8fafc;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.table-toolbar-title {
+    font-weight: 600;
+    font-size: 0.9rem;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.table-toolbar-actions {
+    display: flex;
+    gap: 4px;
+    flex-shrink: 0;
+}
+
+.table-tool-btn {
+    width: 28px;
+    height: 28px;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    background: var(--card-bg);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-muted);
+    transition: all 0.15s ease;
+}
+
+.table-tool-btn:hover {
+    background: #f1f5f9;
+    color: var(--primary);
+    border-color: var(--primary);
+}
+
+.table-tool-btn.active {
+    background: var(--primary);
+    color: white;
+    border-color: var(--primary);
+}
+
+.table-tool-btn i {
+    font-size: 12px;
+}
+
+/* Grouped Table Styles */
+.grouped-table .group-header {
+    background: linear-gradient(to right, #f1f5f9, #f8fafc);
+    cursor: pointer;
+    font-weight: 600;
+    user-select: none;
+    transition: background 0.15s ease;
+}
+
+.grouped-table .group-header:hover {
+    background: #e2e8f0;
+}
+
+.grouped-table .group-header td {
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border-color);
+    text-align: left;
+}
+
+.grouped-table .group-header .chevron {
+    display: inline-block;
+    transition: transform 0.2s ease;
+    margin-right: 8px;
+    font-size: 10px;
+    color: var(--text-muted);
+}
+
+.grouped-table .group-header.collapsed .chevron {
+    transform: rotate(-90deg);
+}
+
+.grouped-table .group-count {
+    margin-left: 8px;
+    font-weight: 400;
+    color: var(--text-muted);
+    font-size: 0.85em;
+}
+
+.grouped-table .group-data-row td:first-child {
+    padding-left: 32px;
+}
+
+.grouped-table .subtotal-row {
+    background: #fafafa;
+    border-top: 1px dashed var(--border-color);
+}
+
+.grouped-table .subtotal-row td {
+    font-style: italic;
+    color: var(--text-muted);
+}
+
+.grouped-table .subtotal-row td:first-child {
+    padding-left: 32px;
+}
+
+.grand-total-row {
+    background: #f1f5f9;
+    border-top: 2px solid var(--border-color);
+}
+
+.grand-total-row td {
+    font-weight: 600;
+    padding: 10px 12px;
+}
+

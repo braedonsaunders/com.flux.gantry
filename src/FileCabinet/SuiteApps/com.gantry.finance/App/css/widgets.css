@@ -1,0 +1,438 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   WIDGETS - Sparklines, gauges, and chart-related styles
+   Part of Gantry Financial Suite CSS
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ==========================================
+   SPARKLINES
+   ========================================== */
+.sparkline, .sparkline-area, .sparkline-bars {
+    display: inline-block;
+    vertical-align: middle;
+}
+
+.kpi-sparkline {
+    display: inline-flex;
+    align-items: center;
+    margin-left: 8px;
+}
+
+.kpi-card .kpi-value-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.kpi-card .kpi-value-row .kpi-value {
+    flex: 1;
+}
+
+/* Sparkline in table cells */
+td .sparkline {
+    display: block;
+    margin-top: 2px;
+}
+
+/* ==========================================
+   HEALTH GAUGE
+   ========================================== */
+.health-gauge-container {
+    display: inline-block;
+}
+
+.health-gauge {
+    display: block;
+}
+
+.health-gauge-label {
+    font-size: var(--font-xs);
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-weight: 600;
+}
+
+.health-gauge-semi {
+    display: block;
+}
+
+/* Mini gauge for inline use */
+.health-gauge-mini {
+    display: inline-flex;
+    align-items: center;
+}
+
+/* Gauge card styling */
+.gauge-card {
+    text-align: center;
+    padding: 1rem;
+}
+
+.gauge-card .health-gauge-container {
+    margin: 0 auto;
+}
+
+/* ==========================================
+   CASH RUNWAY BAR
+   ========================================== */
+.runway-bar-container {
+    padding: 0.5rem 0;
+}
+
+.runway-bar-label {
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-weight: 600;
+}
+
+.runway-bar-value {
+    font-size: var(--font-md);
+}
+
+.runway-bar-track {
+    position: relative;
+    background: #e5e7eb;
+    border-radius: 4px;
+    overflow: visible;
+}
+
+.runway-bar-fill {
+    height: 100%;
+    border-radius: 4px;
+    transition: width 0.5s ease;
+}
+
+.runway-bar-markers {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+}
+
+.runway-marker {
+    position: absolute;
+    top: -4px;
+    bottom: -4px;
+    width: 3px;
+    border-radius: 2px;
+    transform: translateX(-50%);
+}
+
+.runway-marker-critical {
+    background: #991b1b;
+}
+
+.runway-threshold {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background: rgba(0, 0, 0, 0.2);
+    transform: translateX(-50%);
+}
+
+.runway-threshold-critical {
+    background: rgba(239, 68, 68, 0.4);
+}
+
+.runway-threshold-warning {
+    background: rgba(245, 158, 11, 0.4);
+}
+
+.runway-bar-footer {
+    font-size: var(--font-xs);
+}
+
+/* Compact runway indicator */
+.runway-compact-bar {
+    background: #e5e7eb;
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.runway-compact-fill {
+    height: 100%;
+    border-radius: 3px;
+    transition: width 0.3s ease;
+}
+
+.runway-compact-value {
+    min-width: 28px;
+}
+
+/* Status classes */
+.runway-critical .runway-bar-track {
+    background: #fecaca;
+}
+
+.runway-warning .runway-bar-track {
+    background: #fef3c7;
+}
+
+.runway-healthy .runway-bar-track {
+    background: #d1fae5;
+}
+
+/* ==========================================
+   CHART CONTAINERS
+   ========================================== */
+.chart-container {
+    position: relative;
+    width: 100%;
+    background: var(--bg-white);
+    border-radius: 8px;
+    padding: 0.75rem;
+}
+
+.chart-container-sm {
+    min-height: 160px;
+}
+
+.chart-container-md {
+    min-height: 200px;
+}
+
+.chart-container-lg {
+    min-height: 280px;
+}
+
+.chart-title {
+    font-size: var(--font-sm);
+    font-weight: 600;
+    color: var(--text-dark);
+    margin-bottom: 0.5rem;
+}
+
+.chart-subtitle {
+    font-size: var(--font-xs);
+    color: var(--text-muted);
+    margin-bottom: 0.75rem;
+}
+
+/* Plotly chart overrides */
+.js-plotly-plot .plotly .modebar {
+    display: none !important;
+}
+
+.js-plotly-plot {
+    width: 100% !important;
+}
+
+/* Ensure plotly hover labels aren't clipped */
+.js-plotly-plot .hoverlayer {
+    z-index: 1000 !important;
+}
+
+.border.rounded.bg-light {
+    overflow: visible !important;
+}
+
+.card-body {
+    overflow: visible;
+}
+
+/* ==========================================
+   STATUS BADGES & INDICATORS
+   ========================================== */
+.status-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.15rem 0.5rem;
+    border-radius: 999px;
+    font-size: var(--font-xs);
+    font-weight: 600;
+}
+
+.status-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-right: 6px;
+}
+
+.status-good {
+    background: #dcfce7;
+    color: #166534;
+    border-color: #86efac;
+}
+
+.status-warning {
+    background: #fef3c7;
+    color: #92400e;
+    border-color: #fcd34d;
+}
+
+.status-critical {
+    background: #fee2e2;
+    color: #991b1b;
+    border-color: #fca5a5;
+}
+
+.status-neutral {
+    background: #f3f4f6;
+    color: #374151;
+    border-color: #d1d5db;
+}
+
+/* ==========================================
+   KPI CARD ENHANCEMENTS
+   ========================================== */
+.cf-kpi-card.kpi-with-chart {
+    flex-direction: column;
+    align-items: stretch;
+}
+
+.cf-kpi-card.kpi-with-chart .kpi-content {
+    margin-bottom: 0.5rem;
+}
+
+.cf-kpi-card .kpi-chart {
+    width: 100%;
+    height: 40px;
+    margin-top: 4px;
+}
+
+/* KPI card with sparkline inline */
+.cf-kpi-card .kpi-main-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.cf-kpi-card .kpi-main-row .kpi-value {
+    margin-right: 8px;
+}
+
+/* ==========================================
+   EXECUTIVE SUMMARY CARD
+   ========================================== */
+.exec-summary-card {
+    background: linear-gradient(135deg, #1e3a5f 0%, #2d5a87 100%);
+    color: white;
+    border-radius: 12px;
+    padding: 1.25rem;
+}
+
+.exec-summary-card .kpi-label {
+    color: rgba(255, 255, 255, 0.7);
+}
+
+.exec-summary-card .kpi-value {
+    color: white;
+    font-size: 1.75rem;
+}
+
+.exec-summary-card .kpi-sub {
+    color: rgba(255, 255, 255, 0.6);
+}
+
+.exec-summary-card .sparkline polyline {
+    stroke: rgba(255, 255, 255, 0.8) !important;
+}
+
+.exec-summary-card .sparkline circle {
+    fill: #10b981 !important;
+}
+
+/* ==========================================
+   TREND INDICATORS
+   ========================================== */
+.trend-indicator {
+    display: inline-flex;
+    align-items: center;
+    font-size: var(--font-xs);
+    font-weight: 600;
+    padding: 0.1rem 0.35rem;
+    border-radius: 4px;
+}
+
+.trend-up {
+    color: #059669;
+    background: #d1fae5;
+}
+
+.trend-down {
+    color: #dc2626;
+    background: #fee2e2;
+}
+
+.trend-flat {
+    color: #6b7280;
+    background: #f3f4f6;
+}
+
+.trend-indicator i {
+    margin-right: 3px;
+    font-size: 0.7em;
+}
+
+/* ==========================================
+   RESPONSIVE CHART ADJUSTMENTS
+   ========================================== */
+@media (max-width: 768px) {
+    .chart-container-md,
+    .chart-container-lg {
+        min-height: 200px;
+    }
+    
+    .health-gauge-container svg {
+        max-width: 100px;
+        max-height: 100px;
+    }
+    
+    .runway-bar-container {
+        padding: 0.25rem 0;
+    }
+}
+
+@media (max-width: 480px) {
+    .chart-container {
+        padding: 0.5rem;
+    }
+    
+    .kpi-sparkline {
+        display: none;
+    }
+}
+
+/* --- BORDER LEFT COLOR UTILITIES --- */
+.border-left-success {
+    border-left: 4px solid #28a745 !important;
+}
+.border-left-warning {
+    border-left: 4px solid #ffc107 !important;
+}
+.border-left-danger {
+    border-left: 4px solid #dc3545 !important;
+}
+.border-left-primary {
+    border-left: 4px solid #007bff !important;
+}
+.border-left-info {
+    border-left: 4px solid #17a2b8 !important;
+}
+.border-left-secondary {
+    border-left: 4px solid #6c757d !important;
+}
+
+/* --- DRAGGING STATE --- */
+.dashboard-order-item.dragging {
+    opacity: 0.5;
+    background: #f8f9fa;
+}
+.dashboard-order-item:hover {
+    background: rgba(0, 123, 255, 0.05);
+}
+
+/* Fix visibility switch styling in light mode */
+.dashboard-order-item .custom-switch .custom-control-label::before {
+    background-color: #cbd5e1;
+    border-color: #94a3b8;
+}
+.dashboard-order-item .custom-switch .custom-control-input:checked ~ .custom-control-label::before {
+    background-color: #3b82f6;
+    border-color: #3b82f6;
+}
+

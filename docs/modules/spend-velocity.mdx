@@ -1,0 +1,300 @@
+---
+title: "Spend Velocity"
+description: "Spending pattern analysis and anomaly detection"
+order: 9
+icon: "gauge"
+---
+
+## Overview
+
+Spend Velocity (also called Cost Dynamics) applies physics concepts to spending analysis. Just as velocity measures speed of motion, Spend Velocity measures the speed and acceleration of your spending.
+
+This dashboard catches subtle changes that other analyses miss — the slow subscription creep, the viral software adoption, the zombie vendor still getting paid.
+
+## The Physics of Spending
+
+### Velocity
+
+How fast is spending growing?
+
+```
+Velocity = (Current Spend - Prior Spend) ÷ Prior Spend
+```
+
+**Example**: If you spent $10,000 last month and $12,000 this month:
+```
+Velocity = ($12,000 - $10,000) ÷ $10,000 = 20%
+```
+
+### Acceleration
+
+Is growth speeding up or slowing down?
+
+```
+Acceleration = Current Velocity - Prior Velocity
+```
+
+**Example**: If velocity was 10% last month and 20% this month:
+```
+Acceleration = 20% - 10% = 10% (accelerating)
+```
+
+Positive acceleration = spending growth is increasing
+Negative acceleration = spending growth is slowing
+
+## Health Score
+
+### The Score
+
+Spend Velocity Health Score (0-100) measures the health of spending patterns:
+
+| Score | Grade | Meaning |
+|-------|-------|---------|
+| 80-100 | A | Healthy, controlled spending |
+| 70-79 | B | Good with minor anomalies |
+| 60-69 | C | Some concerning patterns |
+| 50-59 | D | Multiple issues detected |
+| Below 50 | F | Significant spend control problems |
+
+Higher is better.
+
+## Key Metrics
+
+### Header Metrics
+
+| Metric | Description |
+|--------|-------------|
+| **Health Score** | Overall spend health |
+| **Total Spend** | Spending in the period |
+| **Average Monthly Velocity** | Typical monthly growth rate |
+| **Acceleration** | Change in velocity |
+| **Accelerating Vendors** | Vendors with increasing velocity |
+| **Alert Count** | Number of spend anomalies |
+
+## Detection Models
+
+Spend Velocity uses seven specialized detection models:
+
+### 1. Velocity & Acceleration Tracking
+
+**What It Detects**: Vendors or categories where spending is growing rapidly, especially when growth is accelerating.
+
+**Why It Matters**: Catching cost increases early, before they become significant.
+
+**Indicators**:
+- High velocity (rapid growth)
+- Positive acceleration (getting faster)
+- Velocity above threshold (default 20%)
+
+### 2. Boiling Frog Detector
+
+**What It Is**: Named for the metaphor of a frog in slowly heating water. Detects incremental price increases that are individually too small to notice but compound over time.
+
+**What It Detects**:
+- Subscriptions with creeping price increases
+- Service contracts with annual escalators
+- Vendors slowly raising prices
+
+**Example**: A vendor charges $1,000/month. They increase prices 3% per year. After 5 years, you're paying $1,159/month. Each increase seemed small, but the total is significant.
+
+**Threshold**: Default 25% cumulative increase over 180 days.
+
+### 3. Shadow IT Detection
+
+**What It Is**: Identifies software and services that spread "virally" through the organization without IT/procurement oversight.
+
+**What It Detects**:
+- Tools adopted by multiple employees independently
+- Departmental software subscriptions proliferating
+- Unauthorized SaaS spreading
+
+**How It Works**: Tracks when payments to a vendor appear from multiple cost centers or departments, especially new-to-the-organization vendors.
+
+**Threshold**: Default 5 employees using a tool within short period.
+
+### 4. Anomaly Heat Signatures
+
+**What It Is**: Statistical outlier detection using standard deviations.
+
+**What It Detects**:
+- Spending significantly above or below normal
+- Unusual transaction patterns
+- One-time large purchases
+- Missing expected regular payments
+
+**How It Works**: For each vendor/category, calculates the mean and standard deviation. Flags amounts outside 2.5 standard deviations.
+
+### 5. Commitment Cliff Analysis
+
+**What It Is**: Compares purchase order velocity to actual spending velocity.
+
+**What It Detects**:
+- Overcommitment (POs far exceeding actual purchases)
+- Undercommitment (spending exceeding planned)
+- Timing mismatches between commitments and spend
+
+**Why It Matters**: POs are future commitments. If PO velocity diverges from spend velocity, something is changing.
+
+### 6. Seasonal Pattern Recognition
+
+**What It Is**: Identifies cyclical spending patterns and flags when current behavior doesn't match expected seasonality.
+
+**What It Detects**:
+- Missing seasonal spend (you usually spend more in Q4, but not this year)
+- Unusual timing (spending that normally happens in March happens in February)
+- Seasonal vendors with unexpected activity
+
+### 7. Zombie Spend Detection
+
+**What It Is**: Identifies vendors you're still paying but haven't actively purchased from.
+
+**What It Detects**:
+- Subscriptions for departed employees
+- Unused software licenses
+- Services no longer needed
+- Auto-renewing contracts forgotten
+
+**Threshold**: Default 90 days of payments without new purchases.
+
+## Dashboard Sections
+
+### Velocity Overview
+
+Summary gauges showing:
+- Overall velocity trend
+- Acceleration direction
+- Number of anomalies
+
+### Vendor Velocity Table
+
+| Column | Description |
+|--------|-------------|
+| **Vendor** | Vendor name |
+| **Current Spend** | This period's spending |
+| **Prior Spend** | Last period's spending |
+| **Velocity** | Growth rate |
+| **Acceleration** | Change in velocity |
+| **Flags** | Active anomaly alerts |
+
+### Detection Alerts
+
+Grouped by detection type:
+- Boiling Frog alerts
+- Shadow IT discoveries
+- Statistical anomalies
+- Zombie vendors
+
+Each alert shows:
+- Vendor/category affected
+- Magnitude of issue
+- Recommended action
+
+### Trend Charts
+
+- Velocity over time
+- Top accelerating vendors
+- Anomaly frequency trends
+
+## Using the Dashboard
+
+### Weekly
+
+1. Review any new anomaly alerts
+2. Check acceleration trends
+3. Investigate flagged vendors
+
+### Monthly
+
+1. Review Boiling Frog detections (slow creep)
+2. Check for Shadow IT spread
+3. Audit Zombie vendors
+4. Analyze seasonal patterns
+
+### Quarterly
+
+1. Comprehensive spend velocity review
+2. Vendor negotiation planning (based on velocity data)
+3. Policy adjustments for spending control
+4. Shadow IT cleanup initiatives
+
+## Configuration Options
+
+Access via **Settings → Spend Velocity**:
+
+### Velocity Thresholds
+
+| Setting | Purpose | Default |
+|---------|---------|---------|
+| **High Velocity** | Flag when monthly growth exceeds | 20% |
+| **Acceleration Threshold** | Flag when acceleration exceeds | 15% |
+
+### Boiling Frog Settings
+
+| Setting | Purpose | Default |
+|---------|---------|---------|
+| **Detection Window** | Days to look back | 180 |
+| **Cumulative Increase** | Total increase to flag | 25% |
+
+### Shadow IT Settings
+
+| Setting | Purpose | Default |
+|---------|---------|---------|
+| **Employee Threshold** | Users before flagging | 5 |
+| **Growth Period** | Time window for spread | 90 days |
+
+### Anomaly Detection
+
+| Setting | Purpose | Default |
+|---------|---------|---------|
+| **Standard Deviations** | Outlier threshold | 2.5 |
+| **Minimum Data Points** | Required history | 6 periods |
+
+### Zombie Detection
+
+| Setting | Purpose | Default |
+|---------|---------|---------|
+| **Inactivity Period** | Days without new purchase | 90 |
+| **Minimum Amount** | Threshold to flag | $500 |
+
+## Best Practices
+
+### Investigate Acceleration, Not Just Velocity
+High velocity might be planned (new project, seasonal). Acceleration indicates things are changing — that's when to dig in.
+
+### Review Boiling Frog Quarterly
+Slow creep is designed to avoid notice. Set a calendar reminder.
+
+### Shadow IT Isn't Always Bad
+Sometimes employees find great tools. Review Shadow IT discoveries as potential adoption candidates, not just violations.
+
+### Kill Zombies Promptly
+Every zombie vendor is pure waste. Audit quarterly and cancel aggressively.
+
+### Connect to Contracts
+Pair velocity analysis with contract renewal dates. Negotiate before renewal when you have leverage.
+
+## Common Questions
+
+### Why is high velocity sometimes okay?
+Growth requires spending. A vendor with 50% velocity growth may be supporting a 50% revenue growth. Context matters.
+
+### How do I distinguish signal from noise?
+Focus on:
+- Recurring patterns (not one-time spikes)
+- Multiple alert types on same vendor
+- Material amounts
+
+### What's a good velocity target?
+Spending velocity should be at or below revenue velocity. If revenue grows 15%, spending growing 15% is neutral. Growing faster means shrinking margins.
+
+### Can I track by category instead of vendor?
+Yes, the dashboard shows both vendor-level and category-level analysis.
+
+### How far back should I look?
+Default lookback is 180 days for trend analysis. Longer periods provide more stable baselines but may miss recent changes.
+
+## Related Dashboards
+
+- **[Procurement](/docs/gantry/modules/procurement)** — Vendor performance and relationships
+- **[Profitability](/docs/gantry/modules/profitability)** — Margin impact of spending
+- **[Sentinel](/docs/gantry/modules/sentinel)** — Unusual spending patterns and fraud

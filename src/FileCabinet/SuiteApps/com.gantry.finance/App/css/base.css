@@ -1,0 +1,740 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   BASE - Base variables, reset, and layout
+   Part of Gantry Financial Suite CSS
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* --- COMPREHENSIVE COLOR SYSTEM --- */
+:root {
+    /* === SEMANTIC SURFACE COLORS === */
+    --surface-body: #f3f4f6;
+    --surface-primary: #ffffff;
+    --surface-secondary: #f8fafc;
+    --surface-tertiary: #f1f5f9;
+    --surface-muted: #e5e7eb;
+    --surface-hover: #f3f4f6;
+    --surface-active: #e5e7eb;
+    
+    /* === SEMANTIC TEXT COLORS === */
+    --text-primary: #111827;
+    --text-secondary: #374151;
+    --text-muted: #6b7280;
+    --text-light: #9ca3af;
+    --text-inverse: #ffffff;
+    
+    /* === SEMANTIC BORDER COLORS === */
+    --border-default: #e5e7eb;
+    --border-light: #f3f4f6;
+    --border-strong: #d1d5db;
+    
+    /* === STATUS COLORS (same in light/dark) === */
+    --status-blue: #3b82f6;
+    --status-blue-dark: #2563eb;
+    --status-blue-soft: #dbeafe;
+    --status-green: #10b981;
+    --status-green-dark: #059669;
+    --status-green-soft: #dcfce7;
+    --status-red: #ef4444;
+    --status-red-dark: #dc2626;
+    --status-red-soft: #fee2e2;
+    --status-amber: #f59e0b;
+    --status-amber-dark: #d97706;
+    --status-amber-soft: #fef3c7;
+    --status-purple: #8b5cf6;
+    --status-purple-soft: #f3e8ff;
+    --status-pink: #ec4899;
+    --status-indigo: #6366f1;
+    --status-cyan: #06b6d4;
+    
+    /* === LEGACY VARIABLE ALIASES (for backwards compat) === */
+    --primary: #2563eb;
+    --primary-soft: #eff6ff;
+    --success: #10b981;
+    --success-soft: #ecfdf5;
+    --danger: #ef4444;
+    --danger-soft: #fef2f2;
+    --warning: #f59e0b;
+    --text-dark: #111827;
+    --border-color: #e5e7eb;
+    --bg-body: #f3f4f6;
+    --bg-white: #ffffff;
+    
+    /* === LAYOUT === */
+    --sidebar-width: 240px;
+    --sidebar-width-collapsed: 60px;
+
+    /* === SIDEBAR COLORS (synced with NetSuite or fallback) === */
+    --sidebar-bg: #1e293b;
+    --sidebar-bg-hover: #334155;
+    --sidebar-border: #334155;
+    
+    /* === TYPOGRAPHY SCALE === */
+    --font-xs: 0.65rem;      /* 10.4px - tiny labels */
+    --font-sm: 0.72rem;      /* 11.5px - table cells, small text */
+    --font-base: 0.78rem;    /* 12.5px - body text */
+    --font-md: 0.85rem;      /* 13.6px - slightly larger */
+    --font-lg: 1rem;         /* 16px - headings */
+    
+    /* === SPACING SCALE === */
+    --spacing-xs: 3px;
+    --spacing-sm: 5px;
+    --spacing-md: 8px;
+    --spacing-lg: 12px;
+}
+
+/* --- DARK MODE COLOR OVERRIDES --- */
+body.dark-mode {
+    /* === SURFACES === */
+    --surface-body: #0f172a;
+    --surface-primary: #1e293b;
+    --surface-secondary: #1e293b;
+    --surface-tertiary: #334155;
+    --surface-muted: #475569;
+    --surface-hover: #334155;
+    --surface-active: #475569;
+    
+    /* === TEXT === */
+    --text-primary: #f1f5f9;
+    --text-secondary: #e2e8f0;
+    --text-muted: #94a3b8;
+    --text-light: #64748b;
+    --text-inverse: #0f172a;
+    
+    /* === BORDERS === */
+    --border-default: #334155;
+    --border-light: #1e293b;
+    --border-strong: #475569;
+    
+    /* === STATUS SOFT COLORS (inverted for dark) === */
+    --status-blue-soft: #1e3a5f;
+    --status-green-soft: #064e3b;
+    --status-red-soft: #450a0a;
+    --status-amber-soft: #451a03;
+    --status-purple-soft: #2e1065;
+    
+    /* === LEGACY ALIASES === */
+    --primary-soft: #1e3a5f;
+    --success-soft: #064e3b;
+    --danger-soft: #450a0a;
+    --text-dark: #f1f5f9;
+    --border-color: #334155;
+    --bg-body: #0f172a;
+    --bg-white: #1e293b;
+}
+
+body {
+    margin: 0;
+    padding: 0;
+    background-color: var(--bg-body);
+    font-family: "Inter", -apple-system, BlinkMacSystemFont, sans-serif;
+    color: var(--text-dark);
+    font-size: var(--font-base);
+}
+
+/* --- GANTRY LAYOUT --- */
+.gantry-wrapper {
+    display: flex;
+    min-height: 100vh;
+}
+
+.gantry-sidebar {
+    width: var(--sidebar-width);
+    background: var(--sidebar-bg);
+    color: #fff;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+.gantry-sidebar-header {
+    padding: 16px 20px;
+    font-size: 1.1rem;
+    font-weight: 700;
+    border-bottom: 1px solid var(--sidebar-border);
+    display: flex;
+    align-items: center;
+}
+
+.gantry-sidebar-header i {
+    color: var(--warning);
+    margin-right: 10px;
+}
+
+.gantry-nav {
+    list-style: none;
+    padding: 0;
+    margin: 16px 0;
+}
+
+.gantry-nav-item {
+    margin-bottom: 2px;
+}
+
+.gantry-nav-link {
+    display: flex;
+    align-items: center;
+    padding: 10px 20px;
+    color: rgba(255, 255, 255, 0.85);
+    text-decoration: none;
+    transition: all 0.2s;
+    cursor: pointer;
+    font-size: var(--font-md);
+    font-weight: 500;
+}
+
+.gantry-nav-link:hover {
+    color: #fff;
+    background: var(--sidebar-bg-hover);
+    text-decoration: none;
+}
+
+.gantry-nav-link.active {
+    color: #fff;
+    background: var(--primary);
+    border-left: 4px solid #60a5fa;
+}
+
+.gantry-nav-link i {
+    width: 22px;
+    text-align: center;
+    margin-right: 10px;
+}
+
+.gantry-nav-separator {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid var(--sidebar-border);
+}
+
+.gantry-sidebar-footer {
+    margin-top: auto;
+    padding: 12px 20px;
+    border-top: 1px solid var(--sidebar-border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    color: #64748b;
+    font-size: 0.7rem;
+}
+
+.gantry-sidebar-footer button {
+    font-size: 0.9rem;
+    opacity: 0.7;
+    transition: opacity 0.2s;
+}
+
+.gantry-sidebar-footer button:hover {
+    opacity: 1;
+}
+
+/* --- SIDEBAR COLLAPSE TOGGLE --- */
+.gantry-sidebar-toggle {
+    background: none;
+    border: none;
+    color: #64748b;
+    cursor: pointer;
+    padding: 4px;
+    margin-left: auto;
+    opacity: 0.7;
+    transition: opacity 0.2s, transform 0.2s;
+    font-size: 0.85rem;
+}
+
+.gantry-sidebar-toggle:hover {
+    opacity: 1;
+    color: #fff;
+}
+
+/* --- SIDEBAR COLLAPSED STATE --- */
+.gantry-sidebar.collapsed {
+    width: var(--sidebar-width-collapsed);
+    overflow: hidden;
+}
+
+.gantry-sidebar.collapsed .gantry-sidebar-header {
+    padding: 16px 0;
+    justify-content: center;
+    flex-wrap: nowrap;
+    position: relative;
+}
+
+.gantry-sidebar.collapsed .gantry-sidebar-header > span,
+.gantry-sidebar.collapsed .gantry-sidebar-header span:not(.gantry-sidebar-toggle) {
+    display: none !important;
+    width: 0;
+    overflow: hidden;
+}
+
+.gantry-sidebar.collapsed .gantry-sidebar-header i:first-child {
+    margin-right: 0;
+}
+
+.gantry-sidebar.collapsed .gantry-sidebar-toggle {
+    display: none;
+}
+
+/* Make header clickable to expand when collapsed */
+.gantry-sidebar.collapsed .gantry-sidebar-header {
+    cursor: pointer;
+}
+
+.gantry-sidebar.collapsed .gantry-nav-link {
+    padding: 10px 0;
+    justify-content: center;
+    overflow: hidden;
+}
+
+.gantry-sidebar.collapsed .gantry-nav-link i {
+    margin-right: 0;
+    flex-shrink: 0;
+}
+
+.gantry-sidebar.collapsed .gantry-nav-link span {
+    display: none !important;
+    width: 0;
+    overflow: hidden;
+}
+
+.gantry-sidebar.collapsed .gantry-nav-link.active {
+    border-left: none;
+    border-radius: 0;
+}
+
+.gantry-sidebar.collapsed .gantry-sidebar-footer {
+    padding: 12px 0;
+    flex-direction: column;
+    gap: 8px;
+    overflow: hidden;
+}
+
+.gantry-sidebar.collapsed .gantry-sidebar-footer span,
+.gantry-sidebar.collapsed .gantry-sidebar-footer .small {
+    display: none !important;
+    width: 0;
+    overflow: hidden;
+}
+
+/* Smooth transition for sidebar width */
+.gantry-sidebar {
+    transition: width 0.2s ease;
+}
+
+/* --- LIGHT THEME SIDEBAR (for light NetSuite themes) --- */
+.gantry-sidebar.light-theme {
+    color: #1a1a1a;
+}
+
+.gantry-sidebar.light-theme .gantry-sidebar-header {
+    color: #1a1a1a;
+}
+
+.gantry-sidebar.light-theme .gantry-sidebar-header i {
+    color: #b45309;
+}
+
+.gantry-sidebar.light-theme .gantry-nav-link {
+    color: rgba(26, 26, 26, 0.8);
+}
+
+.gantry-sidebar.light-theme .gantry-nav-link:hover {
+    color: #1a1a1a;
+}
+
+.gantry-sidebar.light-theme .gantry-nav-link.active {
+    color: #fff;
+}
+
+.gantry-sidebar.light-theme .gantry-sidebar-footer {
+    color: rgba(26, 26, 26, 0.6);
+}
+
+.gantry-sidebar.light-theme .gantry-sidebar-toggle {
+    color: rgba(26, 26, 26, 0.6);
+}
+
+.gantry-sidebar.light-theme .gantry-sidebar-toggle:hover {
+    color: #1a1a1a;
+}
+
+/* --- SIDEBAR HEALTH SCORE BADGES (Frosted Glass Chip - Premium) --- */
+.nav-score-badge {
+    margin-left: auto;
+    min-width: 34px;
+    font-size: 10px;
+    font-weight: 600;
+    padding: 4px 8px;
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.04);
+    backdrop-filter: blur(8px);
+    color: rgba(255, 255, 255, 0.55);
+    font-variant-numeric: tabular-nums;
+    text-align: center;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+}
+
+.gantry-nav-link:hover .nav-score-badge {
+    background: rgba(255, 255, 255, 0.08);
+    color: rgba(255, 255, 255, 0.75);
+}
+
+/* Hide badge when sidebar collapsed */
+.gantry-sidebar.collapsed .nav-score-badge {
+    display: none;
+}
+
+/* Light theme sidebar badges */
+.gantry-sidebar.light-theme .nav-score-badge {
+    background: rgba(0, 0, 0, 0.03);
+    backdrop-filter: blur(8px);
+    color: rgba(0, 0, 0, 0.45);
+    border: 1px solid rgba(0, 0, 0, 0.04);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+
+.gantry-sidebar.light-theme .gantry-nav-link:hover .nav-score-badge {
+    background: rgba(0, 0, 0, 0.06);
+    color: rgba(0, 0, 0, 0.65);
+}
+
+.gantry-main {
+    flex: 1;
+    padding: 16px;
+    overflow-x: hidden;
+    height: 100vh;
+    overflow-y: auto;
+    position: relative; /* Required for loading screen absolute positioning */
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   PREMIUM LOADING SCREEN
+   Sophisticated loading animation for first load experience
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.gantry-loading-screen {
+    position: fixed; /* Fixed to viewport, not affected by sidebar */
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 50%, #e2e8f0 100%);
+    z-index: 1000;
+    opacity: 1;
+    transition: opacity 0.5s ease, visibility 0.5s ease;
+    /* CSS-only fallback: auto-hide after 3s if JS fails */
+    animation: gantry-loading-fallback-hide 0.5s ease 3s forwards;
+}
+
+.gantry-loading-screen.hidden {
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    animation: none;
+}
+
+/* CSS fallback animation - hides loading screen if JS doesn't dismiss it */
+@keyframes gantry-loading-fallback-hide {
+    to {
+        opacity: 0;
+        visibility: hidden;
+        pointer-events: none;
+    }
+}
+
+.gantry-loading-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 24px;
+}
+
+/* Animated Logo Container */
+.gantry-loading-logo {
+    position: relative;
+    width: 80px;
+    height: 80px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+/* Rotating rings around the icon */
+.gantry-loading-icon-ring {
+    position: absolute;
+    inset: 0;
+    border: 2px solid transparent;
+    border-top-color: #f59e0b;
+    border-right-color: #f59e0b;
+    border-radius: 50%;
+    animation: gantry-ring-spin 1.5s cubic-bezier(0.5, 0, 0.5, 1) infinite;
+}
+
+.gantry-loading-icon-ring-2 {
+    inset: 8px;
+    border-top-color: #fbbf24;
+    border-right-color: transparent;
+    border-bottom-color: #fbbf24;
+    border-left-color: transparent;
+    animation: gantry-ring-spin 2s cubic-bezier(0.5, 0, 0.5, 1) infinite reverse;
+}
+
+/* The main icon */
+.gantry-loading-icon {
+    font-size: 28px;
+    color: #b45309;
+    animation: gantry-icon-pulse 2s ease-in-out infinite;
+    z-index: 1;
+}
+
+/* Brand text with staggered letter animation */
+.gantry-loading-brand {
+    display: flex;
+    gap: 4px;
+    font-size: 24px;
+    font-weight: 700;
+    letter-spacing: 6px;
+    color: #1e293b;
+}
+
+.gantry-loading-letter {
+    display: inline-block;
+    animation: gantry-letter-wave 1.5s ease-in-out infinite;
+    animation-delay: calc(var(--i) * 0.08s);
+}
+
+/* Loading text */
+.gantry-loading-text {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 4px;
+    color: #64748b;
+    animation: gantry-text-pulse 2s ease-in-out infinite;
+}
+
+/* Progress bar */
+.gantry-loading-progress {
+    width: 200px;
+    height: 3px;
+    background: #e2e8f0;
+    border-radius: 3px;
+    overflow: hidden;
+    position: relative;
+}
+
+.gantry-loading-progress-bar {
+    position: absolute;
+    height: 100%;
+    width: 40%;
+    background: linear-gradient(90deg, #f59e0b 0%, #fbbf24 50%, #f59e0b 100%);
+    border-radius: 3px;
+    animation: gantry-progress-slide 1.5s ease-in-out infinite;
+}
+
+/* === KEYFRAME ANIMATIONS === */
+
+@keyframes gantry-ring-spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+@keyframes gantry-icon-pulse {
+    0%, 100% {
+        transform: scale(1);
+        opacity: 0.85;
+    }
+    50% {
+        transform: scale(1.08);
+        opacity: 1;
+    }
+}
+
+@keyframes gantry-letter-wave {
+    0%, 100% {
+        transform: translateY(0);
+        opacity: 0.7;
+    }
+    50% {
+        transform: translateY(-3px);
+        opacity: 1;
+    }
+}
+
+@keyframes gantry-text-pulse {
+    0%, 100% { opacity: 0.5; }
+    50% { opacity: 1; }
+}
+
+@keyframes gantry-progress-slide {
+    0% {
+        left: -40%;
+    }
+    100% {
+        left: 100%;
+    }
+}
+
+/* === DARK MODE LOADING SCREEN === */
+body.dark-mode .gantry-loading-screen {
+    background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #0f172a 100%);
+}
+
+body.dark-mode .gantry-loading-icon {
+    color: #fbbf24;
+}
+
+body.dark-mode .gantry-loading-icon-ring {
+    border-top-color: #f59e0b;
+    border-right-color: #f59e0b;
+}
+
+body.dark-mode .gantry-loading-icon-ring-2 {
+    border-top-color: #fbbf24;
+    border-bottom-color: #fbbf24;
+}
+
+body.dark-mode .gantry-loading-brand {
+    color: #f1f5f9;
+}
+
+body.dark-mode .gantry-loading-text {
+    color: #94a3b8;
+}
+
+body.dark-mode .gantry-loading-progress {
+    background: #334155;
+}
+
+body.dark-mode .gantry-loading-progress-bar {
+    background: linear-gradient(90deg, #f59e0b 0%, #fbbf24 50%, #f59e0b 100%);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   SIDEBAR REVEAL ANIMATION - World-Class Poppy Edition
+   Dynamic spring-physics entrance with staggered nav items
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Initial hidden state - sidebar off-screen with scale */
+.gantry-sidebar {
+    transform: translateX(-100%) scale(0.92);
+    opacity: 0;
+    box-shadow: none;
+    transition:
+        width 0.2s ease; /* Only width transitions normally */
+    /* CSS-only fallback: auto-reveal after 2s if JS fails */
+    animation: gantry-sidebar-fallback-reveal 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) 2s forwards;
+}
+
+/* Revealed state - spring-physics slide with bounce */
+.gantry-sidebar.sidebar-ready {
+    transform: translateX(0) scale(1);
+    opacity: 1;
+    box-shadow:
+        4px 0 24px -4px rgba(0, 0, 0, 0.12),
+        1px 0 4px rgba(0, 0, 0, 0.06);
+    /* Cancel the fallback animation once JS has revealed */
+    animation: gantry-sidebar-pop-in 0.65s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+
+/* Poppy spring entrance animation */
+@keyframes gantry-sidebar-pop-in {
+    0% {
+        transform: translateX(-100%) scale(0.92);
+        opacity: 0;
+        box-shadow: none;
+    }
+    60% {
+        transform: translateX(4%) scale(1.01);
+        opacity: 1;
+    }
+    80% {
+        transform: translateX(-1%) scale(0.995);
+    }
+    100% {
+        transform: translateX(0) scale(1);
+        opacity: 1;
+        box-shadow:
+            4px 0 24px -4px rgba(0, 0, 0, 0.12),
+            1px 0 4px rgba(0, 0, 0, 0.06);
+    }
+}
+
+/* CSS fallback animation - reveals sidebar if JS doesn't add sidebar-ready */
+@keyframes gantry-sidebar-fallback-reveal {
+    0% {
+        transform: translateX(-100%) scale(0.92);
+        opacity: 0;
+    }
+    60% {
+        transform: translateX(4%) scale(1.01);
+        opacity: 1;
+    }
+    100% {
+        transform: translateX(0) scale(1);
+        opacity: 1;
+    }
+}
+
+/* === STAGGERED NAV ITEM ANIMATIONS === */
+.gantry-sidebar.sidebar-ready .gantry-nav-item {
+    animation: gantry-nav-item-pop 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) backwards;
+}
+
+/* Stagger each nav item with increasing delay */
+.gantry-sidebar.sidebar-ready .gantry-nav-item:nth-child(1) { animation-delay: 0.15s; }
+.gantry-sidebar.sidebar-ready .gantry-nav-item:nth-child(2) { animation-delay: 0.2s; }
+.gantry-sidebar.sidebar-ready .gantry-nav-item:nth-child(3) { animation-delay: 0.25s; }
+.gantry-sidebar.sidebar-ready .gantry-nav-item:nth-child(4) { animation-delay: 0.3s; }
+.gantry-sidebar.sidebar-ready .gantry-nav-item:nth-child(5) { animation-delay: 0.35s; }
+.gantry-sidebar.sidebar-ready .gantry-nav-item:nth-child(6) { animation-delay: 0.4s; }
+.gantry-sidebar.sidebar-ready .gantry-nav-item:nth-child(7) { animation-delay: 0.45s; }
+.gantry-sidebar.sidebar-ready .gantry-nav-item:nth-child(8) { animation-delay: 0.5s; }
+.gantry-sidebar.sidebar-ready .gantry-nav-item:nth-child(9) { animation-delay: 0.55s; }
+.gantry-sidebar.sidebar-ready .gantry-nav-item:nth-child(10) { animation-delay: 0.6s; }
+.gantry-sidebar.sidebar-ready .gantry-nav-item:nth-child(11) { animation-delay: 0.65s; }
+.gantry-sidebar.sidebar-ready .gantry-nav-item:nth-child(12) { animation-delay: 0.7s; }
+
+@keyframes gantry-nav-item-pop {
+    0% {
+        opacity: 0;
+        transform: translateX(-12px) scale(0.95);
+    }
+    100% {
+        opacity: 1;
+        transform: translateX(0) scale(1);
+    }
+}
+
+/* Header and footer also animate in */
+.gantry-sidebar.sidebar-ready .gantry-sidebar-header {
+    animation: gantry-header-pop 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) 0.1s backwards;
+}
+
+.gantry-sidebar.sidebar-ready .gantry-sidebar-footer {
+    animation: gantry-footer-pop 0.4s cubic-bezier(0.25, 1, 0.5, 1) 0.5s backwards;
+}
+
+@keyframes gantry-header-pop {
+    0% {
+        opacity: 0;
+        transform: translateY(-8px);
+    }
+    100% {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@keyframes gantry-footer-pop {
+    0% {
+        opacity: 0;
+        transform: translateY(8px);
+    }
+    100% {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* Ensure collapsed state still works after reveal */
+.gantry-sidebar.sidebar-ready.collapsed {
+    width: var(--sidebar-width-collapsed);
+}

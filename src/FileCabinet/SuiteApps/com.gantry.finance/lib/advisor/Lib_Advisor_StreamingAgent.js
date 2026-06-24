@@ -1,0 +1,10333 @@
+/**
+ * @NApiVersion 2.1
+ * @NModuleScope Public
+ *
+ * Lib_Advisor_StreamingAgent.js
+ * Streaming Context Architecture (SCA) - Multi-Phase Conversation Protocol
+ *
+ * WORLD-CLASS ARCHITECTURE:
+ * LLM as Data Analyst - Full data access with zero hallucination
+ *
+ * TRUE AGENTIC ARCHITECTURE (v2.0):
+ * The system now implements a true ReAct (Reasoning + Acting) loop:
+ *
+ * PHASES:
+ * 1. INTENT     - Classify the question type (~200 tokens, <1s)
+ * 2. REASON_ACT - TRUE ReAct LOOP: Iteratively gather data until ready
+ *                 ┌─────────────────────────────────────────────┐
+ *                 │  THINK: "What do I need next?"              │
+ *                 │  ACT: Invoke ONE tool                       │
+ *                 │  OBSERVE: What did I get?                   │
+ *                 │  REFLECT: Do I have enough? ──NO──→ LOOP   │
+ *                 │      │                                      │
+ *                 │     YES → Exit to RESPOND                   │
+ *                 └─────────────────────────────────────────────┘
+ * 3. SYNTHESIZE - LLM writes custom SuiteQL when tools fail (self-correcting)
+ * 4. RESPOND    - LLM sees ACTUAL DATA ROWS, outputs narrative with {{token}} refs
+ *
+ * KEY DIFFERENCES FROM OLD ARCHITECTURE:
+ * - OLD: SELECT all tools → INVOKE all → REFLECT once → RESPOND
+ * - NEW: REASON_ACT loops, invoking ONE tool at a time, evaluating after each
+ * - LLM decides when it has enough data (not a fixed pipeline)
+ * - For comparisons (YoY, etc.), naturally gets both periods' data
+ *
+ * KEY INNOVATION: Token Reference System
+ * - LLM outputs: "Your top customer is {{data.rows[0].customer_name}} with {{data.rows[0].total_revenue:currency}}"
+ * - Code resolves tokens to real values from DataStore
+ * - ZERO hallucination - all numbers come from actual data
+ */
+define([
+    'N/log',
+    './Lib_Advisor_AIProviders',
+    './Lib_Advisor_Tools',
+    './Lib_Advisor_Cache',
+    './Lib_Advisor_Utils',
+    '../Lib_Dashboard_Registry'
+], function(log, AIProviders, Tools, Cache, Utils, DashboardRegistry) {
+    'use strict';
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // CONFIGURATION
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    const PHASES = {
+        INIT: 'init',
+        INTENT: 'intent',
+        REASON_ACT: 'reason_act',  // NEW: True ReAct loop - replaces SELECT/INVOKE/REFLECT
+        SELECT: 'select',          // DEPRECATED: kept for backwards compatibility
+        INVOKE: 'invoke',          // DEPRECATED: kept for backwards compatibility
+        REFLECT: 'reflect',        // DEPRECATED: kept for backwards compatibility
+        SYNTHESIZE: 'synthesize',  // LLM writes custom SQL when tools fail
+        RESPOND: 'respond',        // Generate final response with data access
+        COMPLETE: 'complete'
+    };
+
+    // Maximum iterations for the ReAct loop to prevent infinite loops
+    const MAX_REASON_ACT_ITERATIONS = 8;
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // ADAPTIVE INTELLIGENCE ROUTING (AIR)
+    // Task-aware model selection for optimal cost/quality balance
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    const TIERS = {
+        FAST: 1,      // Fast/cheap: Haiku, GPT-4o-mini, Gemini Flash - for classification, params
+        BALANCED: 2,  // Balanced: Sonnet, GPT-4o, Gemini Flash - for reasoning
+        PREMIUM: 3    // Premium: Opus, GPT-4, Gemini Pro - for complex analysis, SQL synthesis
+    };
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // SQL COMPLEXITY ASSESSMENT FOR SYNTHESIZE TIER
+    // Allows BALANCED tier for simple SQL, requires PREMIUM for complex queries
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Assess SQL query complexity to determine required tier
+     * @param {string} sql - The SQL query to assess
+     * @returns {string} 'SIMPLE' or 'COMPLEX'
+     */
+    function assessQueryComplexity(sql) {
+        if (!sql) return 'SIMPLE';
+
+        const sqlUpper = sql.toUpperCase();
+
+        // Complex indicators: JOINs, subqueries, window functions, aggregations with GROUP BY
+        const complexIndicators = [
+            /\bJOIN\b/,                           // Any JOIN operation
+            /\(\s*SELECT\b/,                      // Subqueries
+            /\bWITH\s+\w+\s+AS\s*\(/,            // CTEs
+            /\bGROUP\s+BY\b.*\bHAVING\b/,        // GROUP BY with HAVING
+            /\bOVER\s*\(/,                        // Window functions
+            /\bUNION\b/,                          // UNION queries
+            /\bINTERSECT\b/,                      // Set operations
+            /\bEXCEPT\b/,
+            /\bCASE\s+WHEN\b.*\bCASE\s+WHEN\b/,  // Nested CASE statements
+        ];
+
+        // Check for complex patterns
+        for (const pattern of complexIndicators) {
+            if (pattern.test(sqlUpper)) {
+                return 'COMPLEX';
+            }
+        }
+
+        // Simple: single table SELECT, basic WHERE, ORDER BY, LIMIT
+        return 'SIMPLE';
+    }
+
+    /**
+     * Check if synthesize is allowed based on tier and query complexity
+     * @param {number} tier - Current tier (1=FAST, 2=BALANCED, 3=PREMIUM)
+     * @param {string} queryComplexity - 'SIMPLE' or 'COMPLEX'
+     * @returns {boolean} True if synthesize is allowed
+     */
+    function canUseSynthesize(tier, queryComplexity) {
+        if (tier >= TIERS.PREMIUM) return true;
+        if (tier >= TIERS.BALANCED && queryComplexity === 'SIMPLE') return true;
+        return false;
+    }
+
+    /**
+     * Get the appropriate tier for SYNTHESIZE phase based on question complexity
+     * Predicts likely query complexity from the question/intent before SQL generation
+     * @param {Object} state - Current state
+     * @returns {number} The tier (2=BALANCED or 3=PREMIUM)
+     */
+    function getSynthesizeTier(state) {
+        // If we already have a generated query, assess its actual complexity
+        if (state.synthesize?.queries?.length > 0) {
+            const lastQuery = state.synthesize.queries[state.synthesize.queries.length - 1];
+            if (lastQuery?.sql) {
+                const complexity = assessQueryComplexity(lastQuery.sql);
+                return complexity === 'COMPLEX' ? TIERS.PREMIUM : TIERS.BALANCED;
+            }
+        }
+
+        // Predict complexity from question/intent
+        const message = (state.message || '').toLowerCase();
+        const intent = state.intent?.intent || '';
+
+        // Indicators that suggest complex queries will be needed
+        const complexIntentIndicators = [
+            /compar/i,           // compare, comparison
+            /year.over.year|yoy|y\/y/i,
+            /month.over.month|mom|m\/m/i,
+            /trend/i,
+            /correlat/i,
+            /breakdown.*by.*and/i,  // Multiple groupings
+            /ratio/i,
+            /percent.*of.*total/i,
+            /rank/i,
+            /top.*bottom/i,
+            /vs\.?\s|versus/i,
+        ];
+
+        for (const pattern of complexIntentIndicators) {
+            if (pattern.test(message)) {
+                return TIERS.PREMIUM;
+            }
+        }
+
+        // Comparison intent typically needs complex queries
+        if (intent === 'comparison') {
+            return TIERS.PREMIUM;
+        }
+
+        // Default to BALANCED for simpler synthesize requests
+        return TIERS.BALANCED;
+    }
+
+    /**
+     * Get the appropriate tier for a phase based on task requirements
+     * @param {string} phase - The SCA phase
+     * @param {Object} state - Current state for adaptive decisions
+     * @returns {number} The tier (1, 2, or 3)
+     */
+    function getTierForPhase(phase, state) {
+        switch (phase) {
+            // Fast tier - simple classification and structured output
+            case 'intent':
+            case 'select':
+            case 'invoke':
+            case 'recovery':
+                return TIERS.FAST;
+
+            // Balanced tier - requires reasoning about results
+            case 'reflect':
+            case 'reason_act':  // ReAct loop requires good reasoning
+                return TIERS.BALANCED;
+
+            // Synthesize tier - adaptive based on query complexity
+            // Simple SQL can use BALANCED, complex SQL needs PREMIUM
+            case 'synthesize':
+                return getSynthesizeTier(state);
+
+            // Adaptive - based on response complexity
+            case 'respond':
+                return getAdaptiveRespondTier(state);
+
+            default:
+                return TIERS.FAST;
+        }
+    }
+
+    /**
+     * Calculate response complexity to determine RESPOND tier
+     * Higher complexity = better model for quality answer
+     * @param {Object} state - Current state
+     * @returns {number} Complexity score (0-10)
+     */
+    function calculateResponseComplexity(state) {
+        let score = 0;
+
+        // Data volume factor
+        const totalRows = (state.dataReferences || []).reduce((sum, ref) =>
+            sum + (ref?.summary?.rowCount || 0), 0);
+        if (totalRows > 100) score += 2;
+        else if (totalRows > 20) score += 1;
+
+        // Data source diversity (multiple tools = more complex synthesis)
+        const successfulTools = (state.toolInvocations || []).filter(t => t.success).length;
+        if (successfulTools > 2) score += 2;
+        else if (successfulTools > 1) score += 1;
+
+        // Dashboard data (rich metrics require better synthesis)
+        if ((state.dataReferences || []).some(r => r.isDashboard)) score += 1;
+
+        // Question complexity from INTENT phase
+        if (state.intent) {
+            if (state.intent.intent === 'comparison') score += 2;
+            if (state.intent.intent === 'reporting') score += 1;
+            if ((state.intent.semantic_topics || []).length > 2) score += 1;
+        }
+
+        // Synthesized SQL (already complex path)
+        if (state.synthesizedQuery) score += 2;
+
+        // Multiple entities resolved (cross-entity analysis)
+        if (Object.keys(state.resolvedEntities || {}).length > 1) score += 1;
+
+        return Math.min(score, 10); // Cap at 10
+    }
+
+    /**
+     * Get tier for RESPOND phase based on complexity
+     * @param {Object} state - Current state
+     * @returns {number} The tier (1, 2, or 3)
+     */
+    function getAdaptiveRespondTier(state) {
+        const complexity = calculateResponseComplexity(state);
+
+        // Premium for complex multi-source analysis
+        if (complexity >= 5) {
+            Utils.debugLog('AIR: Premium tier for RESPOND', { complexity });
+            return TIERS.PREMIUM;
+        }
+
+        // Balanced for moderate complexity
+        if (complexity >= 2) {
+            Utils.debugLog('AIR: Balanced tier for RESPOND', { complexity });
+            return TIERS.BALANCED;
+        }
+
+        // Fast for simple summaries
+        Utils.debugLog('AIR: Fast tier for RESPOND', { complexity });
+        return TIERS.FAST;
+    }
+
+    const MAX_TOOL_INVOCATIONS = 5;
+    const MAX_REFLECT_ITERATIONS = 3;  // Prevent infinite reflection loops
+    const MAX_SYNTHESIZE_ITERATIONS = 3; // Max SQL generation/correction attempts
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // FIX 8: ITERATION BUDGET ALLOCATION
+    // Limits attempts per unique tool to force diversification
+    // ═══════════════════════════════════════════════════════════════════════════
+    const MAX_ATTEMPTS_PER_TOOL = 3;  // Max attempts per unique tool before requiring different tool
+    const MIN_TOOLS_BEFORE_GIVEUP = 2; // Must try at least 2 different tools before giving up
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // FIX 6: PROGRESS-BASED CIRCUIT BREAKER
+    // Triggers escalation when no progress is made across iterations
+    // ═══════════════════════════════════════════════════════════════════════════
+    const NO_PROGRESS_THRESHOLD = 3;  // Escalate after 3 consecutive iterations with 0 rows
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // FAILURE MODE CLASSIFICATION
+    // Distinguishes between different types of "no data" results
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    const FAILURE_MODES = {
+        SUCCESS: 'success',                    // Got useful data
+        ENTITY_NOT_FOUND: 'entity_not_found',  // Entity doesn't exist in system
+        ENTITY_FOUND_NO_DATA: 'entity_found_no_data',  // Entity exists but no matching transactions
+        QUERY_TOO_RESTRICTIVE: 'query_too_restrictive', // Filters excluded all results
+        NO_DATA_EXISTS: 'no_data_exists',      // No data for this query type at all
+        PARTIAL_SUCCESS: 'partial_success',    // Some tools succeeded, some failed
+        TOOL_ERROR: 'tool_error'               // Tool execution error
+    };
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // SEMANTIC ERROR CLASSIFICATION
+    // Uses LLM to classify errors when available, with fast fallback
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Classify an error semantically using fast LLM call
+     * @param {string} errorMessage - The error message to classify
+     * @returns {Object} - { category, recoverable, suggestion }
+     */
+    function classifyErrorSemantically(errorMessage) {
+        const errorText = errorMessage || 'Unknown error';
+
+        try {
+            // Fast LLM classification (< 50 tokens response)
+            const result = AIProviders.callAI(
+                `Classify this NetSuite/SuiteQL error into ONE category:
+
+Error: "${errorText.substring(0, 500)}"
+
+Categories:
+- PERMISSION_DENIED: Access/role issues
+- INVALID_RECORD: Bad record type or ID
+- INVALID_FIELD: Unknown column/field
+- INVALID_QUERY: SQL syntax error
+- RATE_LIMITED: Governance/concurrency
+- NOT_FOUND: Record doesn't exist
+- VALIDATION: Business rule violation
+- TYPE_MISMATCH: Wrong data type provided
+- TIMEOUT: Query took too long
+- NETWORK: Connection/timeout
+- UNKNOWN: Can't determine
+
+Respond with JSON only: {"category":"...","recoverable":true/false,"suggestion":"one line fix"}`,
+                { max_tokens: 100, temperature: 0 }
+            );
+
+            const responseText = result.text || result;
+
+            // Try to parse the JSON response
+            const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+                const parsed = JSON.parse(jsonMatch[0]);
+                return {
+                    category: parsed.category || 'UNKNOWN',
+                    recoverable: parsed.recoverable !== false,
+                    suggestion: parsed.suggestion || 'Check error details'
+                };
+            }
+        } catch (classificationError) {
+            Utils.debugLog('Semantic error classification failed', { error: classificationError.message });
+        }
+
+        // Fallback if LLM response isn't valid JSON or call failed
+        return {
+            category: 'UNKNOWN',
+            recoverable: true,
+            suggestion: 'Check error details'
+        };
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // FIX 2: ERROR SEMANTIC PARSER
+    // Parses error messages to extract actionable insights for the LLM
+    // Uses semantic classification with fast fallback for critical checks
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Parse an error message and extract actionable insights
+     * @param {string} errorMessage - The raw error message
+     * @param {string} toolName - The tool that generated the error
+     * @param {Object} args - The arguments that were passed
+     * @param {Object} options - Optional settings: { useSemanticClassification: boolean }
+     * @returns {Object} { category, insight, suggestedAction, parameterHints }
+     */
+    function parseErrorSemantics(errorMessage, toolName, args, options) {
+        if (!errorMessage || typeof errorMessage !== 'string') {
+            return {
+                category: 'unknown',
+                insight: 'An unknown error occurred.',
+                suggestedAction: 'Try a different approach.',
+                parameterHints: {}
+            };
+        }
+
+        const lowerError = errorMessage.toLowerCase();
+        options = options || {};
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // SECURITY-CRITICAL CHECKS - Always run these regardless of LLM
+        // ═══════════════════════════════════════════════════════════════════════
+        if (lowerError.includes('permission') || lowerError.includes('access denied') ||
+            lowerError.includes('unauthorized') || lowerError.includes('insufficient')) {
+            return {
+                category: 'permission_error',
+                insight: `Access to the requested data is restricted.`,
+                suggestedAction: `Try accessing data from a different subsidiary or record type.`,
+                parameterHints: {},
+                recoverable: false
+            };
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // SEMANTIC CLASSIFICATION - Use LLM for intelligent error categorization
+        // ═══════════════════════════════════════════════════════════════════════
+        if (options.useSemanticClassification !== false) {
+            try {
+                const semanticResult = classifyErrorSemantically(errorMessage);
+
+                // Map semantic categories to detailed insights
+                const categoryMappings = {
+                    'TYPE_MISMATCH': {
+                        insight: `A value of the wrong type was provided. The operation expected a different data type.`,
+                        suggestedAction: `Use numeric values for numbers (24 instead of "last 2 years"), check date formats, and ensure IDs are integers.`,
+                        parameterHints: { checkTypes: true, usedArgs: args }
+                    },
+                    'INVALID_FIELD': {
+                        insight: `The field or column referenced does not exist or is not accessible.`,
+                        suggestedAction: `Verify field names using get_record_schema or check available columns in the record type.`,
+                        parameterHints: {}
+                    },
+                    'INVALID_QUERY': {
+                        insight: `The database query has a syntax error or invalid structure.`,
+                        suggestedAction: `Check SQL syntax, ensure all referenced tables/columns exist, and verify JOIN conditions.`,
+                        parameterHints: { checkTypes: true, usedArgs: args }
+                    },
+                    'NOT_FOUND': {
+                        insight: `The entity or record referenced does not exist in the system.`,
+                        suggestedAction: `Verify the entity name spelling or try a broader search. Use resolve_vendor or resolve_customer to find valid entities.`,
+                        parameterHints: {}
+                    },
+                    'VALIDATION': {
+                        insight: `One or more values failed business rule validation.`,
+                        suggestedAction: `Check that all required parameters are provided and values match the expected format.`,
+                        parameterHints: {}
+                    },
+                    'RATE_LIMITED': {
+                        insight: `The operation was limited due to governance or concurrency restrictions.`,
+                        suggestedAction: `Wait a moment before retrying, or break the request into smaller operations.`,
+                        parameterHints: { suggestRetry: true }
+                    },
+                    'TIMEOUT': {
+                        insight: `The query took too long to execute.`,
+                        suggestedAction: `Add more filters to reduce the data volume, or use a shorter time period.`,
+                        parameterHints: { suggestShorterPeriod: true, suggestMoreFilters: true }
+                    },
+                    'PERMISSION_DENIED': {
+                        insight: `Access to the requested data is restricted.`,
+                        suggestedAction: `Try accessing data from a different subsidiary or record type.`,
+                        parameterHints: {}
+                    },
+                    'INVALID_RECORD': {
+                        insight: `The record type specified is invalid or not accessible.`,
+                        suggestedAction: `Verify the record type name using explore_schema or check available record types.`,
+                        parameterHints: {}
+                    },
+                    'NETWORK': {
+                        insight: `A network or connection error occurred.`,
+                        suggestedAction: `Retry the operation. If the problem persists, check system status.`,
+                        parameterHints: { suggestRetry: true }
+                    }
+                };
+
+                const mapping = categoryMappings[semanticResult.category] || {
+                    insight: semanticResult.suggestion || `Error occurred: ${errorMessage.substring(0, 100)}`,
+                    suggestedAction: `Try a different tool or different parameter values.`,
+                    parameterHints: {}
+                };
+
+                return {
+                    category: semanticResult.category.toLowerCase(),
+                    insight: mapping.insight,
+                    suggestedAction: mapping.suggestedAction,
+                    parameterHints: mapping.parameterHints,
+                    recoverable: semanticResult.recoverable,
+                    semanticClassification: true
+                };
+            } catch (e) {
+                Utils.auditLog('Semantic error classification failed', {
+                    error: e.message,
+                    errorMessage: errorMessage.substring(0, 100)
+                });
+                // Fall through to default return below
+            }
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // DEFAULT: Return generic error when semantic classification unavailable
+        // Pattern-matching fallback removed - LLM classification is always available
+        // and provides superior context-aware error handling
+        // ═══════════════════════════════════════════════════════════════════════
+        return {
+            category: 'unknown',
+            insight: `Error occurred: ${errorMessage.substring(0, 100)}`,
+            suggestedAction: `Try a different tool or different parameter values.`,
+            parameterHints: {},
+            recoverable: true
+        };
+    }
+
+    /**
+     * Format parsed error insights for inclusion in LLM prompts
+     * @param {Object} errorSemantics - Output from parseErrorSemantics
+     * @returns {string} Formatted string for LLM context
+     */
+    function formatErrorInsightsForPrompt(errorSemantics) {
+        const lines = [];
+        lines.push(`🔍 ERROR ANALYSIS:`);
+        lines.push(`   Category: ${errorSemantics.category}`);
+        lines.push(`   Insight: ${errorSemantics.insight}`);
+        lines.push(`   Suggested Action: ${errorSemantics.suggestedAction}`);
+
+        if (Object.keys(errorSemantics.parameterHints).length > 0) {
+            lines.push(`   Parameter Hints:`);
+            for (const [key, value] of Object.entries(errorSemantics.parameterHints)) {
+                lines.push(`     • ${key}: ${JSON.stringify(value)}`);
+            }
+        }
+
+        return lines.join('\n');
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // SEMANTIC TOOL DIVERSIFICATION
+    // Uses LLM to intelligently suggest alternative tools after failures
+    // Replaces hardcoded tool→alternatives mapping with semantic selection
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * SEMANTIC TOOL DIVERSIFICATION PROMPT
+     * Used to find alternative tools when one fails repeatedly
+     */
+    const TOOL_DIVERSIFICATION_PROMPT = `Tool "${'{failed_tool}'}" has failed {failure_reason}.
+
+Original question: "{question}"
+
+Tool description: {tool_description}
+
+Available tools (excluding the failed one):
+{available_tools}
+
+Which 2-3 alternative tools could provide similar or complementary data to answer the question?
+Consider:
+- Tools that access related data sources
+- Tools that might have the same information in a different format
+- Fallback tools for when specialized queries fail
+
+Reply JSON only:
+{
+  "alternatives": [
+    {"tool": "tool_name", "reason": "why this could help", "suggested_args": {}}
+  ]
+}`;
+
+    /**
+     * Get alternative tools using semantic LLM selection
+     * @param {string} failedTool - The tool that failed
+     * @param {Object} args - The arguments that were passed
+     * @param {Object} resolvedEntities - Any resolved entities in state
+     * @param {Object} state - Current agent state for context
+     * @returns {Array} List of alternative tools to try [{tool, reason, args}]
+     */
+    function getAlternativeToolsForDiversification(failedTool, args, resolvedEntities, state) {
+        const toolManifest = Tools.getToolManifest();
+        return getAlternativeTools(failedTool, state)
+            .filter(toolName => toolManifest[toolName])
+            .slice(0, 3)
+            .map(toolName => ({
+                tool: toolName,
+                reason: 'Deterministic fallback based on related data domain',
+                args: {}
+            }));
+    }
+
+    /**
+     * Check if tool diversification is required based on state
+     * @param {Object} state - Current agent state
+     * @returns {Object} { required: boolean, reason: string, suggestions: Array }
+     */
+    function checkToolDiversificationRequired(state) {
+        // Count attempts per unique tool
+        const toolAttempts = {};
+        const toolsWithSuccess = new Set();
+
+        for (const data of state.accumulatedData || []) {
+            const toolName = data.tool;
+            toolAttempts[toolName] = (toolAttempts[toolName] || 0) + 1;
+
+            if (data.success && data.rowCount > 0) {
+                toolsWithSuccess.add(toolName);
+            }
+        }
+
+        // Check if any tool has exceeded the attempt limit
+        for (const [tool, attempts] of Object.entries(toolAttempts)) {
+            if (attempts >= MAX_ATTEMPTS_PER_TOOL && !toolsWithSuccess.has(tool)) {
+                const alternatives = getAlternativeToolsForDiversification(
+                    tool,
+                    state.accumulatedData.find(d => d.tool === tool)?.args || {},
+                    state.resolvedEntities,
+                    state
+                );
+
+                return {
+                    required: true,
+                    reason: `Tool "${tool}" has been tried ${attempts} times without success. Must try a different tool.`,
+                    exhaustedTool: tool,
+                    suggestions: alternatives
+                };
+            }
+        }
+
+        // Check total unique tools tried
+        const uniqueToolsTried = new Set(Object.keys(toolAttempts));
+        if (uniqueToolsTried.size < MIN_TOOLS_BEFORE_GIVEUP &&
+            state.reasonActIterations >= MAX_REASON_ACT_ITERATIONS - 2) {
+            return {
+                required: true,
+                reason: `Only ${uniqueToolsTried.size} unique tool(s) tried. Must try at least ${MIN_TOOLS_BEFORE_GIVEUP} different tools before giving up.`,
+                suggestions: []
+            };
+        }
+
+        return { required: false, reason: null, suggestions: [] };
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // FIX 6: PROGRESS-BASED CIRCUIT BREAKER
+    // Detects when no progress is being made and triggers escalation
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Classify the failure mode based on accumulated tool attempts
+     * Analyzes patterns to understand WHY queries returned 0 rows
+     * @param {Array} recentData - Recent accumulated data entries
+     * @param {Object} state - Current agent state
+     * @returns {Object} { mode: string, remediation: string, shouldTrySynthesizeFirst: boolean }
+     */
+    function classifyFailureMode(recentData, state) {
+        const intent = state.intent || {};
+        const emptyResults = recentData.filter(d => d.success && d.rowCount === 0);
+
+        // Analyze period usage pattern
+        const periodsUsed = emptyResults
+            .filter(d => d.args?.period)
+            .map(d => d.args.period);
+        const hasTriedAllPeriod = periodsUsed.includes('all');
+        const onlyBoundedPeriods = periodsUsed.length > 0 && !hasTriedAllPeriod;
+
+        // Analyze tool type pattern
+        const toolsUsed = emptyResults.map(d => d.tool);
+        const usedAgingTools = toolsUsed.some(t => t && (t.includes('aging') || t.includes('_ar_') || t.includes('_ap_')));
+        const usedTransactionTools = toolsUsed.some(t => t && t.includes('transaction'));
+        const isTransactionLookupIntent = intent.intent === 'entity_transactions';
+
+        // Analyze entity resolution
+        const entityResolved = Object.keys(state.resolvedEntities || {}).length > 0;
+        const entityResolutionFailed = recentData.some(d => d.tool?.startsWith('resolve_') && !d.success);
+
+        // Determine failure mode and remediation
+        if (entityResolutionFailed) {
+            return {
+                mode: 'ENTITY_RESOLUTION_FAILED',
+                remediation: 'Entity could not be found. Try alternative entity names or ask user for clarification.',
+                shouldTrySynthesizeFirst: false
+            };
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // DETECT UNRESOLVED ENTITY CODES
+        // If a tool was called with an ID parameter that looks like a code (not an internal ID),
+        // the LLM likely skipped entity resolution
+        // NOTE: Only flag obvious codes (leading zeros, non-numeric) - don't flag
+        // valid internal IDs like "6034" just because they're short numbers
+        // ═══════════════════════════════════════════════════════════════════════
+        const entityIdParams = ['project_id', 'customer_id', 'vendor_id', 'employee_id', 'entity_id'];
+        for (const result of emptyResults) {
+            if (!result.args) continue;
+            for (const param of entityIdParams) {
+                const value = result.args[param];
+                if (value !== undefined && value !== null) {
+                    const strValue = String(value);
+                    // Detect if it looks like a code:
+                    // 1. Contains non-numeric characters (e.g., "PRJ-001", "Acme Corp")
+                    // 2. Has leading zeros (e.g., "0915", "007") - internal IDs never have leading zeros
+                    const hasNonNumeric = /[^0-9]/.test(strValue);
+                    const hasLeadingZero = strValue.length > 1 && strValue.startsWith('0');
+                    const looksLikeCode = hasNonNumeric || hasLeadingZero;
+                    if (looksLikeCode) {
+                        const entityType = param.replace('_id', '');
+                        return {
+                            mode: 'UNRESOLVED_ENTITY_CODE',
+                            remediation: `The ${param} "${strValue}" looks like a code/number, not an internal ID. ` +
+                                        `Call resolve_entity(name="${strValue}", type="${entityType}") first to get the internal ID.`,
+                            shouldTrySynthesizeFirst: false,
+                            suggestedAction: 'RESOLVE_ENTITY_FIRST',
+                            suggestedTool: 'resolve_entity',
+                            suggestedArgs: { name: strValue, type: entityType }
+                        };
+                    }
+                }
+            }
+        }
+
+        if (onlyBoundedPeriods && entityResolved) {
+            return {
+                mode: 'DATE_FILTER_MISS',
+                remediation: `Data may exist outside the time ranges tried (${periodsUsed.join(', ')}). Retry with period: "all" to search all time.`,
+                shouldTrySynthesizeFirst: false,
+                suggestedAction: 'RETRY_WITH_ALL_PERIOD'
+            };
+        }
+
+        if (isTransactionLookupIntent && usedAgingTools && !usedTransactionTools) {
+            return {
+                mode: 'WRONG_TOOL_TYPE',
+                remediation: 'Used aging tools for transaction lookup. Aging tools show current balances, not historical transactions. Try get_recent_transactions with period: "all" instead.',
+                shouldTrySynthesizeFirst: false,
+                suggestedAction: 'RETRY_WITH_CORRECT_TOOL'
+            };
+        }
+
+        if (usedAgingTools && emptyResults.length > 0) {
+            // Aging tools returning empty might mean all bills are paid
+            const isPayablesContext = intent.semantic_topics?.includes('payables') || intent.transaction_context === 'bills';
+            if (isPayablesContext) {
+                return {
+                    mode: 'AGING_EMPTY_PAID_BILLS',
+                    remediation: 'AP aging returned empty - this entity may have no UNPAID bills. For historical bill records, use get_recent_transactions with period: "all".',
+                    shouldTrySynthesizeFirst: false,
+                    suggestedAction: 'RETRY_WITH_TRANSACTION_TOOL'
+                };
+            }
+        }
+
+        if (hasTriedAllPeriod && entityResolved && emptyResults.length >= 2) {
+            return {
+                mode: 'ACTUAL_NO_DATA',
+                remediation: 'Data genuinely does not exist for this entity and query type. This is a valid finding.',
+                shouldTrySynthesizeFirst: true
+            };
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // SAFETY CHECK: Before escalating to synthesize, ensure period:"all" was tried
+        // This prevents unnecessary synthesize calls when simple parameter fix would work
+        // ═══════════════════════════════════════════════════════════════════════
+        if (entityResolved && !hasTriedAllPeriod && usedTransactionTools) {
+            return {
+                mode: 'PERIOD_NOT_EXHAUSTED',
+                remediation: 'Transaction tools were used but period: "all" was never tried. Retry get_recent_transactions with period: "all" to search all time before escalating.',
+                shouldTrySynthesizeFirst: false,
+                suggestedAction: 'RETRY_WITH_ALL_PERIOD'
+            };
+        }
+
+        // Default case - uncertain, try synthesize
+        return {
+            mode: 'UNDETERMINED',
+            remediation: 'Multiple attempts returned no data. Will try custom SQL query.',
+            shouldTrySynthesizeFirst: true
+        };
+    }
+
+    /**
+     * Generate a hash for a tool call (tool name + args) for deduplication
+     * @param {string} toolName - The tool name
+     * @param {Object} args - The tool arguments
+     * @returns {string} A hash string for this tool call
+     */
+    function getToolCallHash(toolName, args) {
+        // Normalize args by sorting keys and removing undefined/null values
+        const normalizedArgs = {};
+        if (args && typeof args === 'object') {
+            Object.keys(args).sort().forEach(key => {
+                const value = args[key];
+                if (value !== undefined && value !== null) {
+                    normalizedArgs[key] = value;
+                }
+            });
+        }
+        return `${toolName}::${JSON.stringify(normalizedArgs)}`;
+    }
+
+    /**
+     * Detect duplicate tool calls in accumulated data
+     * Returns info about which tools have been called multiple times with same args
+     * @param {Object} state - Current agent state
+     * @returns {Object} { hasDuplicates, duplicates, maxDuplicates, mostDuplicated }
+     */
+    function detectDuplicateToolCalls(state) {
+        const accumulatedData = state.accumulatedData || [];
+
+        if (accumulatedData.length < 2) {
+            return { hasDuplicates: false, duplicates: {}, maxDuplicates: 0 };
+        }
+
+        // Count tool call occurrences by hash
+        const callCounts = {};
+        const callDetails = {};
+
+        for (const data of accumulatedData) {
+            if (!data.tool) continue;
+
+            const hash = getToolCallHash(data.tool, data.args);
+            callCounts[hash] = (callCounts[hash] || 0) + 1;
+
+            if (!callDetails[hash]) {
+                callDetails[hash] = {
+                    tool: data.tool,
+                    args: data.args,
+                    count: 0,
+                    firstResult: data
+                };
+            }
+            callDetails[hash].count = callCounts[hash];
+        }
+
+        // Find duplicates (count > 1)
+        const duplicates = {};
+        let maxDuplicates = 0;
+        let mostDuplicated = null;
+
+        for (const [hash, count] of Object.entries(callCounts)) {
+            if (count > 1) {
+                duplicates[hash] = callDetails[hash];
+                if (count > maxDuplicates) {
+                    maxDuplicates = count;
+                    mostDuplicated = callDetails[hash];
+                }
+            }
+        }
+
+        return {
+            hasDuplicates: Object.keys(duplicates).length > 0,
+            duplicates: duplicates,
+            maxDuplicates: maxDuplicates,
+            mostDuplicated: mostDuplicated
+        };
+    }
+
+    /**
+     * Check if a tool call has already been made with the same arguments
+     * Used to skip redundant tool calls before execution
+     * @param {Object} state - Current agent state
+     * @param {string} toolName - The tool to check
+     * @param {Object} args - The arguments to check
+     * @returns {Object} { isDuplicate, existingResult }
+     */
+    function checkForExistingToolResult(state, toolName, args) {
+        const accumulatedData = state.accumulatedData || [];
+        const targetHash = getToolCallHash(toolName, args);
+
+        for (const data of accumulatedData) {
+            if (!data.tool) continue;
+
+            const existingHash = getToolCallHash(data.tool, data.args);
+            if (existingHash === targetHash) {
+                return {
+                    isDuplicate: true,
+                    existingResult: data
+                };
+            }
+        }
+
+        return { isDuplicate: false, existingResult: null };
+    }
+
+    /**
+     * Check if the circuit breaker should trigger based on progress
+     * Enhanced with failure mode classification for smarter escalation
+     * @param {Object} state - Current agent state
+     * @returns {Object} { shouldTrigger: boolean, reason: string, escalationAction: string, failureMode: Object }
+     */
+    function checkCircuitBreaker(state) {
+        const accumulatedData = state.accumulatedData || [];
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // FIX: DUPLICATE TOOL CALL DETECTION
+        // If the same tool+args has been called multiple times, trigger immediately
+        // ═══════════════════════════════════════════════════════════════════════
+        const duplicateCheck = detectDuplicateToolCalls(state);
+        if (duplicateCheck.hasDuplicates && duplicateCheck.maxDuplicates >= 2) {
+            Utils.auditLog('Circuit breaker: duplicate tool calls detected', {
+                duplicates: duplicateCheck.duplicates,
+                maxDuplicates: duplicateCheck.maxDuplicates
+            });
+
+            return {
+                shouldTrigger: true,
+                reason: `Duplicate tool calls detected: "${duplicateCheck.mostDuplicated.tool}" called ${duplicateCheck.maxDuplicates} times with same parameters. Already have this data.`,
+                consecutiveFailures: duplicateCheck.maxDuplicates,
+                escalationAction: 'ANSWER_WITH_EXISTING', // Use data we already have
+                duplicateToolCalls: duplicateCheck.duplicates
+            };
+        }
+
+        if (accumulatedData.length < NO_PROGRESS_THRESHOLD) {
+            return { shouldTrigger: false };
+        }
+
+        // Check the last N iterations for progress
+        const recentData = accumulatedData.slice(-NO_PROGRESS_THRESHOLD);
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // CRITICAL FIX: Distinguish VALIDATION_ERROR from NO_DATA
+        // Validation errors mean the tool was never properly executed - don't count
+        // as "no progress" since we never actually queried the data.
+        // Only count iterations where the tool actually ran (success or 0 rows).
+        // ═══════════════════════════════════════════════════════════════════════
+        const validationFailures = recentData.filter(d =>
+            !d.success && d.validationErrors && d.validationErrors.length > 0
+        );
+        const actualExecutions = recentData.filter(d =>
+            d.success || (d.validationErrors?.length === 0 || !d.validationErrors)
+        );
+
+        // If most recent attempts were validation errors, don't trigger circuit breaker
+        // The LLM needs a chance to fix its parameter usage
+        if (validationFailures.length >= Math.floor(NO_PROGRESS_THRESHOLD / 2)) {
+            Utils.debugLog('Circuit breaker skipped: validation errors detected', {
+                validationFailures: validationFailures.length,
+                actualExecutions: actualExecutions.length
+            });
+            return {
+                shouldTrigger: false,
+                reason: 'Validation errors detected - allowing LLM to correct parameters'
+            };
+        }
+
+        const totalRowsRecent = recentData.reduce((sum, d) => sum + (d.rowCount || 0), 0);
+        const allFailed = recentData.every(d => !d.success || d.rowCount === 0);
+
+        if (allFailed && totalRowsRecent === 0) {
+            // ═══════════════════════════════════════════════════════════════════════
+            // FAILURE MODE CLASSIFICATION - Understand WHY queries failed
+            // ═══════════════════════════════════════════════════════════════════════
+            const failureMode = classifyFailureMode(recentData, state);
+
+            Utils.debugLog('Circuit breaker failure mode analysis', {
+                mode: failureMode.mode,
+                remediation: failureMode.remediation,
+                shouldTrySynthesizeFirst: failureMode.shouldTrySynthesizeFirst
+            });
+
+            // Determine escalation action based on failure mode
+            let escalationAction = 'SYNTHESIZE'; // Default: try custom SQL
+
+            // If failure mode suggests a simple fix, don't escalate to synthesize yet
+            if (!failureMode.shouldTrySynthesizeFirst && failureMode.suggestedAction) {
+                // Store remediation hint for the LLM to use
+                state.failureModeHint = failureMode;
+                escalationAction = 'RETRY_WITH_HINT';
+            }
+
+            // If we've already tried synthesize, suggest clarification
+            if (state.synthesize?.iterations > 0) {
+                escalationAction = 'CLARIFY';
+            }
+
+            // If entity resolution failed, suggest different entity search
+            if (failureMode.mode === 'ENTITY_RESOLUTION_FAILED') {
+                escalationAction = 'CLARIFY';
+            }
+
+            // Include validation vs data failure breakdown in reason
+            const dataFailures = actualExecutions.filter(d => d.rowCount === 0).length;
+            const reasonDetail = validationFailures.length > 0
+                ? ` (${validationFailures.length} validation errors, ${dataFailures} empty results)`
+                : '';
+
+            return {
+                shouldTrigger: true,
+                reason: `No progress detected: ${NO_PROGRESS_THRESHOLD} consecutive attempts returned 0 rows${reasonDetail}.`,
+                consecutiveFailures: NO_PROGRESS_THRESHOLD,
+                escalationAction: escalationAction,
+                validationFailureCount: validationFailures.length,
+                dataFailureCount: dataFailures,
+                failureMode: failureMode,
+                attemptsSummary: recentData.map(d => ({
+                    tool: d.tool,
+                    args: d.args,
+                    success: d.success,
+                    rowCount: d.rowCount,
+                    isValidationError: d.validationErrors?.length > 0
+                }))
+            };
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // SCHEMA GAP DETECTION - Data returned but wrong columns for the question
+        // This catches cases where rows are returned but can't answer the question
+        // (e.g., "who does the most" but data lacks created_by field)
+        // ═══════════════════════════════════════════════════════════════════════
+        if (totalRowsRecent > 0 && accumulatedData.length >= 3) {
+            const schemaGap = detectSchemaGap(state);
+            if (schemaGap.detected) {
+                Utils.auditLog('Schema gap circuit breaker triggered', {
+                    gap: schemaGap.gap,
+                    suggestion: schemaGap.suggestion,
+                    iterations: accumulatedData.length
+                });
+
+                // Store the hint for the LLM
+                state.schemaGapHint = schemaGap;
+
+                return {
+                    shouldTrigger: true,
+                    reason: `Schema gap detected: ${schemaGap.gap}. Data returned (${totalRowsRecent} rows) but lacks required fields to answer the question.`,
+                    escalationAction: 'RETRY_WITH_SCHEMA_HINT',
+                    schemaGap: schemaGap,
+                    attemptsSummary: recentData.map(d => ({
+                        tool: d.tool,
+                        args: d.args,
+                        success: d.success,
+                        rowCount: d.rowCount,
+                        columns: d.columns?.slice(0, 5) // Include column sample
+                    }))
+                };
+            }
+        }
+
+        return { shouldTrigger: false };
+    }
+
+    /**
+     * Detect schema gaps - when data is returned but lacks required fields to answer the question
+     * This catches scenarios where the circuit breaker wouldn't trigger (rows returned)
+     * but the data can't actually answer the user's question.
+     *
+     * @param {Object} state - Current agent state with question and accumulated data
+     * @returns {Object} { detected: boolean, gap: string, suggestion: string }
+     */
+    function detectSchemaGap(state) {
+        const question = (state.question || '').toLowerCase();
+        const recentData = (state.accumulatedData || []).slice(-3);
+
+        // Skip if we don't have enough data to analyze
+        if (recentData.length < 2) {
+            return { detected: false };
+        }
+
+        // Only check successful results with actual rows
+        const successfulResults = recentData.filter(d => d.success && d.rowCount > 0);
+        if (successfulResults.length === 0) {
+            return { detected: false };
+        }
+
+        // Collect all columns from recent successful results
+        const allColumns = new Set();
+        successfulResults.forEach(d => {
+            const cols = d.columns || [];
+            cols.forEach(c => allColumns.add(c.toLowerCase()));
+        });
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // SCHEMA GAP PATTERNS - What fields are needed for what questions?
+        // ═══════════════════════════════════════════════════════════════════════
+        const schemaGapPatterns = [
+            {
+                // "who does the most", "who created", "which user", "by employee"
+                questionPattern: /\bwho\b|\bwhich user\b|\bcreator\b|\bcreated by\b|\bby employee\b|\bmost.*entries\b/i,
+                requiredFields: ['created_by_name', 'created_by_id', 'user_name', 'employee_name', 'createdby'],
+                gap: 'MISSING_CREATOR_FIELD',
+                suggestion: 'Data lacks creator/user information. For journal entries, use get_journal_entries with group_by: "created_by". For other transactions, the created_by_name field should now be available.'
+            },
+            {
+                // "by department", "which department"
+                questionPattern: /\bby department\b|\bwhich department\b|\bdepartment breakdown\b/i,
+                requiredFields: ['department_name', 'department_id', 'department'],
+                gap: 'MISSING_DEPARTMENT_FIELD',
+                suggestion: 'Data lacks department information. Try using include_lines: true or a tool that returns department details.'
+            },
+            {
+                // "by class", "which class"
+                questionPattern: /\bby class\b|\bwhich class\b|\bclass breakdown\b/i,
+                requiredFields: ['class_name', 'class_id', 'class'],
+                gap: 'MISSING_CLASS_FIELD',
+                suggestion: 'Data lacks class information. Try using include_lines: true or a tool that returns class details.'
+            },
+            {
+                // "count by", "group by", "breakdown"
+                questionPattern: /\bcount\s+by\b|\bgroup\s*by\b|\bbreakdown\b|\baggregate\b/i,
+                requiredFields: ['count', 'entry_count', 'total_count'],
+                gap: 'MISSING_AGGREGATION',
+                suggestion: 'Consider using a tool with group_by parameter or run_custom_query with GROUP BY clause.'
+            }
+        ];
+
+        // Check each pattern
+        for (const pattern of schemaGapPatterns) {
+            if (pattern.questionPattern.test(question)) {
+                // Check if any required field exists in the data
+                const hasRequiredField = pattern.requiredFields.some(field =>
+                    allColumns.has(field.toLowerCase())
+                );
+
+                if (!hasRequiredField) {
+                    Utils.debugLog('Schema gap detected', {
+                        gap: pattern.gap,
+                        question: question.substring(0, 100),
+                        availableColumns: Array.from(allColumns).slice(0, 10),
+                        requiredFields: pattern.requiredFields
+                    });
+
+                    return {
+                        detected: true,
+                        gap: pattern.gap,
+                        suggestion: pattern.suggestion,
+                        requiredFields: pattern.requiredFields,
+                        availableColumns: Array.from(allColumns)
+                    };
+                }
+            }
+        }
+
+        return { detected: false };
+    }
+
+    /**
+     * Generate a user-friendly explanation when circuit breaker triggers
+     * Instead of technical "No progress detected", explains what was searched and not found
+     * @param {Object} state - Current agent state with resolved entities and intent
+     * @param {Object} circuitBreaker - The circuit breaker result
+     * @returns {string} A user-friendly explanation
+     */
+    function generateNoDataExplanation(state, circuitBreaker) {
+        const resolvedEntities = state.resolvedEntities || {};
+        const intent = state.intent || {};
+        const transactionContext = intent.transaction_context || intent.transactionContext;
+
+        // Get entity names
+        const entityNames = Object.values(resolvedEntities)
+            .filter(e => e && e.name)
+            .map(e => e.name);
+
+        // Build context-aware message
+        const parts = [];
+
+        // What were we looking for?
+        let searchTarget = 'the requested data';
+        if (transactionContext) {
+            const contextNames = {
+                'bills': 'bills',
+                'bill': 'bills',
+                'VendBill': 'vendor bills',
+                'CustInvc': 'customer invoices',
+                'invoices': 'invoices',
+                'invoice': 'invoices',
+                'payments': 'payments',
+                'VendPymt': 'vendor payments',
+                'CustPymt': 'customer payments'
+            };
+            searchTarget = contextNames[transactionContext] || transactionContext;
+        } else if (intent.intent === 'entity_transactions') {
+            searchTarget = 'transactions';
+        } else if (intent.semantic_topics?.includes('payables')) {
+            searchTarget = 'payables data';
+        } else if (intent.semantic_topics?.includes('receivables')) {
+            searchTarget = 'receivables data';
+        }
+
+        // Who were we looking for?
+        if (entityNames.length > 0) {
+            const entityList = entityNames.join(', ');
+            parts.push(`I couldn't find any ${searchTarget} for ${entityList}.`);
+            parts.push(`This entity may not have any ${searchTarget} recorded in the system, or they may be under a different entity name.`);
+        } else {
+            parts.push(`I wasn't able to find ${searchTarget} matching your query.`);
+            parts.push('The data may not exist in the system, or you may need to refine your search criteria.');
+        }
+
+        // Add suggestion
+        parts.push('Try asking about a different time period or check if the entity name is correct.');
+
+        return parts.join(' ');
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // SQL SYNTAX VALIDATION
+    // Catch SQL Server syntax BEFORE hitting the database
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Validate and auto-correct SQL syntax before execution
+     *
+     * SuiteQL is Oracle-based. Common mistakes include:
+     * - SQL Server date functions (DATEADD, GETDATE, DATEPART)
+     * - Wrong table names (transactions vs transaction)
+     * - Non-existent fields (transtime, created_by_id)
+     *
+     * @param {string} sql - The SQL query to validate
+     * @returns {Object} { hasCriticalErrors, errors, suggestions, correctedSql, corrections }
+     */
+    function validateAndCorrectSql(sql) {
+        const errors = [];
+        const suggestions = [];
+        const corrections = [];
+        let correctedSql = sql;
+
+        const sqlUpper = sql.toUpperCase();
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // SQL SERVER FUNCTION DETECTION (CRITICAL - will always fail)
+        // ═══════════════════════════════════════════════════════════════════════
+        const sqlServerFunctions = [
+            { pattern: /\bDATEADD\s*\(/gi, name: 'DATEADD()', fix: 'Use ADD_MONTHS() or date arithmetic (date + 30)' },
+            { pattern: /\bGETDATE\s*\(\s*\)/gi, name: 'GETDATE()', fix: 'Use CURRENT_DATE or SYSDATE' },
+            { pattern: /\bDATEPART\s*\(/gi, name: 'DATEPART()', fix: 'Use TO_CHAR(date, format)' },
+            { pattern: /\bDATEDIFF\s*\(/gi, name: 'DATEDIFF()', fix: 'Use (date1 - date2) for days difference' },
+            { pattern: /\bISNULL\s*\(/gi, name: 'ISNULL()', fix: 'Use NVL() or COALESCE()' },
+            { pattern: /\bGETUTCDATE\s*\(\s*\)/gi, name: 'GETUTCDATE()', fix: 'Use CURRENT_DATE' },
+            { pattern: /\bCONVERT\s*\(\s*\w+\s*,/gi, name: 'CONVERT()', fix: 'Use TO_CHAR(), TO_DATE(), or CAST()' },
+            { pattern: /\bTOP\s+\d+\b/gi, name: 'TOP N', fix: 'Use ROWNUM <= N in WHERE clause' },
+            { pattern: /\bLEN\s*\(/gi, name: 'LEN()', fix: 'Use LENGTH()' },
+            { pattern: /\bCHARINDEX\s*\(/gi, name: 'CHARINDEX()', fix: 'Use INSTR()' }
+        ];
+
+        for (const func of sqlServerFunctions) {
+            if (func.pattern.test(sql)) {
+                errors.push(`SQL Server function "${func.name}" not supported in SuiteQL`);
+                suggestions.push(func.fix);
+            }
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // WRONG TABLE NAMES (CRITICAL - will fail with "record not found")
+        // ═══════════════════════════════════════════════════════════════════════
+        const wrongTables = [
+            { pattern: /\bFROM\s+transactions\b/gi, wrong: 'transactions', fix: 'transaction (singular)' },
+            { pattern: /\bJOIN\s+transactions\b/gi, wrong: 'transactions', fix: 'transaction (singular)' },
+            { pattern: /\bFROM\s+journalentry\b/gi, wrong: 'journalentry', fix: "transaction WHERE type = 'Journal'" },
+            { pattern: /\bFROM\s+journal_entry\b/gi, wrong: 'journal_entry', fix: "transaction WHERE type = 'Journal'" },
+            { pattern: /\bFROM\s+invoices\b/gi, wrong: 'invoices', fix: "transaction WHERE type = 'CustInvc'" },
+            { pattern: /\bFROM\s+bills\b/gi, wrong: 'bills', fix: "transaction WHERE type = 'VendBill'" }
+        ];
+
+        for (const table of wrongTables) {
+            if (table.pattern.test(sql)) {
+                errors.push(`Table "${table.wrong}" does not exist`);
+                suggestions.push(`Use: ${table.fix}`);
+
+                // Auto-correct simple plural → singular
+                if (table.wrong === 'transactions') {
+                    correctedSql = correctedSql.replace(/\btransactions\b/gi, 'transaction');
+                    corrections.push('Fixed: transactions → transaction');
+                }
+            }
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // NON-EXISTENT FIELDS (will fail with "field not found")
+        // ═══════════════════════════════════════════════════════════════════════
+        const badFields = [
+            { pattern: /\btranstime\b/gi, wrong: 'transtime', fix: 'Field does not exist. Use lastmodifieddate for timestamp' },
+            { pattern: /\bcreated_by_id\b/gi, wrong: 'created_by_id', fix: 'Field does not exist' },
+            { pattern: /\bcreatedby\b/gi, wrong: 'createdby', fix: 'Field may not be exposed in SuiteQL' },
+            { pattern: /\bdate\s*(?:>=|<=|=|>|<|BETWEEN)/gi, wrong: 'date', fix: 'Use trandate for transaction date, not "date"' }
+        ];
+
+        for (const field of badFields) {
+            if (field.pattern.test(sql)) {
+                errors.push(`Field "${field.wrong}" will cause errors`);
+                suggestions.push(field.fix);
+            }
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // WRONG TYPE VALUES (minor - may return 0 rows)
+        // ═══════════════════════════════════════════════════════════════════════
+        const wrongTypes = [
+            { pattern: /type\s*=\s*'Journal Entry'/gi, wrong: "'Journal Entry'", fix: "'Journal'" },
+            { pattern: /type\s*=\s*'Invoice'/gi, wrong: "'Invoice'", fix: "'CustInvc'" },
+            { pattern: /type\s*=\s*'Bill'/gi, wrong: "'Bill'", fix: "'VendBill'" },
+            { pattern: /type\s*=\s*'Payment'/gi, wrong: "'Payment'", fix: "'CustPymt' or 'VendPymt'" }
+        ];
+
+        for (const typeVal of wrongTypes) {
+            if (typeVal.pattern.test(sql)) {
+                // Auto-correct type values
+                if (typeVal.wrong === "'Journal Entry'") {
+                    correctedSql = correctedSql.replace(/type\s*=\s*'Journal Entry'/gi, "type = 'Journal'");
+                    corrections.push("Fixed: 'Journal Entry' → 'Journal'");
+                } else if (typeVal.wrong === "'Invoice'") {
+                    correctedSql = correctedSql.replace(/type\s*=\s*'Invoice'/gi, "type = 'CustInvc'");
+                    corrections.push("Fixed: 'Invoice' → 'CustInvc'");
+                } else if (typeVal.wrong === "'Bill'") {
+                    correctedSql = correctedSql.replace(/type\s*=\s*'Bill'/gi, "type = 'VendBill'");
+                    corrections.push("Fixed: 'Bill' → 'VendBill'");
+                }
+            }
+        }
+
+        // Determine if we have critical errors (SQL Server functions = always fails)
+        const hasCriticalErrors = sqlServerFunctions.some(func => func.pattern.test(sql));
+
+        // Build error message
+        let errorMessage = '';
+        if (errors.length > 0) {
+            errorMessage = 'SQL SYNTAX ERRORS DETECTED:\n' +
+                errors.map((e, i) => `• ${e}\n  → Fix: ${suggestions[i] || 'See SuiteQL documentation'}`).join('\n');
+        }
+
+        return {
+            hasCriticalErrors: hasCriticalErrors,
+            errors: errors,
+            suggestions: suggestions,
+            corrections: corrections,
+            correctedSql: corrections.length > 0 ? correctedSql : null,
+            errorMessage: errorMessage
+        };
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // AGENTIC INTELLIGENCE LAYER
+    // All-LLM solutions for robust error handling, tool selection, and recovery
+    // No hardcoded lists, regex, or pattern matching - pure semantic understanding
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * PRE-FLIGHT TOOL CAPABILITY ASSESSMENT
+     * Before entering REASON_ACT, use LLM to assess whether available tools can answer the question.
+     * This prevents wasted iterations on fundamentally unsupported queries.
+     *
+     * @param {string} question - The user's question
+     * @param {Object} intent - Parsed intent from INTENT phase
+     * @param {Object} toolManifest - Available tools
+     * @returns {Object} { canAnswer: boolean, bestTools: Array, gaps: Array, recommendation: string }
+     */
+    function assessToolCapability(question, intent, toolManifest) {
+        const toolList = Object.entries(toolManifest)
+            .map(([name, desc]) => `• ${name}: ${desc}`)
+            .join('\n');
+
+        const prompt = `Assess whether the available tools can answer this question.
+
+QUESTION: "${question}"
+
+INTENT ANALYSIS:
+- Intent: ${intent?.intent || 'unknown'}
+- Semantic topics: ${(intent?.semantic_topics || []).join(', ') || 'none'}
+- Time scope: ${intent?.time_scope || intent?.timeScope || 'not specified'}
+- Constraints: ${JSON.stringify(intent?.constraints || {})}
+
+AVAILABLE TOOLS:
+${toolList}
+
+ANALYSIS REQUIRED:
+1. What capabilities does this question require? (e.g., period comparison, percentage calculation, entity filtering, aggregation)
+2. Which tools could provide data relevant to this question?
+3. Are there any capability GAPS - things the question needs that no tool provides?
+4. What's your recommendation?
+
+Respond with JSON only:
+{
+  "required_capabilities": ["list", "of", "capabilities", "needed"],
+  "matching_tools": [
+    {"tool": "tool_name", "fit_score": 0.0-1.0, "reason": "why this tool fits"}
+  ],
+  "capability_gaps": ["gaps", "that", "no", "tool", "covers"],
+  "can_answer_with_tools": true|false,
+  "recommendation": "PROCEED|SYNTHESIZE_EARLY|DECOMPOSE",
+  "decomposition_strategy": "if DECOMPOSE, explain how to break down the query"
+}`;
+
+        try {
+            const response = AIProviders.callAI(prompt, {
+                tier: TIERS.FAST,
+                temperature: 0,
+                jsonMode: true,
+                maxTokens: 500,
+                purpose: 'SCA:capability_assessment'
+            });
+
+            const parsed = parseJsonResponse(response?.text);
+
+            if (parsed) {
+                Utils.debugLog('Tool capability assessment', {
+                    canAnswer: parsed.can_answer_with_tools,
+                    recommendation: parsed.recommendation,
+                    matchingTools: parsed.matching_tools?.length || 0,
+                    gaps: parsed.capability_gaps?.length || 0
+                });
+
+                return {
+                    canAnswer: parsed.can_answer_with_tools !== false,
+                    bestTools: (parsed.matching_tools || [])
+                        .filter(t => t.fit_score >= 0.6)
+                        .sort((a, b) => b.fit_score - a.fit_score),
+                    gaps: parsed.capability_gaps || [],
+                    recommendation: parsed.recommendation || 'PROCEED',
+                    decompositionStrategy: parsed.decomposition_strategy,
+                    requiredCapabilities: parsed.required_capabilities || []
+                };
+            }
+        } catch (e) {
+            Utils.debugLog('Tool capability assessment failed', { error: e.message });
+        }
+
+        // Fallback: proceed optimistically
+        return {
+            canAnswer: true,
+            bestTools: [],
+            gaps: [],
+            recommendation: 'PROCEED',
+            requiredCapabilities: []
+        };
+    }
+
+    /**
+     * AGENTIC PARAMETER AUTO-CORRECTION
+     * When tool validation fails, use LLM to intelligently correct parameters
+     * instead of relying on simple string matching.
+     *
+     * @param {string} toolName - The tool that was called
+     * @param {Object} originalArgs - The arguments that failed validation
+     * @param {Array} validationErrors - Errors from validateAndNormalizeArgs
+     * @param {Object} toolSchema - The tool's parameter schema
+     * @returns {Object} { corrected: boolean, args: Object, explanation: string }
+     */
+    function correctParametersAgentically(toolName, originalArgs, validationErrors, toolSchema) {
+        if (!validationErrors || validationErrors.length === 0) {
+            return { corrected: false, args: originalArgs, explanation: 'No errors to correct' };
+        }
+        return { corrected: false, args: originalArgs, explanation: 'Deterministic mode skips speculative parameter rewrites' };
+    }
+
+    /**
+     * AGENTIC TOOL HEALTH CLASSIFICATION
+     * Distinguish between parameter errors, tool implementation bugs, and actual data issues.
+     * This enables smart fallback decisions.
+     *
+     * @param {Object} toolResult - The result from tool execution
+     * @param {string} toolName - Name of the tool
+     * @param {Object} args - Arguments that were passed
+     * @returns {Object} { errorType, recoverable, suggestedAction, shouldAlert }
+     */
+    function classifyToolHealth(toolResult, toolName, args) {
+        if (toolResult.success) {
+            return {
+                errorType: 'NONE',
+                recoverable: true,
+                suggestedAction: 'CONTINUE',
+                shouldAlert: false
+            };
+        }
+
+        const errorMessage = toolResult.error || '';
+        const lowerError = errorMessage.toLowerCase();
+
+        if (toolResult.validationErrors && toolResult.validationErrors.length > 0) {
+            return {
+                errorType: 'PARAMETER_ERROR',
+                recoverable: true,
+                suggestedAction: 'FIX_PARAMS',
+                shouldAlert: false,
+                explanation: 'Parameter validation failed before execution.'
+            };
+        }
+        if (lowerError.indexOf('permission') !== -1 || lowerError.indexOf('access denied') !== -1 || toolResult.accessDenied) {
+            return {
+                errorType: 'PERMISSION_ERROR',
+                recoverable: false,
+                suggestedAction: 'TRY_ALTERNATIVE_TOOL',
+                shouldAlert: false,
+                explanation: 'The current user cannot access this data source.'
+            };
+        }
+        if (lowerError.indexOf('timeout') !== -1 || lowerError.indexOf('timed out') !== -1) {
+            return {
+                errorType: 'TIMEOUT',
+                recoverable: true,
+                suggestedAction: 'TRY_ALTERNATIVE_TOOL',
+                shouldAlert: false,
+                explanation: 'The query exceeded the execution budget.'
+            };
+        }
+        if (lowerError.indexOf('undefined') !== -1 ||
+            lowerError.indexOf('cannot read') !== -1 ||
+            lowerError.indexOf('unknown identifier') !== -1 ||
+            lowerError.indexOf('column does not exist') !== -1 ||
+            lowerError.indexOf('syntax') !== -1) {
+            return {
+                errorType: 'TOOL_BUG',
+                recoverable: false,
+                suggestedAction: 'SKIP_TO_SYNTHESIZE',
+                shouldAlert: true,
+                explanation: 'The tool implementation or generated query is invalid.'
+            };
+        }
+
+        return {
+            errorType: 'UNKNOWN',
+            recoverable: true,
+            suggestedAction: 'TRY_ALTERNATIVE_TOOL',
+            shouldAlert: false,
+            explanation: 'Retry with a different tool or less restrictive parameters.'
+        };
+    }
+
+    /**
+     * AGENTIC QUERY DECOMPOSITION
+     * Break complex queries into simpler sub-queries that are more likely to succeed.
+     *
+     * @param {string} question - The user's question
+     * @param {Object} intent - Parsed intent
+     * @param {Object} toolManifest - Available tools
+     * @returns {Object} { shouldDecompose: boolean, subQueries: Array, strategy: string }
+     */
+    function decomposeQuery(question, intent, toolManifest) {
+        const toolList = Object.keys(toolManifest).join(', ');
+
+        const prompt = `Analyze if this complex question should be broken into simpler sub-queries.
+
+QUESTION: "${question}"
+
+INTENT: ${intent?.intent || 'unknown'}
+SEMANTIC TOPICS: ${(intent?.semantic_topics || []).join(', ')}
+
+AVAILABLE TOOLS: ${toolList}
+
+Complex queries that benefit from decomposition:
+- Period comparisons: Get data for each period separately, then compare
+- Cross-entity analysis: Get data for each entity, then combine
+- Multi-step calculations: Get raw data, then calculate metrics
+- Filtered aggregations: Get broader data, then filter/aggregate
+
+Simple queries that don't need decomposition:
+- Single entity lookup
+- Single period report
+- Dashboard metrics
+- Direct aggregations
+
+Respond with JSON only:
+{
+  "should_decompose": true|false,
+  "complexity_reason": "why this query is/isn't complex",
+  "sub_queries": [
+    {
+      "description": "what this sub-query gets",
+      "tool": "suggested_tool",
+      "args": {},
+      "purpose": "how this contributes to final answer"
+    }
+  ],
+  "combination_strategy": "how to combine sub-query results for final answer"
+}`;
+
+        try {
+            const response = AIProviders.callAI(prompt, {
+                tier: TIERS.FAST,
+                temperature: 0.1,
+                jsonMode: true,
+                maxTokens: 500,
+                purpose: 'SCA:query_decomposition'
+            });
+
+            const parsed = parseJsonResponse(response?.text);
+
+            if (parsed && parsed.should_decompose && parsed.sub_queries?.length > 0) {
+                Utils.debugLog('Query decomposition', {
+                    shouldDecompose: parsed.should_decompose,
+                    subQueryCount: parsed.sub_queries.length,
+                    strategy: parsed.combination_strategy
+                });
+
+                return {
+                    shouldDecompose: true,
+                    subQueries: parsed.sub_queries,
+                    strategy: parsed.combination_strategy,
+                    reason: parsed.complexity_reason
+                };
+            }
+        } catch (e) {
+            Utils.debugLog('Query decomposition failed', { error: e.message });
+        }
+
+        return {
+            shouldDecompose: false,
+            subQueries: [],
+            strategy: null
+        };
+    }
+
+    /**
+     * AGENTIC PERIOD VALIDATION
+     * Validate that period comparisons make semantic sense.
+     *
+     * @param {string} period1 - First period
+     * @param {string} period2 - Second period
+     * @param {string} comparisonType - Type of comparison (e.g., 'trend', 'yoy', 'improvement')
+     * @returns {Object} { valid: boolean, issue: string, suggestion: string }
+     */
+    function validatePeriodComparison(period1, period2, comparisonType) {
+        const prompt = `Validate this period comparison for a financial analysis.
+
+PERIOD 1 (baseline/earlier): ${period1}
+PERIOD 2 (current/later): ${period2}
+COMPARISON TYPE: ${comparisonType || 'general comparison'}
+
+Today's date context for reference: Use current date to understand what "this_quarter", "last_quarter" etc. mean.
+
+Validation checks:
+1. Does period1 come BEFORE period2 chronologically?
+2. Are the periods non-overlapping?
+3. Are they comparable (similar duration/type)?
+4. Does this combination make sense for the comparison type?
+
+Respond with JSON only:
+{
+  "is_valid": true|false,
+  "chronologically_correct": true|false,
+  "periods_overlap": true|false,
+  "are_comparable": true|false,
+  "issue": "description of any problem",
+  "suggestion": "how to fix if invalid",
+  "recommended_periods": {
+    "period1": "suggested_period1_if_different",
+    "period2": "suggested_period2_if_different"
+  }
+}`;
+
+        try {
+            const response = AIProviders.callAI(prompt, {
+                tier: TIERS.FAST,
+                temperature: 0,
+                jsonMode: true,
+                maxTokens: 200,
+                purpose: 'SCA:period_validation'
+            });
+
+            const parsed = parseJsonResponse(response?.text);
+
+            if (parsed) {
+                return {
+                    valid: parsed.is_valid !== false,
+                    chronologicallyCorrect: parsed.chronologically_correct,
+                    periodsOverlap: parsed.periods_overlap,
+                    areComparable: parsed.are_comparable,
+                    issue: parsed.issue,
+                    suggestion: parsed.suggestion,
+                    recommendedPeriods: parsed.recommended_periods
+                };
+            }
+        } catch (e) {
+            Utils.debugLog('Period validation failed', { error: e.message });
+        }
+
+        // Fallback: assume valid
+        return { valid: true, issue: null, suggestion: null };
+    }
+
+    /**
+     * AGENTIC TOOL-QUERY FIT ASSESSMENT
+     * Before calling a tool, verify its output will match what the query needs.
+     *
+     * @param {string} question - The user's question
+     * @param {string} toolName - Tool being considered
+     * @param {string} toolDescription - Full tool description
+     * @param {string} expectedOutputs - What the tool returns
+     * @returns {Object} { fits: boolean, missingColumns: Array, fitScore: number }
+     */
+    function assessToolQueryFit(question, toolName, toolDescription, expectedOutputs) {
+        const prompt = `Does this tool's output match what the question needs?
+
+QUESTION: "${question}"
+
+TOOL: ${toolName}
+DESCRIPTION: ${toolDescription}
+OUTPUT COLUMNS: ${expectedOutputs || 'Not specified'}
+
+Analysis required:
+1. What columns/data does the question need?
+2. Does this tool provide those columns?
+3. Are there any gaps between what's needed and what's provided?
+
+Respond with JSON only:
+{
+  "question_needs": ["list", "of", "data", "elements", "needed"],
+  "tool_provides": ["list", "of", "what", "tool", "returns"],
+  "fit_score": 0.0-1.0,
+  "fits_well": true|false,
+  "missing_elements": ["what", "question", "needs", "but", "tool", "lacks"],
+  "recommendation": "USE_TOOL|TRY_DIFFERENT_TOOL|USE_WITH_SYNTHESIZE"
+}`;
+
+        try {
+            const response = AIProviders.callAI(prompt, {
+                tier: TIERS.FAST,
+                temperature: 0,
+                jsonMode: true,
+                maxTokens: 300,
+                purpose: 'SCA:tool_fit'
+            });
+
+            const parsed = parseJsonResponse(response?.text);
+
+            if (parsed) {
+                return {
+                    fits: parsed.fits_well !== false && parsed.fit_score >= 0.6,
+                    fitScore: parsed.fit_score || 0.5,
+                    questionNeeds: parsed.question_needs || [],
+                    toolProvides: parsed.tool_provides || [],
+                    missingElements: parsed.missing_elements || [],
+                    recommendation: parsed.recommendation || 'USE_TOOL'
+                };
+            }
+        } catch (e) {
+            Utils.debugLog('Tool-query fit assessment failed', { error: e.message });
+        }
+
+        // Fallback: assume it fits
+        return { fits: true, fitScore: 0.5, missingElements: [], recommendation: 'USE_TOOL' };
+    }
+
+    /**
+     * BUILD ENHANCED ERROR CONTEXT FOR PROMPTS
+     * Format previous failures prominently so the LLM can learn from them.
+     *
+     * @param {Array} accumulatedData - Previous tool attempts
+     * @param {number} maxErrors - Maximum errors to show
+     * @returns {string} Formatted error context for prompt injection
+     */
+    function buildErrorContextForPrompt(accumulatedData, maxErrors) {
+        maxErrors = maxErrors || 5;
+        const failures = (accumulatedData || [])
+            .filter(d => !d.success || d.rowCount === 0)
+            .slice(-maxErrors);
+
+        if (failures.length === 0) {
+            return '';
+        }
+
+        const lines = [
+            '',
+            '⚠️⚠️⚠️ PREVIOUS ATTEMPTS THAT FAILED - LEARN FROM THESE ⚠️⚠️⚠️',
+            ''
+        ];
+
+        failures.forEach((f, i) => {
+            lines.push(`ATTEMPT ${i + 1} FAILED:`);
+            lines.push(`  Tool: ${f.tool}`);
+            lines.push(`  Args: ${JSON.stringify(f.args)}`);
+            if (f.error) {
+                lines.push(`  Error: ${f.error.substring(0, 200)}`);
+            }
+            if (f.validationErrors?.length > 0) {
+                lines.push(`  Validation Errors:`);
+                f.validationErrors.forEach(ve => lines.push(`    • ${ve}`));
+            }
+            if (f.rowCount === 0 && f.success) {
+                lines.push(`  Result: Query succeeded but returned 0 rows`);
+            }
+            lines.push('');
+        });
+
+        lines.push('DO NOT REPEAT THESE MISTAKES. Check tool schemas carefully.');
+        lines.push('');
+
+        return lines.join('\n');
+    }
+
+    /**
+     * GET ADAPTIVE MODEL TIER BASED ON FAILURE HISTORY
+     * Upgrade model quality after repeated failures.
+     *
+     * @param {string} basePhase - The phase being executed
+     * @param {Object} state - Current state with failure history
+     * @returns {number} The tier to use (1=FAST, 2=BALANCED, 3=PREMIUM)
+     */
+    function getAdaptiveModelTier(basePhase, state) {
+        const baseTier = getTierForPhase(basePhase, state);
+
+        // Count recent failures
+        const recentData = (state.accumulatedData || []).slice(-5);
+        const failureCount = recentData.filter(d => !d.success || d.rowCount === 0).length;
+        const validationErrorCount = recentData.filter(d => d.validationErrors?.length > 0).length;
+
+        // Upgrade tier based on failure patterns
+        if (validationErrorCount >= 2) {
+            // Multiple validation errors - upgrade for better tool understanding
+            Utils.debugLog('Adaptive tier upgrade: validation errors', {
+                baseTier,
+                validationErrorCount,
+                upgradeTo: Math.min(baseTier + 1, TIERS.PREMIUM)
+            });
+            return Math.min(baseTier + 1, TIERS.PREMIUM);
+        }
+
+        if (failureCount >= 3) {
+            // Multiple failures - upgrade for better reasoning
+            Utils.debugLog('Adaptive tier upgrade: repeated failures', {
+                baseTier,
+                failureCount,
+                upgradeTo: Math.min(baseTier + 1, TIERS.PREMIUM)
+            });
+            return Math.min(baseTier + 1, TIERS.PREMIUM);
+        }
+
+        return baseTier;
+    }
+
+    /**
+     * ENHANCED TOOL LIST WITH FULL SCHEMAS
+     * Generate detailed tool documentation including parameter schemas for prompts.
+     *
+     * @param {Array} toolNames - Optional filter to specific tools
+     * @returns {string} Formatted tool list with schemas
+     */
+    function getEnhancedToolListForPrompt(toolNames) {
+        const manifest = Tools.getToolManifest();
+        const lines = [];
+
+        const toolsToShow = toolNames
+            ? Object.keys(manifest).filter(t => toolNames.includes(t))
+            : Object.keys(manifest);
+
+        for (const toolName of toolsToShow) {
+            const tool = Tools.getTool ? Tools.getTool(toolName) : Tools.ALL_TOOLS?.[toolName];
+            if (!tool) continue;
+
+            const desc = tool.shortDescription ||
+                (tool.description ? tool.description.split('\n')[0].trim() : toolName);
+
+            lines.push(`═══ ${toolName} ═══`);
+            lines.push(desc);
+
+            // Add parameter schema
+            if (tool.parameters?.properties) {
+                lines.push('PARAMETERS:');
+                const required = tool.parameters.required || [];
+
+                for (const [param, def] of Object.entries(tool.parameters.properties)) {
+                    const req = required.includes(param) ? ' (REQUIRED)' : '';
+                    let typeInfo = def.type;
+
+                    if (def.enum) {
+                        const enumStr = def.enum.slice(0, 6).join(', ');
+                        typeInfo = `[${enumStr}${def.enum.length > 6 ? ', ...' : ''}]`;
+                    }
+
+                    lines.push(`  • ${param}: ${typeInfo}${req}`);
+                }
+            }
+            lines.push('');
+        }
+
+        return lines.join('\n');
+    }
+
+    /**
+     * CHECK IF EARLY SYNTHESIZE ESCALATION IS WARRANTED
+     * Based on failure patterns, decide if we should skip to SYNTHESIZE.
+     *
+     * @param {Object} state - Current state
+     * @returns {Object} { shouldEscalate: boolean, reason: string }
+     */
+    function checkEarlySynthesizeEscalation(state) {
+        const accumulatedData = state.accumulatedData || [];
+        if (accumulatedData.length < 2) {
+            return { shouldEscalate: false };
+        }
+
+        // Check for tool implementation bugs (not parameter errors)
+        const toolBugs = accumulatedData.filter(d => {
+            if (d.success) return false;
+            const error = (d.error || '').toLowerCase();
+            // These indicate internal tool bugs, not user errors
+            return error.includes('unknown identifier') ||
+                   error.includes('column does not exist') ||
+                   error.includes('undefined is not') ||
+                   error.includes('cannot read property') ||
+                   error.includes('internal error');
+        });
+
+        if (toolBugs.length >= 1) {
+            return {
+                shouldEscalate: true,
+                reason: `Tool implementation error detected: ${toolBugs[0].error?.substring(0, 100)}. Escalating to SYNTHESIZE.`
+            };
+        }
+
+        // Check for repeated failures with same tool (even after corrections)
+        const toolAttempts = {};
+        for (const d of accumulatedData) {
+            toolAttempts[d.tool] = (toolAttempts[d.tool] || 0) + 1;
+        }
+
+        for (const [tool, count] of Object.entries(toolAttempts)) {
+            if (count >= 3) {
+                const toolFailures = accumulatedData.filter(d => d.tool === tool && !d.success);
+                if (toolFailures.length >= 2) {
+                    return {
+                        shouldEscalate: true,
+                        reason: `Tool "${tool}" failed ${toolFailures.length} times. Escalating to custom SQL.`
+                    };
+                }
+            }
+        }
+
+        // Check capability assessment result if available
+        if (state.capabilityAssessment?.recommendation === 'SYNTHESIZE_EARLY') {
+            return {
+                shouldEscalate: true,
+                reason: 'Pre-flight assessment indicated tools cannot fully answer this query.'
+            };
+        }
+
+        return { shouldEscalate: false };
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // LIGHTWEIGHT PROMPTS
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * INTENT_PROMPT - Semantic intent classification
+     * RECOMMENDATION 1: Uses LLM's semantic understanding instead of word lists
+     * The LLM determines intent, entities, and topics based on meaning, not pattern matching
+     */
+    const INTENT_PROMPT = `Classify this financial question semantically. Respond with JSON only.
+{date_context}
+{history_context}
+Categories (determine based on semantic meaning, not keywords):
+- entity_lookup: ONLY use when the question is JUST about identifying/finding an entity (e.g., "who is acme corp", "find vendor xyz")
+- entity_transactions: Finding transactions/documents FOR a specific entity (e.g., "bills from vendor X", "invoices to customer Y", "payments from Z")
+  → This is DIFFERENT from entity_lookup! If user wants bills/invoices/payments/transactions for an entity, use entity_transactions
+- top_list: Top N customers, vendors, items by some metric
+- aging: AR aging, AP aging, overdue amounts
+- reporting: Revenue, spend, GL activity, trial balance
+- dashboard: Health metrics, KPIs, trends
+- comparison: Compare periods, YoY, MoM
+- transaction: Specific transaction details (by ID, number, or specific document)
+- follow_up: Reference to previous question/data (e.g., "show that as a table", "more details")
+- general: General questions, greetings, help
+
+CRITICAL DISTINCTION:
+- "who is oblender" → entity_lookup (just identifying)
+- "bills from oblender" → entity_transactions (want transactions FOR the entity)
+- "what do we owe oblender" → entity_transactions (want AP data FOR the entity)
+- "invoices to acme" → entity_transactions (want transactions FOR the entity)
+
+Question: "{question}"
+
+Analyze the SEMANTIC MEANING of the question. Extract:
+1. The primary intent category
+2. Any named entities mentioned (customer names, vendor names, account names, etc.)
+3. The time scope if mentioned
+4. Semantic topics - determine what financial domains this question relates to based on meaning (e.g., receivables, payables, revenue, expenses, cash management, profitability)
+5. A brief user-friendly narration (max 10 words) describing what you're analyzing, specific to their question
+6. For entity_transactions: the transaction_context hint (what type: bills, invoices, payments, credits)
+7. OUTPUT CONSTRAINTS - extract any limits or presentation requirements from the question:
+   - limit: Number if user says "top 5", "top 10", "first 3", etc.
+   - sort_by: What to rank by ("fastest growing" → "growth", "largest" → "amount", "most overdue" → "days_overdue")
+   - sort_direction: "desc" for largest/fastest/most, "asc" for smallest/slowest/least
+   - highlight: What to emphasize in the answer (e.g., "fastest growing category", "largest expense")
+   - exclude: Items to exclude (e.g., "excluding COGS", "except marketing")
+8. PERIOD RECOMMENDATION - Determine the appropriate default time scope based on the SEMANTIC meaning:
+   - recommended_period: The period value to use (e.g., "all", "ytd", "last_90_days")
+   - period_rationale: Brief explanation of why this period fits the question semantically
+
+   SEMANTIC PERIOD GUIDANCE:
+   • "latest [X]", "most recent [X]", "show me [X] from entity" → recommended_period: "all" (user wants most recent available, not time-bounded)
+   • "recent [X]", "[X] this month", "[X] this week" → use the explicit time frame mentioned
+   • "current [X]", "outstanding [X]", "what do we owe" → recommended_period: "all" (current state, no history filter)
+   • Historical lookups for specific entity without explicit timeframe → recommended_period: "all"
+   • Reporting/aggregation without explicit timeframe → recommended_period: "ytd"
+   • Trend analysis → use period appropriate for trend (ytd, last_12_months)
+
+NEEDS_RESOLUTION GUIDELINES - Set true ONLY when genuinely ambiguous:
+- TRUE: "Show me the stuff" (genuinely unclear what they want)
+- TRUE: "Bills from Smith" when multiple entities named Smith exist
+- TRUE: "Compare last quarter to the other one" (conflicting references)
+- FALSE: "Show utilization by employee" (clear request - use defaults)
+- FALSE: "What's our cash position" (clear request - just get the data)
+- FALSE: "Revenue by customer" (clear request - use ytd default)
+- FALSE: "Show expenses" (clear request - use ytd default)
+Most reporting requests should be FALSE - use sensible period defaults instead of asking.
+
+DRILL-DOWN DETECTION:
+is_drill_down is true when user wants MORE detail on a previous result:
+- "show me the details"
+- "break that down"
+- "give me more"
+- "expand on that"
+- "dig deeper"
+- "elaborate"
+- "can you list them"
+- "what are those items"
+- "show the table"
+- "itemize that"
+drill_down_context should describe what they want to expand on (e.g., "vendor analysis", "weekly projection", "AR buckets").
+
+Response format: {"intent": "category", "entities": ["named items"], "time_scope": "ytd|mtd|last_30|custom|none", "needs_resolution": true|false, "references_previous": true|false, "semantic_topics": ["topic1", "topic2"], "transaction_context": "bills|invoices|payments|credits|all", "constraints": {"limit": null, "sort_by": null, "sort_direction": "desc", "highlight": null, "exclude": []}, "is_drill_down": false, "drill_down_context": null, "recommended_period": "all|ytd|mtd|last_30_days|etc", "period_rationale": "brief explanation", "userNarration": "Looking into your customer revenue..."}`;
+
+    const SELECT_PROMPT = `Select tools to answer this {intent} question. Respond with JSON only.
+{date_context}
+
+AVAILABLE TOOLS:
+{tool_list}
+
+Question: "{question}"
+Intent: {intent}
+{entity_context}
+{history_context}
+{available_data_context}
+
+Rules:
+- Pick 1-3 most relevant tools
+- For entity names, include resolve_entity first
+- Prefer specific tools over run_custom_query
+- For follow_up questions referencing previous data, you may select no tools if data is available
+- DO NOT select format_response - that's handled automatically
+
+DRILL-DOWN QUERIES:
+- If user asks for MORE DETAILS about a collection shown in previous response (e.g., "show weekly projection", "list AR buckets", "what are the critical weeks"), use load_cached_data tool
+- Use load_cached_data with the ref_id from the previous dashboard response and the collection_name
+- Collection names are listed in previous responses (e.g., weeklyProjection, arBuckets, apBuckets, criticalWeeks, topCustomers)
+
+Also include a brief userNarration (max 10 words) describing what data you'll fetch, specific to their question.
+
+Response format: {"tools": ["tool1", "tool2"], "reasoning": "brief explanation", "userNarration": "I'll analyze your customer transactions..."}`;
+
+    const INVOKE_PROMPT = `Call this tool. Respond with JSON only.
+{date_context}
+
+TOOL: {tool_name}
+{tool_schema}
+
+{history_context}
+Current question: "{question}"
+{resolved_entities}
+
+CRITICAL SEMANTIC GUIDANCE:
+
+{period_options}
+
+TRANSACTION TYPES - Infer from context (who is paying whom):
+   - "Invoice FROM vendor" / "bill FROM vendor" / "we owe" → transaction_type: "VendBill"
+   - "Invoice TO customer" / "customer owes us" / "receivable" → transaction_type: "CustInvc"
+   - "Payment TO vendor" / "we paid" → transaction_type: "VendPmt"
+   - "Payment FROM customer" / "customer paid" → transaction_type: "CustPmt"
+   - "Credit memo TO customer" → transaction_type: "CustCred"
+   - "Credit FROM vendor" → transaction_type: "VendCred"
+
+   Determine direction by semantic meaning: who is the payer and who is the payee?
+
+3. ENTITY CONTEXT:
+   - If a vendor was resolved, transaction likely involves payables (VendBill, VendPmt)
+   - If a customer was resolved, transaction likely involves receivables (CustInvc, CustPmt)
+
+4. CLASSIFICATION DIMENSIONS (for resolve_classification):
+   - ALWAYS use dimension="auto" to search all dimensions UNLESS you are 100% certain of the type
+   - Common confusion: "Shop", "Engineering", "Sales" are typically DEPARTMENTS, not classes
+   - "class" = accounting classification for categorizing transactions
+   - "department" = organizational unit (teams, divisions, shops, etc.)
+   - "location" = physical place
+   - "subsidiary" = legal entity
+   - When in doubt, use "auto" - it searches everything!
+
+Response format: {"tool": "{tool_name}", "args": {...}}`;
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // REASON_ACT PROMPT - True ReAct Pattern (Reasoning + Acting in a Loop)
+    // This is the core of the agentic system - iteratively gather data until ready
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    const REASON_ACT_PROMPT = `You are an agentic financial analyst working step-by-step to answer the user's question.
+{date_context}
+
+{history_context}
+CURRENT QUESTION: "{question}"
+
+═══════════════════════════════════════════════════════════════════════════════
+DATA COLLECTED SO FAR:
+{accumulated_data}
+═══════════════════════════════════════════════════════════════════════════════
+
+AVAILABLE TOOLS:
+{tool_list}
+
+{period_options}
+
+{intent_guidance}
+
+═══════════════════════════════════════════════════════════════════════════════
+INTENT-TO-TOOL SEMANTIC MAPPING:
+Use the semantic meaning of the question to choose the RIGHT tool:
+
+For "bills from [vendor]", "invoices to [customer]", "transactions for [entity]":
+  → Use get_recent_transactions with period: "all" (historical document lookup)
+  → NOT get_ap_aging or get_ar_aging (those are for CURRENT outstanding balances)
+
+For "what do we owe [vendor]", "AP aging", "overdue bills", "outstanding payables":
+  → Use get_ap_aging (current balances by age bucket)
+  → NOT get_recent_transactions (that's for historical lookup)
+
+For "who owes us", "AR aging", "overdue invoices", "outstanding receivables":
+  → Use get_ar_aging (current balances by age bucket)
+
+For "[vendor/customer] summary", "spending with [vendor]", "revenue from [customer]":
+  → Use get_vendor_spend or get_customer_revenue (aggregate analysis)
+
+For "project [code] profitability", "how did project X do", "project performance", "project P&L":
+  → FIRST: resolve_entity(name="[code]", type="project") to get internal ID
+  → THEN: get_project_profitability(project_id=<resolved_id>)
+  → Uses ProjectFinancials table with ACTUAL costs only (excludes SOs, POs, estimates)
+  → DO NOT use get_income_statement for project P&L - use get_project_profitability!
+  → Project codes like "0915", "PRJ-001", "Phase 1" must be resolved first
+
+CRITICAL: Match the tool to what the user SEMANTICALLY wants, not just keywords.
+═══════════════════════════════════════════════════════════════════════════════
+
+YOUR TASK: Think step-by-step about what you need to answer this question.
+
+1. ANALYZE what data you already have (see "DATA COLLECTED SO FAR")
+2. DETERMINE if you can fully answer the question with current data
+3. If YES: respond with action="ANSWER"
+4. If NO: identify EXACTLY what data you need next and call ONE tool
+
+CRITICAL RULES:
+- Call ONE tool at a time, then evaluate results
+- For comparisons (YoY, MoM, etc): USE THE compare_to PARAMETER to get unified comparison data
+  Example: "YoY comparison" → get_income_statement(period="ytd", compare_to="prior_year_ytd")
+  This returns current_amount, prior_amount, change, pct_change columns in ONE dataset - MUCH better!
+  DO NOT make separate calls for each period - use compare_to instead
+{comparison_hint}
+- Don't guess or assume - if you need data, GET IT
+- After getting data, think: "Does this ACTUALLY answer the question?"
+- ENTITY IDs: When working with entities (customer, vendor, employee, item, PROJECT):
+  1. ALWAYS call resolve_entity FIRST to convert names/codes to internal IDs
+  2. Project codes (like "0915", "PRJ-001") are NOT internal IDs - resolve them first!
+  3. Look for "RESOLVED ENTITIES" in data summary for the actual numeric ID
+  4. Use the ACTUAL numeric entity_id (e.g., 416), NOT placeholders or codes
+
+  WRONG: project_id: "0915"  ← This is a code, not an ID!
+  WRONG: vendor_id: "{{resolve_entity result}}"
+  RIGHT: resolve_entity(name="0915", type="project") → then use returned ID
+  RIGHT: vendor_id: 416
+
+SENSIBLE DEFAULTS - AVOID UNNECESSARY CLARIFICATION:
+{needs_resolution_context}
+- For reporting requests WITHOUT a specific period, USE DEFAULT PERIODS and proceed:
+  • "Show utilization" → call dashboard_time with default period (this_month)
+  • "What are our expenses" → call get_expenses with default period (ytd)
+  • "Revenue by customer" → call the appropriate tool with ytd default
+  • "Cash position" → call dashboard_cashflow (no period needed)
+- DO NOT ask for clarification on straightforward reporting requests
+- Only use CLARIFY when:
+  • Multiple entities could match and disambiguation is required
+  • The request is genuinely ambiguous (not just missing a period)
+  • You've tried getting data but need more specific criteria from user
+
+═══════════════════════════════════════════════════════════════════════════════
+⚠️ DATA-QUESTION SEMANTIC FIT - CRITICAL VALIDATION
+═══════════════════════════════════════════════════════════════════════════════
+Before choosing ANSWER, verify the data you collected can DERIVE the answer:
+
+Ask yourself: "What METRIC does the user want?"
+- Speed/velocity questions (faster, slower, how long) → need TIME-based data (dates, durations)
+- Amount questions (how much, total, balance) → need QUANTITY data (amounts, counts)
+- Trend questions (increasing, declining) → need TIME-SERIES data (multiple periods)
+- Comparison questions → need COMPARABLE data for both entities
+
+Then ask: "Does my collected data contain this metric type?"
+- Aging reports show CURRENT OUTSTANDING BALANCES by age bucket
+  → They do NOT show payment speed, payment history, or average days to pay
+- Transaction lists show WHAT transactions occurred
+  → They may NOT show comparative metrics unless you compute them
+- Summary dashboards show AGGREGATE metrics
+  → They may NOT have the granular detail needed
+
+If the data type doesn't match the question's metric type:
+→ Use SYNTHESIZE to get the right data, or try a different tool
+→ Do NOT fabricate conclusions from mismatched data
+
+WHEN A QUERY RETURNS 0 ROWS:
+- Look at "💡 BROADENING OPTIONS" - YOU DECIDE whether to use them
+- Look at "🔄 ALTERNATIVE TOOLS TO CONSIDER" - consider different approaches
+- SMART DEFAULT STRATEGY based on question intent:
+  For TRANSACTION LOOKUPS (entity_transactions, "bills from X", "invoices to Y"):
+    1. START with period: "all" - get all historical data first
+    2. If too many results, NARROW with period filters
+    3. "Latest" means "most recent available" - NOT "within last 30 days"
+  For REPORTING/AGGREGATION (revenue analysis, expense reports):
+    1. Start with sensible bounded period (ytd, this_month)
+    2. Broaden if needed for historical context
+- DIAGNOSIS: If a tool returns 0 rows, ask WHY before retrying:
+  • Wrong period filter? → Try period: "all"
+  • Wrong tool type? (aging vs transaction lookup) → Try the semantically correct tool
+  • Wrong entity? → Verify entity resolution
+  • Data genuinely doesn't exist? → That's a valid answer
+- NEVER assume data doesn't exist without trying period: "all"
+
+WHEN TO USE SYNTHESIZE (Custom SQL):
+- Use SYNTHESIZE only when pre-built tools CANNOT answer the question
+- Indicators that you should SYNTHESIZE:
+  • You've tried 3+ variations of a tool with no results AND the entity exists
+  • The question needs data that no pre-built tool provides
+  • You need to join data in ways tools don't support
+- Do NOT use SYNTHESIZE for simple queries - try broadening first
+═══════════════════════════════════════════════════════════════════════════════
+
+RESPOND WITH JSON:
+
+If you need MORE DATA (single tool):
+{{
+  "thinking": "I have X, but I still need Y because...",
+  "action": "GET_DATA",
+  "tool": "tool_name",
+  "args": {{}},
+  "userNarration": "Brief status (max 8 words)"
+}}
+
+⚠️ FOR PERIOD COMPARISONS (YoY, MoM, quarter vs quarter):
+ALWAYS use the compare_to parameter on financial statement tools - this returns a SINGLE unified table with pre-computed deltas (change, pct_change) which is MUCH better for comparison analysis.
+
+Example - comparing this year to last year:
+{{
+  "thinking": "User wants YoY comparison. I'll use compare_to for unified comparison data with deltas.",
+  "action": "GET_DATA",
+  "tool": "get_income_statement",
+  "args": {{ "period": "ytd", "compare_to": "prior_year_ytd" }},
+  "userNarration": "Building YoY comparison"
+}}
+
+This returns columns: current_amount, prior_amount, change, pct_change - perfect for comparison analysis.
+DO NOT make separate calls for each period - always use compare_to for comparisons.
+
+If you need MULTIPLE TRULY INDEPENDENT datasets (NOT for period comparisons):
+{{
+  "thinking": "I need unrelated datasets: customer revenue AND vendor spend...",
+  "action": "GET_DATA_BATCH",
+  "tools": [
+    {{ "tool": "get_customer_revenue", "args": {{}} }},
+    {{ "tool": "get_vendor_spend", "args": {{}} }}
+  ],
+  "userNarration": "Fetching multiple datasets"
+}}
+NOTE: Only use GET_DATA_BATCH for truly independent data. NEVER use it for period comparisons.
+
+If you have ENOUGH DATA to answer:
+{{
+  "thinking": "I have all the data needed: [list what you have]. I can now answer because...",
+  "action": "ANSWER",
+  "userNarration": "Ready to present findings"
+}}
+
+If you need to write CUSTOM SQL (tools don't cover this):
+{{
+  "thinking": "Pre-built tools cannot answer this because...",
+  "action": "SYNTHESIZE",
+  "userNarration": "Writing custom query"
+}}
+
+If the question is AMBIGUOUS and needs clarification:
+{{
+  "thinking": "The question is unclear because...",
+  "action": "CLARIFY",
+  "clarification_question": "What specifically would you like to know?",
+  "userNarration": "Need more details"
+}}`;
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // REFLECT PROMPT - ReAct Pattern (Reasoning + Acting)
+    // Evaluates tool results and decides next action
+    // DEPRECATED: Kept for backwards compatibility, REASON_ACT replaces this
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    const REFLECT_PROMPT = `You are an agentic financial analyst. Your job is to evaluate whether you have the RIGHT data to answer the user's SPECIFIC question.
+
+{history_context}
+CURRENT QUESTION: "{question}"
+
+═══════════════════════════════════════════════════════════════════════════════
+⚠️ CHECK DATA FIRST - THIS IS THE MOST IMPORTANT SECTION
+═══════════════════════════════════════════════════════════════════════════════
+
+DATA COLLECTED:
+{data_summary}
+
+RESOLVED ENTITIES:
+{resolved_entities}
+
+TOOL EXECUTION SUMMARY:
+{tool_summary}
+
+⚠️ IMPORTANT: If DATA COLLECTED shows rows with actual data, you HAVE data to work with!
+Custom SQL queries from SYNTHESIZE phase appear in both DATA COLLECTED and TOOL SUMMARY.
+Do NOT say "no data found" if the DATA COLLECTED section shows rows > 0.
+
+═══════════════════════════════════════════════════════════════════════════════
+CRITICAL: QUESTION-DATA MATCHING
+
+Ask yourself these questions:
+
+1. GRANULARITY CHECK:
+   - Does the user want SUMMARY totals or DETAILED breakdown?
+   - If they said "by employee", "by customer", "by project" - do you have that breakdown?
+   - If you only have summary metrics but they want per-item details, you need MORE DATA
+
+2. COLLECTION CHECK:
+   - Look at "AVAILABLE COLLECTIONS" in the data summary
+   - If a collection matches what the user needs (e.g., employeeUtilization for "by employee"), LOAD IT
+   - Collections contain the detailed data - summary metrics are not enough for breakdown queries
+
+3. COVERAGE CHECK:
+   - Does the data actually answer what was asked?
+   - Having "some data" is NOT the same as having "the right data"
+
+═══════════════════════════════════════════════════════════════════════════════
+CRITICAL: HANDLING "VALID_SEARCH_NO_MATCH" RESULTS
+
+If TOOL SUMMARY shows a tool with status "VALID_SEARCH_NO_MATCH", this means:
+- The query executed SUCCESSFULLY
+- There is simply NO matching data in the system for the user's criteria
+- This IS a valid answer - you should PROCEED and tell the user!
+
+Example: User asks "Show journal entries posted on weekends last month"
+→ Query runs successfully but finds 0 rows
+→ This means: There WERE NO journal entries posted on weekends
+→ CORRECT response: "I searched for journal entries posted on weekends in the last month and found none. This means all journal entries during this period were posted during standard business days."
+
+DO NOT retry, broaden, or give up when you see VALID_SEARCH_NO_MATCH!
+This is useful information that answers the user's question.
+
+═══════════════════════════════════════════════════════════════════════════════
+DECIDE YOUR ACTION:
+
+- PROCEED: You have EXACTLY what's needed OR you have a VALID_SEARCH_NO_MATCH result. Include the full response blocks (saves a round trip)
+- LOAD_COLLECTION: A dashboard collection exists with needed detail → load it
+- BROADEN: Retry with broader parameters (expand date range, remove filters) - NEVER use for VALID_SEARCH_NO_MATCH
+- DIFFERENT_TOOL: Need a completely different tool
+- SYNTHESIZE: Need custom SQL query (tools don't cover this)
+- CLARIFY: Genuinely ambiguous, need user input
+- GIVE_UP: Exhausted all options (NOT for VALID_SEARCH_NO_MATCH - that's a valid result!)
+
+═══════════════════════════════════════════════════════════════════════════════
+CHART AXIS RULES:
+- x = LABEL axis (categories, dates, names) - displayed on horizontal axis
+- y = VALUE axis (numeric amounts, counts) - displayed on vertical axis
+- Example: For "Invoice Amounts Over Time", use x="trandate", y="amount"
+- NEVER put numeric values on x-axis or dates on y-axis
+
+═══════════════════════════════════════════════════════════════════════════════
+RESPONSE FORMAT (JSON only):
+
+{{
+  "evaluation": {{
+    "has_useful_data": true|false,
+    "answers_specific_question": true|false,
+    "needs_more_detail": true|false,
+    "available_collections": ["collection_names_if_any"],
+    "failure_mode": "SUCCESS|NEEDS_COLLECTION|ENTITY_NOT_FOUND|WRONG_GRANULARITY|NO_DATA_EXISTS"
+  }},
+  "diagnosis": "Does the data answer '{question}'? Be specific.",
+  "action": "PROCEED|LOAD_COLLECTION|BROADEN|DIFFERENT_TOOL|SYNTHESIZE|CLARIFY|GIVE_UP",
+  "action_details": {{
+    "ref_id": "ref_id_for_load_collection",
+    "collection_name": "collection_name_to_load",
+    "tool": "tool_name_if_different_tool",
+    "modified_params": {{}},
+    "clarification_question": "question_if_clarify"
+  }},
+  "reasoning": "Why this action? What data do you need that you don't have?",
+  "userNarration": "Brief status (max 10 words)",
+
+  "response": {{
+    "blocks": [
+      {{"type": "text", "content": "Analysis with {{data.rows[N].column}} tokens..."}},
+      {{"type": "metrics", "items": [{{"label": "Label", "value": "{{token}}", "trend": "up|down|neutral"}}]}},
+      {{"type": "table", "dataRef": "ref_xxx", "title": "Title"}},
+      {{"type": "chart", "chartType": "bar|line|pie", "dataRef": "ref_xxx", "x": "label_column", "y": "value_column"}},
+      {{"type": "list", "title": "Findings", "items": ["item1", "item2"]}}
+    ]
+  }}
+}}
+
+⚠️ IMPORTANT: Only include "response" field if action is "PROCEED".
+The response.blocks should be the COMPLETE final answer using the data you have.
+Use {{data.rows[N].column}} tokens for actual values - they will be resolved.`;
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // SYNTHESIZE PROMPT - LLM Writes Custom SuiteQL
+    // World-class SQL generation when pre-built tools fail
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    const SYNTHESIZE_PROMPT = `You are an expert NetSuite SuiteQL developer. Write a custom query to answer the user's question.
+
+⚠️⚠️⚠️ CRITICAL: SUITEQL IS ORACLE-BASED, NOT SQL SERVER! ⚠️⚠️⚠️
+
+❌ NEVER USE THESE SQL SERVER FUNCTIONS (will FAIL):
+   - DATEADD() → USE: ADD_MONTHS() or simple arithmetic (date + 30)
+   - GETDATE() → USE: CURRENT_DATE or SYSDATE
+   - DATEPART() → USE: TO_CHAR()
+   - DATEDIFF() → USE: (date1 - date2) for days
+   - ISNULL() → USE: NVL() or COALESCE()
+   - GETUTCDATE() → USE: CURRENT_DATE
+   - WEEKDAY() → USE: TO_CHAR(date, 'D')
+
+❌ NEVER USE THESE TABLE NAMES (don't exist):
+   - transactions → USE: transaction (singular!)
+   - journalentry → USE: transaction WHERE type = 'Journal'
+   - invoices → USE: transaction WHERE type = 'CustInvc'
+
+❌ NEVER USE THESE FIELD NAMES:
+   - transtime → DOES NOT EXIST
+   - created_by_id → DOES NOT EXIST
+   - date → USE: trandate (for transaction date)
+   - amount → USE: foreigntotal (on transaction table)
+
+{history_context}
+CURRENT QUESTION: "{question}"
+
+═══════════════════════════════════════════════════════════════════════════════
+CONTEXT FROM PREVIOUS ATTEMPTS:
+{previous_context}
+
+═══════════════════════════════════════════════════════════════════════════════
+NETSUITE SUITEQL SCHEMA:
+
+**CORE TABLES:**
+
+transaction (Header-level transactions)
+  - id, tranid, trandate, type, entity, subsidiary, status
+  - foreigntotal (USE THIS for amounts - 'amount' is NOT exposed!)
+  - foreignamountunpaid (USE THIS for unpaid/remaining amounts - NOT 'amountremaining'!)
+  - duedate, posting ('T'/'F'), voided ('T'/'F'), memo
+  - lastmodifieddate (TIMESTAMP with time - use for time-of-day analysis!)
+  - ALWAYS filter: posting = 'T' AND voided = 'F'
+  - Types: CustInvc, CustPymt, VendBill, VendPymt, CashSale, Check, Journal, ExpRept
+
+transactionline (Line-level detail)
+  - id, transaction, linesequencenumber, item
+  - netamount (USE THIS - 'amount' is NOT exposed!)
+  - quantity, rate, department, class, location, memo
+  - mainline ('T' for header, 'F' for lines)
+  - Filter mainline = 'F' for line items
+
+transactionaccountingline (GL entries - USE FOR EXPENSE/INCOME ANALYSIS)
+  - id, transaction, account
+  - amount, debit, credit (THESE ARE exposed here!)
+  - department, class, location, posting
+
+account (Chart of accounts)
+  - id, acctnumber, accountsearchdisplayname, accttype
+  - balance, parent, subsidiary, isinactive
+  - Types: Bank, AcctRec, AcctPay, Income, COGS, Expense, OthIncome, OthExpense, Equity, FixedAsset
+
+customer
+  - id, entityid, companyname, email, phone, subsidiary
+  - balance (outstanding AR), overduebalance, creditlimit, isinactive
+
+vendor
+  - id, entityid, companyname, email, phone, subsidiary
+  - balance (outstanding AP), isinactive
+
+employee
+  - id, entityid, firstname, lastname, email, department, subsidiary, isinactive
+
+accountingperiod
+  - id, periodname, startdate, enddate, isyear ('T'/'F'), isquarter ('T'/'F')
+
+**SUITEQL SYNTAX RULES (CRITICAL!):**
+
+1. ⚠️ NEVER USE "LIMIT" - IT DOES NOT EXIST IN SUITEQL! ⚠️
+   SuiteQL is Oracle-based. "LIMIT" is MySQL/PostgreSQL syntax and WILL FAIL.
+
+   For row limits, use ROWNUM in outer WHERE clause:
+   ✓ SELECT * FROM (SELECT * FROM customer ORDER BY id) WHERE ROWNUM <= 100
+   ✗ SELECT * FROM customer LIMIT 100  -- SYNTAX ERROR!
+   ✗ SELECT * FROM customer FETCH FIRST 100 ROWS ONLY  -- NOT SUPPORTED!
+   ✗ ... ORDER BY x LIMIT 1  -- SYNTAX ERROR EVEN IN SUBQUERIES!
+
+   For "top 1" in nested subqueries, use ROWNUM:
+   ✓ SELECT * FROM (SELECT * FROM table ORDER BY date DESC) WHERE ROWNUM = 1
+   ✗ SELECT * FROM table ORDER BY date DESC LIMIT 1  -- WILL FAIL!
+
+2. DISPLAY NAMES: Use BUILTIN.DF() for foreign key display values
+   ✓ BUILTIN.DF(transaction.entity) AS entity_name
+   ✓ BUILTIN.DF(tal.account) AS account_name
+
+3. DATE ARITHMETIC:
+   - CURRENT_DATE (today)
+   - CURRENT_DATE + 30 (add 30 days - just use + operator!)
+   - CURRENT_DATE - 30 (subtract 30 days)
+   - TO_DATE('2024-01-01', 'YYYY-MM-DD')
+   - ADD_MONTHS(CURRENT_DATE, -12)
+   - TRUNC(date, 'MM') for month start, 'Q' for quarter, 'IW' for week
+
+   DATE/TIME EXTRACTION (Oracle TO_CHAR):
+   - TO_CHAR(date, 'D') → Day of week (1=Sunday, 7=Saturday)
+   - TO_CHAR(date, 'DY') → Day name abbrev (SUN, MON, TUE...)
+   - TO_CHAR(date, 'HH24') → Hour in 24h format (00-23)
+   - TO_CHAR(date, 'MI') → Minutes (00-59)
+   - TO_CHAR(date, 'YYYY') → Year
+   - TO_CHAR(date, 'MM') → Month number (01-12)
+   - TO_CHAR(date, 'DD') → Day of month (01-31)
+
+   WEEKEND/AFTER-HOURS EXAMPLE:
+   SELECT * FROM transaction t
+   WHERE t.type = 'Journal' AND t.posting = 'T' AND t.voided = 'F'
+   AND (
+     TO_CHAR(t.lastmodifieddate, 'D') IN ('1', '7')  -- Weekend (Sun=1, Sat=7)
+     OR TO_CHAR(t.lastmodifieddate, 'HH24') < '09'   -- Before 9am
+     OR TO_CHAR(t.lastmodifieddate, 'HH24') >= '17'  -- After 5pm
+   )
+   ⚠️ NOTE: trandate is DATE only (no time). Use lastmodifieddate for timestamp.
+
+4. ⚠️ TABLE NAME CLARIFICATIONS - AVOID COMMON MISTAKES:
+   ✗ journalentry → DOES NOT EXIST! Use: transaction WHERE type = 'Journal'
+   ✗ invoice → DOES NOT EXIST! Use: transaction WHERE type = 'CustInvc'
+   ✗ bill → DOES NOT EXIST! Use: transaction WHERE type = 'VendBill'
+   ✗ payment → DOES NOT EXIST! Use: transaction WHERE type = 'CustPymt' or 'VendPymt'
+   ✗ calendar → DOES NOT EXIST! Use TO_CHAR() for day/date calculations
+
+   ALL transactions are in the 'transaction' table, differentiated by 'type' field!
+
+5. BOOLEANS: Use 'T' for true, 'F' for false
+   ✓ WHERE posting = 'T' AND voided = 'F'
+
+6. STRING COMPARISON: Use single quotes
+   ✓ WHERE type = 'VendBill'
+
+7. CASE STATEMENTS for conditional aggregation:
+   SUM(CASE WHEN condition THEN value ELSE 0 END)
+
+8. CTEs (WITH clause): Supported! Rules for CTEs:
+   - The main SELECT must reference a real table (not just CTEs)
+   - Use CROSS JOIN to bring in CTE values
+   - For row limits with ORDER BY, wrap entire CTE query: SELECT * FROM (WITH ... SELECT ... ORDER BY ...) WHERE ROWNUM <= N
+   - For scalar aggregates, prefer subqueries from DUAL instead of CTEs
+
+**COMMON PATTERNS:**
+
+YoY Comparison (using CTEs):
+SELECT * FROM (
+  WITH current_year AS (
+    SELECT account, SUM(amount) as amount
+    FROM transactionaccountingline tal
+    JOIN transaction t ON tal.transaction = t.id
+    WHERE t.trandate >= TO_DATE('2025-01-01', 'YYYY-MM-DD')
+      AND t.posting = 'T' AND t.voided = 'F'
+    GROUP BY account
+  ),
+  prior_year AS (
+    SELECT account, SUM(amount) as amount
+    FROM transactionaccountingline tal
+    JOIN transaction t ON tal.transaction = t.id
+    WHERE t.trandate >= TO_DATE('2024-01-01', 'YYYY-MM-DD')
+      AND t.trandate < TO_DATE('2025-01-01', 'YYYY-MM-DD')
+      AND t.posting = 'T' AND t.voided = 'F'
+    GROUP BY account
+  )
+  SELECT c.account, BUILTIN.DF(c.account) AS account_name,
+    c.amount AS current_amount, p.amount AS prior_amount,
+    CASE WHEN p.amount > 0 THEN (c.amount - p.amount) / p.amount * 100 END AS yoy_pct
+  FROM current_year c
+  LEFT JOIN prior_year p ON c.account = p.account
+) WHERE ROWNUM <= 100
+
+Cash Flow Projection (AR/AP due in next N days):
+SELECT
+  (SELECT COALESCE(SUM(balance), 0) FROM account WHERE accttype = 'Bank' AND isinactive = 'F') AS current_cash,
+  (SELECT COALESCE(SUM(foreignamountunpaid), 0) FROM transaction
+   WHERE type = 'CustInvc' AND posting = 'T' AND voided = 'F'
+   AND duedate BETWEEN CURRENT_DATE AND CURRENT_DATE + 30) AS ar_due_30_days,
+  (SELECT COALESCE(SUM(foreignamountunpaid), 0) FROM transaction
+   WHERE type = 'VendBill' AND posting = 'T' AND voided = 'F'
+   AND duedate BETWEEN CURRENT_DATE AND CURRENT_DATE + 30) AS ap_due_30_days
+FROM DUAL
+
+Expense by Category:
+SELECT * FROM (
+  SELECT a.acctnumber, a.accountsearchdisplayname,
+    SUM(COALESCE(tal.debit,0) - COALESCE(tal.credit,0)) as amount
+  FROM transactionaccountingline tal
+  JOIN transaction t ON tal.transaction = t.id
+  JOIN account a ON tal.account = a.id
+  WHERE a.accttype = 'Expense' AND t.posting = 'T' AND t.voided = 'F'
+  GROUP BY a.acctnumber, a.accountsearchdisplayname
+  ORDER BY amount DESC
+) WHERE ROWNUM <= 50
+
+═══════════════════════════════════════════════════════════════════════════════
+{error_context}
+═══════════════════════════════════════════════════════════════════════════════
+
+Write a SuiteQL query to answer the user's question. Think step by step:
+1. What data do I need?
+2. Which tables have that data?
+3. What joins are required?
+4. What filters apply?
+5. How should I aggregate/sort?
+
+Response format (JSON only):
+{{
+  "reasoning": "Step-by-step explanation of query design",
+  "query": "The complete SuiteQL query",
+  "purpose": "Brief description of what this query returns",
+  "expected_columns": ["col1", "col2", "..."]
+}}`;
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // MARKDOWN DIRECTIVE ARCHITECTURE (MDA) - Revolutionary Fast Response System
+    // LLMs generate markdown naturally with simple directives for rich content
+    // Code parses directives and builds tables/charts from dataRefs - BLAZING FAST
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    const MDA_RESPOND_PROMPT = `You are a financial analyst. Analyze this data and write a clear response.
+
+{history_context}
+QUESTION: "{question}"
+
+{data_sections}
+
+═══════════════════════════════════════════════════════════════════════════════
+WRITE YOUR RESPONSE IN MARKDOWN with these special directives:
+
+1. TABLES - Show data from a dataRef:
+   :::table ref_xxx
+   Optional Title Here
+   :::
+
+   FILTER tables by category using the FILTER SYNTAX shown in data section:
+   :::table ref_xxx filter:column_name=slug_value
+   Filtered Results
+   :::
+   ⚠️ IMPORTANT: Use the exact column name and slug from the CATEGORY BREAKDOWN
+   ⚠️ Only filter if there IS a CATEGORY BREAKDOWN shown - otherwise show all data
+
+2. CHARTS - Visualize data:
+   :::chart bar ref_xxx
+   x_column | y_column | Optional Title
+   :::
+   (chart types: bar, line, pie)
+
+3. METRICS - Key numbers (max 4):
+   :::metrics
+   | Revenue | $1.2M | up |
+   | Expenses | $800K | down |
+   :::
+   Format: | Label | Value | trend |
+   Trend must be: up, down, or neutral
+   ⚠️ DO NOT include header row or alignment rows like |:---|
+
+4. LISTS - Findings or recommendations:
+   :::list Optional Title
+   - First item
+   - Second item
+   - Third item
+   :::
+
+5. TEXT - Just write normally (no directive needed)
+
+═══════════════════════════════════════════════════════════════════════════════
+TOKEN SYNTAX - Reference actual data values:
+
+Row values: {{data.rows[0].column_name}} or {{data.rows[0].column_name:currency}}
+Stats: {{data.stats.total:currency}}, {{data.stats.count}}, {{data.stats.average}}
+Column totals: {{data.stats.total_column_name:currency}}
+
+MULTI-DATA SOURCE SYNTAX (when comparing periods or multiple datasets):
+- First dataset: {{data[0].rows[0].column}} or {{data[0].stats.total:currency}}
+- Second dataset: {{data[1].rows[0].column}} or {{data[1].stats.total:currency}}
+- By ref ID: {{ref:ref_abc123.rows[0].column:currency}}
+
+═══════════════════════════════════════════════════════════════════════════════
+{constraints_section}
+═══════════════════════════════════════════════════════════════════════════════
+GUIDELINES:
+
+- Start with a brief overview of what the data shows
+- Interleave explanatory text between tables and charts
+- Use metrics for quick insights (place early)
+- Use tables for detailed breakdowns
+- Use charts for patterns/comparisons (bar: compare, line: trends, pie: composition, comparison: side-by-side period comparison)
+- End with key findings or recommendations
+- Write naturally - this is markdown, not JSON
+- STRICTLY follow any OUTPUT CONSTRAINTS specified above
+
+═══════════════════════════════════════════════════════════════════════════════
+EXAMPLE RESPONSE:
+
+Here's your year-over-year revenue comparison for {{data.rows[0].customer_name}}...
+
+:::metrics
+| Total Revenue | {{data.stats.total:currency}} | up |
+| Record Count | {{data.stats.count}} | neutral |
+:::
+
+The current period shows strong performance:
+
+:::table ref_abc123
+Current Period Revenue
+:::
+
+Compared to the prior period:
+
+:::table ref_def456
+Prior Period Revenue
+:::
+
+:::chart bar ref_abc123
+customer_name | total_revenue | Revenue by Customer
+:::
+
+:::list Key Findings
+- Revenue increased 15% year-over-year
+- Top 3 customers account for 60% of total
+- New customer acquisition up 20%
+:::
+
+═══════════════════════════════════════════════════════════════════════════════
+
+Now write your analysis:`;
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // MARKDOWN DIRECTIVE PARSER (MDA)
+    // Parses markdown with :::directive blocks into structured block array
+    // BLAZING FAST - LLM writes markdown, code builds rich content
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Parse markdown with directives into blocks array
+     * Directives: :::table, :::chart, :::metrics, :::list
+     * Regular text becomes text blocks
+     * @param {string} markdown - Raw markdown from LLM
+     * @param {Object} state - Current state for token resolution
+     * @returns {Array} Array of block objects
+     */
+    function parseMarkdownDirectives(markdown, state) {
+        if (!markdown || typeof markdown !== 'string') {
+            Utils.debugLog('MDA: empty or invalid markdown input');
+            return [];
+        }
+
+        const blocks = [];
+        let currentText = '';
+
+        // Split by directive markers (:::)
+        // Regex captures: opening directive, content, closing
+        const directiveRegex = /:::(table|chart|metrics|list)\s*([^\n]*)\n([\s\S]*?):::/g;
+
+        let lastIndex = 0;
+        let match;
+
+        while ((match = directiveRegex.exec(markdown)) !== null) {
+            // Capture text before this directive
+            const textBefore = markdown.substring(lastIndex, match.index).trim();
+            if (textBefore) {
+                blocks.push({
+                    type: 'text',
+                    content: textBefore
+                });
+            }
+
+            const directiveType = match[1];
+            const directiveMeta = match[2].trim();
+            const directiveContent = match[3].trim();
+
+            try {
+                const block = parseDirectiveBlock(directiveType, directiveMeta, directiveContent);
+                if (block) {
+                    blocks.push(block);
+                }
+            } catch (e) {
+                Utils.debugLog('MDA: error parsing directive', {
+                    type: directiveType,
+                    error: e.message
+                });
+            }
+
+            lastIndex = match.index + match[0].length;
+        }
+
+        // Capture remaining text after last directive
+        const remainingText = markdown.substring(lastIndex).trim();
+        if (remainingText) {
+            blocks.push({
+                type: 'text',
+                content: remainingText
+            });
+        }
+
+        Utils.debugLog('MDA: parsed markdown into blocks', {
+            inputLength: markdown.length,
+            blockCount: blocks.length,
+            blockTypes: blocks.map(b => b.type).join(',')
+        });
+
+        return blocks;
+    }
+
+    /**
+     * Parse a single directive block based on type
+     * @param {string} type - Directive type (table, chart, metrics, list)
+     * @param {string} meta - Metadata after directive type (e.g., "bar ref_xxx")
+     * @param {string} content - Content inside the directive
+     * @returns {Object|null} Block object or null if invalid
+     */
+    function parseDirectiveBlock(type, meta, content) {
+        switch (type) {
+            case 'table':
+                return parseTableDirective(meta, content);
+            case 'chart':
+                return parseChartDirective(meta, content);
+            case 'metrics':
+                return parseMetricsDirective(content);
+            case 'list':
+                return parseListDirective(meta, content);
+            default:
+                return null;
+        }
+    }
+
+    /**
+     * Parse :::table ref_xxx directive
+     * Format: :::table ref_xxx [filter:column=value]
+     *         Optional Title
+     *         :::
+     * Filter syntax: filter:category=Revenue or filter:account_type=Income
+     */
+    function parseTableDirective(meta, content) {
+        // meta contains the dataRef and optional filter
+        // Example: "ref_xxx" or "ref_xxx filter:category=Revenue"
+        const metaParts = meta.trim().split(/\s+/);
+        const dataRef = metaParts[0];
+
+        if (!dataRef || !dataRef.startsWith('ref_')) {
+            Utils.debugLog('MDA: invalid table dataRef', { meta });
+            return null;
+        }
+
+        // Parse optional filter from meta
+        // Format: filter:column=value
+        let filter = null;
+        for (let i = 1; i < metaParts.length; i++) {
+            const filterMatch = metaParts[i].match(/^filter:(\w+)=(.+)$/);
+            if (filterMatch) {
+                filter = filter || {};
+                filter[filterMatch[1]] = filterMatch[2];
+            }
+        }
+
+        return {
+            type: 'table',
+            dataRef: dataRef,
+            title: content.trim() || undefined,
+            filter: filter
+        };
+    }
+
+    /**
+     * Parse :::chart type ref_xxx directive
+     * Format: :::chart bar ref_xxx
+     *         x_column | y_column | Optional Title
+     *         :::
+     */
+    function parseChartDirective(meta, content) {
+        // meta format: "bar ref_xxx" or "line ref_xxx" or "pie ref_xxx"
+        const metaParts = meta.trim().split(/\s+/);
+        if (metaParts.length < 2) {
+            Utils.debugLog('MDA: invalid chart meta', { meta });
+            return null;
+        }
+
+        const chartType = metaParts[0].toLowerCase();
+        const dataRef = metaParts[1];
+
+        if (!['bar', 'line', 'pie'].includes(chartType)) {
+            Utils.debugLog('MDA: invalid chart type', { chartType });
+            return null;
+        }
+
+        if (!dataRef || !dataRef.startsWith('ref_')) {
+            Utils.debugLog('MDA: invalid chart dataRef', { dataRef });
+            return null;
+        }
+
+        // content format: "x_column | y_column | Optional Title"
+        const contentParts = content.split('|').map(s => s.trim());
+        if (contentParts.length < 2) {
+            Utils.debugLog('MDA: invalid chart content', { content });
+            return null;
+        }
+
+        return {
+            type: 'chart',
+            chartType: chartType,
+            dataRef: dataRef,
+            x: contentParts[0],
+            y: contentParts[1],
+            title: contentParts[2] || undefined
+        };
+    }
+
+    /**
+     * Parse :::metrics directive
+     * Format: :::metrics
+     *         | Label | Value | trend |
+     *         | Revenue | $1.2M | up |
+     *         :::
+     */
+    function parseMetricsDirective(content) {
+        const lines = content.split('\n').filter(l => l.trim());
+        const items = [];
+
+        for (const line of lines) {
+            // Skip header row if present
+            if (line.toLowerCase().includes('label') && line.toLowerCase().includes('value')) {
+                continue;
+            }
+
+            // Skip markdown table alignment rows: :---, :--:, ---:, ---, |---|
+            // These are formatting hints, not data
+            if (/^[\|\s\-:]+$/.test(line) || line.includes(':---') || line.includes('---:') || line.includes(':--:')) {
+                continue;
+            }
+
+            // Parse pipe-delimited format: | Label | Value | trend |
+            const parts = line.split('|').map(s => s.trim()).filter(s => s);
+            if (parts.length >= 2) {
+                // Additional validation: skip if parts look like alignment syntax
+                if (parts[0].match(/^-+$/) || parts[1].match(/^-+$/)) {
+                    continue;
+                }
+
+                items.push({
+                    label: parts[0].substring(0, 50),
+                    value: parts[1],
+                    trend: ['up', 'down', 'neutral'].includes(parts[2]?.toLowerCase())
+                        ? parts[2].toLowerCase()
+                        : 'neutral'
+                });
+            }
+        }
+
+        if (items.length === 0) {
+            return null;
+        }
+
+        // Limit to 4 metrics
+        return {
+            type: 'metrics',
+            items: items.slice(0, 4)
+        };
+    }
+
+    /**
+     * Parse :::list directive
+     * Format: :::list Optional Title
+     *         - First item
+     *         - Second item
+     *         :::
+     */
+    function parseListDirective(meta, content) {
+        const title = meta.trim() || undefined;
+        const lines = content.split('\n').filter(l => l.trim());
+        const items = [];
+
+        for (const line of lines) {
+            // Parse bullet points: "- Item text" or "* Item text"
+            const match = line.match(/^[\-\*]\s*(.+)$/);
+            if (match) {
+                items.push(match[1].trim());
+            }
+        }
+
+        if (items.length === 0) {
+            return null;
+        }
+
+        return {
+            type: 'list',
+            title: title,
+            items: items
+        };
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // RECOMMENDATION 6: PROACTIVE ERROR RECOVERY
+    // Maps tools to alternative tools that can provide similar data when failures occur
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * SEMANTIC SIMPLE TOOL FALLBACK PROMPT
+     * Used for quick tool alternative suggestions
+     */
+    const SIMPLE_TOOL_FALLBACK_PROMPT = `Tool "${'{tool_name}'}" failed.
+
+Tool description: {tool_description}
+
+Available alternative tools:
+{available_tools}
+
+Which 2 tools could provide similar data? Reply JSON only:
+{"alternatives": ["tool1", "tool2"]}`;
+
+    /**
+     * Get alternative tools to try when a tool fails (semantic version)
+     * Uses LLM to find semantically similar tools instead of hardcoded mapping
+     * @param {string} toolName - The failed tool
+     * @param {Object} state - Optional state for context
+     * @returns {string[]} Array of alternative tool names to try
+     */
+    function getAlternativeTools(toolName, state) {
+        const toolManifest = Tools.getToolManifest();
+        const candidates = [];
+        const push = function(name) {
+            if (name && name !== toolName && toolManifest[name] && candidates.indexOf(name) === -1) {
+                candidates.push(name);
+            }
+        };
+
+        if (/vendor|payable|ap_/i.test(toolName)) {
+            push('dashboard_vendorperformance');
+            push('dashboard_spendvelocity');
+            push('dashboard_cashflow');
+        }
+        if (/customer|receivable|ar_/i.test(toolName)) {
+            push('dashboard_customervalue');
+            push('dashboard_cashflow');
+            push('dashboard_health');
+        }
+        if (/cash|aging|transaction/i.test(toolName)) {
+            push('dashboard_cashflow');
+            push('dashboard_health');
+        }
+        if (/health|income|balance|gl|trial/i.test(toolName)) {
+            push('dashboard_health');
+            push('dashboard_cashflow');
+        }
+        if (/time|employee|project/i.test(toolName)) {
+            push('dashboard_time');
+            push('dashboard_health');
+        }
+        if (/integrity|audit|benford|duplicate/i.test(toolName)) {
+            push('dashboard_integrity');
+        }
+        if (/burden|overhead|rate/i.test(toolName)) {
+            push('dashboard_burden');
+        }
+
+        push('list_dashboards');
+        return candidates.slice(0, 3);
+    }
+
+    /**
+     * Build a retry suggestion message for users when tools fail
+     * @param {string} toolName - The failed tool
+     * @param {string} error - The error message
+     * @returns {string} User-friendly suggestion
+     */
+    function buildRetrySuggestion(toolName, error) {
+        const suggestions = {
+            'resolve_entity': 'Try being more specific with the entity name, or check if the entity exists in the system.',
+            'get_ar_aging': 'Try asking about specific customers or recent invoices instead.',
+            'get_ap_aging': 'Try asking about specific vendors or recent bills instead.',
+            'get_customer_revenue': 'Try asking for top customers or customer value analysis.',
+            'get_vendor_spend': 'Try asking for top vendors or vendor performance metrics.',
+            'run_custom_query': 'Try rephrasing your question to use a specific report or analysis.'
+        };
+
+        return suggestions[toolName] || 'Try rephrasing your question or asking for different data.';
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // DASHBOARD INTELLIGENCE BRIDGE
+    // Converts dashboard intelligence objects to LLM-consumable data references
+    // Works dynamically with any dashboard registered in Dashboard Registry
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Check if a tool result is a dashboard intelligence object
+     * @param {Object} result - Tool execution result
+     * @returns {boolean} True if result contains dashboard intelligence
+     */
+    function isDashboardResult(result) {
+        return result && result.success && result.intelligence && result.dashboard;
+    }
+
+    /**
+     * Build a comprehensive LLM-consumable summary from dashboard intelligence
+     * Dynamically reads schema from Dashboard Registry - works for any dashboard
+     *
+     * @param {Object} result - Dashboard tool result with intelligence object
+     * @returns {Object} Data structure formatted for RESPOND phase consumption
+     */
+    /**
+     * Threshold for inlining collections - collections with fewer items
+     * than this will be fully expanded in the LLM prompt
+     */
+    const COLLECTION_INLINE_THRESHOLD = 15;
+
+    function buildDashboardIntelligenceData(result) {
+        const dashboardId = result.dashboard;
+        const intelligence = result.intelligence;
+
+        // Get schema from Dashboard Registry
+        const dashboard = DashboardRegistry.getDashboard(dashboardId);
+        const schema = dashboard?.dataSchema;
+
+        if (!schema) {
+            Utils.debugLog('Dashboard Intelligence Bridge', 'No schema for: ' + dashboardId);
+            return null;
+        }
+
+        // Build summary rows - one row per metric for LLM consumption
+        const rows = [];
+        const metrics = intelligence.metrics || {};
+
+        // Process all metrics dynamically from the intelligence object
+        for (const [metricName, metricData] of Object.entries(metrics)) {
+            const fieldDef = schema.fields?.[metricName];
+            rows.push({
+                metric_name: metricName,
+                value: metricData.value,
+                formatted_value: metricData.formatted || String(metricData.value),
+                description: metricData.desc || fieldDef?.desc || metricName,
+                type: metricData.type || fieldDef?.type || 'unknown',
+                status: metricData.status || null,
+                trend: metricData.trend || null,
+                change: metricData.change || null
+            });
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // INLINE SMALL COLLECTIONS
+        // Collections with <= COLLECTION_INLINE_THRESHOLD items are fully expanded
+        // This allows LLM to see all data without needing drill-down queries
+        // ═══════════════════════════════════════════════════════════════════════
+        const collections = intelligence.collections || {};
+        const inlinedCollections = {}; // Store full collection data for text summary
+
+        for (const [collectionName, collectionInfo] of Object.entries(collections)) {
+            const fieldDef = schema.fields?.[collectionName];
+            const shouldInline = collectionInfo.count <= COLLECTION_INLINE_THRESHOLD;
+
+            // Try to load full collection data for inlining
+            let fullCollectionData = null;
+            if (shouldInline && intelligence.refId) {
+                try {
+                    const collectionResult = Cache.loadCollection(
+                        intelligence.refId,
+                        collectionName,
+                        { limit: COLLECTION_INLINE_THRESHOLD }
+                    );
+                    if (collectionResult.success && collectionResult.items) {
+                        fullCollectionData = collectionResult;
+                        inlinedCollections[collectionName] = collectionResult;
+                    }
+                } catch (e) {
+                    Utils.debugLog('Dashboard Intelligence Bridge', 'Failed to load collection for inline: ' + e.message);
+                }
+            }
+
+            rows.push({
+                metric_name: collectionName + '_collection',
+                value: collectionInfo.count,
+                formatted_value: `${collectionInfo.count} items`,
+                description: collectionInfo.desc || fieldDef?.desc || `${collectionName} data`,
+                type: 'collection',
+                status: null,
+                trend: null,
+                change: null,
+                preview: (collectionInfo.preview || []).join(', '),
+                columns: (collectionInfo.columns || []).join(', '),
+                refId: collectionInfo.refId,
+                inlined: shouldInline && fullCollectionData !== null
+            });
+        }
+
+        // Build column definitions
+        const columns = [
+            'metric_name', 'value', 'formatted_value', 'description',
+            'type', 'status', 'trend', 'change', 'preview', 'columns', 'refId'
+        ];
+
+        // Build comprehensive text summary for the LLM
+        let textSummary = `DASHBOARD: ${dashboard.name} (${dashboardId})\n`;
+        textSummary += `${schema.summary}\n\n`;
+
+        // Add insights if available
+        if (intelligence.insights && intelligence.insights.length > 0) {
+            textSummary += `KEY INSIGHTS:\n`;
+            intelligence.insights.forEach(insight => {
+                textSummary += `• ${insight}\n`;
+            });
+            textSummary += '\n';
+        }
+
+        // Add alerts if available
+        if (intelligence.alerts && intelligence.alerts.length > 0) {
+            textSummary += `ALERTS:\n`;
+            intelligence.alerts.forEach(alert => {
+                const icon = alert.type === 'danger' ? '🔴' : alert.type === 'warning' ? '🟡' : '🟢';
+                textSummary += `${icon} ${alert.message}\n`;
+            });
+            textSummary += '\n';
+        }
+
+        // Add metrics section
+        textSummary += `METRICS:\n`;
+        for (const [metricName, metricData] of Object.entries(metrics)) {
+            const statusIcon = metricData.status === 'danger' ? '⚠️ ' :
+                              metricData.status === 'warning' ? '⚡ ' : '';
+            const trendIcon = metricData.trend === 'up' ? '↑' :
+                             metricData.trend === 'down' ? '↓' : '';
+            textSummary += `• ${metricName}: ${metricData.formatted}`;
+            if (trendIcon) textSummary += ` ${trendIcon}`;
+            if (metricData.change) textSummary += ` (${metricData.change})`;
+            if (statusIcon) textSummary += ` ${statusIcon}`;
+            textSummary += `\n  └─ ${metricData.desc || ''}\n`;
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // ADD COLLECTION DATA - INLINE SMALL, SUMMARIZE LARGE
+        // ═══════════════════════════════════════════════════════════════════════
+        if (Object.keys(collections).length > 0) {
+            textSummary += `\n`;
+
+            for (const [collectionName, collectionInfo] of Object.entries(collections)) {
+                const inlinedData = inlinedCollections[collectionName];
+
+                if (inlinedData && inlinedData.items && inlinedData.items.length > 0) {
+                    // INLINE: Show full collection data
+                    textSummary += `═══ ${collectionName.toUpperCase()} (${inlinedData.items.length} items - FULL DATA) ═══\n`;
+
+                    // Build table header from item keys
+                    const sampleItem = inlinedData.items[0];
+                    const itemKeys = Object.keys(sampleItem).slice(0, 6); // Max 6 columns
+                    textSummary += `| ${itemKeys.join(' | ')} |\n`;
+                    textSummary += `|${itemKeys.map(() => '---').join('|')}|\n`;
+
+                    // Add each row
+                    inlinedData.items.forEach(item => {
+                        const values = itemKeys.map(key => {
+                            const val = item[key];
+                            if (val === null || val === undefined) return '-';
+                            if (typeof val === 'number') {
+                                // Format currency-like values
+                                if (Math.abs(val) >= 1000) {
+                                    return val < 0 ? '-$' + Math.abs(val/1000).toFixed(0) + 'K' : '$' + (val/1000).toFixed(0) + 'K';
+                                }
+                                return typeof val === 'number' && !Number.isInteger(val) ? val.toFixed(2) : String(val);
+                            }
+                            return String(val).substring(0, 20);
+                        });
+                        textSummary += `| ${values.join(' | ')} |\n`;
+                    });
+
+                    // Add aggregates if available
+                    if (inlinedData.aggregates) {
+                        textSummary += `\nAggregates: Total=${inlinedData.aggregates.formatted?.sum || 'N/A'}, Avg=${inlinedData.aggregates.formatted?.avg || 'N/A'}\n`;
+                    }
+                    textSummary += `\n`;
+                } else {
+                    // SUMMARIZE: Show preview for large collections
+                    // Note: REFLECT phase will see collection details and decide if loading is needed
+                    textSummary += `═══ ${collectionName.toUpperCase()} (${collectionInfo.count} items available) ═══\n`;
+                    if (collectionInfo.preview && collectionInfo.preview.length > 0) {
+                        textSummary += `Preview: ${collectionInfo.preview.join(', ')}${collectionInfo.count > 3 ? '...' : ''}\n`;
+                    }
+                    textSummary += `Columns: ${(collectionInfo.columns || []).join(', ')}\n\n`;
+                }
+            }
+        }
+
+        return {
+            rows: rows,
+            columns: columns,
+            rowCount: rows.length,
+            textSummary: textSummary,
+            dashboardId: dashboardId,
+            dashboardName: dashboard.name,
+            intelligence: intelligence,
+            inlinedCollections: inlinedCollections,
+            // Store refId for collection access
+            refId: intelligence.refId
+        };
+    }
+
+    /**
+     * Store dashboard intelligence as a data reference for RESPOND phase
+     *
+     * @param {string} requestId - Current request ID
+     * @param {string} toolName - Dashboard tool name (e.g., 'dashboard_cashflow')
+     * @param {Object} result - Dashboard tool result
+     * @returns {Object|null} Data reference object or null if failed
+     */
+    function storeDashboardDataReference(requestId, toolName, result) {
+        const dashboardData = buildDashboardIntelligenceData(result);
+
+        if (!dashboardData) {
+            Utils.debugLog('Dashboard Intelligence Bridge', 'Failed to build data for: ' + toolName);
+            return null;
+        }
+
+        // Create a data reference that looks like standard tool output
+        // This allows RESPOND phase to consume it without special handling
+        const dataRef = Cache.storeData(requestId, toolName, {
+            success: true,
+            rows: dashboardData.rows,
+            columns: dashboardData.columns,
+            rowCount: dashboardData.rowCount,
+            // Store text summary for enhanced prompts
+            textSummary: dashboardData.textSummary,
+            // Mark as dashboard data for special handling in buildDataSectionsForPrompt
+            isDashboard: true,
+            dashboardId: dashboardData.dashboardId,
+            dashboardName: dashboardData.dashboardName,
+            // Preserve original intelligence for deep access
+            intelligence: dashboardData.intelligence
+        });
+
+        Utils.debugLog('Dashboard Intelligence Bridge', {
+            action: 'stored_data_reference',
+            toolName: toolName,
+            dashboardId: dashboardData.dashboardId,
+            metricsCount: Object.keys(dashboardData.intelligence?.metrics || {}).length,
+            collectionsCount: Object.keys(dashboardData.intelligence?.collections || {}).length,
+            refId: dataRef?.refId
+        });
+
+        // Return both dataRef and dashboardData for caller to access textSummary, rowCount, etc.
+        return {
+            dataRef: dataRef,
+            dashboardData: dashboardData
+        };
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // STATE MANAGEMENT
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    function initStreamingState(message, sessionContext, requestId, history, requestContext) {
+        // Build recent history context (last 3 exchanges for context)
+        const recentHistory = (history || []).slice(-6).map(h => ({
+            role: h.role,
+            content: h.role === 'assistant' ? (h.text || h.content || '').substring(0, 200) : (h.text || h.content || '')
+        }));
+
+        return {
+            requestId: requestId,
+            message: message,
+            history: recentHistory,  // Store recent history for context
+            requestContext: requestContext || null,
+            sessionContext: sessionContext || {},
+            phase: PHASES.INIT,
+            intent: null,
+            selectedTools: [],
+            toolInvocations: [],
+            dataReferences: [],
+            resolvedEntities: {},
+            analysis: null,
+            formattedResponse: null,
+            iteration: 0,
+            analyzeIterations: 0,    // Track analyze phase runs
+            formatIterations: 0,     // Track format phase runs
+            reflectIterations: 0,    // Track reflect phase runs (ReAct pattern)
+            startTime: Date.now(),
+            phaseTimings: {},        // Track duration per phase
+            errors: [],
+            // Step tracking - IDs for updating vs adding
+            stepIds: {
+                intent: null,
+                select: null,
+                reflect: null,
+                synthesize: null,    // SYNTHESIZE phase step tracking
+                analyze: null,
+                format: null
+            },
+            // RECOMMENDATION 6: Error recovery tracking
+            recoveryAttempts: {},     // Track which tools have been tried for recovery
+            alternativeToolsQueue: [], // Queue of alternative tools to try
+
+            // ═══════════════════════════════════════════════════════════════════════
+            // Failed Tool Tracking - Prevent infinite retry loops
+            // ═══════════════════════════════════════════════════════════════════════
+            failedToolCalls: [],      // Array of { tool, args, error, count } for failed calls
+            toolRetryCount: {},       // Map of "tool:argsHash" -> retry count
+
+            // ═══════════════════════════════════════════════════════════════════════
+            // FIX 3/4/6/8: Enhanced Tracking for Agentic Improvements
+            // ═══════════════════════════════════════════════════════════════════════
+            toolAttemptCount: {},      // FIX 8: Map of toolName -> attempt count
+            consecutiveNoProgress: 0,  // FIX 6: Counter for consecutive 0-row results
+            errorSemantics: [],        // FIX 2: Parsed error insights for LLM context
+            blockedTools: {},          // FIX 3: Tools that are hard-blocked from retry (Object for JSON serialization)
+            diversificationTriggered: false, // FIX 4: Whether diversification was required
+            circuitBreakerTriggered: false,  // FIX 6: Whether circuit breaker fired
+            diagnostics: {             // FIX 7: Diagnostic information for failure response
+                toolsAttempted: [],    // List of {tool, args, error, success, rowCount}
+                errorsEncountered: [], // List of error messages with context
+                suggestedActions: [],  // List of suggested next steps
+                timeSpent: 0           // Total time spent in iterations
+            },
+
+            // ═══════════════════════════════════════════════════════════════════════
+            // ReAct Pattern State - Reflection and Reasoning
+            // ═══════════════════════════════════════════════════════════════════════
+            reflection: {
+                hasReflected: false,           // Whether we've done initial reflection
+                failureMode: null,             // Classified failure type
+                entityFound: null,             // Track entity resolution separately from data
+                dataFound: null,               // Track data retrieval separately
+                broadeningAttempts: 0,         // How many times we've tried broadening
+                clarificationNeeded: false,    // Whether we need user input
+                gaveUp: false,                 // Whether we exhausted options
+                journey: []                    // Track what we tried for transparency
+            },
+
+            // ═══════════════════════════════════════════════════════════════════════
+            // SYNTHESIZE State - LLM SQL Generation
+            // ═══════════════════════════════════════════════════════════════════════
+            synthesize: {
+                iterations: 0,                 // Number of SQL generation attempts
+                queries: [],                   // History of queries tried [{sql, error, success}]
+                lastError: null,               // Last SQL error for correction
+                enabled: true                  // Whether to attempt synthesis before giving up
+            },
+
+            // ═══════════════════════════════════════════════════════════════════════
+            // Progressive Narration - User-friendly status messages during processing
+            // ═══════════════════════════════════════════════════════════════════════
+            narration: {
+                text: null,                    // Current narration text to display
+                phase: null,                   // Phase that generated this narration
+                timestamp: null                // When narration was set
+            },
+
+            // Follow-up context - preserve data from previous exchanges
+            previousDataRefs: sessionContext?.lastDataRefs || null
+        };
+    }
+
+    /**
+     * Build context string from recent history for prompts
+     * Includes both conversation history AND previous tool invocation results
+     * This allows the LLM to use data from earlier tools when invoking subsequent tools
+     */
+    function buildHistoryContext(state) {
+        const sections = [];
+
+        if (state.requestContext && typeof state.requestContext === 'object') {
+            const contextLines = [];
+            if (state.requestContext.dashboard) {
+                contextLines.push(`Active dashboard: ${state.requestContext.dashboard}`);
+            }
+            if (state.requestContext.subsidiaryId || state.requestContext.subsidiary) {
+                contextLines.push(`Subsidiary filter: ${state.requestContext.subsidiaryId || state.requestContext.subsidiary}`);
+            }
+            if (state.requestContext.startDate || state.requestContext.endDate) {
+                contextLines.push(`Date range: ${state.requestContext.startDate || 'open'} to ${state.requestContext.endDate || 'open'}`);
+            }
+            if (contextLines.length > 0) {
+                sections.push(`ACTIVE REQUEST CONTEXT:\n${contextLines.join('\n')}`);
+            }
+        }
+
+        // 1. Conversation history
+        if (state.history && state.history.length > 0) {
+            const lines = state.history.map(h => {
+                const role = h.role === 'user' ? 'User' : 'Assistant';
+                return `${role}: ${h.content}`;
+            });
+            sections.push(`RECENT CONVERSATION:\n${lines.join('\n')}`);
+        }
+
+        // 2. Previous tool invocations in this request (critical for multi-tool queries)
+        // This gives the LLM access to data from earlier tools (e.g., vendor IDs from get_top_vendors)
+        if (state.toolInvocations && state.toolInvocations.length > 0) {
+            const toolResults = state.toolInvocations
+                .filter(inv => inv.success && !inv.skipped)
+                .map(inv => {
+                    let resultSummary = `Tool: ${inv.tool}`;
+                    if (inv.args) {
+                        resultSummary += `\nArgs: ${JSON.stringify(inv.args)}`;
+                    }
+                    resultSummary += `\nStatus: ${inv.rowCount > 0 ? 'SUCCESS' : 'NO DATA'} (${inv.rowCount || 0} rows)`;
+
+                    // Include actual data preview if available (critical for using IDs from previous tools)
+                    if (inv.result && inv.result.rows && inv.result.rows.length > 0) {
+                        const preview = inv.result.rows.slice(0, 10); // Show up to 10 rows
+                        resultSummary += `\nData preview:\n${JSON.stringify(preview, null, 2)}`;
+                    }
+
+                    return resultSummary;
+                });
+
+            if (toolResults.length > 0) {
+                sections.push(`PREVIOUS TOOL RESULTS (use these values when relevant):\n${toolResults.join('\n\n')}`);
+            }
+        }
+
+        return sections.length > 0 ? `\n${sections.join('\n\n')}\n` : '';
+    }
+
+    /**
+     * Build intent guidance for REASON_ACT phase
+     * Uses the semantic analysis from INTENT phase to guide tool and period selection
+     * Also includes failure mode hints when previous attempts didn't find data
+     * @param {Object} state - Current agent state
+     * @returns {string} Formatted intent guidance string
+     */
+    function buildIntentGuidance(state) {
+        const intent = state.intent || {};
+        const lines = [];
+
+        // Only add guidance if we have intent information
+        if (!intent.intent && !state.failureModeHint) {
+            return '';
+        }
+
+        lines.push('═══════════════════════════════════════════════════════════════════════════════');
+        lines.push('SEMANTIC ANALYSIS FROM INTENT PHASE:');
+
+        if (intent.intent) {
+            // Intent type
+            lines.push(`Question Intent: ${intent.intent}`);
+
+            // ═══════════════════════════════════════════════════════════════════════
+            // FIX: STRONG TRANSACTION_CONTEXT GUIDANCE FOR TOOL SELECTION
+            // When the user asks about specific transaction types, we MUST use
+            // tools that return those transaction types, not aggregate tools.
+            // ═══════════════════════════════════════════════════════════════════════
+            if (intent.transaction_context && intent.transaction_context !== 'all') {
+                lines.push(`\n⚠️⚠️⚠️ CRITICAL: Transaction Context = "${intent.transaction_context}" ⚠️⚠️⚠️`);
+                lines.push(`The user is asking about ${intent.transaction_context.toUpperCase()}!`);
+                lines.push('');
+
+                // Provide explicit tool recommendations based on transaction context
+                const transactionContextTools = {
+                    'invoices': {
+                        recommended: ['get_recent_transactions', 'get_entity_transactions'],
+                        params: { transaction_type: 'CustInvc' },
+                        avoid: ['get_revenue_by_month', 'get_customer_revenue'],
+                        reason: 'User wants to see individual INVOICES, not revenue aggregates'
+                    },
+                    'bills': {
+                        recommended: ['get_recent_transactions', 'get_entity_transactions'],
+                        params: { transaction_type: 'VendBill' },
+                        avoid: ['get_vendor_spend', 'get_expenses'],
+                        reason: 'User wants to see individual BILLS, not spending aggregates'
+                    },
+                    'payments': {
+                        recommended: ['get_recent_transactions', 'get_entity_transactions'],
+                        params: { transaction_type: 'CustPymt' },
+                        avoid: ['get_revenue_by_month'],
+                        reason: 'User wants to see individual PAYMENTS, not aggregates'
+                    },
+                    'journal_entries': {
+                        recommended: ['get_journal_entries', 'get_recent_transactions'],
+                        params: { transaction_type: 'Journal' },
+                        avoid: [],
+                        reason: 'User wants to see individual JOURNAL ENTRIES'
+                    }
+                };
+
+                const guidance = transactionContextTools[intent.transaction_context];
+                if (guidance) {
+                    lines.push(`✓ USE: ${guidance.recommended.join(' or ')} with ${JSON.stringify(guidance.params)}`);
+                    if (guidance.avoid.length > 0) {
+                        lines.push(`✗ AVOID: ${guidance.avoid.join(', ')} - ${guidance.reason}`);
+                    }
+                } else {
+                    lines.push(`Use transaction-listing tools (get_recent_transactions, get_entity_transactions)`);
+                    lines.push(`NOT aggregation tools (get_revenue_by_month, get_expenses, etc.)`);
+                }
+                lines.push('');
+            } else if (intent.transaction_context && intent.transaction_context !== 'all') {
+                lines.push(`Transaction Context: ${intent.transaction_context}`);
+            }
+
+            // Recommended period from semantic analysis
+            if (intent.recommended_period) {
+                lines.push(`\n⚠️ RECOMMENDED PERIOD: ${intent.recommended_period}`);
+                if (intent.period_rationale) {
+                    lines.push(`   Rationale: ${intent.period_rationale}`);
+                }
+                lines.push(`   Use this period as the default for tool calls unless user specified otherwise.`);
+            }
+
+            // Semantic topics for tool selection context
+            if (intent.semantic_topics && intent.semantic_topics.length > 0) {
+                lines.push(`\nSemantic Topics: ${intent.semantic_topics.join(', ')}`);
+            }
+
+            // Constraints from user's question
+            if (intent.constraints) {
+                const constraints = intent.constraints;
+                const activeConstraints = [];
+                if (constraints.limit) activeConstraints.push(`limit: ${constraints.limit}`);
+                if (constraints.sort_by) activeConstraints.push(`sort_by: ${constraints.sort_by}`);
+                if (constraints.sort_direction !== 'desc') activeConstraints.push(`sort_direction: ${constraints.sort_direction}`);
+                if (activeConstraints.length > 0) {
+                    lines.push(`User Constraints: ${activeConstraints.join(', ')}`);
+                }
+            }
+
+            // ═══════════════════════════════════════════════════════════════════════
+            // ENTITY RESOLUTION GUIDANCE
+            // When entities are detected, remind the LLM to resolve them first
+            // ═══════════════════════════════════════════════════════════════════════
+            if (intent.entities && intent.entities.length > 0) {
+                lines.push('');
+                lines.push('🔍 ENTITIES DETECTED - RESOLUTION REQUIRED:');
+                intent.entities.forEach(function(entity) {
+                    lines.push(`   • "${entity}" → call resolve_entity FIRST to get internal ID`);
+                });
+                lines.push('   → NEVER pass entity names/codes directly to data tools');
+                lines.push('   → Tools need INTERNAL IDs (numeric), not names/codes');
+                lines.push('   → Example: resolve_entity(name="0915", type="project") → use returned id');
+            }
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // FIX: FOLLOW-UP QUERY HANDLING
+        // When this is a follow-up/drill-down, guide the LLM to use similar tools
+        // as the previous query, just with modified parameters (e.g., different period)
+        // ═══════════════════════════════════════════════════════════════════════
+        if (intent.references_previous || intent.is_drill_down) {
+            lines.push('');
+            lines.push('🔄 FOLLOW-UP QUERY DETECTED:');
+            lines.push('   This is a follow-up to a previous question.');
+
+            if (intent.drill_down_context) {
+                lines.push(`   Context: ${intent.drill_down_context}`);
+            }
+
+            // Provide guidance based on what we know
+            if (intent.transaction_context && intent.transaction_context !== 'all') {
+                lines.push(`   The previous query was about "${intent.transaction_context}" - use the SAME data type!`);
+                lines.push('   → Use the SAME TOOLS as the previous query, just with updated parameters.');
+                lines.push('   → If previous query used get_entity_transactions for invoices, use it again.');
+                lines.push('   → DO NOT switch to aggregation tools (get_revenue_by_month, etc.)');
+            }
+
+            // If we have history with previous tool calls, reference them
+            if (state.history && state.history.length > 0) {
+                // Extract any tool mentions from assistant history
+                const assistantResponses = state.history.filter(h => h.role === 'assistant');
+                if (assistantResponses.length > 0) {
+                    lines.push('   → Review the RECENT CONVERSATION above to understand what data type was used.');
+                }
+            }
+            lines.push('');
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // FAILURE MODE HINT: Inject guidance from circuit breaker analysis
+        // This helps the LLM understand WHY previous attempts failed and how to fix
+        // ═══════════════════════════════════════════════════════════════════════
+        if (state.failureModeHint) {
+            lines.push('');
+            lines.push('🚨 PREVIOUS ATTEMPTS ANALYSIS:');
+            lines.push(`   Failure Mode: ${state.failureModeHint.mode}`);
+            lines.push(`   Diagnosis: ${state.failureModeHint.remediation}`);
+            if (state.failureModeHint.suggestedAction) {
+                lines.push(`   Suggested Action: ${state.failureModeHint.suggestedAction}`);
+            }
+            lines.push('');
+            lines.push('   ⚠️ FOLLOW THIS GUIDANCE to find the data. Previous approach did not work.');
+
+            // Clear the hint after using it to avoid infinite loops
+            state.failureModeHint = null;
+        }
+
+        lines.push('═══════════════════════════════════════════════════════════════════════════════');
+
+        return lines.join('\n');
+    }
+
+    /**
+     * Build constraints section for MDA_RESPOND_PROMPT
+     * Extracts user's output constraints from INTENT phase and formats for response generation
+     * @param {Object} state - Current agent state
+     * @returns {string} Formatted constraints section or empty string
+     */
+    function buildConstraintsSection(state) {
+        const constraints = state.intent?.constraints;
+
+        // If no constraints extracted, return empty
+        if (!constraints) {
+            return '';
+        }
+
+        const lines = ['OUTPUT CONSTRAINTS (MUST FOLLOW):'];
+        let hasConstraints = false;
+
+        if (constraints.limit && typeof constraints.limit === 'number') {
+            lines.push(`- Show EXACTLY ${constraints.limit} items in tables and charts (not more, not less unless fewer exist)`);
+            hasConstraints = true;
+        }
+
+        if (constraints.sort_by) {
+            const direction = constraints.sort_direction === 'asc' ? 'ascending' : 'descending';
+            lines.push(`- Sort by ${constraints.sort_by} (${direction})`);
+            hasConstraints = true;
+        }
+
+        if (constraints.highlight) {
+            lines.push(`- HIGHLIGHT in your response: "${constraints.highlight}"`);
+            hasConstraints = true;
+        }
+
+        if (constraints.exclude && Array.isArray(constraints.exclude) && constraints.exclude.length > 0) {
+            lines.push(`- EXCLUDE from results: ${constraints.exclude.join(', ')}`);
+            hasConstraints = true;
+        }
+
+        if (!hasConstraints) {
+            return '';
+        }
+
+        lines.push('');
+        lines.push('⚠️ These constraints come directly from the user\'s question. Violating them will make the response incorrect.');
+
+        return lines.join('\n');
+    }
+
+    /**
+     * Get current date context for prompts
+     */
+    function getDateContext() {
+        const now = new Date();
+        const months = ['January', 'February', 'March', 'April', 'May', 'June',
+                        'July', 'August', 'September', 'October', 'November', 'December'];
+        return `Today is ${months[now.getMonth()]} ${now.getDate()}, ${now.getFullYear()}.`;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // STEP HELPERS - Rich step data for frontend
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Build debug info object when debug mode is enabled
+     */
+    function buildDebugInfo(prompt, response, state, extras) {
+        if (!Utils.isDebugMode()) return undefined;
+
+        return {
+            promptLength: prompt?.length || 0,
+            promptPreview: prompt?.substring(0, 500) + (prompt?.length > 500 ? '...' : ''),
+            responseLength: response?.text?.length || 0,
+            responsePreview: response?.text?.substring(0, 500) + (response?.text?.length > 500 ? '...' : ''),
+            model: response?.model || AIProviders.getCurrentModelInfo()?.model,
+            provider: response?.provider || AIProviders.getCurrentModelInfo()?.provider,
+            tokensUsed: response?.usage || null,
+            phase: state.phase,
+            iteration: state.iteration,
+            analyzeIterations: state.analyzeIterations,
+            formatIterations: state.formatIterations,
+            dataRefCount: state.dataReferences?.length || 0,
+            errorCount: state.errors?.length || 0,
+            ...extras
+        };
+    }
+
+    /**
+     * Add or update a thinking step with rich information
+     */
+    function upsertThinkingStep(state, stepKey, data) {
+        const stepData = {
+            type: 'thinking',
+            title: data.title,
+            status: data.status || 'active',
+            context: {
+                phase: data.phase,
+                ...data.context
+            },
+            timestamp: data.timestamp || Date.now(),
+            duration: data.duration,
+            debug: data.debug
+        };
+
+        // Clean undefined values
+        Object.keys(stepData).forEach(key => {
+            if (stepData[key] === undefined) delete stepData[key];
+        });
+        if (stepData.context) {
+            Object.keys(stepData.context).forEach(key => {
+                if (stepData.context[key] === undefined) delete stepData.context[key];
+            });
+        }
+
+        if (state.stepIds[stepKey]) {
+            // Update existing step
+            Cache.updateStep(state.requestId, stepData);
+        } else {
+            // Add new step
+            Cache.addStep(state.requestId, stepData);
+            state.stepIds[stepKey] = true;
+        }
+    }
+
+    /**
+     * Add a tool call step with rich information
+     */
+    function addToolCallStep(state, data) {
+        const stepData = {
+            type: 'tool_call',
+            title: data.title,
+            tool: data.tool,
+            status: data.status || 'active',
+            params: data.params,
+            timestamp: Date.now()
+        };
+
+        // Add result info if complete
+        if (data.status === 'complete') {
+            stepData.result = {
+                success: data.success,
+                rowCount: data.rowCount,
+                columns: data.columns,
+                preview: data.preview,
+                error: data.error,
+                dataRef: data.dataRef
+            };
+            stepData.duration = data.duration;
+            stepData.summary = data.summary;
+        }
+
+        // Add debug info
+        if (data.debug) {
+            stepData.debug = data.debug;
+        }
+
+        // Clean undefined values
+        Object.keys(stepData).forEach(key => {
+            if (stepData[key] === undefined) delete stepData[key];
+        });
+        if (stepData.result) {
+            Object.keys(stepData.result).forEach(key => {
+                if (stepData.result[key] === undefined) delete stepData.result[key];
+            });
+        }
+
+        if (data.update) {
+            Cache.updateLastStep(state.requestId, stepData);
+        } else {
+            Cache.addStep(state.requestId, stepData);
+        }
+    }
+
+    /**
+     * Update an existing tool call step
+     */
+    function updateToolCallStep(state, toolName, data) {
+        addToolCallStep(state, {
+            ...data,
+            tool: toolName,
+            update: true
+        });
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // PHASE EXECUTORS
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Phase 1: INTENT - Classify the question
+     */
+    function executeIntentPhase(state) {
+        const phaseStart = Date.now();
+        const prompt = INTENT_PROMPT
+            .replace('{question}', state.message)
+            .replace('{date_context}', getDateContext())
+            .replace('{history_context}', buildHistoryContext(state));
+
+        // Add thinking step
+        upsertThinkingStep(state, 'intent', {
+            title: 'Understanding your question',
+            phase: 'intent',
+            status: 'active',
+            context: {
+                question: state.message.substring(0, 100)
+            }
+        });
+
+        try {
+            const response = AIProviders.callAI(prompt, {
+                tier: getTierForPhase('intent', state),
+                temperature: 0.1,
+                jsonMode: true,
+                purpose: 'SCA:intent'
+            });
+
+            const parsed = parseJsonResponse(response?.text);
+            const duration = Date.now() - phaseStart;
+            state.phaseTimings.intent = duration;
+
+            if (parsed && parsed.intent) {
+                state.intent = parsed;
+
+                // General intent stays conversational - avoid extra control-plane LLM calls.
+                if (parsed.intent === 'general') {
+                    // No tools needed - pure conversational response
+                    state.phase = PHASES.RESPOND;
+                    Utils.debugLog('SCA Intent - general/conversational, skipping to RESPOND');
+
+                    upsertThinkingStep(state, 'intent', {
+                        title: 'Understanding your question',
+                        phase: 'intent',
+                        status: 'complete',
+                        duration: duration,
+                        context: {
+                            question: state.message.substring(0, 100),
+                            intent: parsed.intent,
+                            conversational: true
+                        },
+                        debug: buildDebugInfo(prompt, response, state, { parsedIntent: parsed })
+                    });
+
+                    return { success: true, nextPhase: PHASES.RESPOND };
+                }
+
+                state.capabilityAssessment = null;
+                state.queryDecomposition = null;
+
+                // NEW: Route to REASON_ACT for agentic data gathering
+                state.phase = PHASES.REASON_ACT;
+
+                // Initialize accumulated data tracking for ReAct loop
+                state.accumulatedData = [];
+                state.reasonActIterations = 0;
+
+                // Store progressive narration for frontend display
+                state.narration = {
+                    text: parsed.userNarration || 'Analyzing your question...',
+                    phase: 'intent',
+                    timestamp: Date.now()
+                };
+
+                // Update step with results
+                upsertThinkingStep(state, 'intent', {
+                    title: 'Understanding your question',
+                    phase: 'intent',
+                    status: 'complete',
+                    duration: duration,
+                    context: {
+                        phase: 'intent',
+                        question: state.message.substring(0, 100),
+                        intent: parsed.intent,
+                        entities: parsed.entities || [],
+                        timeScope: parsed.time_scope,
+                        needsResolution: parsed.needs_resolution,
+                        // Include transaction context for entity_transactions intent
+                        transactionContext: parsed.transaction_context
+                    },
+                    debug: buildDebugInfo(prompt, response, state, { parsedIntent: parsed })
+                });
+
+                Utils.debugLog('SCA Intent phase complete', { intent: parsed.intent, duration: duration });
+                return { success: true, nextPhase: PHASES.REASON_ACT };
+            } else {
+                throw new Error('Failed to parse intent: ' + (response?.text?.substring(0, 100) || 'empty response'));
+            }
+        } catch (e) {
+            const duration = Date.now() - phaseStart;
+            log.error('SCA Intent phase failed', { error: e.message, duration: duration });
+            state.errors.push({ phase: 'intent', error: e.message, timestamp: Date.now() });
+
+            // Default to general reporting intent - route to REASON_ACT
+            state.intent = { intent: 'reporting', entities: [], time_scope: 'none' };
+            state.phase = PHASES.REASON_ACT;
+            state.accumulatedData = [];
+            state.reasonActIterations = 0;
+
+            upsertThinkingStep(state, 'intent', {
+                title: 'Understanding your question',
+                phase: 'intent',
+                status: 'complete',
+                duration: duration,
+                context: {
+                    intent: 'reporting',
+                    fallback: true,
+                    error: e.message
+                }
+            });
+
+            return { success: true, nextPhase: PHASES.REASON_ACT };
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // REASON_ACT PHASE - True ReAct Pattern (Replaces SELECT/INVOKE/REFLECT)
+    // This is the core agentic loop: THINK → ACT → OBSERVE → REFLECT → LOOP
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Build accumulated data summary for the LLM
+     * Shows all data collected so far across iterations
+     * Includes data sanity warnings for comparison anomalies
+     */
+    function buildAccumulatedDataSummary(state) {
+        if (!state.accumulatedData || state.accumulatedData.length === 0) {
+            return 'No data collected yet. This is your first iteration.';
+        }
+
+        const lines = [];
+        state.accumulatedData.forEach((item, idx) => {
+            lines.push(`\n[${idx + 1}] Tool: ${item.tool}`);
+            lines.push(`    Args: ${JSON.stringify(item.args)}`);
+            lines.push(`    Status: ${item.success ? 'SUCCESS' : 'FAILED'}`);
+
+            if (item.success) {
+                lines.push(`    Rows: ${item.rowCount || 0}`);
+                // ═══════════════════════════════════════════════════════════════════════
+                // COLUMN SCHEMA: Show types so LLM can reason about data structure
+                // Critical for chart generation: LLM needs to know which columns are
+                // dates (x-axis labels) vs numbers (y-axis values)
+                // ═══════════════════════════════════════════════════════════════════════
+                if (item.schema && typeof item.schema === 'object') {
+                    const colTypes = Object.entries(item.schema)
+                        .map(([col, info]) => `${col}(${info.type || 'unknown'})`)
+                        .join(', ');
+                    lines.push(`    Columns [type]: ${colTypes}`);
+                } else if (item.columns && item.columns.length > 0) {
+                    lines.push(`    Columns: ${item.columns.join(', ')}`);
+                }
+                if (item.summary) {
+                    lines.push(`    Summary: ${item.summary}`);
+                }
+
+                // ═══════════════════════════════════════════════════════════════
+                // DASHBOARD DATA: Show metrics, collections, and full textSummary
+                // ═══════════════════════════════════════════════════════════════
+                if (item.metrics) {
+                    lines.push(`    Key Metrics:`);
+                    Object.entries(item.metrics).slice(0, 8).forEach(([name, data]) => {
+                        const statusIcon = data.status === 'danger' ? ' ⚠️' : data.status === 'warning' ? ' ⚡' : '';
+                        const trendIcon = data.trend === 'up' ? ' ↑' : data.trend === 'down' ? ' ↓' : '';
+                        lines.push(`      • ${name}: ${data.formatted || data.value}${trendIcon}${statusIcon}`);
+                    });
+                }
+
+                if (item.collections && item.collections.length > 0) {
+                    lines.push(`    Available Collections (queryable):`);
+                    item.collections.forEach(col => {
+                        const preview = col.preview ? ` - Preview: ${col.preview.slice(0, 2).join(', ')}...` : '';
+                        lines.push(`      • ${col.name}: ${col.count} items${preview}`);
+                        // Show the refId and query hint so LLM knows exactly how to query
+                        if (col.refId) {
+                            lines.push(`        → Query with: load_collection(refId="${col.refId}", collection="${col.name}")`);
+                        }
+                    });
+                }
+
+                // For dashboards, show the full textSummary if available (truncated)
+                if (item.textSummary) {
+                    lines.push(`    ───── Full Dashboard Data ─────`);
+                    // Show truncated textSummary (first 1500 chars to keep context manageable)
+                    const truncatedSummary = item.textSummary.length > 1500
+                        ? item.textSummary.substring(0, 1500) + '\n    ... [truncated - use collection queries for more]'
+                        : item.textSummary;
+                    truncatedSummary.split('\n').forEach(line => {
+                        lines.push(`    ${line}`);
+                    });
+                }
+
+                // Available dashboards (from list_dashboards)
+                if (item.availableDashboards && item.availableDashboards.length > 0) {
+                    lines.push(`    Available Dashboards:`);
+                    item.availableDashboards.forEach(d => {
+                        lines.push(`      • ${d.id}: ${d.name}`);
+                        if (d.description) {
+                            lines.push(`        ${d.description.substring(0, 80)}${d.description.length > 80 ? '...' : ''}`);
+                        }
+                        if (d.use_cases && d.use_cases.length > 0) {
+                            lines.push(`        Use for: ${d.use_cases.join(', ')}`);
+                        }
+                    });
+                }
+
+                // Standard row data preview
+                if (item.preview && item.preview.length > 0 && !item.metrics) {
+                    lines.push(`    Sample data:`);
+                    item.preview.slice(0, 3).forEach(row => {
+                        const rowStr = Object.entries(row)
+                            .map(([k, v]) => `${k}: ${typeof v === 'number' ? Utils.formatCurrency(v) : v}`)
+                            .join(', ');
+                        lines.push(`      - ${rowStr}`);
+                    });
+                }
+
+                // ═══════════════════════════════════════════════════════════════
+                // RESOLVED ENTITY: Show the actual entity data for use in queries
+                // ═══════════════════════════════════════════════════════════════
+                if (item.resolvedEntity) {
+                    lines.push(`    ✓ RESOLVED: "${item.args?.name || 'entity'}" → ${item.resolvedEntity.name}`);
+                    lines.push(`      ID: ${item.resolvedEntity.id} | Type: ${item.resolvedEntity.type}`);
+                    lines.push(`      → USE entity_id: ${item.resolvedEntity.id} in subsequent tool calls`);
+                }
+            } else {
+                lines.push(`    Error: ${item.error || 'Unknown error'}`);
+
+                // ═══════════════════════════════════════════════════════════════
+                // VALIDATION ERRORS: Show what was wrong with the parameters
+                // ═══════════════════════════════════════════════════════════════
+                if (item.validationErrors && item.validationErrors.length > 0) {
+                    lines.push(`    Validation Errors:`);
+                    item.validationErrors.forEach(err => {
+                        lines.push(`      ⚠️ ${err}`);
+                    });
+                }
+            }
+
+            // ═══════════════════════════════════════════════════════════════════
+            // SUGGESTIONS PIPELINE: Show tool suggestions for recovery
+            // These help the LLM decide what to try next when queries fail
+            // ═══════════════════════════════════════════════════════════════════
+            if (item.rowCount === 0 || !item.success) {
+                // Get broadening suggestions
+                const broaderParams = Tools.suggestBroaderParams(item.args, item.tool);
+                if (broaderParams.canBroaden) {
+                    lines.push(`    💡 BROADENING OPTIONS (you decide which to use):`);
+                    broaderParams.suggestions.forEach(s => lines.push(`      • ${s}`));
+                }
+
+                // Get semantically-selected alternative tools (LLM-based)
+                const alternatives = getAlternativeToolsForDiversification(
+                    item.tool,
+                    item.args,
+                    state.resolvedEntities,
+                    state
+                );
+                if (alternatives.length > 0) {
+                    lines.push(`    🔄 ALTERNATIVE TOOLS TO CONSIDER:`);
+                    alternatives.forEach(alt => {
+                        lines.push(`      • ${alt.tool}: ${alt.reason}`);
+                        if (alt.args && Object.keys(alt.args).length > 0) {
+                            lines.push(`        Suggested args: ${JSON.stringify(alt.args)}`);
+                        }
+                    });
+                }
+
+                // Include tool-specific suggestions if any
+                if (item.suggestions && item.suggestions.length > 0) {
+                    lines.push(`    📋 Tool Suggestions:`);
+                    item.suggestions.forEach(s => lines.push(`      • ${s}`));
+                }
+            }
+
+            // Show normalization warnings (informational)
+            if (item.normalizationWarnings && item.normalizationWarnings.length > 0) {
+                lines.push(`    ℹ️ Parameter Normalization:`);
+                item.normalizationWarnings.forEach(w => lines.push(`      • ${w}`));
+            }
+        });
+
+        // Add data sanity warnings if comparison data looks anomalous
+        const warnings = detectDataAnomalies(state.accumulatedData);
+        if (warnings.length > 0) {
+            lines.push('\n⚠️ DATA SANITY WARNINGS:');
+            warnings.forEach(w => lines.push(`  - ${w}`));
+            lines.push('  Consider verifying the data or adjusting your query if these seem unexpected.');
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // RESOLVED ENTITIES SUMMARY: Show all resolved entities with their IDs
+        // This is CRITICAL - LLM must use these actual IDs, not placeholders!
+        // ═══════════════════════════════════════════════════════════════════════
+        if (state.resolvedEntities && Object.keys(state.resolvedEntities).length > 0) {
+            lines.push('\n✅ RESOLVED ENTITIES (use these IDs in your queries):');
+            Object.entries(state.resolvedEntities).forEach(([searchName, entity]) => {
+                lines.push(`  • "${searchName}" → ${entity.name} (${entity.type})`);
+                lines.push(`    entity_id: ${entity.id}`);
+            });
+            lines.push('  ⚠️ IMPORTANT: Use the actual entity_id number above, NOT placeholders like {{resolve_entity result}}');
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // FAILED TOOL CALLS: Show what has already failed to prevent retries
+        // ═══════════════════════════════════════════════════════════════════════
+        if (state.failedToolCalls && state.failedToolCalls.length > 0) {
+            lines.push('\n🚫 FAILED TOOL CALLS (DO NOT RETRY WITH SAME ARGUMENTS):');
+            state.failedToolCalls.forEach(f => {
+                lines.push(`  - ${f.tool}(${JSON.stringify(f.args)})`);
+                lines.push(`    Error: ${f.error}`);
+                lines.push(`    Failed ${f.count} time(s) - try different arguments or a different approach`);
+            });
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // FIX 2: ERROR SEMANTIC INSIGHTS - Show parsed error analysis
+        // Helps LLM understand WHY tools failed and HOW to fix
+        // ═══════════════════════════════════════════════════════════════════════
+        if (state.errorSemantics && state.errorSemantics.length > 0) {
+            // Show only the most recent unique error insights
+            const recentInsights = state.errorSemantics.slice(-3);
+            const uniqueCategories = [...new Set(recentInsights.map(e => e.insights.category))];
+
+            lines.push('\n🔍 ERROR ANALYSIS (learn from these to avoid repeating mistakes):');
+            uniqueCategories.forEach(category => {
+                const insight = recentInsights.find(e => e.insights.category === category);
+                if (insight) {
+                    lines.push(`  Category: ${category}`);
+                    lines.push(`    Insight: ${insight.insights.insight}`);
+                    lines.push(`    Fix: ${insight.insights.suggestedAction}`);
+                    if (insight.insights.parameterHints && Object.keys(insight.insights.parameterHints).length > 0) {
+                        lines.push(`    Hints: ${JSON.stringify(insight.insights.parameterHints)}`);
+                    }
+                }
+            });
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // FIX 3/8: BLOCKED TOOLS - Show which tools are completely blocked
+        // ═══════════════════════════════════════════════════════════════════════
+        if (state.blockedTools && Object.keys(state.blockedTools).length > 0) {
+            lines.push('\n⛔ BLOCKED TOOLS (exhausted iteration budget):');
+            lines.push(`  The following tools are BLOCKED: ${Object.keys(state.blockedTools).join(', ')}`);
+            lines.push(`  You MUST use different tools to continue.`);
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // FIX 4: DIVERSIFICATION REQUIREMENT - Force trying different tools
+        // ═══════════════════════════════════════════════════════════════════════
+        if (state.forcedDiversification) {
+            lines.push('\n⚠️ DIVERSIFICATION REQUIRED:');
+            lines.push(`  Reason: ${state.forcedDiversification.reason}`);
+            if (state.forcedDiversification.suggestedAlternatives && state.forcedDiversification.suggestedAlternatives.length > 0) {
+                lines.push(`  SUGGESTED ALTERNATIVE TOOLS:`);
+                state.forcedDiversification.suggestedAlternatives.forEach(alt => {
+                    lines.push(`    • ${alt.tool}: ${alt.reason}`);
+                    lines.push(`      Suggested args: ${JSON.stringify(alt.args)}`);
+                });
+            }
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // FIX 8: TOOL ATTEMPT BUDGET - Show remaining budget per tool
+        // ═══════════════════════════════════════════════════════════════════════
+        if (state.toolAttemptCount && Object.keys(state.toolAttemptCount).length > 0) {
+            const toolsNearLimit = Object.entries(state.toolAttemptCount)
+                .filter(([tool, count]) => count >= MAX_ATTEMPTS_PER_TOOL - 1)
+                .map(([tool, count]) => `${tool}(${count}/${MAX_ATTEMPTS_PER_TOOL})`);
+
+            if (toolsNearLimit.length > 0) {
+                lines.push('\n📊 TOOL BUDGET WARNING:');
+                lines.push(`  Tools near/at limit: ${toolsNearLimit.join(', ')}`);
+                lines.push(`  Consider switching to alternative tools proactively.`);
+            }
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // SCHEMA DISCOVERY NEEDED: Route LLM to discover valid fields
+        // Triggered when SYNTHESIZE hits "field not found" errors
+        // ═══════════════════════════════════════════════════════════════════════
+        if (state.synthesize?.schemaDiscoveryNeeded) {
+            const hint = state.synthesize.schemaDiscoveryNeeded;
+            lines.push('\n🔎 SCHEMA DISCOVERY REQUIRED:');
+            lines.push(`  ⚠️ A query failed because field "${hint.error.match(/field\s+['"]?(\w+)['"]?/i)?.[1] || 'unknown'}" does not exist.`);
+            lines.push(`  Table: ${hint.tableName}`);
+            lines.push(`  `);
+            lines.push(`  ACTION REQUIRED: Use get_record_schema to discover valid field names:`);
+            lines.push(`    get_record_schema({ record_type: "${hint.tableName}" })`);
+            lines.push(`  `);
+            lines.push(`  After discovering the schema, rewrite your query with the correct field names.`);
+            lines.push(`  This is better than guessing - the schema will show exactly what fields exist.`);
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // SYNTHESIZE TRIGGER: Add hint if conditions are met for custom SQL
+        // ═══════════════════════════════════════════════════════════════════════
+        const synthesizeHint = detectSynthesizeTrigger(state);
+        if (synthesizeHint) {
+            lines.push(synthesizeHint);
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // AGENTIC ERROR CONTEXT AMPLIFICATION
+        // Prominently display previous failures to help LLM learn from mistakes
+        // ═══════════════════════════════════════════════════════════════════════
+        const errorContext = buildErrorContextForPrompt(state.accumulatedData, 5);
+        if (errorContext) {
+            lines.push(errorContext);
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // AGENTIC EARLY SYNTHESIZE CHECK
+        // If tool health suggests synthesize, or capability gaps detected, flag it
+        // ═══════════════════════════════════════════════════════════════════════
+        const earlyEscalation = checkEarlySynthesizeEscalation(state);
+        if (earlyEscalation.shouldEscalate) {
+            lines.push('\n🔴 AGENTIC RECOMMENDATION: SKIP TO SYNTHESIZE');
+            lines.push(`  Reason: ${earlyEscalation.reason}`);
+            lines.push('  Consider using action: "SYNTHESIZE" to write custom SQL.');
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // CAPABILITY ASSESSMENT RESULT (if available)
+        // Show pre-flight assessment to guide tool selection
+        // ═══════════════════════════════════════════════════════════════════════
+        if (state.capabilityAssessment) {
+            const ca = state.capabilityAssessment;
+            if (ca.gaps && ca.gaps.length > 0) {
+                lines.push('\n📋 CAPABILITY GAPS (from pre-flight assessment):');
+                ca.gaps.forEach(gap => lines.push(`  • ${gap}`));
+            }
+            if (ca.bestTools && ca.bestTools.length > 0) {
+                lines.push('\n🎯 BEST-FIT TOOLS (from pre-flight assessment):');
+                ca.bestTools.slice(0, 3).forEach(t => {
+                    lines.push(`  • ${t.tool} (${Math.round(t.fit_score * 100)}% fit): ${t.reason}`);
+                });
+            }
+        }
+
+        return lines.join('\n');
+    }
+
+    /**
+     * Detect anomalies in accumulated data for comparison queries
+     * Flags major discrepancies that might indicate query issues
+     * @param {Array} accumulatedData - Data collected from tool executions
+     * @returns {Array} Array of warning messages
+     */
+    function detectDataAnomalies(accumulatedData) {
+        const warnings = [];
+
+        if (!accumulatedData || accumulatedData.length < 2) {
+            return warnings;
+        }
+
+        // Group by tool name to compare similar queries
+        const byTool = {};
+        accumulatedData.forEach(item => {
+            if (item.success) {
+                if (!byTool[item.tool]) byTool[item.tool] = [];
+                byTool[item.tool].push(item);
+            }
+        });
+
+        // Check for row count anomalies in same-tool comparisons
+        Object.entries(byTool).forEach(([toolName, items]) => {
+            if (items.length >= 2) {
+                const rowCounts = items.map(i => i.rowCount || 0).filter(r => r > 0);
+                if (rowCounts.length >= 2) {
+                    const max = Math.max(...rowCounts);
+                    const min = Math.min(...rowCounts);
+                    const ratio = max / Math.max(min, 1);
+
+                    // Flag if one result has 5x+ more rows than another
+                    if (ratio >= 5) {
+                        warnings.push(`${toolName}: Large row count variance (${min} vs ${max} rows, ${ratio.toFixed(1)}x difference). Verify period filters are correct.`);
+                    }
+                }
+
+                // Check for total amount anomalies if we have stats
+                const totals = items
+                    .filter(i => i.stats && i.stats.total !== undefined)
+                    .map(i => ({ args: i.args, total: i.stats.total }));
+
+                if (totals.length >= 2) {
+                    const amounts = totals.map(t => Math.abs(t.total));
+                    const maxAmt = Math.max(...amounts);
+                    const minAmt = Math.min(...amounts);
+                    const amtRatio = maxAmt / Math.max(minAmt, 1);
+
+                    if (amtRatio >= 5 && minAmt > 0) {
+                        warnings.push(`${toolName}: Large total variance (${Utils.formatCurrency(minAmt)} vs ${Utils.formatCurrency(maxAmt)}, ${amtRatio.toFixed(1)}x difference). This may indicate different time periods.`);
+                    }
+                }
+            }
+        });
+
+        return warnings;
+    }
+
+    /**
+     * Detect if SYNTHESIZE (custom SQL) might be warranted
+     * Returns a hint string for the LLM if conditions are met, null otherwise
+     *
+     * Conditions for suggesting SYNTHESIZE:
+     * 1. An entity has been successfully resolved (we know who/what we're looking for)
+     * 2. Multiple tool calls have returned 0 rows (data tools are exhausted)
+     * 3. No SYNTHESIZE has been attempted yet
+     *
+     * @param {Object} state - Current agent state
+     * @returns {string|null} Hint message for LLM, or null if not triggered
+     */
+    function detectSynthesizeTrigger(state) {
+        // Check if we have resolved entities (entity exists in the system)
+        const hasResolvedEntities = state.resolvedEntities &&
+            Object.keys(state.resolvedEntities).length > 0;
+
+        if (!hasResolvedEntities) {
+            return null; // No point suggesting SYNTHESIZE if we don't know what entity we're looking for
+        }
+
+        // Count how many data tool calls returned 0 rows
+        const emptyDataToolCalls = (state.accumulatedData || []).filter(item => {
+            // Only count data tools (not resolve_* which are discovery tools)
+            const isDataTool = !item.tool.startsWith('resolve_') &&
+                              item.tool !== 'list_dashboards' &&
+                              item.tool !== 'get_fiscal_context';
+            return isDataTool && item.success && item.rowCount === 0;
+        });
+
+        // Check if we've already tried SYNTHESIZE
+        const alreadyTriedSynthesize = (state.accumulatedData || []).some(
+            item => item.tool === 'run_custom_query'
+        );
+
+        if (alreadyTriedSynthesize) {
+            return null; // Already tried custom SQL
+        }
+
+        // Trigger if 3+ data tool calls returned 0 rows with a resolved entity
+        if (emptyDataToolCalls.length >= 3) {
+            const entityNames = Object.keys(state.resolvedEntities);
+            const entitySummary = entityNames.map(name => {
+                const e = state.resolvedEntities[name];
+                return `${e.name} (${e.type}, ID: ${e.id})`;
+            }).join(', ');
+
+            const toolsTried = [...new Set(emptyDataToolCalls.map(t => t.tool))].join(', ');
+
+            return `\n⚡ SYNTHESIZE TRIGGER DETECTED:
+  • Entity confirmed: ${entitySummary}
+  • Pre-built tools exhausted: ${emptyDataToolCalls.length} queries returned 0 rows
+  • Tools tried: ${toolsTried}
+  • Consider using SYNTHESIZE to write custom SuiteQL that directly queries the transaction table
+  • Example: Search for all bills for this vendor with: SELECT * FROM transaction WHERE entity = ${state.resolvedEntities[entityNames[0]]?.id} AND type = 'VendBill'
+  • YOU DECIDE: If you believe the data genuinely doesn't exist, you can still ANSWER with "no data found"`;
+        }
+
+        return null;
+    }
+
+    /**
+     * Generate a hash key for tool+args combination to track retries
+     */
+    function getToolArgsKey(toolName, args) {
+        return toolName + ':' + JSON.stringify(args || {});
+    }
+
+    /**
+     * Check if this tool+args combination has already failed too many times
+     * FIX 3: HARD RETRY BLOCKING - Returns true to completely prevent the call
+     */
+    function shouldBlockRetry(state, toolName, args) {
+        const key = getToolArgsKey(toolName, args);
+        const retryCount = state.toolRetryCount[key] || 0;
+
+        // Hard block after 2 failures with EXACT same args
+        if (retryCount >= 2) {
+            return { blocked: true, reason: 'exact_args_failed', count: retryCount };
+        }
+
+        // FIX 3: Also check if this tool is completely blocked due to repeated failures
+        if (state.blockedTools && state.blockedTools[toolName]) {
+            return { blocked: true, reason: 'tool_exhausted', count: state.toolAttemptCount[toolName] || 0 };
+        }
+
+        // FIX 8: Check iteration budget per tool
+        const toolAttempts = state.toolAttemptCount[toolName] || 0;
+        if (toolAttempts >= MAX_ATTEMPTS_PER_TOOL) {
+            // Check if any of those attempts succeeded
+            const hadSuccess = (state.accumulatedData || []).some(
+                d => d.tool === toolName && d.success && d.rowCount > 0
+            );
+            if (!hadSuccess) {
+                // Add to blocked tools object (not Set - must be JSON-serializable)
+                if (!state.blockedTools) state.blockedTools = {};
+                state.blockedTools[toolName] = true;
+                return { blocked: true, reason: 'budget_exhausted', count: toolAttempts };
+            }
+        }
+
+        return { blocked: false };
+    }
+
+    /**
+     * Track a failed tool call
+     * ENHANCED with error semantic parsing (Fix 2) and diagnostics tracking (Fix 7)
+     */
+    function trackFailedToolCall(state, toolName, args, error) {
+        const key = getToolArgsKey(toolName, args);
+        state.toolRetryCount[key] = (state.toolRetryCount[key] || 0) + 1;
+
+        // Also add to failedToolCalls array for prompt visibility
+        const existing = state.failedToolCalls.find(f => f.key === key);
+        if (existing) {
+            existing.count++;
+            existing.lastError = error;
+        } else {
+            state.failedToolCalls.push({
+                key: key,
+                tool: toolName,
+                args: args,
+                error: error,
+                count: 1
+            });
+        }
+
+        // FIX 2: Parse error semantics and store for LLM context
+        const errorInsights = parseErrorSemantics(error, toolName, args);
+        if (!state.errorSemantics) state.errorSemantics = [];
+        state.errorSemantics.push({
+            tool: toolName,
+            args: args,
+            error: error,
+            insights: errorInsights,
+            timestamp: Date.now()
+        });
+
+        // FIX 7: Add to diagnostics
+        if (!state.diagnostics) state.diagnostics = { toolsAttempted: [], errorsEncountered: [], suggestedActions: [] };
+        state.diagnostics.errorsEncountered.push({
+            tool: toolName,
+            error: error,
+            category: errorInsights.category,
+            suggestion: errorInsights.suggestedAction
+        });
+
+        // Add unique suggested actions
+        if (!state.diagnostics.suggestedActions.includes(errorInsights.suggestedAction)) {
+            state.diagnostics.suggestedActions.push(errorInsights.suggestedAction);
+        }
+    }
+
+    /**
+     * Track tool attempt for budget allocation (Fix 8)
+     */
+    function trackToolAttempt(state, toolName, success, rowCount) {
+        if (!state.toolAttemptCount) state.toolAttemptCount = {};
+        state.toolAttemptCount[toolName] = (state.toolAttemptCount[toolName] || 0) + 1;
+
+        // FIX 7: Track in diagnostics
+        if (!state.diagnostics) state.diagnostics = { toolsAttempted: [], errorsEncountered: [], suggestedActions: [] };
+        // Note: full details added in executeToolForReasonAct
+
+        // FIX 6: Update consecutive no-progress counter
+        if (success && rowCount > 0) {
+            state.consecutiveNoProgress = 0; // Reset on progress
+        } else {
+            state.consecutiveNoProgress = (state.consecutiveNoProgress || 0) + 1;
+        }
+    }
+
+    /**
+     * Execute a single tool and return the result
+     * ENHANCED with Fix 3 (Hard Retry Blocking), Fix 7 (Diagnostics), Fix 8 (Budget Tracking)
+     */
+    function executeToolForReasonAct(state, toolName, args) {
+        const tool = Tools.getTool(toolName);
+
+        if (!tool) {
+            log.error('REASON_ACT Unknown tool', { tool: toolName });
+            // FIX 7: Track in diagnostics
+            if (!state.diagnostics) state.diagnostics = { toolsAttempted: [], errorsEncountered: [], suggestedActions: [] };
+            state.diagnostics.toolsAttempted.push({ tool: toolName, args, success: false, error: 'Unknown tool', rowCount: 0 });
+            return {
+                tool: toolName,
+                args: args,
+                success: false,
+                error: 'Unknown tool: ' + toolName + '. Check tool name spelling.',
+                rowCount: 0
+            };
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // FIX 3: HARD RETRY BLOCKING - Completely prevent repeated failing calls
+        // Returns structured block info instead of boolean
+        // ═══════════════════════════════════════════════════════════════════════
+        const blockCheck = shouldBlockRetry(state, toolName, args);
+        if (blockCheck.blocked) {
+            const key = getToolArgsKey(toolName, args);
+            const failedCall = state.failedToolCalls.find(f => f.key === key);
+
+            // Build context-aware error message based on block reason
+            let errorMessage;
+            let suggestion;
+
+            switch (blockCheck.reason) {
+                case 'exact_args_failed':
+                    errorMessage = `Tool '${toolName}' with these EXACT arguments has already failed ${blockCheck.count} times. ` +
+                        `Previous error: ${failedCall?.lastError || 'Unknown'}.`;
+                    suggestion = 'You MUST use different arguments or a different tool entirely.';
+                    break;
+
+                case 'tool_exhausted':
+                    errorMessage = `Tool '${toolName}' is BLOCKED - it has been tried ${blockCheck.count} times without success.`;
+                    suggestion = 'You MUST try a completely different tool. Consider: ' +
+                        getAlternativeToolsForDiversification(toolName, args, state.resolvedEntities, state)
+                            .map(a => a.tool).join(', ');
+                    break;
+
+                case 'budget_exhausted':
+                    errorMessage = `Tool '${toolName}' has exhausted its iteration budget (${MAX_ATTEMPTS_PER_TOOL} attempts).`;
+                    suggestion = 'Budget depleted. You MUST use a different tool to continue.';
+                    break;
+
+                default:
+                    errorMessage = `Tool '${toolName}' is blocked from retry.`;
+                    suggestion = 'Try a different approach.';
+            }
+
+            Utils.auditLog('REASON_ACT HARD BLOCK', {
+                tool: toolName,
+                args: args,
+                reason: blockCheck.reason,
+                count: blockCheck.count
+            });
+
+            // FIX 7: Track blocked attempt in diagnostics
+            if (!state.diagnostics) state.diagnostics = { toolsAttempted: [], errorsEncountered: [], suggestedActions: [] };
+            state.diagnostics.toolsAttempted.push({
+                tool: toolName,
+                args,
+                success: false,
+                error: errorMessage,
+                blocked: true,
+                blockReason: blockCheck.reason
+            });
+
+            return {
+                tool: toolName,
+                args: args,
+                success: false,
+                error: errorMessage + ' ' + suggestion,
+                rowCount: 0,
+                blockedRetry: true,
+                blockReason: blockCheck.reason
+            };
+        }
+
+        // Auto-inject resolved entities
+        args = autoInjectResolvedEntities(args, state, toolName);
+
+        // Execute tool
+        const toolStart = Date.now();
+        let result = Cache.getCachedToolResult(toolName, args);
+        let fromCache = false;
+        let autoRetried = false;
+
+        if (result) {
+            fromCache = true;
+        } else {
+            result = Tools.executeTool(toolName, args);
+
+            // ═══════════════════════════════════════════════════════════════════════
+            // AGENTIC AUTO-RETRY ON VALIDATION ERRORS
+            // Uses LLM to intelligently correct parameters when validation fails
+            // Upgrades from simple regex matching to semantic understanding
+            // ═══════════════════════════════════════════════════════════════════════
+            if (!result.success && result.validationErrors && result.validationErrors.length > 0) {
+                // First try agentic correction using LLM
+                const agenticCorrection = correctParametersAgentically(
+                    toolName,
+                    args,
+                    result.validationErrors,
+                    tool.parameters
+                );
+
+                if (agenticCorrection.corrected && agenticCorrection.confidence >= 0.7) {
+                    Utils.auditLog('AGENTIC AUTO-CORRECTION: Using LLM-corrected args', {
+                        tool: toolName,
+                        originalArgs: args,
+                        correctedArgs: agenticCorrection.args,
+                        explanation: agenticCorrection.explanation,
+                        confidence: agenticCorrection.confidence
+                    });
+
+                    result = Tools.executeTool(toolName, agenticCorrection.args);
+                    autoRetried = true;
+                    args = agenticCorrection.args;
+
+                    if (!result.normalizationWarnings) result.normalizationWarnings = [];
+                    result.normalizationWarnings.push(
+                        'Agentic auto-correction: ' + agenticCorrection.explanation
+                    );
+                } else {
+                    // Fallback: Simple pattern-based correction for obvious cases
+                    const correctedArgs = { ...args };
+                    let hasCorrectable = false;
+
+                    for (const error of result.validationErrors) {
+                        // Parse "Did you mean X?" suggestions from validation
+                        const jsonMatch = error.match(/\{[\s\S]*\}/);
+                        if (jsonMatch) {
+                            // Skip JSON error formats
+                            continue;
+                        }
+
+                        // Simple string pattern matching as fallback
+                        const simpleMatch = error.match(/Unknown parameter "([^"]+)".*Did you mean "([^"]+)"\?/);
+                        if (simpleMatch) {
+                            const wrongParam = simpleMatch[1];
+                            const correctParam = simpleMatch[2];
+
+                            if (correctedArgs[wrongParam] !== undefined && correctedArgs[correctParam] === undefined) {
+                                correctedArgs[correctParam] = correctedArgs[wrongParam];
+                                delete correctedArgs[wrongParam];
+                                hasCorrectable = true;
+                            }
+                        }
+                    }
+
+                    if (hasCorrectable) {
+                        Utils.auditLog('FALLBACK AUTO-CORRECTION: Using pattern-matched args', {
+                            tool: toolName,
+                            originalArgs: args,
+                            correctedArgs: correctedArgs
+                        });
+                        result = Tools.executeTool(toolName, correctedArgs);
+                        autoRetried = true;
+                        args = correctedArgs;
+
+                        if (!result.normalizationWarnings) result.normalizationWarnings = [];
+                        result.normalizationWarnings.push('Auto-corrected parameter names based on validation suggestions');
+                    }
+                }
+            }
+
+            // ═══════════════════════════════════════════════════════════════════════
+            // AGENTIC TOOL HEALTH CLASSIFICATION
+            // After execution, classify the error type to enable smart recovery
+            // ═══════════════════════════════════════════════════════════════════════
+            if (!result.success && result.error) {
+                const healthClassification = classifyToolHealth(result, toolName, args);
+
+                // Store classification for circuit breaker and escalation decisions
+                result.healthClassification = healthClassification;
+
+                // If it's a tool bug, mark for potential alerting
+                if (healthClassification.shouldAlert) {
+                    Utils.auditLog('TOOL BUG DETECTED', {
+                        tool: toolName,
+                        errorType: healthClassification.errorType,
+                        error: result.error?.substring(0, 200),
+                        suggestedAction: healthClassification.suggestedAction
+                    });
+                }
+
+                // If suggested action is SKIP_TO_SYNTHESIZE, flag it for the state
+                if (healthClassification.suggestedAction === 'SKIP_TO_SYNTHESIZE') {
+                    state.toolHealthSuggestsSynthesize = true;
+                }
+            }
+
+            // Cache the result (using potentially corrected args)
+            Cache.cacheToolResult(toolName, args, result);
+        }
+        const toolDuration = Date.now() - toolStart;
+
+        // Build accumulated data entry
+        const dataEntry = {
+            tool: toolName,
+            args: args,
+            success: result.success !== false,
+            rowCount: result.rowCount || result.rows?.length || 0,
+            columns: result.columns || [],
+            error: result.error,
+            duration: toolDuration,
+            fromCache: fromCache,
+            // Include tool suggestions for empty results
+            suggestions: result.suggestions || [],
+            // Include validation errors if any
+            validationErrors: result.validationErrors || [],
+            // Include normalization warnings
+            normalizationWarnings: result.normalizationWarnings || []
+        };
+
+        // Store data reference if we got rows
+        if (result.success && result.rows && result.rows.length > 0) {
+            const dataRef = Cache.storeData(state.requestId, toolName, result);
+            state.dataReferences.push(dataRef);
+            dataEntry.dataRef = dataRef?.refId;
+
+            // Add preview for LLM context
+            dataEntry.preview = result.rows.slice(0, 5);
+
+            // ═══════════════════════════════════════════════════════════════════════
+            // AGENTIC FIX: Include schema with column types so LLM can reason about
+            // data structure - critical for chart generation (date vs numeric columns)
+            // ═══════════════════════════════════════════════════════════════════════
+            if (dataRef?.summary?.schema) {
+                dataEntry.schema = dataRef.summary.schema;
+            }
+
+            // Build summary
+            if (result.columns && result.columns.length > 0) {
+                const numericCols = result.columns.filter(col => {
+                    const firstVal = result.rows[0]?.[col];
+                    return typeof firstVal === 'number';
+                });
+                if (numericCols.length > 0) {
+                    const col = numericCols[0];
+                    const sum = result.rows.reduce((s, r) => s + (r[col] || 0), 0);
+                    dataEntry.summary = `Total ${col}: ${Utils.formatCurrency(sum)}`;
+                }
+            }
+        } else if (isDashboardResult(result)) {
+            // Dashboard intelligence - bridge to first-class data
+            const stored = storeDashboardDataReference(state.requestId, toolName, result);
+            if (stored && stored.dataRef) {
+                state.dataReferences.push(stored.dataRef);
+                dataEntry.dataRef = stored.dataRef.refId;
+                dataEntry.success = true;
+
+                // Use dashboardData for accurate rowCount and textSummary
+                const dashData = stored.dashboardData;
+                dataEntry.rowCount = dashData.rowCount || Object.keys(result.intelligence?.metrics || {}).length;
+                dataEntry.textSummary = dashData.textSummary;
+                dataEntry.summary = `Dashboard: ${dashData.dashboardName || result.dashboard} - ${dataEntry.rowCount} metrics loaded`;
+                dataEntry.columns = dashData.columns || [];
+
+                // Extract key metrics for preview display
+                if (result.intelligence?.metrics) {
+                    dataEntry.metrics = result.intelligence.metrics;
+                }
+
+                // Extract collections info for LLM awareness - INCLUDE refId for querying
+                if (result.intelligence?.collections) {
+                    // Get the base dashboard refId from the stored data
+                    const dashboardRefId = stored.dataRef?.refId || result.intelligence?.refId;
+
+                    dataEntry.collections = Object.entries(result.intelligence.collections).map(([name, info]) => ({
+                        name: name,
+                        count: info.count,
+                        preview: info.preview,
+                        // Include the refId so LLM knows how to query this collection
+                        refId: dashboardRefId,
+                        queryHint: `Use load_collection(refId="${dashboardRefId}", collection="${name}") to load full data`
+                    }));
+                }
+            }
+        } else if (result.success && result.dashboards && Array.isArray(result.dashboards)) {
+            // ═══════════════════════════════════════════════════════════════════════
+            // STRUCTURED DATA: list_dashboards returns dashboards array, not rows
+            // Make this first-class data so LLM knows what dashboards are available
+            // ═══════════════════════════════════════════════════════════════════════
+            dataEntry.rowCount = result.dashboards.length;
+            dataEntry.success = true;
+            dataEntry.summary = `${result.dashboards.length} dashboards available`;
+
+            // Build preview for LLM
+            dataEntry.availableDashboards = result.dashboards.map(d => ({
+                id: d.id,
+                name: d.name,
+                description: d.description,
+                use_cases: d.use_cases?.slice(0, 3)
+            }));
+
+            // Create columns for consistency
+            dataEntry.columns = ['id', 'name', 'description', 'use_cases'];
+        }
+
+        // Track entity resolution
+        if (toolName.startsWith('resolve_') && result.found && result.entity) {
+            const searchName = args.name || 'unknown';
+            state.resolvedEntities[searchName] = result.entity;
+            dataEntry.resolvedEntity = result.entity;
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // FAILURE & EMPTY RESULT TRACKING: Prevent infinite retries
+        // Track both actual failures AND empty results (success but no data)
+        // ═══════════════════════════════════════════════════════════════════════
+        const isFailure = !dataEntry.success && dataEntry.error;
+        const isEmptyResult = dataEntry.success && dataEntry.rowCount === 0 && !dataEntry.metrics;
+        const isEntityNotFound = toolName.startsWith('resolve_') && result.found === false;
+
+        if (isFailure) {
+            trackFailedToolCall(state, toolName, args, dataEntry.error);
+        } else if (isEmptyResult || isEntityNotFound) {
+            // Track empty results too - repeating them won't help
+            const reason = isEntityNotFound
+                ? `Entity not found: "${args.name || 'unknown'}"`
+                : 'Query returned 0 rows';
+            trackFailedToolCall(state, toolName, args, reason);
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // FIX 8: Track tool attempt for iteration budget
+        // FIX 6: Update consecutive no-progress counter
+        // FIX 7: Add to diagnostics for failure response
+        // ═══════════════════════════════════════════════════════════════════════
+        trackToolAttempt(state, toolName, dataEntry.success, dataEntry.rowCount);
+
+        // FIX 7: Add to diagnostics (detailed entry)
+        if (!state.diagnostics) state.diagnostics = { toolsAttempted: [], errorsEncountered: [], suggestedActions: [], timeSpent: 0 };
+        state.diagnostics.toolsAttempted.push({
+            tool: toolName,
+            args: args,
+            success: dataEntry.success,
+            rowCount: dataEntry.rowCount,
+            error: dataEntry.error || null,
+            duration: toolDuration
+        });
+        state.diagnostics.timeSpent += toolDuration;
+
+        // Record tool invocation for compatibility
+        state.toolInvocations.push({
+            tool: toolName,
+            args: args,
+            success: dataEntry.success,
+            rowCount: dataEntry.rowCount,
+            duration: toolDuration,
+            fromCache: fromCache
+        });
+
+        return dataEntry;
+    }
+
+    /**
+     * Phase 2: REASON_ACT - True ReAct Loop
+     * Iteratively reasons about what data is needed and gathers it
+     */
+    function executeReasonActPhase(state) {
+        const phaseStart = Date.now();
+
+        // Increment iteration counter
+        state.reasonActIterations = (state.reasonActIterations || 0) + 1;
+
+        // Check for max iterations to prevent infinite loops
+        if (state.reasonActIterations > MAX_REASON_ACT_ITERATIONS) {
+            Utils.auditLog('REASON_ACT max iterations reached', {
+                iterations: state.reasonActIterations,
+                dataCollected: state.accumulatedData?.length || 0
+            });
+
+            upsertThinkingStep(state, 'reason_act', {
+                title: 'Analyzing data',
+                phase: 'reason_act',
+                status: 'complete',
+                duration: Date.now() - phaseStart,
+                context: {
+                    iteration: state.reasonActIterations,
+                    maxIterationsReached: true,
+                    dataCount: state.accumulatedData?.length || 0
+                }
+            });
+
+            state.phase = PHASES.RESPOND;
+            return { success: true, nextPhase: PHASES.RESPOND };
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // FIX 6: PROGRESS-BASED CIRCUIT BREAKER
+        // Check if we're making progress - if not, escalate early
+        // ═══════════════════════════════════════════════════════════════════════
+        const circuitBreaker = checkCircuitBreaker(state);
+        if (circuitBreaker.shouldTrigger) {
+            Utils.auditLog('REASON_ACT circuit breaker triggered', {
+                reason: circuitBreaker.reason,
+                consecutiveFailures: circuitBreaker.consecutiveFailures,
+                escalationAction: circuitBreaker.escalationAction
+            });
+
+            state.circuitBreakerTriggered = true;
+
+            // ═══════════════════════════════════════════════════════════════════════
+            // SMART ESCALATION: Based on failure mode, decide best action
+            // ═══════════════════════════════════════════════════════════════════════
+
+            // RETRY_WITH_HINT: Don't escalate yet - give LLM one more chance with guidance
+            if (circuitBreaker.escalationAction === 'RETRY_WITH_HINT' && circuitBreaker.failureMode) {
+                Utils.auditLog('REASON_ACT circuit breaker - retry with hint', {
+                    failureMode: circuitBreaker.failureMode.mode,
+                    remediation: circuitBreaker.failureMode.remediation
+                });
+
+                // Store failure mode hint for injection into next REASON_ACT prompt
+                state.failureModeHint = circuitBreaker.failureMode;
+                state.circuitBreakerTriggered = false; // Allow one more iteration
+
+                upsertThinkingStep(state, 'reason_act', {
+                    title: 'Adjusting search strategy',
+                    phase: 'reason_act',
+                    status: 'complete',
+                    duration: Date.now() - phaseStart,
+                    context: {
+                        failureMode: circuitBreaker.failureMode.mode,
+                        remediation: circuitBreaker.failureMode.remediation
+                    }
+                });
+
+                // Don't escalate - let REASON_ACT continue with the hint
+                // The hint will be injected via buildIntentGuidance or buildAccumulatedDataSummary
+                return { success: true, nextPhase: PHASES.REASON_ACT };
+            }
+
+            // ═══════════════════════════════════════════════════════════════════════
+            // ANSWER_WITH_EXISTING: Duplicate tool calls detected - use existing data
+            // Don't waste more iterations, we already have the data we need
+            // ═══════════════════════════════════════════════════════════════════════
+            if (circuitBreaker.escalationAction === 'ANSWER_WITH_EXISTING') {
+                Utils.auditLog('REASON_ACT circuit breaker - using existing data (duplicate calls)', {
+                    duplicates: circuitBreaker.duplicateToolCalls ? Object.keys(circuitBreaker.duplicateToolCalls).length : 0,
+                    dataCount: state.accumulatedData?.length || 0
+                });
+
+                upsertThinkingStep(state, 'reason_act', {
+                    title: 'Using collected data',
+                    phase: 'reason_act',
+                    status: 'complete',
+                    duration: Date.now() - phaseStart,
+                    context: {
+                        circuitBreaker: true,
+                        escalation: 'ANSWER_WITH_EXISTING',
+                        reason: 'Duplicate tool calls detected - data already collected',
+                        dataCount: state.accumulatedData?.length || 0
+                    }
+                });
+
+                // Go directly to REFLECT to evaluate what we have
+                state.phase = PHASES.REFLECT;
+                return { success: true, nextPhase: PHASES.REFLECT };
+            }
+
+            // Escalate based on the suggested action
+            if (circuitBreaker.escalationAction === 'SYNTHESIZE' &&
+                state.synthesize?.enabled &&
+                (state.synthesize?.iterations || 0) < MAX_SYNTHESIZE_ITERATIONS) {
+
+                upsertThinkingStep(state, 'reason_act', {
+                    title: 'No progress - trying custom query',
+                    phase: 'reason_act',
+                    status: 'complete',
+                    duration: Date.now() - phaseStart,
+                    context: {
+                        circuitBreaker: true,
+                        escalation: 'SYNTHESIZE',
+                        reason: circuitBreaker.reason
+                    }
+                });
+
+                state.phase = PHASES.SYNTHESIZE;
+                return { success: true, nextPhase: PHASES.SYNTHESIZE };
+            } else {
+                // CLARIFY or give up - go to RESPOND with diagnostic info
+                upsertThinkingStep(state, 'reason_act', {
+                    title: 'Unable to find data',
+                    phase: 'reason_act',
+                    status: 'complete',
+                    duration: Date.now() - phaseStart,
+                    context: {
+                        circuitBreaker: true,
+                        escalation: 'RESPOND',
+                        reason: circuitBreaker.reason
+                    }
+                });
+
+                state.reflection.gaveUp = true;
+                // Generate user-friendly message instead of raw technical error
+                state.reflection.giveUpExplanation = generateNoDataExplanation(state, circuitBreaker);
+                state.phase = PHASES.RESPOND;
+                return { success: true, nextPhase: PHASES.RESPOND };
+            }
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // FIX 4: TOOL DIVERSIFICATION REQUIREMENT
+        // Check if we need to force trying different tools
+        // ═══════════════════════════════════════════════════════════════════════
+        const diversification = checkToolDiversificationRequired(state);
+        if (diversification.required) {
+            Utils.auditLog('REASON_ACT tool diversification required', {
+                reason: diversification.reason,
+                exhaustedTool: diversification.exhaustedTool,
+                suggestions: diversification.suggestions.map(s => s.tool)
+            });
+
+            state.diversificationTriggered = true;
+
+            // Add diversification context to the state for prompt building
+            state.forcedDiversification = {
+                reason: diversification.reason,
+                blockedTools: Object.keys(state.blockedTools || {}),
+                suggestedAlternatives: diversification.suggestions
+            };
+        }
+
+        // Build the prompt with accumulated data
+        // Note: SYNTHESIZE hint is automatically computed inside buildAccumulatedDataSummary()
+
+        // Build needs_resolution context from INTENT phase to guide CLARIFY behavior
+        const needsResolution = state.intent?.needsResolution;
+        const needsResolutionContext = needsResolution
+            ? '- Intent analysis suggests this question may need clarification - CLARIFY is acceptable if still unclear after analysis.'
+            : '- Intent was CLEAR - strongly prefer using DEFAULT PERIODS and proceeding. Do NOT ask for clarification unless data is genuinely missing after trying tools.';
+
+        // Build comparison hint based on detected time_scope from intent phase
+        const timeScope = state.intent?.time_scope || state.intent?.timeScope;
+        const comparisonScopes = ['yoy', 'mom', 'qoq', 'comparison', 'prior_year', 'last_year', 'year_over_year'];
+        const isComparisonIntent = comparisonScopes.some(scope =>
+            timeScope?.toLowerCase()?.includes(scope) ||
+            state.intent?.intent === 'comparison'
+        );
+        const comparisonHint = isComparisonIntent
+            ? `
+⚠️ COMPARISON DETECTED: Your question involves period comparison (${timeScope || 'comparison'}).
+   USE compare_to PARAMETER: get_income_statement(period="ytd", compare_to="prior_year_ytd")
+   This gives you unified data with pre-computed change and pct_change columns.
+   DO NOT call the tool twice with different periods - use compare_to instead!`
+            : '';
+
+        // Build intent guidance with recommended period from INTENT phase
+        const intentGuidance = buildIntentGuidance(state);
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // AGENTIC ENHANCED TOOL SCHEMA INJECTION
+        // If there have been validation errors, include full parameter schemas
+        // to help the LLM use correct parameters on subsequent attempts
+        // ═══════════════════════════════════════════════════════════════════════
+        const hasValidationErrors = (state.accumulatedData || []).some(
+            d => d.validationErrors && d.validationErrors.length > 0
+        );
+
+        let toolListForPrompt;
+        if (hasValidationErrors || state.reasonActIterations >= 2) {
+            // Use enhanced tool list with full schemas after validation errors
+            // or after 2+ iterations to help LLM understand tool parameters better
+            const relevantTools = state.capabilityAssessment?.bestTools
+                ?.map(t => t.tool) || null;
+            toolListForPrompt = getEnhancedToolListForPrompt(relevantTools);
+            Utils.debugLog('Using enhanced tool list for prompt', {
+                reason: hasValidationErrors ? 'validation_errors' : 'multiple_iterations',
+                relevantTools: relevantTools?.length || 'all'
+            });
+        } else {
+            toolListForPrompt = Tools.getToolListForPrompt();
+        }
+
+        const prompt = REASON_ACT_PROMPT
+            .replace('{date_context}', getDateContext())
+            .replace('{history_context}', buildHistoryContext(state))
+            .replace('{question}', state.message)
+            .replace('{accumulated_data}', buildAccumulatedDataSummary(state))
+            .replace('{tool_list}', toolListForPrompt)
+            .replace('{period_options}', Tools.getAvailablePeriods())
+            .replace('{needs_resolution_context}', needsResolutionContext)
+            .replace('{comparison_hint}', comparisonHint)
+            .replace('{intent_guidance}', intentGuidance);
+
+        // Add thinking step
+        upsertThinkingStep(state, 'reason_act', {
+            title: state.reasonActIterations === 1 ? 'Planning analysis' : 'Evaluating progress',
+            phase: 'reason_act',
+            status: 'active',
+            context: {
+                iteration: state.reasonActIterations,
+                dataCollected: state.accumulatedData?.length || 0
+            }
+        });
+
+        try {
+            // ═══════════════════════════════════════════════════════════════════════
+            // AGENTIC ADAPTIVE MODEL TIER
+            // Upgrade model quality based on failure history for better recovery
+            // ═══════════════════════════════════════════════════════════════════════
+            const adaptiveTier = getAdaptiveModelTier('reason_act', state);
+            Utils.debugLog('REASON_ACT adaptive tier', {
+                baseTier: getTierForPhase('reason_act', state),
+                adaptiveTier: adaptiveTier,
+                iteration: state.reasonActIterations
+            });
+
+            const response = AIProviders.callAI(prompt, {
+                tier: adaptiveTier,
+                temperature: 0.2,
+                jsonMode: true,
+                maxTokens: 800,
+                purpose: 'SCA:reason_act'
+            });
+
+            const parsed = parseJsonResponse(response?.text);
+            const duration = Date.now() - phaseStart;
+
+            if (!parsed || !parsed.action) {
+                throw new Error('Invalid REASON_ACT response - missing action');
+            }
+
+            Utils.debugLog('REASON_ACT decision', {
+                iteration: state.reasonActIterations,
+                action: parsed.action,
+                thinking: parsed.thinking?.substring(0, 100),
+                tool: parsed.tool
+            });
+
+            // Store narration
+            state.narration = {
+                text: parsed.userNarration || 'Analyzing...',
+                phase: 'reason_act',
+                timestamp: Date.now()
+            };
+
+            // Handle the action
+            switch (parsed.action) {
+                case 'GET_DATA': {
+                    // Validate we have tool and args
+                    if (!parsed.tool) {
+                        throw new Error('GET_DATA action requires tool name');
+                    }
+
+                    const toolName = parsed.tool;
+                    let args = parsed.args || {};
+
+                    // ═══════════════════════════════════════════════════════════════════════
+                    // FIX: PRE-CHECK FOR EXISTING TOOL RESULT (SKIP DUPLICATES)
+                    // If we already called this exact tool with these exact args, skip it
+                    // ═══════════════════════════════════════════════════════════════════════
+                    const existingCheck = checkForExistingToolResult(state, toolName, args);
+                    if (existingCheck.isDuplicate) {
+                        Utils.debugLog('REASON_ACT skipping duplicate tool call', {
+                            tool: toolName,
+                            args: args,
+                            existingRowCount: existingCheck.existingResult?.rowCount
+                        });
+
+                        // Update thinking step to indicate we're reusing data
+                        upsertThinkingStep(state, 'reason_act', {
+                            title: 'Using cached data',
+                            phase: 'reason_act',
+                            status: 'complete',
+                            duration: duration,
+                            context: {
+                                iteration: state.reasonActIterations,
+                                action: 'SKIP_DUPLICATE',
+                                tool: toolName,
+                                reason: 'Already have data from this tool call'
+                            }
+                        });
+
+                        // Don't execute the tool again - loop back to REASON_ACT
+                        // The LLM will see the existing data in accumulated_data
+                        state.phase = PHASES.REASON_ACT;
+                        return { success: true, nextPhase: PHASES.REASON_ACT };
+                    }
+
+                    // Add tool call step for UI
+                    addToolCallStep(state, {
+                        title: Tools.getToolDisplayName(toolName, args),
+                        tool: toolName,
+                        status: 'active'
+                    });
+
+                    // Execute the tool
+                    const toolResult = executeToolForReasonAct(state, toolName, args);
+
+                    // Add to accumulated data
+                    state.accumulatedData.push(toolResult);
+
+                    // Update tool call step
+                    updateToolCallStep(state, toolName, {
+                        status: 'complete',
+                        params: args,
+                        result: {
+                            success: toolResult.success,
+                            rowCount: toolResult.rowCount,
+                            columns: toolResult.columns,
+                            preview: toolResult.preview?.slice(0, 3)
+                        },
+                        duration: toolResult.duration,
+                        summary: toolResult.success
+                            ? `Found ${toolResult.rowCount} results`
+                            : toolResult.error
+                    });
+
+                    // Update thinking step
+                    upsertThinkingStep(state, 'reason_act', {
+                        title: 'Gathering data',
+                        phase: 'reason_act',
+                        status: 'complete',
+                        duration: duration + toolResult.duration,
+                        context: {
+                            iteration: state.reasonActIterations,
+                            action: 'GET_DATA',
+                            tool: toolName,
+                            success: toolResult.success,
+                            rowCount: toolResult.rowCount
+                        },
+                        debug: buildDebugInfo(prompt, response, state, {
+                            reasonActDecision: parsed,
+                            toolResult: toolResult
+                        })
+                    });
+
+                    // Loop back to REASON_ACT to evaluate if we have enough data
+                    state.phase = PHASES.REASON_ACT;
+                    return { success: true, nextPhase: PHASES.REASON_ACT };
+                }
+
+                case 'GET_DATA_BATCH': {
+                    // Execute multiple independent tools in one step
+                    if (!parsed.tools || !Array.isArray(parsed.tools) || parsed.tools.length === 0) {
+                        throw new Error('GET_DATA_BATCH action requires tools array');
+                    }
+
+                    Utils.debugLog('REASON_ACT executing batch tools', {
+                        count: parsed.tools.length,
+                        tools: parsed.tools.map(t => t.tool)
+                    });
+
+                    let totalDuration = 0;
+                    const batchResults = [];
+
+                    // Execute each tool in the batch
+                    for (const toolSpec of parsed.tools) {
+                        const toolName = toolSpec.tool;
+                        const args = toolSpec.args || {};
+
+                        if (!toolName) {
+                            Utils.auditLog('GET_DATA_BATCH skipping invalid tool spec', toolSpec);
+                            continue;
+                        }
+
+                        // ═══════════════════════════════════════════════════════════════════════
+                        // FIX: SKIP DUPLICATE TOOL CALLS IN BATCH
+                        // If we already have data from this exact tool call, skip it
+                        // ═══════════════════════════════════════════════════════════════════════
+                        const existingCheck = checkForExistingToolResult(state, toolName, args);
+                        if (existingCheck.isDuplicate) {
+                            Utils.debugLog('GET_DATA_BATCH skipping duplicate tool call', {
+                                tool: toolName,
+                                args: args,
+                                existingRowCount: existingCheck.existingResult?.rowCount
+                            });
+                            batchResults.push({
+                                tool: toolName,
+                                success: true,
+                                rowCount: existingCheck.existingResult?.rowCount || 0,
+                                skipped: true,
+                                reason: 'Already have data from this tool call'
+                            });
+                            continue; // Skip to next tool in batch
+                        }
+
+                        // Add tool call step for UI
+                        addToolCallStep(state, {
+                            title: Tools.getToolDisplayName(toolName, args),
+                            tool: toolName,
+                            status: 'active'
+                        });
+
+                        // Execute the tool
+                        const toolResult = executeToolForReasonAct(state, toolName, args);
+                        totalDuration += toolResult.duration || 0;
+
+                        // Add to accumulated data
+                        state.accumulatedData.push(toolResult);
+                        batchResults.push({
+                            tool: toolName,
+                            success: toolResult.success,
+                            rowCount: toolResult.rowCount
+                        });
+
+                        // Update tool call step
+                        updateToolCallStep(state, toolName, {
+                            status: 'complete',
+                            params: args,
+                            result: {
+                                success: toolResult.success,
+                                rowCount: toolResult.rowCount,
+                                columns: toolResult.columns,
+                                preview: toolResult.preview?.slice(0, 3)
+                            },
+                            duration: toolResult.duration,
+                            summary: toolResult.success
+                                ? `Found ${toolResult.rowCount} results`
+                                : toolResult.error
+                        });
+                    }
+
+                    // Update thinking step
+                    upsertThinkingStep(state, 'reason_act', {
+                        title: 'Gathering data (batch)',
+                        phase: 'reason_act',
+                        status: 'complete',
+                        duration: duration + totalDuration,
+                        context: {
+                            iteration: state.reasonActIterations,
+                            action: 'GET_DATA_BATCH',
+                            toolCount: parsed.tools.length,
+                            results: batchResults
+                        },
+                        debug: buildDebugInfo(prompt, response, state, {
+                            reasonActDecision: parsed,
+                            batchResults: batchResults
+                        })
+                    });
+
+                    // Loop back to REASON_ACT to evaluate if we have enough data
+                    state.phase = PHASES.REASON_ACT;
+                    return { success: true, nextPhase: PHASES.REASON_ACT };
+                }
+
+                case 'ANSWER': {
+                    // LLM decided we have enough data - proceed to RESPOND
+                    Utils.debugLog('REASON_ACT ready to answer', {
+                        iterations: state.reasonActIterations,
+                        dataCount: state.accumulatedData?.length || 0,
+                        thinking: parsed.thinking
+                    });
+
+                    upsertThinkingStep(state, 'reason_act', {
+                        title: 'Analysis complete',
+                        phase: 'reason_act',
+                        status: 'complete',
+                        duration: duration,
+                        context: {
+                            iteration: state.reasonActIterations,
+                            action: 'ANSWER',
+                            dataCollected: state.accumulatedData?.length || 0,
+                            reasoning: parsed.thinking?.substring(0, 100)
+                        },
+                        debug: buildDebugInfo(prompt, response, state, { reasonActDecision: parsed })
+                    });
+
+                    state.phase = PHASES.RESPOND;
+                    return { success: true, nextPhase: PHASES.RESPOND };
+                }
+
+                case 'SYNTHESIZE': {
+                    // LLM wants to write custom SQL
+                    Utils.debugLog('REASON_ACT routing to SYNTHESIZE', {
+                        thinking: parsed.thinking
+                    });
+
+                    upsertThinkingStep(state, 'reason_act', {
+                        title: 'Need custom query',
+                        phase: 'reason_act',
+                        status: 'complete',
+                        duration: duration,
+                        context: {
+                            iteration: state.reasonActIterations,
+                            action: 'SYNTHESIZE',
+                            reasoning: parsed.thinking?.substring(0, 100)
+                        },
+                        debug: buildDebugInfo(prompt, response, state, { reasonActDecision: parsed })
+                    });
+
+                    state.phase = PHASES.SYNTHESIZE;
+                    return { success: true, nextPhase: PHASES.SYNTHESIZE };
+                }
+
+                case 'CLARIFY': {
+                    // Need user clarification - store question and go to respond
+                    Utils.debugLog('REASON_ACT needs clarification', {
+                        question: parsed.clarification_question
+                    });
+
+                    state.clarificationNeeded = parsed.clarification_question;
+
+                    upsertThinkingStep(state, 'reason_act', {
+                        title: 'Need clarification',
+                        phase: 'reason_act',
+                        status: 'complete',
+                        duration: duration,
+                        context: {
+                            iteration: state.reasonActIterations,
+                            action: 'CLARIFY',
+                            question: parsed.clarification_question
+                        },
+                        debug: buildDebugInfo(prompt, response, state, { reasonActDecision: parsed })
+                    });
+
+                    state.phase = PHASES.RESPOND;
+                    return { success: true, nextPhase: PHASES.RESPOND };
+                }
+
+                default: {
+                    // Unknown action - log and proceed to respond
+                    Utils.auditLog('REASON_ACT unknown action', { action: parsed.action });
+
+                    upsertThinkingStep(state, 'reason_act', {
+                        title: 'Analysis complete',
+                        phase: 'reason_act',
+                        status: 'complete',
+                        duration: duration,
+                        context: {
+                            iteration: state.reasonActIterations,
+                            action: parsed.action,
+                            unknown: true
+                        }
+                    });
+
+                    state.phase = PHASES.RESPOND;
+                    return { success: true, nextPhase: PHASES.RESPOND };
+                }
+            }
+
+        } catch (e) {
+            const duration = Date.now() - phaseStart;
+            log.error('REASON_ACT phase failed', {
+                error: e.message,
+                iteration: state.reasonActIterations
+            });
+
+            state.errors.push({
+                phase: 'reason_act',
+                error: e.message,
+                timestamp: Date.now()
+            });
+
+            upsertThinkingStep(state, 'reason_act', {
+                title: 'Analysis complete',
+                phase: 'reason_act',
+                status: 'complete',
+                duration: duration,
+                context: {
+                    iteration: state.reasonActIterations,
+                    fallback: true,
+                    error: e.message.substring(0, 100)
+                }
+            });
+
+            // If we have some data, proceed to respond; otherwise try synthesize
+            if (state.accumulatedData && state.accumulatedData.length > 0) {
+                state.phase = PHASES.RESPOND;
+                return { success: true, nextPhase: PHASES.RESPOND };
+            } else if (state.synthesize?.enabled) {
+                state.phase = PHASES.SYNTHESIZE;
+                return { success: true, nextPhase: PHASES.SYNTHESIZE };
+            } else {
+                state.phase = PHASES.RESPOND;
+                return { success: true, nextPhase: PHASES.RESPOND };
+            }
+        }
+    }
+
+    /**
+     * Phase 2 (DEPRECATED): SELECT - Pick tools by name
+     * Kept for backwards compatibility - REASON_ACT is the new flow
+     */
+    function executeSelectPhase(state) {
+        const phaseStart = Date.now();
+
+        // Legacy compatibility path: the production flow uses REASON_ACT directly.
+        // Keep this branch deterministic so older states cannot re-enable auxiliary
+        // control-plane AI calls during rollout.
+        if (state.intent && state.intent.intent === 'general') {
+            state.selectedTools = [];
+            state.phase = PHASES.RESPOND;
+
+            upsertThinkingStep(state, 'select', {
+                title: 'Selecting analysis tools',
+                phase: 'select',
+                status: 'complete',
+                duration: Date.now() - phaseStart,
+                context: {
+                    intent: 'general',
+                    selectedTools: [],
+                    conversational: true,
+                    skippedToolSelection: true,
+                    deterministicFallback: true
+                }
+            });
+
+            Utils.debugLog('SCA SELECT phase - deterministic conversational fallback');
+            return { success: true, nextPhase: PHASES.RESPOND };
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // FOLLOW-UP DATA REUSE vs DRILL-DOWN DETECTION
+        // Check if user is asking for DRILL-DOWN details (specific collection data)
+        // or just referencing previous data for context
+        // Uses semantic is_drill_down from INTENT phase (replaces hardcoded keywords)
+        // ═══════════════════════════════════════════════════════════════════════
+        if (state.intent.intent === 'follow_up' && state.previousDataRefs && state.previousDataRefs.length > 0) {
+            // Use semantic drill-down detection from INTENT phase
+            const isDrillDownRequest = state.intent.is_drill_down === true;
+
+            // Check if previous data was from a dashboard (has collections)
+            const hasDashboardData = state.previousDataRefs.some(ref => {
+                const cols = ref.summary?.columns || [];
+                return cols.includes('refId') || ref.refId?.startsWith('dash_');
+            });
+
+            if (isDrillDownRequest && hasDashboardData) {
+                // This looks like a drill-down request - let LLM select load_cached_data
+                Utils.debugLog('SCA SELECT phase - detected drill-down request, allowing tool selection', {
+                    message: state.message.substring(0, 50),
+                    hasDashboardData: true,
+                    drillDownContext: state.intent.drill_down_context
+                });
+                // Continue to normal tool selection (don't skip)
+            } else {
+                // Simple follow-up - reuse previous data
+                Utils.debugLog('SCA SELECT phase - simple follow-up, reusing previous data');
+
+                // Reuse previous data references
+                state.dataReferences = state.previousDataRefs;
+                state.selectedTools = []; // No new tools needed
+
+                upsertThinkingStep(state, 'select', {
+                    title: 'Using previous results',
+                    phase: 'select',
+                    status: 'complete',
+                    duration: Date.now() - phaseStart,
+                    context: {
+                        intent: state.intent.intent,
+                        reusingPreviousData: true,
+                        dataRefs: state.dataReferences.length
+                    }
+                });
+
+                // Skip INVOKE and go straight to REFLECT (which will proceed to RESPOND)
+                state.phase = PHASES.REFLECT;
+                return { success: true, nextPhase: PHASES.REFLECT };
+            }
+        }
+
+        const entityContext = state.intent.entities && state.intent.entities.length > 0
+            ? `Mentioned entities: ${state.intent.entities.join(', ')}`
+            : 'No specific entities mentioned';
+
+        // Build context about previously fetched data (for drill-down queries)
+        let availableDataContext = '';
+        if (state.previousDataRefs && state.previousDataRefs.length > 0) {
+            availableDataContext = '\nPREVIOUSLY FETCHED DATA (available for drill-down):';
+            state.previousDataRefs.forEach(ref => {
+                const summary = ref.summary || {};
+                availableDataContext += `\n- Tool: ${summary.tool || 'unknown'}, RefId: ${ref.refId}`;
+                if (summary.columns) {
+                    // Check for collection rows
+                    const collectionInfo = (summary.columns || []).includes('refId') ?
+                        ' (dashboard with collections - can drill into arBuckets, apBuckets, weeklyProjection, etc.)' : '';
+                    availableDataContext += collectionInfo;
+                }
+            });
+            availableDataContext += '\n\nIf user asks about details/drill-down, use load_cached_data with ref_id and collection_name.\n';
+        }
+
+        const prompt = SELECT_PROMPT
+            .replace('{intent}', state.intent.intent)
+            .replace('{tool_list}', Tools.getToolListForPrompt())
+            .replace('{question}', state.message)
+            .replace('{entity_context}', entityContext)
+            .replace('{date_context}', getDateContext())
+            .replace('{history_context}', buildHistoryContext(state))
+            .replace('{available_data_context}', availableDataContext);
+
+        upsertThinkingStep(state, 'select', {
+            title: 'Selecting analysis tools',
+            phase: 'select',
+            status: 'active',
+            context: {
+                intent: state.intent.intent,
+                availableTools: Object.keys(Tools.getToolManifest()).length
+            }
+        });
+
+        try {
+            const response = AIProviders.callAI(prompt, {
+                tier: getTierForPhase('select', state),
+                temperature: 0.1,
+                jsonMode: true,
+                purpose: 'SCA:select'
+            });
+
+            const parsed = parseJsonResponse(response?.text);
+            const duration = Date.now() - phaseStart;
+            state.phaseTimings.select = duration;
+
+            if (parsed && parsed.tools && parsed.tools.length > 0) {
+                // Normalize tool selection - handle both string format and object format
+                // LLM might return: ["tool_name"] OR [{tool_name: "name", parameters: {}}]
+                let selectedTools = parsed.tools
+                    .map(t => typeof t === 'string' ? t : (t.tool_name || t.name || null))
+                    .filter(t => t && t !== 'format_response')
+                    .slice(0, MAX_TOOL_INVOCATIONS);
+
+                // Get default tools if LLM didn't select any
+                if (selectedTools.length === 0) {
+                    selectedTools = getDefaultToolsForIntent(state.intent.intent, state);
+                }
+
+                state.selectedTools = selectedTools;
+
+                // OPTIMIZATION: Skip directly to RESPOND for conversational queries (no tools needed)
+                if (selectedTools.length === 0 && state.intent.intent === 'general') {
+                    state.phase = PHASES.RESPOND;
+
+                    upsertThinkingStep(state, 'select', {
+                        title: 'Selecting analysis tools',
+                        phase: 'select',
+                        status: 'complete',
+                        duration: duration,
+                        context: {
+                            intent: state.intent.intent,
+                            selectedTools: [],
+                            conversational: true
+                        },
+                        debug: buildDebugInfo(prompt, response, state, { parsedSelection: parsed })
+                    });
+
+                    Utils.debugLog('SCA Select phase - conversational query, skipping to RESPOND');
+                    return { success: true, nextPhase: PHASES.RESPOND };
+                }
+
+                state.phase = PHASES.INVOKE;
+
+                // Store progressive narration for frontend display
+                state.narration = {
+                    text: parsed.userNarration || 'Gathering your financial data...',
+                    phase: 'select',
+                    timestamp: Date.now()
+                };
+
+                upsertThinkingStep(state, 'select', {
+                    title: 'Selecting analysis tools',
+                    phase: 'select',
+                    status: 'complete',
+                    duration: duration,
+                    context: {
+                        intent: state.intent.intent,
+                        selectedTools: state.selectedTools,
+                        reasoning: parsed.reasoning
+                    },
+                    debug: buildDebugInfo(prompt, response, state, { parsedSelection: parsed })
+                });
+
+                Utils.debugLog('SCA Select phase complete', { tools: state.selectedTools, duration: duration });
+                return { success: true, nextPhase: PHASES.INVOKE };
+            } else {
+                throw new Error('No tools selected from response');
+            }
+        } catch (e) {
+            const duration = Date.now() - phaseStart;
+            log.error('SCA Select phase failed', { error: e.message, duration: duration });
+            state.errors.push({ phase: 'select', error: e.message, timestamp: Date.now() });
+
+            // Default to a sensible tool based on intent
+            state.selectedTools = getDefaultToolsForIntent(state.intent.intent, state);
+
+            // OPTIMIZATION: Skip directly to RESPOND for conversational queries
+            if (state.selectedTools.length === 0 && state.intent.intent === 'general') {
+                state.phase = PHASES.RESPOND;
+
+                upsertThinkingStep(state, 'select', {
+                    title: 'Selecting analysis tools',
+                    phase: 'select',
+                    status: 'complete',
+                    duration: duration,
+                    context: {
+                        selectedTools: [],
+                        conversational: true,
+                        fallback: true,
+                        error: e.message
+                    }
+                });
+
+                return { success: true, nextPhase: PHASES.RESPOND };
+            }
+
+            state.phase = PHASES.INVOKE;
+
+            upsertThinkingStep(state, 'select', {
+                title: 'Selecting analysis tools',
+                phase: 'select',
+                status: 'complete',
+                duration: duration,
+                context: {
+                    selectedTools: state.selectedTools,
+                    fallback: true,
+                    error: e.message
+                }
+            });
+
+            return { success: true, nextPhase: PHASES.INVOKE };
+        }
+    }
+
+    /**
+     * INTELLIGENCE FIX: Auto-inject resolved entity IDs into tool arguments
+     * When we have previously resolved an entity, ensure the tool gets the correct ID
+     * even if the LLM forgot to include it or used the wrong value.
+     *
+     * @param {Object} args - Tool arguments from LLM
+     * @param {Object} state - Current streaming state
+     * @param {string} toolName - Name of the tool being invoked
+     * @returns {Object} Enhanced arguments with entity IDs injected
+     */
+    function autoInjectResolvedEntities(args, state, toolName) {
+        if (!state.resolvedEntities || Object.keys(state.resolvedEntities).length === 0) {
+            return args;
+        }
+
+        const enhanced = { ...args };
+        const resolvedEntries = Object.entries(state.resolvedEntities);
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // FULLY DYNAMIC ENTITY ID INJECTION
+        // Inspects tool's parameter schema to find matching parameters
+        // Works for standard entities AND custom record types
+        // ═══════════════════════════════════════════════════════════════════════
+
+        // Get tool schema to determine which parameters it accepts
+        const tool = Tools.getTool(toolName);
+        const toolParams = tool?.parameters?.properties || {};
+        const toolParamNames = Object.keys(toolParams);
+
+        for (const [searchTerm, entity] of resolvedEntries) {
+            if (!entity || !entity.id) continue;
+
+            const entityType = (entity.type || '').toLowerCase();
+
+            // Dynamically find matching parameter names from tool schema
+            const candidateParams = findEntityParamNames(entityType, toolParamNames);
+
+            // Try to inject into each candidate parameter if the tool accepts it
+            for (const paramName of candidateParams) {
+                // Check if tool accepts this parameter AND we haven't already set it
+                if (toolParams[paramName] && !enhanced[paramName]) {
+                    enhanced[paramName] = entity.id;
+                    Utils.debugLog('Dynamic entity ID injection', {
+                        toolName,
+                        paramName,
+                        entityName: entity.name,
+                        entityId: entity.id,
+                        entityType: entityType,
+                        detectionMethod: 'schema_introspection'
+                    });
+                    // Only inject into the first matching parameter
+                    break;
+                }
+            }
+        }
+
+        return enhanced;
+    }
+
+    /**
+     * Dynamically find parameter names that match an entity type
+     * Works for standard entities AND custom record types
+     *
+     * @param {string} entityType - The entity type (e.g., 'customer', 'vendor', 'customrecord_contact')
+     * @param {Array<string>} toolParamNames - Array of parameter names the tool accepts
+     * @returns {Array<string>} Ordered list of matching parameter names
+     */
+    function findEntityParamNames(entityType, toolParamNames) {
+        const entityLower = entityType.toLowerCase();
+        const candidates = [];
+
+        // Priority 1: Exact match with _id suffix (customer_id, vendor_id, etc.)
+        const exactMatch = `${entityLower}_id`;
+        if (toolParamNames.includes(exactMatch)) {
+            candidates.push(exactMatch);
+        }
+
+        // Priority 2: Handle special cases (project -> job_id)
+        const aliasMap = {
+            'project': 'job_id',
+            'job': 'project_id'
+        };
+        if (aliasMap[entityLower] && toolParamNames.includes(aliasMap[entityLower])) {
+            candidates.push(aliasMap[entityLower]);
+        }
+
+        // Priority 3: Check for custom record types (customrecord_xyz -> customrecord_xyz_id)
+        if (entityLower.startsWith('customrecord_')) {
+            const customParamName = `${entityLower}_id`;
+            if (toolParamNames.includes(customParamName)) {
+                candidates.push(customParamName);
+            }
+            // Also check for generic record_id
+            if (toolParamNames.includes('record_id') && !candidates.includes('record_id')) {
+                candidates.push('record_id');
+            }
+        }
+
+        // Priority 4: Generic entity_id (works for any entity type)
+        if (toolParamNames.includes('entity_id') && !candidates.includes('entity_id')) {
+            candidates.push('entity_id');
+        }
+
+        // Priority 5: Fuzzy match - parameter contains entity type
+        for (const paramName of toolParamNames) {
+            const paramLower = paramName.toLowerCase();
+            if (paramLower.includes(entityLower) && paramLower.endsWith('_id')) {
+                if (!candidates.includes(paramName)) {
+                    candidates.push(paramName);
+                }
+            }
+        }
+
+        // Priority 6: For common entities, also check plural forms
+        const pluralMap = {
+            'vendor': 'vendor_ids',
+            'customer': 'customer_ids',
+            'employee': 'employee_ids'
+        };
+        if (pluralMap[entityLower] && toolParamNames.includes(pluralMap[entityLower])) {
+            // Note: This would need array handling in the injection logic
+            // For now, just note its availability but don't add to candidates
+            Utils.debugLog('Plural parameter available', { entityType, param: pluralMap[entityLower] });
+        }
+
+        return candidates;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // AUTO-INJECT CACHE REF_ID
+    // When load_cached_data is called without ref_id, auto-detect from available refs
+    // ═══════════════════════════════════════════════════════════════════════════
+    function autoInjectCacheRefId(args, state, toolName) {
+        // Only applies to load_cached_data tool
+        if (toolName !== 'load_cached_data') {
+            return args;
+        }
+
+        const enhanced = { ...args };
+
+        // Gather all available data refs (current request + previous request)
+        const allRefs = [
+            ...(state.dataReferences || []),
+            ...(state.previousDataRefs || [])
+        ];
+
+        if (enhanced.ref_id && !enhanced.request_id) {
+            const matchedRef = allRefs.find(ref => ref.refId === enhanced.ref_id);
+            if (matchedRef && matchedRef.requestId) {
+                enhanced.request_id = matchedRef.requestId;
+            }
+            return enhanced;
+        }
+
+        if (allRefs.length === 0) {
+            Utils.debugLog('autoInjectCacheRefId - no refs available');
+            return args;
+        }
+
+        // If collection_name is provided, find a dashboard ref that has this collection
+        if (args.collection_name) {
+            const collectionNameLower = args.collection_name.toLowerCase();
+
+            for (const ref of allRefs) {
+                // Only check dashboard refs
+                if (!ref.refId || !ref.refId.startsWith('dash_')) {
+                    continue;
+                }
+
+                // Load the stored data to check its collections
+                const storedData = Cache.loadRows(ref.requestId || state.requestId, ref.refId, 0, 1);
+                const intelligence = storedData.intelligence;
+
+                if (intelligence && intelligence.collections) {
+                    // Check if this dashboard has the requested collection
+                    const collectionNames = Object.keys(intelligence.collections).map(c => c.toLowerCase());
+                    if (collectionNames.includes(collectionNameLower)) {
+                        enhanced.ref_id = ref.refId;
+                        if (ref.requestId) {
+                            enhanced.request_id = ref.requestId;
+                        }
+                        Utils.debugLog('autoInjectCacheRefId - auto-injected ref_id from collection match', {
+                            collection_name: args.collection_name,
+                            ref_id: ref.refId,
+                            dashboard: ref.summary?.dashboardName || 'unknown'
+                        });
+                        return enhanced;
+                    }
+                }
+            }
+        }
+
+        // If no collection_name specified but only one dashboard ref exists, use it
+        const dashboardRefs = allRefs.filter(r => r.refId && r.refId.startsWith('dash_'));
+        if (dashboardRefs.length === 1 && !args.collection_name) {
+            enhanced.ref_id = dashboardRefs[0].refId;
+            if (dashboardRefs[0].requestId) {
+                enhanced.request_id = dashboardRefs[0].requestId;
+            }
+            Utils.debugLog('autoInjectCacheRefId - auto-injected single dashboard ref_id', {
+                ref_id: dashboardRefs[0].refId
+            });
+            return enhanced;
+        }
+
+        // If there's only one ref total, use it
+        if (allRefs.length === 1 && !args.collection_name) {
+            enhanced.ref_id = allRefs[0].refId;
+            if (allRefs[0].requestId) {
+                enhanced.request_id = allRefs[0].requestId;
+            }
+            Utils.debugLog('autoInjectCacheRefId - auto-injected single ref_id', {
+                ref_id: allRefs[0].refId
+            });
+            return enhanced;
+        }
+
+        // Log warning if we couldn't auto-inject
+        Utils.debugLog('autoInjectCacheRefId - could not auto-inject ref_id', {
+            collection_name: args.collection_name || 'not specified',
+            availableRefIds: allRefs.map(r => r.refId),
+            dashboardCount: dashboardRefs.length
+        });
+
+        return enhanced;
+    }
+
+    /**
+     * Phase 3: INVOKE - Call tools one at a time
+     * After all tools complete, transitions to REFLECT phase for ReAct pattern evaluation
+     */
+    function executeInvokePhase(state) {
+        // Check if we have more tools to invoke
+        const invokedCount = state.toolInvocations.length;
+        if (invokedCount >= state.selectedTools.length) {
+            // All tools invoked - tables will appear in final response, not progressively
+            // Progressive narration provides context during processing instead
+
+            // ═══════════════════════════════════════════════════════════════════════
+            // ReAct Pattern: Move to REFLECT phase to evaluate results
+            // Instead of blindly proceeding to RESPOND, let LLM evaluate:
+            // - Did we get useful data?
+            // - If not, why? (entity not found vs no data vs too restrictive)
+            // - What should we do next? (proceed, broaden, retry, clarify, give up)
+            // ═══════════════════════════════════════════════════════════════════════
+            state.phase = PHASES.REFLECT;
+            return { success: true, nextPhase: PHASES.REFLECT };
+        }
+
+        const toolName = state.selectedTools[invokedCount];
+
+        // Skip format_response if somehow selected (double safety)
+        if (toolName === 'format_response') {
+            state.toolInvocations.push({ tool: toolName, skipped: true, reason: 'Internal tool only' });
+            return { success: true, nextPhase: PHASES.INVOKE };
+        }
+
+        const tool = Tools.getTool(toolName);
+
+        if (!tool) {
+            log.error('SCA Unknown tool', { tool: toolName });
+            state.toolInvocations.push({ tool: toolName, error: 'Unknown tool' });
+
+            addToolCallStep(state, {
+                title: `Unknown tool: ${toolName}`,
+                tool: toolName,
+                status: 'complete',
+                success: false,
+                error: 'Tool not found'
+            });
+
+            return { success: true, nextPhase: PHASES.INVOKE }; // Continue with next tool
+        }
+
+        // Build minimal schema for this tool
+        const schemaLines = [];
+        if (tool.parameters && tool.parameters.properties) {
+            const required = tool.parameters.required || [];
+            for (const [param, def] of Object.entries(tool.parameters.properties)) {
+                const req = required.includes(param) ? ' (required)' : '';
+                const enumVals = def.enum ? ` [${def.enum.slice(0, 5).join('|')}${def.enum.length > 5 ? '|...' : ''}]` : '';
+                schemaLines.push(`  - ${param}: ${def.type}${enumVals}${req}`);
+            }
+        }
+
+        const resolvedContext = Object.entries(state.resolvedEntities)
+            .map(([name, entity]) => `  ${name} = ID ${entity.id} (${entity.type})`)
+            .join('\n');
+
+        const currentYear = new Date().getFullYear();
+        const prompt = INVOKE_PROMPT
+            .replace('{tool_name}', toolName)
+            .replace('{tool_schema}', schemaLines.join('\n') || 'No parameters required')
+            .replace('{history_context}', buildHistoryContext(state))
+            .replace('{question}', state.message)
+            .replace('{resolved_entities}', resolvedContext ? `Resolved entities:\n${resolvedContext}` : '')
+            .replace('{date_context}', getDateContext())
+            .replace('{period_options}', Tools.getAvailablePeriods())
+            .replace(/\{current_year\}/g, currentYear.toString());
+
+        // Add step as active
+        addToolCallStep(state, {
+            title: Tools.getToolDisplayName(toolName, {}),
+            tool: toolName,
+            status: 'active'
+        });
+
+        const invokeStart = Date.now();
+
+        try {
+            const response = AIProviders.callAI(prompt, {
+                tier: getTierForPhase('invoke', state),
+                temperature: 0.1,
+                jsonMode: true,
+                purpose: `SCA:invoke:${toolName}`
+            });
+
+            const parsed = parseJsonResponse(response?.text);
+            let args = parsed?.args || {};
+
+            // ═══════════════════════════════════════════════════════════════════════
+            // INTELLIGENCE FIX: Auto-inject resolved entity IDs into tool arguments
+            // This prevents the LLM from forgetting to use the correct entity ID
+            // ═══════════════════════════════════════════════════════════════════════
+            args = autoInjectResolvedEntities(args, state, toolName);
+
+            // ═══════════════════════════════════════════════════════════════════════
+            // CACHE REF_ID FIX: Auto-inject ref_id for load_cached_data tool
+            // When LLM omits ref_id, detect from available refs based on collection_name
+            // ═══════════════════════════════════════════════════════════════════════
+            args = autoInjectCacheRefId(args, state, toolName);
+
+            // ═══════════════════════════════════════════════════════════════════════
+            // BROADEN FIX: Apply broadened parameters from REFLECT phase
+            // When REFLECT decides to BROADEN, it stores modified_params in state.broadenedParams
+            // These MUST be merged into args to actually change the query behavior
+            // ═══════════════════════════════════════════════════════════════════════
+            if (state.broadenedParams && Object.keys(state.broadenedParams).length > 0) {
+                Utils.debugLog('Applying broadened parameters from REFLECT', {
+                    tool: toolName,
+                    originalArgs: args,
+                    broadenedParams: state.broadenedParams
+                });
+                args = { ...args, ...state.broadenedParams };
+                // Clear after applying so we don't apply stale params to subsequent tools
+                state.broadenedParams = null;
+            }
+
+            // ═══════════════════════════════════════════════════════════════════════
+            // AGENTIC COLLECTION LOADING: Apply pending tool args from REFLECT
+            // When REFLECT decides LOAD_COLLECTION, it stores args in state.pendingToolArgs
+            // This allows REFLECT to directly specify what collection to load
+            // ═══════════════════════════════════════════════════════════════════════
+            if (state.pendingToolArgs && Object.keys(state.pendingToolArgs).length > 0) {
+                Utils.debugLog('Applying pending tool args from REFLECT', {
+                    tool: toolName,
+                    originalArgs: args,
+                    pendingArgs: state.pendingToolArgs
+                });
+                args = { ...args, ...state.pendingToolArgs };
+                // Clear after applying
+                state.pendingToolArgs = null;
+            }
+
+            // ═══════════════════════════════════════════════════════════════════════
+            // TOOL RESULT CACHING: Check cache before executing
+            // Entity resolution tools cached for 5 minutes, data queries for 30 seconds
+            // ═══════════════════════════════════════════════════════════════════════
+            const toolStart = Date.now();
+            let result = Cache.getCachedToolResult(toolName, args);
+            let fromCache = false;
+
+            if (result) {
+                // Cache hit - use cached result
+                fromCache = true;
+                Utils.debugLog('Tool result from cache', { tool: toolName, args: args });
+            } else {
+                // Cache miss - execute the tool
+                result = Tools.executeTool(toolName, args);
+                // Cache successful results
+                Cache.cacheToolResult(toolName, args, result);
+            }
+            const toolDuration = Date.now() - toolStart;
+            const totalDuration = Date.now() - invokeStart;
+
+            // Store data reference if tool returned rows OR dashboard intelligence
+            let dataRef = null;
+            if (result.success && result.rows && result.rows.length > 0) {
+                // Standard tool with rows
+                dataRef = Cache.storeData(state.requestId, toolName, result);
+                state.dataReferences.push(dataRef);
+                // Track that we found data (for reflection)
+                state.reflection.dataFound = true;
+            } else if (isDashboardResult(result)) {
+                // Dashboard Intelligence Bridge: Convert intelligence to data reference
+                // This enables RESPOND phase to consume dashboard data seamlessly
+                dataRef = storeDashboardDataReference(state.requestId, toolName, result);
+                if (dataRef) {
+                    state.dataReferences.push(dataRef);
+                    state.reflection.dataFound = true;
+                    Utils.debugLog('INVOKE phase - dashboard intelligence stored', {
+                        tool: toolName,
+                        dashboard: result.dashboard,
+                        metricsCount: Object.keys(result.intelligence?.metrics || {}).length,
+                        dataRefId: dataRef?.refId
+                    });
+                }
+            }
+
+            // ═══════════════════════════════════════════════════════════════════════
+            // TRACK ENTITY RESOLUTION SEPARATELY FROM DATA
+            // This enables proper diagnosis in REFLECT phase:
+            // - Entity found but no data = ENTITY_FOUND_NO_DATA
+            // - Entity not found = ENTITY_NOT_FOUND
+            // ═══════════════════════════════════════════════════════════════════════
+            if (toolName.startsWith('resolve_')) {
+                if (result.found && result.entity) {
+                    const searchName = args.name || 'unknown';
+                    state.resolvedEntities[searchName] = result.entity;
+                    state.reflection.entityFound = true;
+
+                    // Record in journey
+                    state.reflection.journey.push({
+                        action: 'entity_resolved',
+                        entity: result.entity.name,
+                        type: result.entity.type,
+                        id: result.entity.id,
+                        confidence: result.confidence || 1.0
+                    });
+                } else {
+                    // Entity was NOT found - important distinction
+                    state.reflection.entityFound = false;
+                    state.reflection.journey.push({
+                        action: 'entity_not_found',
+                        searchName: args.name,
+                        searchType: args.type || 'auto'
+                    });
+                }
+            }
+
+            // Classify the invocation result for reflection
+            const invocationResult = classifyToolResult(toolName, result, args, state);
+
+            const invocation = {
+                tool: toolName,
+                args: args,
+                success: result.success,
+                rowCount: result.rowCount || (result.rows ? result.rows.length : 0),
+                columns: result.columns || (result.rows && result.rows[0] ? Object.keys(result.rows[0]) : []),
+                dataRef: dataRef?.refId,
+                duration: toolDuration,
+                fromCache: fromCache,  // Track cache usage
+                timestamp: Date.now(),
+                // NEW: Classification for reflection
+                resultClass: invocationResult.classification,
+                resultDetails: invocationResult.details,
+                // Store result data for subsequent tool invocations to reference
+                // This enables LLM to use IDs/values from previous tools (e.g., vendor IDs from get_top_vendors)
+                result: result.rows ? { rows: result.rows.slice(0, 20) } : null // Limit to 20 rows to manage memory
+            };
+            state.toolInvocations.push(invocation);
+
+            // Build preview for frontend
+            const preview = result.rows?.slice(0, 3).map(row => {
+                const previewRow = {};
+                const cols = Object.keys(row).slice(0, 4);
+                cols.forEach(col => { previewRow[col] = row[col]; });
+                return previewRow;
+            });
+
+            // Update step with results - use smart summary builder
+            addToolCallStep(state, {
+                title: Tools.getToolDisplayName(toolName, args),
+                tool: toolName,
+                status: 'complete',
+                update: true,
+                params: args,
+                success: result.success,
+                rowCount: invocation.rowCount,
+                columns: invocation.columns.slice(0, 8),
+                preview: preview,
+                dataRef: dataRef?.refId,
+                duration: totalDuration,
+                summary: buildToolResultSummary(toolName, result, invocation.rowCount),
+                debug: buildDebugInfo(prompt, response, state, {
+                    toolDuration: toolDuration,
+                    totalDuration: totalDuration,
+                    argsUsed: args
+                })
+            });
+
+            Utils.debugLog('SCA Invoke phase - tool executed', {
+                tool: toolName,
+                success: result.success,
+                rowCount: invocation.rowCount,
+                hasDataRef: !!dataRef,
+                fromCache: fromCache,
+                duration: totalDuration
+            });
+
+            // Update progressive narration with template based on results
+            const toolDisplayName = Tools.getToolDisplayName(toolName, args);
+            if (result.success && invocation.rowCount > 0) {
+                state.narration = {
+                    text: 'Found ' + invocation.rowCount.toLocaleString() + ' results from ' + toolDisplayName.toLowerCase() + '...',
+                    phase: 'invoke',
+                    timestamp: Date.now()
+                };
+            } else if (result.success) {
+                state.narration = {
+                    text: 'Processed ' + toolDisplayName.toLowerCase() + '...',
+                    phase: 'invoke',
+                    timestamp: Date.now()
+                };
+            }
+
+            return { success: true, nextPhase: PHASES.INVOKE }; // Continue with next tool
+
+        } catch (e) {
+            const duration = Date.now() - invokeStart;
+            log.error('SCA Invoke phase failed', { tool: toolName, error: e.message, duration: duration });
+            state.errors.push({ phase: 'invoke', tool: toolName, error: e.message, timestamp: Date.now() });
+            state.toolInvocations.push({ tool: toolName, error: e.message, duration: duration, failed: true });
+
+            addToolCallStep(state, {
+                title: Tools.getToolDisplayName(toolName, {}),
+                tool: toolName,
+                status: 'complete',
+                update: true,
+                success: false,
+                error: e.message,
+                duration: duration,
+                summary: 'Error: ' + e.message.substring(0, 50)
+            });
+
+            // ═══════════════════════════════════════════════════════════════════════
+            // RECOMMENDATION 6: PROACTIVE ERROR RECOVERY
+            // When a tool fails, attempt alternative tools that may provide similar data
+            // ═══════════════════════════════════════════════════════════════════════
+
+            // Check if we haven't already tried recovery for this tool
+            if (!state.recoveryAttempts[toolName]) {
+                const alternatives = getAlternativeTools(toolName, state);
+
+                // Filter out tools we've already selected or invoked
+                const alreadyTried = [...state.selectedTools, ...state.toolInvocations.map(t => t.tool)];
+                const validAlternatives = alternatives.filter(alt =>
+                    !alreadyTried.includes(alt) && Tools.getTool(alt)
+                );
+
+                if (validAlternatives.length > 0) {
+                    // Mark that we've attempted recovery for this tool
+                    state.recoveryAttempts[toolName] = true;
+
+                    // Add the first alternative to the selected tools queue
+                    const alternativeTool = validAlternatives[0];
+                    state.selectedTools.push(alternativeTool);
+
+                    Utils.debugLog('SCA Proactive error recovery - trying alternative tool', {
+                        failedTool: toolName,
+                        alternativeTool: alternativeTool,
+                        error: e.message
+                    });
+
+                    // Add a recovery step to inform the user
+                    addToolCallStep(state, {
+                        title: `Trying alternative: ${Tools.getToolDisplayName(alternativeTool, {})}`,
+                        tool: alternativeTool,
+                        status: 'active',
+                        context: {
+                            recoveryFor: toolName,
+                            reason: 'Primary tool failed, attempting fallback'
+                        }
+                    });
+                } else {
+                    // No alternatives available - store retry suggestion for user
+                    const suggestion = buildRetrySuggestion(toolName, e.message);
+                    state.errors[state.errors.length - 1].suggestion = suggestion;
+                    Utils.debugLog('SCA No alternative tools available', { tool: toolName });
+                }
+            }
+
+            return { success: true, nextPhase: PHASES.INVOKE }; // Continue with next tool
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // TOOL RESULT CLASSIFICATION
+    // Distinguishes between different types of results for intelligent reflection
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Classify a tool result to enable intelligent reflection
+     * Distinguishes between: success, entity not found, entity found but no data, etc.
+     */
+    function classifyToolResult(toolName, result, args, state) {
+        // Entity resolution tools
+        if (toolName.startsWith('resolve_')) {
+            if (result.found && result.entity) {
+                return {
+                    classification: 'ENTITY_FOUND',
+                    details: { entity: result.entity, confidence: result.confidence }
+                };
+            } else {
+                return {
+                    classification: 'ENTITY_NOT_FOUND',
+                    details: { searchName: args.name, searchType: args.type }
+                };
+            }
+        }
+
+        // Data retrieval tools
+        const rowCount = result.rowCount || (result.rows ? result.rows.length : 0);
+
+        if (!result.success) {
+            return {
+                classification: 'TOOL_ERROR',
+                details: { error: result.error || 'Unknown error' }
+            };
+        }
+
+        if (rowCount > 0) {
+            return {
+                classification: 'DATA_FOUND',
+                details: { rowCount: rowCount, truncated: result.truncated || false }
+            };
+        }
+
+        // Zero rows - need to determine WHY
+        // Check if we had an entity filter that might be too restrictive
+        const hasEntityFilter = args.customer_id || args.vendor_id || args.entity_id;
+        const hasDateFilter = args.start_date || args.end_date || args.period;
+        const hasTypeFilter = args.transaction_type || args.account_type;
+
+        if (hasEntityFilter && state.reflection.entityFound) {
+            // Entity was found but query returned no data
+            return {
+                classification: 'ENTITY_FOUND_NO_DATA',
+                details: {
+                    entityFilter: hasEntityFilter,
+                    dateFilter: hasDateFilter,
+                    typeFilter: hasTypeFilter,
+                    suggestion: hasDateFilter || hasTypeFilter ? 'Try broader filters' : 'No matching data exists'
+                }
+            };
+        }
+
+        if (hasDateFilter || hasTypeFilter) {
+            // Filters might be too restrictive
+            return {
+                classification: 'QUERY_TOO_RESTRICTIVE',
+                details: {
+                    dateFilter: hasDateFilter,
+                    typeFilter: hasTypeFilter,
+                    suggestion: 'Try removing or broadening filters'
+                }
+            };
+        }
+
+        // No data exists for this query type
+        return {
+            classification: 'NO_DATA_EXISTS',
+            details: { tool: toolName, suggestion: 'This data type may not exist in the system' }
+        };
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // REFLECT PHASE - ReAct Pattern (Reasoning + Acting)
+    // Evaluates tool results and decides the next action
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Phase 3.5: REFLECT - Evaluate results and decide next action
+     * This is the core of the ReAct pattern:
+     * 1. Evaluate: Did we get useful data?
+     * 2. Reason: If not, why? (entity not found, no data, too restrictive, wrong tool)
+     * 3. Decide: Proceed, broaden, retry, clarify, or give up
+     * 4. Loop back to INVOKE if retrying, otherwise proceed to RESPOND
+     */
+    function executeReflectPhase(state) {
+        const phaseStart = Date.now();
+
+        // Increment reflection counter
+        state.reflectIterations++;
+
+        // Check for infinite loop prevention
+        if (state.reflectIterations > MAX_REFLECT_ITERATIONS) {
+            Utils.auditLog('SCA REFLECT phase - max iterations reached, proceeding to RESPOND', {
+                iterations: state.reflectIterations
+            });
+            state.phase = PHASES.RESPOND;
+            return { success: true, nextPhase: PHASES.RESPOND };
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // AGENTIC REFLECTION: Always evaluate whether data answers the question
+        // Never skip LLM evaluation - "having data" != "having the RIGHT data"
+        // The LLM must decide if it can answer the user's specific question
+        // ═══════════════════════════════════════════════════════════════════════
+
+        // FIX: Also check state.reflection.dataFound which SYNTHESIZE sets to true
+        // This ensures we don't miss data from custom SQL queries
+        const hasUsefulData = state.dataReferences.length > 0 || state.reflection.dataFound === true;
+
+        // FIX: Also count rows from successful SYNTHESIZE queries (defense-in-depth)
+        const synthesizeRows = (state.synthesize?.queries || [])
+            .filter(q => q.success)
+            .reduce((sum, q) => sum + (q.rowCount || 0), 0);
+        const totalRows = state.toolInvocations.reduce((sum, inv) =>
+            sum + (inv.rowCount || 0), 0) + synthesizeRows;
+
+        Utils.debugLog('SCA REFLECT phase - evaluating with LLM (always-evaluate mode)', {
+            dataRefs: state.dataReferences.length,
+            totalRows: totalRows,
+            synthesizeRows: synthesizeRows,
+            dataFoundFlag: state.reflection.dataFound,
+            tools: state.toolInvocations.map(t => t.tool)
+        });
+
+        // Build summaries for the LLM
+        const toolSummary = buildToolSummaryForReflection(state);
+        const resolvedEntitiesStr = buildResolvedEntitiesForReflection(state);
+        const dataSummary = buildDataSummaryForReflection(state);
+
+        const prompt = REFLECT_PROMPT
+            .replace('{history_context}', buildHistoryContext(state))
+            .replace('{question}', state.message)
+            .replace('{tool_summary}', toolSummary)
+            .replace('{resolved_entities}', resolvedEntitiesStr)
+            .replace('{data_summary}', dataSummary);
+
+        // Add thinking step
+        upsertThinkingStep(state, 'reflect', {
+            title: 'Evaluating results',
+            phase: 'reflect',
+            status: 'active',
+            context: {
+                iteration: state.reflectIterations,
+                hasData: hasUsefulData,
+                entityFound: state.reflection.entityFound
+            }
+        });
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // LLM RETRY LOOP - Retry up to 3 times if response is invalid
+        // ═══════════════════════════════════════════════════════════════════════
+        const MAX_LLM_RETRIES = 3;
+        let lastError = null;
+        let parsed = null;
+
+        for (let attempt = 1; attempt <= MAX_LLM_RETRIES; attempt++) {
+            try {
+                const response = AIProviders.callAI(prompt, {
+                    tier: getTierForPhase('reflect', state),
+                    temperature: 0.2 + (attempt - 1) * 0.1, // Slightly increase temperature on retries
+                    maxTokens: 500,
+                    jsonMode: true,
+                    purpose: 'SCA:reflect'
+                });
+
+                parsed = parseJsonResponse(response?.text);
+
+                // Normalize action field - handle alternative key names LLM might use
+                if (parsed && !parsed.action) {
+                    parsed.action = parsed.recommendation || parsed.decision || parsed.next_action;
+                }
+
+                if (!parsed || !parsed.action) {
+                    throw new Error('Invalid reflect response - missing action');
+                }
+
+                // Success - break out of retry loop
+                Utils.debugLog('SCA REFLECT LLM succeeded', { attempt: attempt });
+                break;
+
+            } catch (e) {
+                lastError = e;
+                Utils.debugLog('SCA REFLECT LLM attempt failed', {
+                    attempt: attempt,
+                    maxAttempts: MAX_LLM_RETRIES,
+                    error: e.message
+                });
+
+                if (attempt < MAX_LLM_RETRIES) {
+                    // Will retry
+                    continue;
+                }
+                // Last attempt failed - will fall through to fallback
+            }
+        }
+
+        const duration = Date.now() - phaseStart;
+        state.phaseTimings.reflect = (state.phaseTimings.reflect || 0) + duration;
+
+        // Check if we got a valid response after retries
+        if (parsed && parsed.action) {
+            // Update reflection state
+            state.reflection.hasReflected = true;
+            state.reflection.failureMode = parsed.evaluation?.failure_mode || FAILURE_MODES.NO_DATA_EXISTS;
+
+            // Record in journey
+            state.reflection.journey.push({
+                action: 'reflection',
+                iteration: state.reflectIterations,
+                evaluation: parsed.evaluation,
+                decision: parsed.action,
+                reasoning: parsed.reasoning
+            });
+
+            // Handle the decided action
+            const nextPhase = handleReflectAction(state, parsed);
+
+            // Store progressive narration for frontend display
+            state.narration = {
+                text: parsed.userNarration || 'Analyzing patterns in your data...',
+                phase: 'reflect',
+                timestamp: Date.now()
+            };
+
+            // Update thinking step
+            upsertThinkingStep(state, 'reflect', {
+                title: 'Evaluating results',
+                phase: 'reflect',
+                status: 'complete',
+                duration: duration,
+                context: {
+                    iteration: state.reflectIterations,
+                    action: parsed.action,
+                    reasoning: parsed.reasoning?.substring(0, 100)
+                },
+                debug: buildDebugInfo(prompt, null, state, { reflection: parsed })
+            });
+
+            Utils.debugLog('SCA REFLECT phase complete', {
+                action: parsed.action,
+                failureMode: parsed.evaluation?.failure_mode,
+                nextPhase: nextPhase,
+                duration: duration
+            });
+
+            return { success: true, nextPhase: nextPhase };
+        }
+
+        // All retries exhausted - fallback
+        log.error('SCA REFLECT phase failed after retries', { error: lastError?.message, duration: duration });
+        state.errors.push({ phase: 'reflect', error: lastError?.message || 'LLM retries exhausted', timestamp: Date.now() });
+
+        // Default: proceed to RESPOND with what we have
+        state.phase = PHASES.RESPOND;
+
+        upsertThinkingStep(state, 'reflect', {
+            title: 'Evaluating results',
+            phase: 'reflect',
+            status: 'complete',
+            duration: duration,
+            context: {
+                fallback: true,
+                error: (lastError?.message || 'LLM retries exhausted').substring(0, 100)
+            }
+        });
+
+        return { success: true, nextPhase: PHASES.RESPOND };
+    }
+
+    /**
+     * Handle the action decided by REFLECT phase
+     * Returns the next phase to execute
+     */
+    function handleReflectAction(state, parsed) {
+        const action = parsed.action;
+        const details = parsed.action_details || {};
+
+        switch (action) {
+            case 'PROCEED':
+                // ═══════════════════════════════════════════════════════════════════════
+                // COMBINED REFLECT+RESPOND: If LLM included response.blocks, use them
+                // This saves an entire LLM round trip
+                // ═══════════════════════════════════════════════════════════════════════
+                if (parsed.response && parsed.response.blocks && Array.isArray(parsed.response.blocks)) {
+                    Utils.debugLog('SCA REFLECT - PROCEED with inline response (combined mode)', {
+                        blockCount: parsed.response.blocks.length
+                    });
+                    // Store the response blocks for later processing
+                    state.reflectResponse = parsed.response;
+                    state.phase = PHASES.RESPOND;
+                    return PHASES.RESPOND;
+                }
+                // No inline response - proceed to normal RESPOND phase
+                state.phase = PHASES.RESPOND;
+                return PHASES.RESPOND;
+
+            case 'LOAD_COLLECTION':
+                // ═══════════════════════════════════════════════════════════════════════
+                // AGENTIC COLLECTION LOADING: Load detailed data from dashboard collection
+                // This is the key to making the system truly agentic
+                // ═══════════════════════════════════════════════════════════════════════
+                if (details.collection_name && details.ref_id) {
+                    Utils.debugLog('SCA REFLECT - LOAD_COLLECTION', {
+                        collection: details.collection_name,
+                        refId: details.ref_id
+                    });
+
+                    // Queue load_cached_data tool with collection params
+                    state.selectedTools.push('load_cached_data');
+                    state.pendingToolArgs = {
+                        ref_id: details.ref_id,
+                        collection_name: details.collection_name
+                    };
+                    state.reflection.journey.push({
+                        action: 'load_collection',
+                        collection: details.collection_name,
+                        refId: details.ref_id,
+                        reasoning: parsed.reasoning
+                    });
+
+                    state.phase = PHASES.INVOKE;
+                    return PHASES.INVOKE;
+                }
+                // Missing params - proceed to respond with what we have
+                Utils.debugLog('SCA REFLECT - LOAD_COLLECTION missing params', { details });
+                state.phase = PHASES.RESPOND;
+                return PHASES.RESPOND;
+
+            case 'SYNTHESIZE':
+                // ═══════════════════════════════════════════════════════════════════════
+                // DIRECT SYNTHESIZE: LLM wants to write custom SQL
+                // ═══════════════════════════════════════════════════════════════════════
+                if (state.synthesize.enabled && state.synthesize.iterations < MAX_SYNTHESIZE_ITERATIONS) {
+                    Utils.debugLog('SCA REFLECT - direct SYNTHESIZE action', {
+                        synthesizeIterations: state.synthesize.iterations,
+                        reason: parsed.reasoning
+                    });
+
+                    state.reflection.journey.push({
+                        action: 'synthesize',
+                        reason: 'LLM determined custom SQL needed',
+                        diagnosis: parsed.diagnosis
+                    });
+
+                    state.phase = PHASES.SYNTHESIZE;
+                    return PHASES.SYNTHESIZE;
+                }
+                // Synthesize exhausted or disabled
+                state.phase = PHASES.RESPOND;
+                return PHASES.RESPOND;
+
+            case 'BROADEN':
+                // Retry with broader parameters
+                state.reflection.broadeningAttempts++;
+
+                if (state.reflection.broadeningAttempts > 2) {
+                    // Too many broadening attempts - give up
+                    Utils.debugLog('SCA REFLECT - too many broadening attempts, giving up');
+                    state.phase = PHASES.RESPOND;
+                    return PHASES.RESPOND;
+                }
+
+                // Modify the last tool's args and retry
+                if (details.tool && details.modified_params) {
+                    // Add the tool with modified params to the queue
+                    state.selectedTools.push(details.tool);
+                    state.reflection.journey.push({
+                        action: 'broaden_retry',
+                        tool: details.tool,
+                        modifiedParams: details.modified_params
+                    });
+
+                    // Store modified params for the next invoke
+                    state.broadenedParams = details.modified_params;
+                }
+
+                state.phase = PHASES.INVOKE;
+                return PHASES.INVOKE;
+
+            case 'DIFFERENT_TOOL':
+                // Try a completely different tool
+                if (details.tool && Tools.getTool(details.tool)) {
+                    const alreadyTried = state.toolInvocations.map(t => t.tool);
+                    if (!alreadyTried.includes(details.tool)) {
+                        state.selectedTools.push(details.tool);
+                        state.reflection.journey.push({
+                            action: 'try_different_tool',
+                            tool: details.tool,
+                            reasoning: parsed.reasoning
+                        });
+
+                        state.phase = PHASES.INVOKE;
+                        return PHASES.INVOKE;
+                    }
+                }
+                // Tool already tried or invalid - proceed to respond
+                state.phase = PHASES.RESPOND;
+                return PHASES.RESPOND;
+
+            case 'CLARIFY':
+                // We need user clarification - store the question and proceed
+                state.reflection.clarificationNeeded = true;
+                state.reflection.clarificationQuestion = details.clarification_question;
+                state.phase = PHASES.RESPOND;
+                return PHASES.RESPOND;
+
+            case 'GIVE_UP':
+                // ═══════════════════════════════════════════════════════════════════════
+                // SYNTHESIZE FALLBACK: Before giving up, try LLM SQL generation
+                // This is the world-class innovation - let LLM write custom queries
+                // ═══════════════════════════════════════════════════════════════════════
+                if (state.synthesize.enabled && state.synthesize.iterations < MAX_SYNTHESIZE_ITERATIONS) {
+                    Utils.debugLog('SCA REFLECT - GIVE_UP redirected to SYNTHESIZE', {
+                        synthesizeIterations: state.synthesize.iterations,
+                        reason: details.explanation
+                    });
+
+                    state.reflection.journey.push({
+                        action: 'try_synthesize',
+                        reason: 'Pre-built tools insufficient, attempting custom SQL',
+                        previousExplanation: details.explanation
+                    });
+
+                    state.phase = PHASES.SYNTHESIZE;
+                    return PHASES.SYNTHESIZE;
+                }
+
+                // Synthesize exhausted or disabled - actually give up
+                state.reflection.gaveUp = true;
+                state.reflection.giveUpExplanation = details.explanation;
+                state.phase = PHASES.RESPOND;
+                return PHASES.RESPOND;
+
+            default:
+                // Unknown action - proceed to respond
+                Utils.auditLog('SCA REFLECT - unknown action', { action: action });
+                state.phase = PHASES.RESPOND;
+                return PHASES.RESPOND;
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // SYNTHESIZE PHASE - LLM Writes Custom SQL
+    // World-class innovation: When pre-built tools fail, let LLM write raw SQL
+    // Self-correcting: If SQL errors, shows error to LLM and iterates
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Execute SYNTHESIZE phase - LLM generates custom SuiteQL
+     * Self-correcting loop: generates SQL, executes, if error shows error and retries
+     */
+    function executeSynthesizePhase(state) {
+        const phaseStart = Date.now();
+        state.synthesize.iterations++;
+
+        Utils.debugLog('SCA SYNTHESIZE phase starting', {
+            requestId: state.requestId,
+            iteration: state.synthesize.iterations,
+            hasLastError: !!state.synthesize.lastError
+        });
+
+        // Check iteration limit
+        if (state.synthesize.iterations > MAX_SYNTHESIZE_ITERATIONS) {
+            Utils.auditLog('SCA SYNTHESIZE - max iterations reached', {
+                iterations: state.synthesize.iterations
+            });
+            state.synthesize.enabled = false;
+            state.reflection.gaveUp = true;
+            state.reflection.giveUpExplanation = 'Unable to generate a working query after multiple attempts.';
+            state.phase = PHASES.RESPOND;
+            return { success: true, nextPhase: PHASES.RESPOND };
+        }
+
+        // Build context from previous tool attempts
+        const previousContext = buildSynthesizeContext(state);
+
+        // Build error context if this is a retry
+        let errorContext = '';
+        if (state.synthesize.lastError) {
+            const lastError = state.synthesize.lastError;
+            const lastQuery = state.synthesize.queries[state.synthesize.queries.length - 1]?.sql || 'N/A';
+
+            // Build field correction hints for common mistakes
+            const fieldCorrections = [];
+            if (/amountremaining/i.test(lastError) || /amountremaining/i.test(lastQuery)) {
+                fieldCorrections.push('- "amountremaining" does NOT exist! Use "foreignamountunpaid" for unpaid amounts');
+            }
+            if (/\bamount\b(?!unpaid|remaining)/i.test(lastError)) {
+                fieldCorrections.push('- "amount" is NOT exposed on transaction! Use "foreigntotal" for amounts');
+            }
+            if (/netamount.*not found/i.test(lastError)) {
+                fieldCorrections.push('- "netamount" is only on transactionline, not transaction');
+            }
+            if (/datecreated.*not found/i.test(lastError)) {
+                fieldCorrections.push('- "datecreated" does NOT exist! Use "lastmodifieddate" for timestamps');
+            }
+            if (/subsidiary.*NOT_EXPOSED/i.test(lastError)) {
+                fieldCorrections.push('- "subsidiary" is NOT_EXPOSED in SuiteQL. Remove this field from queries.');
+            }
+
+            // Include table correction if available
+            if (state.synthesize.tableCorrection) {
+                const tc = state.synthesize.tableCorrection;
+                fieldCorrections.push(`- TABLE "${tc.badTable}" does NOT exist! ${tc.correction}`);
+            }
+
+            const correctionHints = fieldCorrections.length > 0
+                ? `\n\nCRITICAL CORRECTIONS:\n${fieldCorrections.join('\n')}`
+                : '';
+
+            errorContext = `⚠️ PREVIOUS QUERY FAILED - DO NOT REPEAT THE SAME MISTAKES ⚠️
+
+FAILED QUERY:
+\`\`\`sql
+${lastQuery}
+\`\`\`
+
+ERROR MESSAGE: ${lastError}${correctionHints}
+
+FIX THE ERROR. Common fixes:
+- Use ROWNUM for row limits: SELECT * FROM (your_query ORDER BY ...) WHERE ROWNUM <= N
+- Check column names against the schema above
+- All transaction types are in 'transaction' table with 'type' field
+- Use BUILTIN.DF() for display names
+- Use lastmodifieddate for timestamps (not datecreated)
+- Use TO_CHAR() for date/time extraction, not HOUR() or DATEONLY()`;
+        }
+
+        const prompt = SYNTHESIZE_PROMPT
+            .replace('{history_context}', buildHistoryContext(state))
+            .replace('{question}', state.message)
+            .replace('{previous_context}', previousContext)
+            .replace('{error_context}', errorContext);
+
+        // Add thinking step
+        upsertThinkingStep(state, 'synthesize', {
+            title: state.synthesize.iterations === 1 ? 'Writing custom query' : 'Fixing query',
+            phase: 'synthesize',
+            status: 'active',
+            context: {
+                iteration: state.synthesize.iterations,
+                isRetry: state.synthesize.iterations > 1,
+                lastError: state.synthesize.lastError?.substring(0, 100)
+            }
+        });
+
+        try {
+            // Call LLM to generate SQL (PREMIUM tier for complex SQL synthesis)
+            const response = AIProviders.callAI(prompt, {
+                tier: getTierForPhase('synthesize', state),
+                temperature: 0.2,
+                jsonMode: true,
+                purpose: 'SCA:synthesize'
+            });
+
+            const parsed = parseJsonResponse(response?.text);
+
+            if (!parsed || !parsed.query) {
+                throw new Error('Invalid synthesize response - missing query');
+            }
+
+            let generatedSql = parsed.query;
+            const purpose = parsed.purpose || 'Custom query';
+
+            Utils.debugLog('SCA SYNTHESIZE - generated SQL', {
+                sqlPreview: generatedSql.substring(0, 300),
+                purpose: purpose,
+                reasoning: parsed.reasoning?.substring(0, 200)
+            });
+
+            // ═══════════════════════════════════════════════════════════════════════
+            // PRE-FLIGHT SQL VALIDATION: Detect and fix SQL Server syntax errors
+            // This catches common mistakes BEFORE hitting the database
+            // ═══════════════════════════════════════════════════════════════════════
+            const sqlValidation = validateAndCorrectSql(generatedSql);
+
+            if (sqlValidation.hasCriticalErrors) {
+                // SQL Server syntax detected - don't even try to execute, force retry
+                state.synthesize.lastError = sqlValidation.errorMessage;
+                state.synthesize.queries.push({
+                    sql: generatedSql,
+                    purpose: purpose,
+                    reasoning: parsed.reasoning,
+                    timestamp: Date.now(),
+                    error: sqlValidation.errorMessage,
+                    preFlightRejected: true
+                });
+
+                Utils.debugLog('SCA SYNTHESIZE - pre-flight SQL validation failed', {
+                    errors: sqlValidation.errors,
+                    suggestions: sqlValidation.suggestions
+                });
+
+                // Add error to context for next iteration
+                if (!state.synthesize.errorContext) state.synthesize.errorContext = [];
+                state.synthesize.errorContext.push({
+                    phase: 'pre-flight-validation',
+                    error: sqlValidation.errorMessage,
+                    suggestions: sqlValidation.suggestions
+                });
+
+                // Update thinking step
+                upsertThinkingStep(state, 'synthesize', {
+                    title: 'SQL syntax error detected',
+                    phase: 'synthesize',
+                    status: 'active',
+                    context: {
+                        phase: 'synthesize',
+                        iteration: state.synthesize.iterations,
+                        validationErrors: sqlValidation.errors.slice(0, 3)
+                    }
+                });
+
+                // Loop back to synthesize with error context
+                state.phase = PHASES.SYNTHESIZE;
+                return { success: true, nextPhase: PHASES.SYNTHESIZE };
+            }
+
+            // Apply auto-corrections if any
+            if (sqlValidation.correctedSql) {
+                Utils.debugLog('SCA SYNTHESIZE - auto-corrected SQL', {
+                    original: generatedSql.substring(0, 100),
+                    corrected: sqlValidation.correctedSql.substring(0, 100),
+                    corrections: sqlValidation.corrections
+                });
+                generatedSql = sqlValidation.correctedSql;
+            }
+
+            // Record the query attempt
+            state.synthesize.queries.push({
+                sql: generatedSql,
+                purpose: purpose,
+                reasoning: parsed.reasoning,
+                timestamp: Date.now()
+            });
+
+            // Add tool call step for the custom query
+            addToolCallStep(state, {
+                title: `Running: ${purpose}`,
+                tool: 'synthesized_query',
+                status: 'active'
+            });
+
+            // Execute the SQL using QueryExecutor (imported via Tools)
+            const queryResult = Tools.executeTool('run_custom_query', {
+                sql: generatedSql,
+                purpose: purpose
+            });
+
+            const queryDuration = Date.now() - phaseStart;
+
+            if (!queryResult.success) {
+                // SQL execution failed - store error and retry
+                const errorMsg = queryResult.error || 'Query execution failed';
+                state.synthesize.lastError = errorMsg;
+                state.synthesize.queries[state.synthesize.queries.length - 1].error = errorMsg;
+
+                Utils.debugLog('SCA SYNTHESIZE - query failed, will retry', {
+                    error: errorMsg,
+                    iteration: state.synthesize.iterations
+                });
+
+                // Update tool call step with error
+                addToolCallStep(state, {
+                    title: `Query failed: ${purpose}`,
+                    tool: 'synthesized_query',
+                    status: 'complete',
+                    update: true,
+                    success: false,
+                    error: errorMsg,
+                    duration: queryDuration
+                });
+
+                // ═══════════════════════════════════════════════════════════════════════
+                // AGENTIC FIX: Detect schema errors and route to REASON_ACT for discovery
+                // Instead of blindly retrying, let the agent use get_record_schema
+                // ═══════════════════════════════════════════════════════════════════════
+                const isFieldError = /field\s+['"]?(\w+)['"]?\s+(for record\s+['"]?(\w+)['"]?\s+)?was not found/i.test(errorMsg) ||
+                                     /column\s+['"]?(\w+)['"]?\s+not found/i.test(errorMsg) ||
+                                     /invalid.*column/i.test(errorMsg);
+
+                const isRecordNotFoundError = /record\s+['"]?(\w+)['"]?\s+was not found/i.test(errorMsg);
+
+                // Detect common table name mistakes and provide immediate correction
+                const tableCorrectionMap = {
+                    'journalentry': "Use: transaction WHERE type = 'Journal'",
+                    'invoice': "Use: transaction WHERE type = 'CustInvc'",
+                    'bill': "Use: transaction WHERE type = 'VendBill'",
+                    'payment': "Use: transaction WHERE type = 'CustPymt' or 'VendPymt'",
+                    'calendar': 'Calendar table does not exist. Use TO_CHAR(date, format) for date calculations.',
+                    'journal': "Use: transaction WHERE type = 'Journal'"
+                };
+
+                if (isRecordNotFoundError) {
+                    const recordMatch = errorMsg.match(/record\s+['"]?(\w+)['"]?\s+was not found/i);
+                    const badTableName = recordMatch ? recordMatch[1].toLowerCase() : 'unknown';
+
+                    Utils.debugLog('SCA SYNTHESIZE - record not found error', {
+                        badTableName: badTableName,
+                        error: errorMsg,
+                        failedQuery: generatedSql?.substring(0, 200)
+                    });
+
+                    // Check if we have a known correction
+                    const correction = tableCorrectionMap[badTableName];
+                    if (correction) {
+                        // Store correction hint for the retry
+                        state.synthesize.tableCorrection = {
+                            badTable: badTableName,
+                            correction: correction,
+                            failedQuery: generatedSql
+                        };
+
+                        // Add to error context for next iteration
+                        state.synthesize.lastError = `${errorMsg}\n\n⚠️ TABLE CORRECTION: "${badTableName}" does not exist! ${correction}`;
+
+                        Utils.auditLog('SCA SYNTHESIZE - providing table correction', {
+                            badTable: badTableName,
+                            correction: correction
+                        });
+
+                        // Loop back to synthesize with correction hint
+                        state.phase = PHASES.SYNTHESIZE;
+                        return { success: true, nextPhase: PHASES.SYNTHESIZE };
+                    }
+
+                    // Unknown table - route to schema discovery
+                    state.synthesize.schemaDiscoveryNeeded = {
+                        tableName: badTableName,
+                        error: errorMsg,
+                        failedQuery: generatedSql,
+                        hint: `Table "${badTableName}" does not exist. Use explore_schema to discover available tables.`
+                    };
+
+                    state.reflection.journey.push({
+                        action: 'record_not_found',
+                        tableName: badTableName,
+                        error: errorMsg,
+                        recommendation: 'Use explore_schema to discover available tables'
+                    });
+
+                    state.phase = PHASES.REASON_ACT;
+                    return { success: true, nextPhase: PHASES.REASON_ACT };
+                }
+
+                if (isFieldError) {
+                    // Extract table name from error if possible
+                    const tableMatch = errorMsg.match(/for record\s+['"]?(\w+)['"]?/i) ||
+                                       errorMsg.match(/table\s+['"]?(\w+)['"]?/i);
+                    const tableName = tableMatch ? tableMatch[1].toLowerCase() : 'transaction';
+
+                    Utils.debugLog('SCA SYNTHESIZE - field error detected, routing to REASON_ACT for discovery', {
+                        tableName: tableName,
+                        error: errorMsg,
+                        failedQuery: generatedSql?.substring(0, 200)
+                    });
+
+                    // Store hint for REASON_ACT to use schema discovery
+                    state.synthesize.schemaDiscoveryNeeded = {
+                        tableName: tableName,
+                        error: errorMsg,
+                        failedQuery: generatedSql,
+                        hint: `Schema error detected. Use get_record_schema({ record_type: "${tableName}" }) to discover valid field names for this table, then retry with correct fields.`
+                    };
+
+                    // Add to journey for visibility
+                    state.reflection.journey.push({
+                        action: 'schema_error_detected',
+                        tableName: tableName,
+                        error: errorMsg,
+                        recommendation: 'Use get_record_schema to discover valid fields'
+                    });
+
+                    // Route to REASON_ACT instead of blind retry
+                    state.phase = PHASES.REASON_ACT;
+                    return { success: true, nextPhase: PHASES.REASON_ACT };
+                }
+
+                // Loop back to synthesize (self-correction) for non-schema errors
+                state.phase = PHASES.SYNTHESIZE;
+                return { success: true, nextPhase: PHASES.SYNTHESIZE };
+            }
+
+            // Success! Store the data
+            state.synthesize.lastError = null;
+            state.synthesize.queries[state.synthesize.queries.length - 1].success = true;
+            state.synthesize.queries[state.synthesize.queries.length - 1].rowCount = queryResult.rowCount;
+
+            // ═══════════════════════════════════════════════════════════════════════
+            // FIX: Record SYNTHESIZE success even with 0 rows
+            // A successful query that returns 0 rows is still a valid answer -
+            // it means the searched-for data doesn't exist, which is useful information!
+            // ═══════════════════════════════════════════════════════════════════════
+
+            // Store data reference if we got rows
+            if (queryResult.rows && queryResult.rows.length > 0) {
+                const dataRef = Cache.storeData(state.requestId, 'synthesized_query', queryResult);
+                state.dataReferences.push(dataRef);
+                state.reflection.dataFound = true;
+            } else {
+                // Query succeeded but found 0 rows - this is still a valid result!
+                // Mark that we successfully completed our search (just found nothing)
+                state.reflection.searchCompleted = true;
+                state.reflection.zeroRowsReason = `Query executed successfully but found no matching records. This means the searched-for data (${purpose}) does not exist in the system for the specified criteria.`;
+
+                Utils.debugLog('SYNTHESIZE - query succeeded with 0 rows', {
+                    purpose: purpose,
+                    sql: generatedSql.substring(0, 200)
+                });
+            }
+
+            // ALWAYS record SYNTHESIZE as a tool invocation (even with 0 rows)
+            // so REFLECT and RESPOND can see that we actually executed a query
+            state.toolInvocations.push({
+                tool: 'synthesized_query',
+                args: {
+                    sql: generatedSql.substring(0, 200) + (generatedSql.length > 200 ? '...' : ''),
+                    purpose: purpose
+                },
+                success: true,
+                rowCount: queryResult.rowCount,
+                failed: false,
+                resultClass: queryResult.rowCount > 0 ? 'DATA' : 'NO_MATCH',
+                synthesized: true,  // Flag to indicate this came from SYNTHESIZE phase
+                columns: queryResult.columns,
+                zeroRowsIsValidResult: queryResult.rowCount === 0  // Flag for RESPOND phase
+            });
+
+            state.reflection.journey.push({
+                action: queryResult.rowCount > 0 ? 'synthesize_success' : 'synthesize_no_match',
+                purpose: purpose,
+                rowCount: queryResult.rowCount,
+                iterations: state.synthesize.iterations,
+                message: queryResult.rowCount === 0
+                    ? 'Query executed successfully but found no matching data'
+                    : `Found ${queryResult.rowCount} matching records`
+            });
+
+            // Update tool call step with success
+            addToolCallStep(state, {
+                title: purpose,
+                tool: 'synthesized_query',
+                status: 'complete',
+                update: true,
+                success: true,
+                rowCount: queryResult.rowCount,
+                columns: queryResult.columns?.slice(0, 8),
+                duration: queryDuration,
+                summary: `Found ${queryResult.rowCount} results`
+            });
+
+            // Update thinking step
+            upsertThinkingStep(state, 'synthesize', {
+                title: 'Custom query succeeded',
+                phase: 'synthesize',
+                status: 'complete',
+                duration: queryDuration,
+                context: {
+                    iteration: state.synthesize.iterations,
+                    rowCount: queryResult.rowCount,
+                    purpose: purpose
+                },
+                debug: {
+                    sqlPreview: generatedSql.substring(0, 500),
+                    reasoning: parsed.reasoning,
+                    columns: queryResult.columns
+                }
+            });
+
+            Utils.debugLog('SCA SYNTHESIZE - success', {
+                rowCount: queryResult.rowCount,
+                iterations: state.synthesize.iterations,
+                duration: queryDuration
+            });
+
+            // ═══════════════════════════════════════════════════════════════════════
+            // AGENTIC ITERATION: Route back to REFLECT instead of directly to RESPOND
+            // This allows REFLECT to evaluate:
+            // - Does this SQL result actually answer the question?
+            // - Should we run another query to get more/different data?
+            // - Is the data complete or do we need to join more tables?
+            // ═══════════════════════════════════════════════════════════════════════
+            state.phase = PHASES.REFLECT;
+            return { success: true, nextPhase: PHASES.REFLECT };
+
+        } catch (e) {
+            const duration = Date.now() - phaseStart;
+            log.error('SCA SYNTHESIZE phase error', { error: e.message, duration: duration });
+            state.errors.push({ phase: 'synthesize', error: e.message, timestamp: Date.now() });
+
+            // If we haven't exhausted iterations, try again
+            if (state.synthesize.iterations < MAX_SYNTHESIZE_ITERATIONS) {
+                state.synthesize.lastError = e.message;
+                state.phase = PHASES.SYNTHESIZE;
+                return { success: true, nextPhase: PHASES.SYNTHESIZE };
+            }
+
+            // Exhausted - give up
+            state.synthesize.enabled = false;
+            state.reflection.gaveUp = true;
+            state.reflection.giveUpExplanation = `Unable to generate a working query: ${e.message}`;
+            state.phase = PHASES.RESPOND;
+
+            upsertThinkingStep(state, 'synthesize', {
+                title: 'Query generation failed',
+                phase: 'synthesize',
+                status: 'complete',
+                duration: duration,
+                context: {
+                    error: e.message.substring(0, 100),
+                    iterations: state.synthesize.iterations
+                }
+            });
+
+            return { success: true, nextPhase: PHASES.RESPOND };
+        }
+    }
+
+    /**
+     * Build context for SYNTHESIZE prompt from previous tool attempts
+     * Shows the LLM what SQL was tried (so it can build on it)
+     */
+    function buildSynthesizeContext(state) {
+        const lines = [];
+
+        // Show what tools were tried and their results
+        if (state.toolInvocations.length > 0) {
+            lines.push('TOOLS THAT WERE TRIED:');
+            state.toolInvocations.forEach((inv, idx) => {
+                const status = inv.success ? (inv.rowCount > 0 ? 'SUCCESS' : 'NO DATA') : 'FAILED';
+                lines.push(`${idx + 1}. ${inv.tool}: ${status} (${inv.rowCount || 0} rows)`);
+                if (inv.args) {
+                    lines.push(`   Args: ${JSON.stringify(inv.args)}`);
+                }
+            });
+            lines.push('');
+        }
+
+        // Show resolved entities
+        if (Object.keys(state.resolvedEntities).length > 0) {
+            lines.push('RESOLVED ENTITIES:');
+            Object.entries(state.resolvedEntities).forEach(([term, entity]) => {
+                lines.push(`- "${term}" = ${entity.name} (${entity.type}, ID: ${entity.id})`);
+            });
+            lines.push('');
+        }
+
+        // Show existing data summaries if any
+        if (state.dataReferences.length > 0) {
+            lines.push('DATA ALREADY COLLECTED:');
+            state.dataReferences.forEach(ref => {
+                const summary = ref.summary || {};
+                lines.push(`- ${summary.tool || 'Query'}: ${summary.rowCount || 0} rows`);
+                if (summary.columns) {
+                    lines.push(`  Columns: ${summary.columns.join(', ')}`);
+                }
+            });
+            lines.push('');
+        }
+
+        // Show previous synthesize attempts
+        if (state.synthesize.queries.length > 0) {
+            lines.push('PREVIOUS CUSTOM QUERY ATTEMPTS:');
+            state.synthesize.queries.forEach((q, idx) => {
+                const status = q.success ? `SUCCESS (${q.rowCount} rows)` : `FAILED: ${q.error}`;
+                lines.push(`Attempt ${idx + 1}: ${status}`);
+                lines.push(`SQL: ${q.sql.substring(0, 200)}...`);
+            });
+            lines.push('');
+        }
+
+        return lines.join('\n') || 'No previous attempts.';
+    }
+
+    /**
+     * Build tool execution summary for REFLECT prompt
+     *
+     * FIX: Also checks state.synthesize.queries as defense-in-depth
+     * In case SYNTHESIZE succeeds but toolInvocations wasn't updated
+     */
+    function buildToolSummaryForReflection(state) {
+        // ═══════════════════════════════════════════════════════════════════════
+        // FIX: Check for successful SYNTHESIZE queries even if toolInvocations is empty
+        // This is defense-in-depth - SYNTHESIZE should add to toolInvocations,
+        // but if it doesn't, we still want REFLECT to know about the data
+        // ═══════════════════════════════════════════════════════════════════════
+        const successfulSynthQueries = (state.synthesize?.queries || [])
+            .filter(q => q.success);
+
+        if (state.toolInvocations.length === 0 && successfulSynthQueries.length === 0) {
+            return 'No tools were executed.';
+        }
+
+        let summaryParts = [];
+
+        // Add regular tool invocations
+        if (state.toolInvocations.length > 0) {
+            const toolSummary = state.toolInvocations.map((inv, idx) => {
+                // ═══════════════════════════════════════════════════════════════════════
+                // FIX: Differentiate between "query failed" and "query succeeded with 0 rows"
+                // The latter is a VALID search result that should proceed to response
+                // ═══════════════════════════════════════════════════════════════════════
+                let status;
+                if (inv.failed) {
+                    status = 'FAILED';
+                } else if (inv.rowCount > 0) {
+                    status = 'SUCCESS';
+                } else if (inv.zeroRowsIsValidResult) {
+                    status = 'VALID_SEARCH_NO_MATCH';  // Query worked, just no data exists
+                } else {
+                    status = 'NO_DATA';
+                }
+                const details = [];
+
+                if (inv.args) {
+                    const argStr = Object.entries(inv.args)
+                        .filter(([k, v]) => v !== undefined && v !== null)
+                        .map(([k, v]) => `${k}=${JSON.stringify(v)}`)
+                        .join(', ');
+                    if (argStr) details.push(`Args: ${argStr}`);
+                }
+
+                if (inv.resultClass) {
+                    details.push(`Classification: ${inv.resultClass}`);
+                }
+
+                if (inv.error) {
+                    details.push(`Error: ${inv.error}`);
+                }
+
+                // Flag synthesized queries
+                if (inv.synthesized) {
+                    details.push('Source: SYNTHESIZE phase (custom SQL)');
+                }
+
+                // ═══════════════════════════════════════════════════════════════════════
+                // FIX: Explicitly tell LLM that 0-rows is a valid result to respond with
+                // ═══════════════════════════════════════════════════════════════════════
+                if (inv.zeroRowsIsValidResult) {
+                    details.push('⚠️ VALID SEARCH: Query executed successfully but found NO matching records.');
+                    details.push('→ This is a definitive answer: the searched-for data does not exist.');
+                    details.push('→ You should PROCEED and tell the user no matching data was found.');
+                }
+
+                return `${idx + 1}. ${inv.tool}: ${status} (${inv.rowCount || 0} rows)\n   ${details.join('\n   ')}`;
+            }).join('\n\n');
+
+            summaryParts.push(toolSummary);
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // FIX: Add SYNTHESIZE queries that may not be in toolInvocations
+        // This catches edge cases where SYNTHESIZE succeeded but wasn't recorded
+        // ═══════════════════════════════════════════════════════════════════════
+        if (successfulSynthQueries.length > 0) {
+            // Check if these are already in toolInvocations (avoid duplicates)
+            const alreadyRecorded = state.toolInvocations.some(inv => inv.synthesized);
+
+            if (!alreadyRecorded) {
+                let synthSummary = '\n═══ CUSTOM SQL QUERIES (SYNTHESIZE) ═══\n';
+                successfulSynthQueries.forEach((q, idx) => {
+                    synthSummary += `${idx + 1}. synthesized_query: SUCCESS (${q.rowCount || 0} rows)\n`;
+                    synthSummary += `   Purpose: ${q.purpose || 'Custom query'}\n`;
+                    synthSummary += `   SQL: ${(q.sql || '').substring(0, 150)}${(q.sql || '').length > 150 ? '...' : ''}\n`;
+                });
+                summaryParts.push(synthSummary);
+            }
+        }
+
+        return summaryParts.join('\n') || 'No tools were executed.';
+    }
+
+    /**
+     * Build resolved entities summary for REFLECT prompt
+     */
+    function buildResolvedEntitiesForReflection(state) {
+        const entries = Object.entries(state.resolvedEntities);
+        if (entries.length === 0) {
+            if (state.reflection.entityFound === false) {
+                return 'Entity resolution was attempted but NO MATCHES were found.';
+            }
+            return 'No entities were resolved.';
+        }
+
+        return entries.map(([term, entity]) =>
+            `"${term}" → ${entity.name} (${entity.type}, ID: ${entity.id})`
+        ).join('\n');
+    }
+
+    /**
+     * Build data summary for REFLECT prompt
+     * AGENTIC STRUCTURAL AWARENESS: Shows categorical distributions, not just sample rows
+     */
+    function buildDataSummaryForReflection(state) {
+        if (state.dataReferences.length === 0) {
+            return 'NO DATA was collected. All queries returned 0 rows.';
+        }
+
+        const sections = [];
+
+        state.dataReferences.forEach((ref, idx) => {
+            const summary = ref.summary || {};
+            const toolName = summary.tool || 'Unknown';
+
+            let section = `\n═══ DATA SOURCE ${idx + 1}: ${toolName} ═══\n`;
+            section += `RefId: ${ref.refId}\n`;
+            section += `Rows: ${summary.rowCount || 0}\n`;
+
+            if (summary.columns && summary.columns.length > 0) {
+                section += `Columns: ${summary.columns.join(', ')}\n`;
+            }
+
+            // ═══════════════════════════════════════════════════════════════════════
+            // STRUCTURAL AWARENESS: Show categorical column distributions
+            // This is the KEY feature - LLM sees ALL categories that exist in data
+            // ═══════════════════════════════════════════════════════════════════════
+            if (summary.categoricalColumns && summary.categoricalColumns.length > 0) {
+                section += `\n*** DATA STRUCTURE (categorical columns with distributions) ***\n`;
+
+                summary.categoricalColumns.forEach(catCol => {
+                    section += `\n  ${catCol.column} (${catCol.uniqueCount} unique values):\n`;
+
+                    // Show distribution with counts and sums
+                    catCol.distribution.forEach(item => {
+                        let line = `    • ${item.value}: ${item.count} rows`;
+                        if (item.sumFormatted && catCol.sumColumn) {
+                            line += `, ${catCol.sumColumn}_total: ${item.sumFormatted}`;
+                        }
+                        section += line + '\n';
+                    });
+                });
+
+                // Show drill-down hint
+                section += `\n  → To filter: load_cached_data(ref_id="${ref.refId}", filter={"column": "value"})\n`;
+                section += `  → To aggregate: load_cached_data(ref_id="${ref.refId}", group_by="column", aggregate_column="amount", aggregate_op="sum")\n`;
+            }
+
+            // ═══════════════════════════════════════════════════════════════════════
+            // NUMERIC COLUMN STATS: Show computed statistics
+            // ═══════════════════════════════════════════════════════════════════════
+            if (summary.schema) {
+                const numericCols = Object.entries(summary.schema)
+                    .filter(([_, schema]) => schema.stats)
+                    .slice(0, 3); // Limit to top 3 numeric columns
+
+                if (numericCols.length > 0) {
+                    section += `\n*** NUMERIC COLUMN STATS ***\n`;
+                    numericCols.forEach(([colName, schema]) => {
+                        const s = schema.stats;
+                        section += `  ${colName}: sum=${formatNumberForSummary(s.sum)}, avg=${formatNumberForSummary(s.avg)}, range=[${formatNumberForSummary(s.min)} to ${formatNumberForSummary(s.max)}]\n`;
+                    });
+                }
+            }
+
+            // ═══════════════════════════════════════════════════════════════════════
+            // STRATIFIED SAMPLE: Show representative rows from each category
+            // Better than "first 3 rows" which can miss entire categories
+            // ═══════════════════════════════════════════════════════════════════════
+            if (summary.stratifiedSample && summary.stratifiedSample.length > 0) {
+                section += `\n*** REPRESENTATIVE SAMPLE (1 per ${summary.stratifiedBy}) ***\n`;
+                summary.stratifiedSample.forEach(sample => {
+                    const parts = [`${summary.stratifiedBy}=${sample.category}`];
+                    if (sample.name) parts.push(`name="${sample.name}"`);
+                    if (sample.value !== undefined) parts.push(`${sample.valueColumn}=${typeof sample.value === 'number' ? sample.value.toLocaleString() : sample.value}`);
+                    section += `  • ${parts.join(', ')}\n`;
+                });
+            } else {
+                // Fallback to traditional sample if no stratified sample
+                const data = Cache.loadRows(ref.requestId || state.requestId, ref.refId, 0, 5);
+                if (data && data.rows && data.rows.length > 0) {
+                    section += `\nSample data (first ${Math.min(3, data.rows.length)} rows):\n`;
+                    const sampleRows = data.rows.slice(0, 3);
+                    const displayCols = (data.columns || Object.keys(sampleRows[0] || {})).slice(0, 5);
+                    sampleRows.forEach((row, i) => {
+                        const values = displayCols.map(col => {
+                            const val = row[col];
+                            if (val === null || val === undefined) return 'null';
+                            if (typeof val === 'number') return val.toLocaleString();
+                            return String(val).substring(0, 30);
+                        });
+                        section += `  Row ${i}: ${displayCols.map((c, j) => `${c}=${values[j]}`).join(', ')}\n`;
+                    });
+                }
+            }
+
+            // ═══════════════════════════════════════════════════════════════════════
+            // DASHBOARD COLLECTIONS: Critical for agentic data loading
+            // If this is a dashboard, show available collections that can be loaded
+            // ═══════════════════════════════════════════════════════════════════════
+            const data = Cache.loadRows(ref.requestId || state.requestId, ref.refId, 0, 1);
+            if (data && data.isDashboard && data.intelligence) {
+                const collections = data.intelligence.collections || {};
+                const collectionNames = Object.keys(collections);
+
+                if (collectionNames.length > 0) {
+                    section += `\n⚠️ AVAILABLE COLLECTIONS (can load with load_cached_data tool):\n`;
+                    collectionNames.forEach(colName => {
+                        const col = collections[colName];
+                        const count = col.count || col.items?.length || 0;
+                        const colColumns = col.columns || [];
+                        section += `  • ${colName}: ${count} items\n`;
+                        if (colColumns.length > 0) {
+                            section += `    Columns: ${colColumns.slice(0, 5).join(', ')}${colColumns.length > 5 ? '...' : ''}\n`;
+                        }
+                        if (col.refId) {
+                            section += `    Load with: load_cached_data(ref_id="${ref.refId}", collection_name="${colName}")\n`;
+                        }
+                    });
+                }
+
+                // Show dashboard metrics summary
+                const metrics = data.intelligence.metrics || {};
+                const metricNames = Object.keys(metrics);
+                if (metricNames.length > 0) {
+                    section += `\nDashboard Metrics (summary-level): ${metricNames.join(', ')}\n`;
+                }
+            }
+
+            sections.push(section);
+        });
+
+        return sections.join('\n');
+    }
+
+    /**
+     * Format number for data summary display
+     */
+    function formatNumberForSummary(num) {
+        if (num === null || num === undefined || isNaN(num)) return 'N/A';
+        const absNum = Math.abs(num);
+        const sign = num < 0 ? '-' : '';
+        if (absNum >= 1000000000) return sign + '$' + (absNum / 1000000000).toFixed(1) + 'B';
+        if (absNum >= 1000000) return sign + '$' + (absNum / 1000000).toFixed(1) + 'M';
+        if (absNum >= 1000) return sign + '$' + (absNum / 1000).toFixed(1) + 'K';
+        return sign + '$' + absNum.toFixed(0);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // LLM-DRIVEN TOOL RECOVERY
+    // When tools fail, ask LLM for intelligent alternatives
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Use LLM to suggest alternative tools when one fails
+     * This replaces the static getAlternativeTools() lookup for smarter recovery
+     */
+    function getLLMSuggestedAlternative(toolName, error, state) {
+        const alreadyTried = state.toolInvocations.map(t => t.tool).join(', ') || 'none';
+
+        const prompt = RECOVERY_PROMPT
+            .replace('{question}', state.message)
+            .replace('{failed_tool}', toolName)
+            .replace('{error}', error)
+            .replace('{tool_list}', Tools.getToolListForPrompt())
+            .replace('{already_tried}', alreadyTried);
+
+        try {
+            const response = AIProviders.callAI(prompt, {
+                tier: getTierForPhase('recovery', state),
+                temperature: 0.2,
+                jsonMode: true,
+                purpose: 'SCA:recovery'
+            });
+
+            const parsed = parseJsonResponse(response?.text);
+
+            if (parsed && parsed.alternative_tool && parsed.suggestion !== 'GIVE_UP') {
+                // Verify the tool exists
+                if (Tools.getTool(parsed.alternative_tool)) {
+                    Utils.debugLog('SCA LLM-suggested recovery tool', {
+                        failed: toolName,
+                        suggested: parsed.alternative_tool,
+                        reasoning: parsed.reasoning
+                    });
+                    return {
+                        tool: parsed.alternative_tool,
+                        reasoning: parsed.reasoning
+                    };
+                }
+            }
+
+            return null;
+        } catch (e) {
+            Utils.debugLog('SCA LLM recovery failed, falling back to static alternatives', { error: e.message });
+            return null;
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // WORLD-CLASS RESPOND PHASE - LLM as Data Analyst
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Phase 4: RESPOND - Single merged phase with FULL DATA ACCESS
+     * LLM sees actual data rows and uses {{token}} syntax for guaranteed accuracy
+     * Now enhanced with context from REFLECT phase
+     */
+    function executeRespondPhase(state) {
+        const phaseStart = Date.now();
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // CONVERSATIONAL HANDLING - Greetings, chitchat, general questions
+        // When intent is 'general', provide a friendly conversational response
+        // ═══════════════════════════════════════════════════════════════════════
+        if (state.intent && state.intent.intent === 'general') {
+            const conversationalResponse = generateConversationalResponse(state);
+            const duration = Date.now() - phaseStart;
+
+            state.formattedResponse = {
+                title: 'Response',
+                summary: conversationalResponse.substring(0, 100),
+                blocks: [{
+                    type: 'text',
+                    content: conversationalResponse
+                }]
+            };
+            state.phase = PHASES.COMPLETE;
+
+            upsertThinkingStep(state, 'respond', {
+                title: 'Generating response',
+                phase: 'respond',
+                status: 'complete',
+                duration: duration,
+                context: {
+                    phase: 'respond',
+                    conversational: true
+                }
+            });
+
+            return { success: true, nextPhase: PHASES.COMPLETE };
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // CLARIFICATION HANDLING - When REASON_ACT needs user input
+        // ═══════════════════════════════════════════════════════════════════════
+        if (state.clarificationNeeded) {
+            const duration = Date.now() - phaseStart;
+
+            state.formattedResponse = {
+                title: 'Clarification Needed',
+                summary: state.clarificationNeeded,
+                blocks: [{
+                    type: 'text',
+                    content: state.clarificationNeeded
+                }]
+            };
+            state.phase = PHASES.COMPLETE;
+
+            upsertThinkingStep(state, 'respond', {
+                title: 'Need more information',
+                phase: 'respond',
+                status: 'complete',
+                duration: duration,
+                context: {
+                    phase: 'respond',
+                    clarification: true
+                }
+            });
+
+            return { success: true, nextPhase: PHASES.COMPLETE };
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // COMBINED REFLECT+RESPOND MODE
+        // If REFLECT phase already generated response blocks, use them directly
+        // This saves an entire LLM round trip
+        // ═══════════════════════════════════════════════════════════════════════
+        if (state.reflectResponse && state.reflectResponse.blocks) {
+            Utils.debugLog('SCA RESPOND - using combined mode response from REFLECT', {
+                blockCount: state.reflectResponse.blocks.length
+            });
+
+            const resolved = resolveBlockSequence(state.reflectResponse.blocks, state);
+            const duration = Date.now() - phaseStart;
+
+            if (resolved && resolved.length > 0) {
+                const firstTextBlock = resolved.find(b => b.type === 'text');
+                const summary = firstTextBlock?.content?.substring(0, 150) || '';
+
+                state.formattedResponse = {
+                    title: 'Analysis Results',
+                    summary: summary,
+                    blocks: resolved
+                };
+                state.phase = PHASES.COMPLETE;
+
+                upsertThinkingStep(state, 'respond', {
+                    title: 'Generating response',
+                    phase: 'respond',
+                    status: 'complete',
+                    duration: duration,
+                    context: {
+                        combinedMode: true,
+                        blockCount: resolved.length,
+                        tokensResolved: true
+                    }
+                });
+
+                Utils.debugLog('SCA RESPOND phase complete (combined mode)', { duration, blockCount: resolved.length });
+                return { success: true, nextPhase: PHASES.COMPLETE };
+            }
+            // If resolution failed, fall through to normal RESPOND
+            Utils.debugLog('SCA RESPOND - combined mode resolution failed, falling back to normal flow');
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // HANDLE REFLECTION OUTCOMES
+        // Use context from REFLECT phase to provide intelligent responses
+        // ═══════════════════════════════════════════════════════════════════════
+
+        // Check if clarification is needed
+        if (state.reflection.clarificationNeeded) {
+            state.formattedResponse = {
+                title: 'Clarification Needed',
+                summary: 'I need more information to answer your question',
+                blocks: [{
+                    type: 'text',
+                    content: state.reflection.clarificationQuestion ||
+                        "I found multiple possible interpretations of your question. Could you provide more details?"
+                }]
+            };
+            state.phase = PHASES.COMPLETE;
+            return { success: true, nextPhase: PHASES.COMPLETE };
+        }
+
+        // Check if we gave up
+        if (state.reflection.gaveUp) {
+            const explanation = state.reflection.giveUpExplanation ||
+                "I wasn't able to find the data needed to answer your question.";
+
+            // Build a helpful journey summary
+            const journeySummary = buildJourneySummary(state);
+
+            state.formattedResponse = {
+                title: 'Unable to Answer',
+                summary: explanation.substring(0, 100),
+                blocks: [
+                    { type: 'text', content: explanation },
+                    ...(journeySummary ? [{
+                        type: 'list',
+                        title: 'What I Tried',
+                        items: journeySummary
+                    }] : [])
+                ]
+            };
+            state.phase = PHASES.COMPLETE;
+            return { success: true, nextPhase: PHASES.COMPLETE };
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // FIX: Handle valid 0-row search results
+        // When SYNTHESIZE (or a tool) succeeds but finds no matching data,
+        // this is a VALID ANSWER - not a failure! We should tell the user.
+        // ═══════════════════════════════════════════════════════════════════════
+        if (state.reflection.searchCompleted && state.dataReferences.length === 0) {
+            const duration = Date.now() - phaseStart;
+
+            // Build a helpful response explaining what we searched for and found nothing
+            const zeroRowsResponse = buildZeroRowsSuccessResponse(state);
+
+            state.formattedResponse = {
+                title: zeroRowsResponse.title,
+                summary: zeroRowsResponse.summary,
+                blocks: zeroRowsResponse.blocks
+            };
+            state.phase = PHASES.COMPLETE;
+
+            upsertThinkingStep(state, 'respond', {
+                title: 'Generating response',
+                phase: 'respond',
+                status: 'complete',
+                duration: duration,
+                context: {
+                    validSearch: true,
+                    zeroRows: true,
+                    message: 'Search completed successfully with no matches'
+                }
+            });
+
+            Utils.debugLog('SCA RESPOND - valid 0-row search result', {
+                searchCompleted: true,
+                zeroRowsReason: state.reflection.zeroRowsReason
+            });
+
+            return { success: true, nextPhase: PHASES.COMPLETE };
+        }
+
+        // Check if we have any data
+        if (state.dataReferences.length === 0) {
+            // No data - provide intelligent fallback based on failure mode
+            const failureResponse = buildFailureModeResponse(state);
+
+            state.formattedResponse = {
+                title: failureResponse.title,
+                summary: failureResponse.summary,
+                blocks: failureResponse.blocks
+            };
+            state.phase = PHASES.COMPLETE;
+
+            upsertThinkingStep(state, 'respond', {
+                title: 'Generating response',
+                phase: 'respond',
+                status: 'complete',
+                context: {
+                    noData: true,
+                    failureMode: state.reflection.failureMode
+                }
+            });
+
+            return { success: true, nextPhase: PHASES.COMPLETE };
+        }
+
+        // Build data sections with ACTUAL ROWS for the prompt
+        const dataSections = buildDataSectionsForPrompt(state);
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // MARKDOWN DIRECTIVE ARCHITECTURE (MDA)
+        // LLM writes natural markdown with :::directives
+        // Code parses directives and builds rich blocks - BLAZING FAST
+        // ═══════════════════════════════════════════════════════════════════════
+
+        // Build constraints section from INTENT phase
+        const constraintsSection = buildConstraintsSection(state);
+
+        const prompt = MDA_RESPOND_PROMPT
+            .replace('{history_context}', buildHistoryContext(state))
+            .replace('{question}', state.message)
+            .replace('{data_sections}', dataSections)
+            .replace('{constraints_section}', constraintsSection);
+
+        // Update thinking step
+        upsertThinkingStep(state, 'respond', {
+            title: 'Generating response',
+            phase: 'respond',
+            status: 'active',
+            context: {
+                dataRefs: state.dataReferences.length,
+                phase: 'respond',
+                architecture: 'MDA'
+            }
+        });
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // MDA LLM CALL - Single fast call, no JSON mode needed
+        // Markdown is natural for LLMs - generates 5-10x faster than complex JSON
+        // ═══════════════════════════════════════════════════════════════════════
+        let lastError = null;
+        let parsedBlocks = null;
+        let resolved = null;
+        let rawMarkdown = null;
+
+        try {
+            const response = AIProviders.callAI(prompt, {
+                tier: getTierForPhase('respond', state),
+                temperature: 0.4,
+                purpose: 'SCA:respond:MDA'
+            });
+
+            rawMarkdown = response?.text || '';
+
+            Utils.debugLog('MDA: received markdown response', {
+                length: rawMarkdown.length,
+                preview: rawMarkdown.substring(0, 200)
+            });
+
+            // Parse markdown with directives into blocks
+            parsedBlocks = parseMarkdownDirectives(rawMarkdown, state);
+
+            if (!parsedBlocks || parsedBlocks.length === 0) {
+                // If no blocks parsed, treat entire response as text block
+                if (rawMarkdown.trim()) {
+                    parsedBlocks = [{ type: 'text', content: rawMarkdown.trim() }];
+                } else {
+                    throw new Error('MDA: empty response from LLM');
+                }
+            }
+
+            // Resolve blocks - builds tables/charts from dataRefs, resolves {{tokens}}
+            resolved = resolveBlockSequence(parsedBlocks, state);
+
+            if (!resolved || resolved.length === 0) {
+                throw new Error('MDA: no blocks resolved');
+            }
+
+            Utils.debugLog('MDA: successfully parsed and resolved blocks', {
+                parsedCount: parsedBlocks.length,
+                resolvedCount: resolved.length,
+                blockTypes: resolved.map(b => b.type).join(',')
+            });
+
+        } catch (e) {
+            lastError = e;
+            log.error('MDA RESPOND failed', {
+                error: e.message,
+                rawLength: rawMarkdown?.length
+            });
+        }
+
+        const duration = Date.now() - phaseStart;
+        state.phaseTimings.respond = duration;
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // MDA SUCCESS - Blocks parsed and resolved successfully
+        // ═══════════════════════════════════════════════════════════════════════
+        if (resolved && resolved.length > 0) {
+            // Extract summary from first text block
+            const firstTextBlock = resolved.find(b => b.type === 'text');
+            const summary = firstTextBlock?.content?.substring(0, 150) || '';
+
+            // Build formatted response using resolved blocks directly
+            state.formattedResponse = {
+                title: 'Analysis Results',
+                summary: summary,
+                blocks: resolved
+            };
+
+            state.phase = PHASES.COMPLETE;
+
+            upsertThinkingStep(state, 'respond', {
+                title: 'Generating response',
+                phase: 'respond',
+                status: 'complete',
+                duration: duration,
+                context: {
+                    architecture: 'MDA',
+                    blockCount: resolved.length,
+                    tokensResolved: true,
+                    hasCharts: resolved.some(b => b.type === 'chart'),
+                    hasTables: resolved.some(b => b.type === 'table')
+                },
+                debug: buildDebugInfo(prompt, null, state, {
+                    architecture: 'MDA',
+                    blockCount: resolved.length,
+                    blockTypes: resolved.map(b => b.type).join(',')
+                })
+            });
+
+            Utils.debugLog('MDA Respond phase complete', { duration: duration, blockCount: resolved.length });
+            return { success: true, nextPhase: PHASES.COMPLETE };
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // MDA FALLBACK - If parsing failed, build tables directly from dataRefs
+        // This ensures users always see their data even if LLM output is malformed
+        // ═══════════════════════════════════════════════════════════════════════
+        log.error('MDA Respond phase failed', { error: lastError?.message, duration: duration });
+        state.errors.push({ phase: 'respond', error: lastError?.message || 'MDA parse failed', timestamp: Date.now() });
+
+        // Build fallback with actual data tables (not just "X results found")
+        const fallbackBlocks = buildMDAFallbackBlocks(state);
+        state.formattedResponse = {
+            title: 'Analysis Results',
+            summary: 'Here is the data from your query.',
+            blocks: fallbackBlocks
+        };
+        state.phase = PHASES.COMPLETE;
+
+        upsertThinkingStep(state, 'respond', {
+            title: 'Generating response',
+            phase: 'respond',
+            status: 'complete',
+            duration: duration,
+            context: {
+                architecture: 'MDA',
+                fallback: true,
+                error: (lastError?.message || 'MDA parse failed').substring(0, 100)
+            }
+        });
+
+        return { success: true, nextPhase: PHASES.COMPLETE };
+    }
+
+    /**
+     * Build fallback blocks with actual data tables when MDA parsing fails
+     * Ensures users always see their data even if LLM output is malformed
+     * @param {Object} state - Current state with dataReferences
+     * @returns {Array} Array of table blocks
+     */
+    function buildMDAFallbackBlocks(state) {
+        const blocks = [];
+
+        // Add intro text
+        blocks.push({
+            type: 'text',
+            content: 'Here is the data from your query:'
+        });
+
+        // Build table blocks for each data reference
+        state.dataReferences.forEach(ref => {
+            const tableBlock = buildTableBlockFromRef({ dataRef: ref.refId }, state);
+            if (tableBlock) {
+                blocks.push(tableBlock);
+            }
+        });
+
+        // If no tables could be built, add a simple text summary
+        if (blocks.length === 1) {
+            const fallbackNarrative = buildFallbackNarrative(state);
+            blocks.push({ type: 'text', content: fallbackNarrative });
+        }
+
+        return blocks;
+    }
+
+    /**
+     * Build data sections with ACTUAL ROWS for the RESPOND prompt
+     * This gives LLM full visibility into the data
+     * Enhanced with Dashboard Intelligence Bridge support
+     */
+    function buildDataSectionsForPrompt(state) {
+        const sections = [];
+
+        state.dataReferences.forEach((ref, idx) => {
+            const summary = ref.summary || {};
+            const toolName = getToolDisplayName(summary.tool) || 'Data';
+
+            // Load ALL rows from DataStore so LLM can see complete data
+            // Use ref.requestId for follow-up queries (data stored under original request)
+            const data = Cache.loadRows(ref.requestId || state.requestId, ref.refId, 0, 9999);
+            if (!data || !data.rows) return;
+
+            // ═══════════════════════════════════════════════════════════════════════
+            // DASHBOARD INTELLIGENCE BRIDGE: Use rich text summary for dashboards
+            // This provides LLM with formatted metrics, insights, and collection info
+            // ═══════════════════════════════════════════════════════════════════════
+            if (data.isDashboard && data.textSummary) {
+                let section = `═══ DASHBOARD INTELLIGENCE: ${data.dashboardName || toolName} [dataRef: "${ref.refId}"] ═══\n\n`;
+                section += data.textSummary;
+
+                // Add token reference guide for dashboard metrics
+                section += `\n\nTOKEN REFERENCE GUIDE FOR DASHBOARD DATA:\n`;
+                section += `  Metrics: {{data.rows[N].formatted_value}} (use the formatted_value column)\n`;
+                section += `  Row structure: metric_name, value, formatted_value, description, type, status, trend, change\n`;
+
+                // List available metrics for easy reference
+                const metricRows = data.rows.filter(r => r.type !== 'collection');
+                if (metricRows.length > 0) {
+                    section += `\n  AVAILABLE METRICS:\n`;
+                    metricRows.forEach((row, i) => {
+                        section += `    Row ${i}: ${row.metric_name} = ${row.formatted_value}\n`;
+                    });
+                }
+
+                // List collections for drill-down reference
+                const collectionRows = data.rows.filter(r => r.type === 'collection');
+                if (collectionRows.length > 0) {
+                    section += `\n  AVAILABLE COLLECTIONS (for drill-down queries):\n`;
+                    collectionRows.forEach(row => {
+                        section += `    ${row.metric_name}: ${row.value} items\n`;
+                    });
+                }
+
+                sections.push(section);
+                return; // Skip standard row processing for dashboards
+            }
+
+            // ═══════════════════════════════════════════════════════════════════════
+            // STANDARD DATA PROCESSING (non-dashboard tools)
+            // ═══════════════════════════════════════════════════════════════════════
+            const totalRows = data.range?.total || data.rows.length;
+            let section = `═══ DATA: ${toolName} (${totalRows} total rows) [dataRef: "${ref.refId}"] ═══\n`;
+            section += `Columns: ${data.columns.join(', ')}\n\n`;
+
+            // Compute aggregate stats from schema
+            const computedStats = computeAggregateStats(summary);
+            if (computedStats) {
+                section += `STATS:\n`;
+                if (computedStats.total !== undefined) {
+                    section += `  total: ${formatStatValue(computedStats.total, 'total')}\n`;
+                }
+                if (computedStats.average !== undefined) {
+                    section += `  average: ${formatStatValue(computedStats.average, 'average')}\n`;
+                }
+                section += `  count: ${totalRows}\n`;
+                section += '\n';
+            }
+
+            // ═══════════════════════════════════════════════════════════════════════
+            // CATEGORY INTELLIGENCE: Show breakdown by categorical columns
+            // This prevents LLM from confusing total sum with specific categories
+            // (e.g., knowing Revenue=$16.7M vs total of all rows=$31.9M)
+            // Shows SLUG for each category - use slug in filter:column=slug
+            // ═══════════════════════════════════════════════════════════════════════
+            if (summary.categoricalColumns && summary.categoricalColumns.length > 0) {
+                section += `CATEGORY BREAKDOWN (use slug for filtering):\n`;
+                summary.categoricalColumns.forEach(catCol => {
+                    section += `  By ${catCol.column}:\n`;
+                    catCol.distribution.forEach(item => {
+                        const sumStr = item.sumFormatted || formatStatValue(item.sum, 'currency');
+                        const slug = toSlug(item.value);
+                        section += `    • ${item.value} [slug: ${slug}]: ${sumStr} (${item.count} rows)\n`;
+                    });
+
+                    // Add dynamic filter examples using actual column name and first slug
+                    const firstSlug = toSlug(catCol.distribution[0]?.value || '');
+                    if (firstSlug) {
+                        section += `  FILTER SYNTAX: :::table ${ref.refId} filter:${catCol.column}=${firstSlug}\n`;
+                    }
+                });
+                section += '\n';
+            }
+
+            // ═══════════════════════════════════════════════════════════════════════
+            // STRATIFIED ROW SAMPLING FOR PROMPT
+            // Ensures LLM sees representative rows from ALL categories, not just first N
+            // This fixes issue where Operating Expenses (rows 38-84) were never shown
+            // ═══════════════════════════════════════════════════════════════════════
+            const maxRowsToShow = 30;
+            let rowsToDisplay = [];
+            const primaryCatCol = summary.categoricalColumns?.[0];
+
+            if (primaryCatCol && primaryCatCol.distribution && primaryCatCol.distribution.length > 1) {
+                // Stratified sampling: show rows from each category
+                const catColumn = primaryCatCol.column;
+                const totalCategories = primaryCatCol.distribution.length;
+
+                // Group rows by category
+                const rowsByCategory = {};
+                data.rows.forEach((row, idx) => {
+                    const cat = row[catColumn];
+                    if (!rowsByCategory[cat]) rowsByCategory[cat] = [];
+                    rowsByCategory[cat].push({ row, idx });
+                });
+
+                // Calculate rows per category (proportional, minimum 3 per category)
+                const rowsPerCategory = {};
+                const totalCount = primaryCatCol.distribution.reduce((sum, d) => sum + d.count, 0);
+
+                primaryCatCol.distribution.forEach(d => {
+                    const proportion = d.count / totalCount;
+                    const idealRows = Math.round(proportion * maxRowsToShow);
+                    const minRows = Math.min(3, d.count);
+                    rowsPerCategory[d.value] = Math.max(minRows, idealRows);
+                });
+
+                // Sample from each category
+                primaryCatCol.distribution.forEach(d => {
+                    const catRows = rowsByCategory[d.value] || [];
+                    const takeCount = Math.min(rowsPerCategory[d.value] || 3, catRows.length);
+                    rowsToDisplay.push(...catRows.slice(0, takeCount));
+                });
+            } else {
+                // No categorical structure - use first N rows
+                rowsToDisplay = data.rows.slice(0, maxRowsToShow).map((row, idx) => ({ row, idx }));
+            }
+
+            section += `ROWS (showing ${rowsToDisplay.length} of ${totalRows} - stratified sample from all categories):\n`;
+
+            for (const { row, idx } of rowsToDisplay) {
+                const rowData = data.columns.slice(0, 6).map(col => {
+                    const val = row[col];
+                    if (val === null || val === undefined) return 'null';
+                    if (typeof val === 'number') {
+                        if (isMonetaryColumn(col)) {
+                            // FIXED: Format negative currency correctly as -$X not $-X
+                            const isNegative = val < 0;
+                            const absVal = Math.abs(val);
+                            const formatted = '$' + absVal.toLocaleString('en-US', {minimumFractionDigits: 2});
+                            return isNegative ? '-' + formatted : formatted;
+                        }
+                        return val.toLocaleString();
+                    }
+                    return String(val);
+                });
+                section += `  Row ${idx}: {${data.columns.slice(0, 6).map((c, j) => `${c}: ${rowData[j]}`).join(', ')}}\n`;
+            }
+
+            // ═══════════════════════════════════════════════════════════════════════
+            // DRILL-DOWN CAPABILITY: Tell LLM it can load ALL rows for any category
+            // This enables accurate financial reporting when sample is insufficient
+            // ═══════════════════════════════════════════════════════════════════════
+            if (primaryCatCol && rowsToDisplay.length < totalRows) {
+                section += `\n⚠️ DRILL-DOWN CAPABILITY: You see a SAMPLE (${rowsToDisplay.length} of ${totalRows} rows).\n`;
+                section += `   If your response requires ALL items in a specific category, use load_cached_data:\n`;
+                primaryCatCol.distribution.forEach(d => {
+                    const filterVal = JSON.stringify({ [primaryCatCol.column]: d.value });
+                    section += `   • ALL "${d.value}" (${d.count} rows): load_cached_data(ref_id="${ref.refId}", filter=${filterVal})\n`;
+                });
+                section += `   The table/chart output will show ALL rows - but cite specific items accurately from what you've loaded.\n`;
+            }
+
+            // ═══════════════════════════════════════════════════════════════════════
+            // EXPLICIT TOKEN REFERENCE: List EXACTLY what tokens are available
+            // This prevents LLM from inventing column names that don't exist
+            // ═══════════════════════════════════════════════════════════════════════
+            section += `\nAVAILABLE TOKEN REFERENCES (use ONLY these exact tokens):\n`;
+
+            // List all available columns for row access
+            section += `\n  📊 ROW VALUES (access individual rows):\n`;
+            data.columns.forEach(col => {
+                const isMonetary = isMonetaryColumn(col);
+                const example = isMonetary
+                    ? `{{data.rows[0].${col}:currency}}`
+                    : `{{data.rows[0].${col}}}`;
+                section += `     ${col}: ${example}\n`;
+            });
+
+            // List computed stats with EXACT token syntax
+            section += `\n  📈 AGGREGATE STATS:\n`;
+            section += `     {{data.stats.count}} → ${totalRows} rows\n`;
+
+            // List per-column stats for numeric columns
+            if (summary.schema) {
+                const numericCols = Object.entries(summary.schema)
+                    .filter(([col, s]) => s.stats)
+                    .map(([col, s]) => ({ col, stats: s.stats }));
+
+                if (numericCols.length > 0) {
+                    numericCols.forEach(({ col, stats }) => {
+                        section += `     {{data.stats.sum_${col}:currency}} → ${formatStatValue(stats.sum, 'currency')}\n`;
+                        section += `     {{data.stats.avg_${col}:currency}} → ${formatStatValue(stats.avg, 'currency')}\n`;
+                        section += `     {{data.stats.min_${col}:currency}} → ${formatStatValue(stats.min, 'currency')}\n`;
+                        section += `     {{data.stats.max_${col}:currency}} → ${formatStatValue(stats.max, 'currency')}\n`;
+                    });
+                }
+            }
+
+            // ═══════════════════════════════════════════════════════════════════════
+            // CATEGORY-LEVEL TOKENS
+            // List tokens for accessing category totals (e.g., Revenue, COGS, Operating Expenses)
+            // ═══════════════════════════════════════════════════════════════════════
+            if (summary.categoricalColumns && summary.categoricalColumns.length > 0) {
+                section += `\n  📊 CATEGORY TOTALS (use these for metrics referencing categories):\n`;
+                summary.categoricalColumns.forEach(catCol => {
+                    catCol.distribution.forEach(item => {
+                        // Convert category value to token-safe format (spaces → underscores)
+                        const tokenName = item.value.replace(/\s+/g, '_');
+                        const sumStr = item.sumFormatted || formatStatValue(item.sum, 'currency');
+                        section += `     {{data.stats.total_${tokenName}:currency}} → ${sumStr}\n`;
+                        section += `     {{data.stats.count_${tokenName}}} → ${item.count} rows\n`;
+                    });
+                });
+            }
+
+            // ═══════════════════════════════════════════════════════════════════════
+            // FINANCIAL STATEMENT METRICS (for income statements)
+            // These are PROPERLY computed - use these instead of {{data.stats.total}}
+            // computedStats already computed earlier in this function
+            // ═══════════════════════════════════════════════════════════════════════
+            if (computedStats && computedStats.isIncomeStatement) {
+                section += `\n  💰 FINANCIAL METRICS (use these for P&L metrics - properly computed):\n`;
+                section += `     {{data.stats.revenue:currency}} → ${formatStatValue(computedStats.revenue, 'currency')}\n`;
+                section += `     {{data.stats.cogs:currency}} → ${formatStatValue(computedStats.cogs, 'currency')}\n`;
+                section += `     {{data.stats.gross_profit:currency}} → ${formatStatValue(computedStats.gross_profit, 'currency')} (Revenue - COGS)\n`;
+                section += `     {{data.stats.opex:currency}} → ${formatStatValue(computedStats.opex, 'currency')}\n`;
+                section += `     {{data.stats.net_income:currency}} → ${formatStatValue(computedStats.net_income, 'currency')} (Revenue - COGS - OpEx)\n`;
+                section += `     {{data.stats.gross_margin:percent}} → ${(computedStats.gross_margin * 100).toFixed(1)}%\n`;
+                section += `     {{data.stats.operating_margin:percent}} → ${(computedStats.operating_margin * 100).toFixed(1)}%\n`;
+                section += `\n  ⚠️ INCOME STATEMENT WARNING: {{data.stats.total}} = ${formatStatValue(computedStats.total, 'currency')} is the arithmetic SUM of all rows.\n`;
+                section += `     This is NOT "Net Income" or "Net Total". For meaningful P&L metrics, use the FINANCIAL METRICS above.\n`;
+            }
+
+            section += `\n  ⚠️ DO NOT invent tokens. Use ONLY the tokens listed above.\n`;
+            section += `  ⚠️ DO NOT use {{data.rows[N]}} for rows not shown in the sample above - values will show as [N/A].\n`;
+            section += `     Inline actual values from displayed rows instead of guessing row indices.\n`;
+            section += `  For table/chart blocks: use dataRef "${ref.refId}"\n`;
+
+            sections.push(section);
+        });
+
+        return sections.join('\n\n') || 'No data available';
+    }
+
+    /**
+     * Compute aggregate stats from the summary schema
+     * Finds the primary monetary column and extracts its stats
+     */
+    function computeAggregateStats(summary) {
+        if (!summary || !summary.schema) return null;
+
+        // Find the primary monetary column (total_revenue, amount, total, etc.)
+        const monetaryPriority = ['total_revenue', 'revenue', 'total', 'amount', 'balance', 'spend'];
+        let primaryCol = null;
+        let primaryStats = null;
+
+        // First try priority columns
+        for (const col of monetaryPriority) {
+            if (summary.schema[col] && summary.schema[col].stats) {
+                primaryCol = col;
+                primaryStats = summary.schema[col].stats;
+                break;
+            }
+        }
+
+        // If not found, look for any numeric column with stats
+        if (!primaryStats) {
+            for (const [col, schema] of Object.entries(summary.schema)) {
+                if (schema.stats && (schema.type === 'number' || schema.type === 'currency')) {
+                    // Prefer columns with monetary names
+                    if (isMonetaryColumn(col)) {
+                        primaryCol = col;
+                        primaryStats = schema.stats;
+                        break;
+                    }
+                    // Keep as fallback
+                    if (!primaryStats) {
+                        primaryCol = col;
+                        primaryStats = schema.stats;
+                    }
+                }
+            }
+        }
+
+        if (!primaryStats) return null;
+
+        const result = {
+            total: primaryStats.sum,
+            average: primaryStats.avg,
+            min: primaryStats.min,
+            max: primaryStats.max,
+            count: primaryStats.count,
+            column: primaryCol
+        };
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // FINANCIAL STATEMENT COMPUTED METRICS
+        // For income statements (Revenue, COGS, OpEx), compute proper financial metrics
+        // {{data.stats.total}} is arithmetic sum - NOT meaningful for P&L!
+        // ═══════════════════════════════════════════════════════════════════════
+        if (summary.categoricalColumns && summary.categoricalColumns.length > 0) {
+            const catCol = summary.categoricalColumns[0];
+            if (catCol.column === 'category' && catCol.distribution) {
+                // Check if this is an income statement (has Revenue, COGS, and/or Operating Expenses)
+                const categories = {};
+                catCol.distribution.forEach(d => {
+                    const key = d.value.toLowerCase().replace(/\s+/g, '_');
+                    categories[key] = d.sum || 0;
+                });
+
+                const hasRevenue = categories['revenue'] !== undefined;
+                const hasCogs = categories['cost_of_goods_sold'] !== undefined;
+                const hasOpex = categories['operating_expenses'] !== undefined;
+
+                // If it looks like an income statement, compute financial metrics
+                if (hasRevenue && (hasCogs || hasOpex)) {
+                    const revenue = categories['revenue'] || 0;
+                    const cogs = categories['cost_of_goods_sold'] || 0;
+                    const opex = categories['operating_expenses'] || 0;
+
+                    result.isIncomeStatement = true;
+                    result.revenue = revenue;
+                    result.cogs = cogs;
+                    result.opex = opex;
+                    result.gross_profit = revenue - cogs;
+                    result.net_income = revenue - cogs - opex;
+                    result.gross_margin = revenue > 0 ? ((revenue - cogs) / revenue) : 0;
+                    result.operating_margin = revenue > 0 ? ((revenue - cogs - opex) / revenue) : 0;
+                }
+            }
+        }
+
+        return result;
+    }
+
+    /**
+     * Build mapping from resolved entity names to their corresponding dataRefs
+     * Enables entity-based token addressing: {{Teva.total_unpaid}} or {{Birla.current_amount}}
+     *
+     * Strategy: Match entity IDs in resolved entities to entity IDs in tool results
+     */
+    function buildEntityToRefMapping(state) {
+        if (!state.resolvedEntities || !state.dataReferences) return null;
+
+        const mapping = {};
+
+        for (const [entityName, entity] of Object.entries(state.resolvedEntities)) {
+            const entityId = entity.id;
+            const entityType = entity.type; // 'customer', 'vendor', etc.
+
+            // Find dataRefs that contain this entity's data
+            for (const dataRef of state.dataReferences) {
+                const summary = dataRef.summary || {};
+
+                // Check if this dataRef was for this entity
+                // Method 1: Check tool args for customer_id, vendor_id, entity_id
+                const toolInvocation = state.toolInvocations.find(inv =>
+                    inv.tool === summary.tool &&
+                    (inv.args?.customer_id === entityId ||
+                     inv.args?.vendor_id === entityId ||
+                     inv.args?.entity_id === entityId)
+                );
+
+                if (toolInvocation) {
+                    mapping[entityName] = dataRef;
+                    break;
+                }
+
+                // Method 2: Check if first row contains this entity's ID
+                // Load first row to check
+                try {
+                    const data = Cache.loadRows(
+                        dataRef.requestId || state.requestId,
+                        dataRef.refId,
+                        0,
+                        1
+                    );
+                    if (data && data.rows && data.rows.length > 0) {
+                        const row = data.rows[0];
+                        if (row.customer_id === entityId ||
+                            row.vendor_id === entityId ||
+                            row.entity_id === entityId) {
+                            mapping[entityName] = dataRef;
+                            break;
+                        }
+                        // Also check if customer_name or vendor_name matches
+                        const nameMatch = entity.name?.toLowerCase();
+                        if (nameMatch &&
+                            (row.customer_name?.toLowerCase()?.includes(nameMatch) ||
+                             row.vendor_name?.toLowerCase()?.includes(nameMatch))) {
+                            mapping[entityName] = dataRef;
+                            break;
+                        }
+                    }
+                } catch (e) {
+                    // Ignore cache errors, continue checking
+                }
+            }
+        }
+
+        return Object.keys(mapping).length > 0 ? mapping : null;
+    }
+
+    /**
+     * Resolve {{tokens}} in a text string
+     * Supports multiple addressing modes:
+     *   - {{data.rows[N].column}}         - Uses first dataRef, row N
+     *   - {{data[R].rows[N].column}}      - Uses dataRef R, row N (multi-ref support)
+     *   - {{ref:REF_ID.rows[N].column}}   - Explicit ref by ID
+     *   - {{EntityName.column}}           - Entity-based addressing (uses resolved entities)
+     *   - {{data.stats.X}}                - Stats from first dataRef
+     *
+     * FIXED: Multi-dataRef support - LLM can address specific data sources
+     */
+    function resolveTokensInText(text, state) {
+        if (!text) return '';
+
+        // Build entity-to-dataRef mapping for entity-based addressing
+        const entityToRef = buildEntityToRefMapping(state);
+
+        // Pattern: {{data.rows[N].column}} or {{data.rows[N].column:format}}
+        let resolved = text.replace(/\{\{([^}]+)\}\}/g, (match, expr) => {
+            try {
+                const trimmed = expr.trim();
+
+                // Parse the expression
+                // Format: data.rows[N].column or data.rows[N].column:format or data.stats.X
+                const formatMatch = trimmed.match(/:(\w+)$/);
+                const format = formatMatch ? formatMatch[1] : null;
+                const path = format ? trimmed.replace(/:(\w+)$/, '') : trimmed;
+
+                // ═══════════════════════════════════════════════════════════════════════
+                // FIX: Multi-DataRef Addressing Modes
+                // ═══════════════════════════════════════════════════════════════════════
+
+                let dataRef = null;
+                let adjustedPath = path;
+
+                // Mode 1: Explicit ref by ID - {{ref:ref_get__xyz.rows[0].column}}
+                const explicitRefMatch = path.match(/^ref:([^.]+)\.(.+)$/);
+                if (explicitRefMatch) {
+                    const refId = explicitRefMatch[1];
+                    adjustedPath = 'data.' + explicitRefMatch[2];
+                    dataRef = state.dataReferences.find(r => r.refId === refId);
+                    if (!dataRef) {
+                        Utils.debugLog('Token resolution: explicit ref not found', { refId: refId });
+                        return match;
+                    }
+                }
+
+                // Mode 2: Indexed dataRef - {{data[1].rows[0].column}}
+                if (!dataRef) {
+                    const indexedRefMatch = path.match(/^data\[(\d+)\]\.(.+)$/);
+                    if (indexedRefMatch) {
+                        const refIdx = parseInt(indexedRefMatch[1], 10);
+                        adjustedPath = 'data.' + indexedRefMatch[2];
+                        if (refIdx >= 0 && refIdx < state.dataReferences.length) {
+                            dataRef = state.dataReferences[refIdx];
+                        } else {
+                            Utils.debugLog('Token resolution: dataRef index out of bounds', {
+                                refIdx: refIdx,
+                                available: state.dataReferences.length
+                            });
+                            return match;
+                        }
+                    }
+                }
+
+                // Mode 3: Entity-based addressing - {{Teva.total_unpaid}} or {{Birla.current_amount}}
+                if (!dataRef && entityToRef) {
+                    const entityMatch = path.match(/^([A-Za-z][A-Za-z0-9_\s]*?)\.(.+)$/);
+                    if (entityMatch) {
+                        const entityName = entityMatch[1].trim();
+                        const columnPath = entityMatch[2];
+                        // Find matching entity (case-insensitive)
+                        const matchingEntity = Object.keys(entityToRef).find(
+                            e => e.toLowerCase() === entityName.toLowerCase()
+                        );
+                        if (matchingEntity && entityToRef[matchingEntity]) {
+                            dataRef = entityToRef[matchingEntity];
+                            adjustedPath = 'data.rows[0].' + columnPath;
+                        }
+                    }
+                }
+
+                // Mode 4: Default - first dataRef (backwards compatible)
+                if (!dataRef) {
+                    dataRef = state.dataReferences[0];
+                    adjustedPath = path;
+                }
+
+                if (!dataRef) return '{{UNRESOLVED:' + expr + '}}';
+
+                // ═══════════════════════════════════════════════════════════════════════
+                // LOAD ALL ROWS for token resolution
+                // LLM might reference any row index - we need complete data access
+                // ═══════════════════════════════════════════════════════════════════════
+                const data = Cache.loadRows(dataRef.requestId || state.requestId, dataRef.refId, 0, 9999);
+                if (!data) return '{{UNRESOLVED:' + expr + '}}';
+
+                const totalRows = data.range?.total || data.rows.length;
+
+                // Handle data.rows[N].column - use adjustedPath for multi-ref support
+                const rowMatch = adjustedPath.match(/data\.rows\[(\d+)\]\.(\w+)/);
+                if (rowMatch) {
+                    const rowIdx = parseInt(rowMatch[1], 10);
+                    const column = rowMatch[2];
+
+                    // FIXED: Add explicit bounds checking before array access
+                    if (!data.rows || !Array.isArray(data.rows)) {
+                        Utils.debugLog('Token resolution: no rows array', { expr: expr });
+                        return '{{UNRESOLVED:' + expr + '}}';
+                    }
+                    if (rowIdx < 0 || rowIdx >= data.rows.length) {
+                        // Out of bounds - mark as UNRESOLVED so it becomes [N/A]
+                        Utils.debugLog('Token resolution: index out of bounds', {
+                            expr: expr,
+                            rowIdx: rowIdx,
+                            availableRows: data.rows.length,
+                            refId: dataRef.refId
+                        });
+                        return '{{UNRESOLVED:' + expr + '}}';
+                    }
+                    if (data.rows[rowIdx] === null || data.rows[rowIdx] === undefined) {
+                        return '{{UNRESOLVED:' + expr + '}}';
+                    }
+                    const value = data.rows[rowIdx][column];
+                    if (value === null || value === undefined) {
+                        return '{{UNRESOLVED:' + expr + '}}';
+                    }
+                    return formatResolvedValue(value, format, column);
+                }
+
+                // Handle data.stats.X - compute from schema (use adjustedPath)
+                const statsMatch = adjustedPath.match(/data\.stats\.(\w+)/);
+                if (statsMatch) {
+                    const statName = statsMatch[1];
+                    const summary = dataRef.summary || {};
+                    const computedStats = computeAggregateStats(summary);
+
+                    // Handle count/rowCount
+                    if (statName === 'count' || statName === 'rowCount') {
+                        return totalRows.toString();
+                    }
+
+                    // Handle computed stats from primary column
+                    if (computedStats) {
+                        if (statName === 'total' && computedStats.total !== undefined) {
+                            return formatResolvedValue(computedStats.total, format || 'currency', 'total');
+                        }
+                        if (statName === 'average' && computedStats.average !== undefined) {
+                            return formatResolvedValue(computedStats.average, format || 'currency', 'average');
+                        }
+                        if (statName === 'min' && computedStats.min !== undefined) {
+                            return formatResolvedValue(computedStats.min, format || 'currency', 'min');
+                        }
+                        if (statName === 'max' && computedStats.max !== undefined) {
+                            return formatResolvedValue(computedStats.max, format || 'currency', 'max');
+                        }
+
+                        // ═══════════════════════════════════════════════════════════════════════
+                        // FINANCIAL STATEMENT METRICS RESOLUTION
+                        // These are PROPERLY computed: net_income = Revenue - COGS - OpEx
+                        // ═══════════════════════════════════════════════════════════════════════
+                        if (computedStats.isIncomeStatement) {
+                            if (statName === 'net_income') {
+                                return formatResolvedValue(computedStats.net_income, format || 'currency', 'net_income');
+                            }
+                            if (statName === 'gross_profit') {
+                                return formatResolvedValue(computedStats.gross_profit, format || 'currency', 'gross_profit');
+                            }
+                            if (statName === 'revenue') {
+                                return formatResolvedValue(computedStats.revenue, format || 'currency', 'revenue');
+                            }
+                            if (statName === 'cogs') {
+                                return formatResolvedValue(computedStats.cogs, format || 'currency', 'cogs');
+                            }
+                            if (statName === 'opex' || statName === 'operating_expenses') {
+                                return formatResolvedValue(computedStats.opex, format || 'currency', 'opex');
+                            }
+                            if (statName === 'gross_margin') {
+                                return formatResolvedValue(computedStats.gross_margin * 100, format || 'percent', 'gross_margin');
+                            }
+                            if (statName === 'operating_margin' || statName === 'net_margin') {
+                                return formatResolvedValue(computedStats.operating_margin * 100, format || 'percent', 'operating_margin');
+                            }
+                        }
+                    }
+
+                    // Handle column-specific stats (e.g., total_outstanding_ar -> sum of outstanding_ar column)
+                    if (summary.schema) {
+                        // Check for total_X or sum_X patterns
+                        const totalMatch = statName.match(/^(total|sum)_(.+)$/);
+                        if (totalMatch) {
+                            const colName = totalMatch[2];
+                            if (summary.schema[colName]?.stats?.sum !== undefined) {
+                                return formatResolvedValue(summary.schema[colName].stats.sum, format || 'currency', colName);
+                            }
+                        }
+
+                        // Check for avg_X or average_X patterns
+                        const avgMatch = statName.match(/^(avg|average)_(.+)$/);
+                        if (avgMatch) {
+                            const colName = avgMatch[2];
+                            if (summary.schema[colName]?.stats?.avg !== undefined) {
+                                return formatResolvedValue(summary.schema[colName].stats.avg, format || 'currency', colName);
+                            }
+                        }
+
+                        // Check for min_X patterns
+                        const minMatch = statName.match(/^min_(.+)$/);
+                        if (minMatch) {
+                            const colName = minMatch[1];
+                            if (summary.schema[colName]?.stats?.min !== undefined) {
+                                return formatResolvedValue(summary.schema[colName].stats.min, format || 'currency', colName);
+                            }
+                        }
+
+                        // Check for max_X patterns
+                        const maxMatch = statName.match(/^max_(.+)$/);
+                        if (maxMatch) {
+                            const colName = maxMatch[1];
+                            if (summary.schema[colName]?.stats?.max !== undefined) {
+                                return formatResolvedValue(summary.schema[colName].stats.max, format || 'currency', colName);
+                            }
+                        }
+
+                        // Direct column stat lookup
+                        for (const [col, schema] of Object.entries(summary.schema)) {
+                            if (schema.stats && schema.stats[statName] !== undefined) {
+                                return formatResolvedValue(schema.stats[statName], format, statName);
+                            }
+                        }
+                    }
+
+                    // ═══════════════════════════════════════════════════════════════════════
+                    // CATEGORY-LEVEL TOKEN RESOLUTION
+                    // Handles tokens like {{data.stats.total_Cost_of_Goods_Sold}} or {{data.stats.sum_Revenue}}
+                    // by looking up category values in categoricalColumns distribution
+                    // ═══════════════════════════════════════════════════════════════════════
+                    if (summary.categoricalColumns && summary.categoricalColumns.length > 0) {
+                        // Try to match category-based stat patterns
+                        // Pattern: total_CategoryValue, sum_CategoryValue, count_CategoryValue
+                        const categoryStatMatch = statName.match(/^(total|sum|count)_(.+)$/i);
+                        if (categoryStatMatch) {
+                            const statType = categoryStatMatch[1].toLowerCase();
+                            const categoryValue = categoryStatMatch[2].replace(/_/g, ' '); // Restore spaces
+
+                            // Search through all categorical columns for a matching value
+                            for (const catCol of summary.categoricalColumns) {
+                                const matchingDist = catCol.distribution.find(d =>
+                                    d.value && d.value.replace(/\s+/g, '_').toLowerCase() === categoryStatMatch[2].toLowerCase()
+                                );
+                                if (matchingDist) {
+                                    if (statType === 'count') {
+                                        return matchingDist.count.toString();
+                                    } else {
+                                        // total or sum
+                                        return formatResolvedValue(matchingDist.sum, format || 'currency', categoryValue);
+                                    }
+                                }
+                            }
+                        }
+
+                        // Also try direct category.VALUE.stat pattern
+                        // Pattern: data.category.CategoryValue.sum or data.category.CategoryValue.count
+                        const categoryPathMatch = adjustedPath.match(/data\.category\.([^.]+)\.(sum|count)/i);
+                        if (categoryPathMatch) {
+                            const categoryValue = categoryPathMatch[1].replace(/_/g, ' ');
+                            const statType = categoryPathMatch[2].toLowerCase();
+
+                            for (const catCol of summary.categoricalColumns) {
+                                const matchingDist = catCol.distribution.find(d =>
+                                    d.value && d.value.replace(/\s+/g, '_').toLowerCase() === categoryPathMatch[1].toLowerCase()
+                                );
+                                if (matchingDist) {
+                                    if (statType === 'count') {
+                                        return matchingDist.count.toString();
+                                    } else {
+                                        return formatResolvedValue(matchingDist.sum, format || 'currency', categoryValue);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Token could not be resolved - mark for potential cleanup
+                Utils.debugLog('Token resolution: unresolved token', { expr: expr, path: adjustedPath });
+                return '{{UNRESOLVED:' + expr + '}}';
+            } catch (e) {
+                Utils.debugLog('Token resolution error', { expr: expr, error: e.message });
+                return match;
+            }
+        });
+
+        // FIX: Clean up double dollar signs from LLM writing ${{token:currency}}
+        // LLM sometimes writes "${{data.rows[0].amount:currency}}" which becomes "$$1,234.56"
+        resolved = resolved.replace(/\$\s*\$/g, '$');  // Handle "$ $" and "$$"
+        resolved = resolved.replace(/\$\$/g, '$');      // Handle remaining "$$"
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // UNRESOLVED TOKEN CLEANUP
+        // Replace marked unresolved tokens with user-friendly fallback
+        // ═══════════════════════════════════════════════════════════════════════
+        resolved = resolved.replace(/\{\{UNRESOLVED:[^}]+\}\}/g, '[N/A]');
+
+        return resolved;
+    }
+
+    /**
+     * Format a resolved value based on format hint and column name
+     * AGENTIC FIX: Properly formats negative currency as -$X instead of $-X
+     */
+    function formatResolvedValue(value, format, columnName) {
+        if (value === null || value === undefined) return '';
+
+        if (typeof value === 'number') {
+            if (format === 'currency' || (!format && isMonetaryColumn(columnName))) {
+                // FIXED: Format negative currency correctly as -$X not $-X
+                const isNegative = value < 0;
+                const absVal = Math.abs(value);
+                const formatted = '$' + absVal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                return isNegative ? '-' + formatted : formatted;
+            }
+            if (format === 'percent') {
+                return value.toFixed(1) + '%';
+            }
+            return value.toLocaleString('en-US');
+        }
+
+        return String(value);
+    }
+
+    /**
+     * Convert a string value to a slug (lowercase, spaces/special chars → underscores)
+     * Used for category filtering - LLM uses slug, we match against slugified row values
+     * @param {string} value - The value to slugify
+     * @returns {string} Slugified value (e.g., "Cost of Goods Sold" → "cost_of_goods_sold")
+     */
+    function toSlug(value) {
+        if (!value) return '';
+        return String(value)
+            .toLowerCase()
+            .trim()
+            .replace(/[^a-z0-9]+/g, '_')  // Replace non-alphanumeric with underscore
+            .replace(/^_+|_+$/g, '');      // Trim leading/trailing underscores
+    }
+
+    /**
+     * Format stat value for display in prompt
+     * AGENTIC FIX: Properly formats negative currency as -$X instead of $-X
+     */
+    function formatStatValue(value, key) {
+        if (typeof value === 'number') {
+            const keyLower = key.toLowerCase();
+            if (keyLower.includes('total') || keyLower.includes('sum') || keyLower.includes('amount') ||
+                keyLower.includes('revenue') || keyLower.includes('spend')) {
+                // FIXED: Format negative currency correctly as -$X not $-X
+                const isNegative = value < 0;
+                const absVal = Math.abs(value);
+                const formatted = '$' + absVal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                return isNegative ? '-' + formatted : formatted;
+            }
+            if (keyLower.includes('percent') || keyLower.includes('rate')) {
+                return value.toFixed(1) + '%';
+            }
+            return value.toLocaleString('en-US');
+        }
+        return String(value);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // BLOCK SEQUENCE ARCHITECTURE - LLM-controlled block ordering
+    // Allows LLM to interleave text, metrics, tables, charts in any order
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Resolve a blocks array from LLM response
+     * Processes each block type and resolves tokens, builds tables/charts from dataRefs
+     * @param {Array} blocks - Array of block objects from LLM
+     * @param {Object} state - Current state with dataReferences
+     * @returns {Array} Resolved blocks ready for rendering
+     */
+    function resolveBlockSequence(blocks, state) {
+        if (!blocks || !Array.isArray(blocks)) {
+            Utils.debugLog('resolveBlockSequence: invalid blocks input', { blocks: typeof blocks });
+            return [];
+        }
+
+        const resolvedBlocks = [];
+        const maxCharts = 2; // Limit charts per response for performance
+        let chartCount = 0;
+
+        for (const block of blocks) {
+            try {
+                const validatedBlock = validateBlock(block);
+                if (!validatedBlock) {
+                    Utils.debugLog('resolveBlockSequence: invalid block skipped', { block: JSON.stringify(block).substring(0, 100) });
+                    continue;
+                }
+
+                switch (validatedBlock.type) {
+                    case 'text':
+                        resolvedBlocks.push({
+                            type: 'text',
+                            content: resolveTokensInText(validatedBlock.content || '', state)
+                        });
+                        break;
+
+                    case 'metrics':
+                        if (validatedBlock.items && Array.isArray(validatedBlock.items)) {
+                            const resolvedItems = validatedBlock.items.slice(0, 4).map(m => ({
+                                label: String(m.label || '').substring(0, 50),
+                                value: resolveTokensInText(String(m.value || ''), state),
+                                trend: ['up', 'down', 'neutral'].includes(m.trend) ? m.trend : 'neutral'
+                            }));
+
+                            // Filter out items with unresolved tokens (showing [N/A])
+                            const validItems = resolvedItems.filter(item =>
+                                item.value && item.value !== '[N/A]' && !item.value.includes('[N/A]')
+                            );
+
+                            if (validItems.length > 0) {
+                                resolvedBlocks.push({
+                                    type: 'metrics',
+                                    items: validItems
+                                });
+                            } else {
+                                Utils.debugLog('resolveBlockSequence: all metrics items had unresolved tokens, skipping block');
+                            }
+                        }
+                        break;
+
+                    case 'list':
+                        if (validatedBlock.items && Array.isArray(validatedBlock.items)) {
+                            const resolvedItems = validatedBlock.items.map(item =>
+                                resolveTokensInText(String(item), state)
+                            );
+                            resolvedBlocks.push({
+                                type: 'list',
+                                title: validatedBlock.title || undefined,
+                                items: resolvedItems
+                            });
+                        }
+                        break;
+
+                    case 'table':
+                        const tableBlock = buildTableBlockFromRef(validatedBlock, state);
+                        if (tableBlock) {
+                            resolvedBlocks.push(tableBlock);
+                        }
+                        break;
+
+                    case 'chart':
+                        if (chartCount < maxCharts) {
+                            const chartBlock = buildChartBlock(validatedBlock, state);
+                            if (chartBlock) {
+                                resolvedBlocks.push(chartBlock);
+                                chartCount++;
+                            }
+                        } else {
+                            Utils.debugLog('resolveBlockSequence: max charts reached, skipping', { chartCount });
+                        }
+                        break;
+
+                    default:
+                        Utils.debugLog('resolveBlockSequence: unknown block type', { type: validatedBlock.type });
+                }
+            } catch (e) {
+                log.error('resolveBlockSequence: error processing block', {
+                    blockType: block?.type,
+                    error: e.message
+                });
+            }
+        }
+
+        return resolvedBlocks;
+    }
+
+    /**
+     * Validate a block object has required fields
+     * @param {Object} block - Block to validate
+     * @returns {Object|null} Validated block or null if invalid
+     */
+    function validateBlock(block) {
+        if (!block || typeof block !== 'object') return null;
+        if (!block.type || typeof block.type !== 'string') return null;
+
+        const validTypes = ['text', 'metrics', 'list', 'table', 'chart'];
+        if (!validTypes.includes(block.type)) return null;
+
+        // Type-specific validation
+        switch (block.type) {
+            case 'text':
+                if (!block.content && block.content !== '') return null;
+                break;
+            case 'metrics':
+                if (!block.items || !Array.isArray(block.items)) return null;
+                break;
+            case 'list':
+                if (!block.items || !Array.isArray(block.items)) return null;
+                break;
+            case 'table':
+                if (!block.dataRef) return null;
+                break;
+            case 'chart':
+                if (!block.dataRef || !block.chartType) return null;
+                if (!block.x || !block.y) return null;
+                break;
+        }
+
+        return block;
+    }
+
+    /**
+     * Find a dataRef by its refId
+     * @param {string} refId - The reference ID to find
+     * @param {Object} state - Current state with dataReferences
+     * @returns {Object|null} The dataRef object or null
+     */
+    function findDataRefByRefId(refId, state) {
+        if (!refId || !state.dataReferences) return null;
+        return state.dataReferences.find(ref => ref.refId === refId) || null;
+    }
+
+    /**
+     * Build a table block from a dataRef
+     * Returns ALL rows - frontend handles pagination (default 25 rows, expandable)
+     * Supports optional filter parameter to show only matching rows
+     * @param {Object} block - Block with dataRef, optional title, and optional filter
+     * @param {Object} state - Current state with dataReferences
+     * @returns {Object|null} Table block or null if dataRef invalid
+     */
+    function buildTableBlockFromRef(block, state) {
+        const dataRef = findDataRefByRefId(block.dataRef, state);
+        if (!dataRef) {
+            Utils.debugLog('buildTableBlockFromRef: dataRef not found', { refId: block.dataRef });
+            return null;
+        }
+
+        try {
+            // ═══════════════════════════════════════════════════════════════════════
+            // LOAD ALL ROWS - Frontend handles pagination
+            // LLM needs full data visibility, UI shows 25 by default with expand button
+            // ═══════════════════════════════════════════════════════════════════════
+            const data = Cache.loadRows(dataRef.requestId || state.requestId, dataRef.refId, 0, 9999);
+            if (!data || !data.rows || data.rows.length === 0) {
+                Utils.debugLog('buildTableBlockFromRef: no data for ref', { refId: block.dataRef });
+                return null;
+            }
+
+            // ═══════════════════════════════════════════════════════════════════════
+            // FILTER SUPPORT: LLM uses slug to filter rows
+            // Example: filter:department_name=mechanical matches "Mechanical"
+            // Both filter value and row value are slugified for comparison
+            // If filter column doesn't exist, skip filtering (return all rows)
+            // ═══════════════════════════════════════════════════════════════════════
+            let filteredRows = data.rows;
+            let filterApplied = null;
+            let filterSkipped = null;
+            if (block.filter && typeof block.filter === 'object') {
+                // Validate filter columns exist in data
+                const validFilterCols = Object.keys(block.filter).filter(col => data.columns.includes(col));
+                const invalidFilterCols = Object.keys(block.filter).filter(col => !data.columns.includes(col));
+
+                if (invalidFilterCols.length > 0) {
+                    Utils.debugLog('buildTableBlockFromRef: filter column(s) not found, skipping filter', {
+                        invalidCols: invalidFilterCols,
+                        availableCols: data.columns
+                    });
+                    filterSkipped = { columns: invalidFilterCols, reason: 'column_not_found' };
+                }
+
+                if (validFilterCols.length > 0) {
+                    // Build valid filter object
+                    const validFilter = {};
+                    validFilterCols.forEach(col => { validFilter[col] = block.filter[col]; });
+                    filterApplied = validFilter;
+
+                    filteredRows = data.rows.filter(row => {
+                        for (const [col, expectedValue] of Object.entries(validFilter)) {
+                            const rowValue = row[col];
+                            // Compare slugified versions - clean, deterministic matching
+                            const rowSlug = toSlug(rowValue);
+                            const expectedSlug = toSlug(expectedValue);
+
+                            if (rowSlug !== expectedSlug) {
+                                return false;
+                            }
+                        }
+                        return true;
+                    });
+                    Utils.debugLog('buildTableBlockFromRef: filter applied', {
+                        filter: validFilter,
+                        originalRows: data.rows.length,
+                        filteredRows: filteredRows.length
+                    });
+                }
+            }
+
+            const summary = dataRef.summary || {};
+            const toolDisplayName = block.title || getToolDisplayName(summary.tool) || 'Results';
+            const displayColumns = data.columns.slice(0, 8);
+
+            // Return filtered rows - frontend paginates with default 25, expand for more
+            return {
+                type: 'table',
+                title: toolDisplayName,
+                dataRef: dataRef.refId,
+                totalRows: filteredRows.length,
+                headers: displayColumns,
+                rows: filteredRows.map(row => {
+                    return displayColumns.map(col => formatCellValue(row[col], col));
+                }),
+                summary: {
+                    rowCount: filteredRows.length,
+                    columns: data.columns.length,
+                    aggregates: summary.aggregates,
+                    filterApplied: filterApplied,
+                    filterSkipped: filterSkipped
+                },
+                // Pagination config for frontend
+                pagination: {
+                    defaultPageSize: 25,
+                    expandable: true
+                },
+                // Mark as LLM-placed to distinguish from progressive tables
+                llmPlaced: true
+            };
+        } catch (e) {
+            log.error('buildTableBlockFromRef: error building table', {
+                refId: block.dataRef,
+                error: e.message
+            });
+            return null;
+        }
+    }
+
+    /**
+     * Build a chart block from a dataRef
+     * Enhanced with SMART CATEGORICAL AGGREGATION - detects when x-column is categorical
+     * and aggregates y-values by category instead of using raw rows
+     * @param {Object} block - Block with dataRef, chartType, x, y columns
+     * @param {Object} state - Current state with dataReferences
+     * @returns {Object|null} Chart block or null if invalid
+     */
+    function buildChartBlock(block, state) {
+        const dataRef = findDataRefByRefId(block.dataRef, state);
+        if (!dataRef) {
+            Utils.debugLog('buildChartBlock: dataRef not found', { refId: block.dataRef });
+            return null;
+        }
+
+        try {
+            // Load data from cache (limit rows for chart performance)
+            const data = Cache.loadRows(dataRef.requestId || state.requestId, dataRef.refId, 0, 49);
+            if (!data || !data.rows || data.rows.length === 0) {
+                Utils.debugLog('buildChartBlock: no data for ref', { refId: block.dataRef });
+                return null;
+            }
+
+            // Validate x and y columns exist
+            const xCol = block.x;
+            const yCol = block.y;
+            if (!data.columns.includes(xCol) || !data.columns.includes(yCol)) {
+                Utils.debugLog('buildChartBlock: invalid columns', {
+                    x: xCol,
+                    y: yCol,
+                    availableColumns: data.columns
+                });
+                return null;
+            }
+
+            // Validate chart type
+            const validChartTypes = ['bar', 'line', 'pie'];
+            const chartType = validChartTypes.includes(block.chartType) ? block.chartType : 'bar';
+
+            // ═══════════════════════════════════════════════════════════════════════
+            // SMART CATEGORICAL AGGREGATION
+            // If x-column is categorical, aggregate y-values by unique x-values
+            // This prevents pie charts with repeated labels like "Revenue, Revenue, Revenue..."
+            // ═══════════════════════════════════════════════════════════════════════
+            const summary = dataRef.summary || {};
+            const categoricalColumn = summary.categoricalColumns?.find(c => c.column === xCol);
+
+            let chartData;
+
+            if (categoricalColumn && categoricalColumn.distribution) {
+                // X-column is categorical - need to aggregate y-values by category
+                Utils.debugLog('buildChartBlock: using categorical aggregation', {
+                    xCol: xCol,
+                    yCol: yCol,
+                    categoryCount: categoricalColumn.distribution.length,
+                    sumColumn: categoricalColumn.sumColumn
+                });
+
+                // ═══════════════════════════════════════════════════════════════════════
+                // FIX: Only use pre-computed distribution if yCol matches sumColumn
+                // Otherwise, aggregate the correct column from raw data
+                // ═══════════════════════════════════════════════════════════════════════
+                let aggregatedData;
+
+                if (categoricalColumn.sumColumn === yCol) {
+                    // Pre-computed sums match requested y-column - use them
+                    aggregatedData = categoricalColumn.distribution.map(d => ({
+                        label: d.value,
+                        value: d.sum
+                    }));
+                } else {
+                    // Y-column differs from pre-computed sumColumn - aggregate from raw data
+                    Utils.debugLog('buildChartBlock: aggregating different column', {
+                        requested: yCol,
+                        precomputed: categoricalColumn.sumColumn
+                    });
+
+                    // Group and sum by category
+                    const categoryTotals = {};
+                    data.rows.forEach(row => {
+                        const category = row[xCol];
+                        const value = typeof row[yCol] === 'number' ? row[yCol] : parseFloat(row[yCol]) || 0;
+                        categoryTotals[category] = (categoryTotals[category] || 0) + value;
+                    });
+
+                    aggregatedData = Object.entries(categoryTotals).map(([label, value]) => ({
+                        label,
+                        value
+                    }));
+                }
+
+                // Sort by absolute value descending for better visualization
+                aggregatedData.sort((a, b) => Math.abs(b.value) - Math.abs(a.value));
+
+                // Limit data points
+                const maxDataPoints = chartType === 'pie' ? 10 : 20;
+                const limitedData = aggregatedData.slice(0, maxDataPoints);
+
+                chartData = {
+                    labels: limitedData.map(d => d.label),
+                    values: limitedData.map(d => d.value)
+                };
+            } else {
+                // Standard row-based chart data
+                const maxDataPoints = chartType === 'pie' ? 10 : 20;
+                const chartRows = data.rows.slice(0, maxDataPoints);
+
+                chartData = {
+                    labels: chartRows.map(row => formatCellValue(row[xCol], xCol)),
+                    values: chartRows.map(row => {
+                        const val = row[yCol];
+                        return typeof val === 'number' ? val : parseFloat(val) || 0;
+                    })
+                };
+            }
+
+            // Determine title
+            const title = block.title || `${yCol} by ${xCol}`;
+
+            return {
+                type: 'chart',
+                chartType: chartType,
+                title: title,
+                data: chartData,
+                config: {
+                    xKey: xCol,
+                    yKey: yCol
+                },
+                dataRef: dataRef.refId
+            };
+        } catch (e) {
+            log.error('buildChartBlock: error building chart', {
+                refId: block.dataRef,
+                chartType: block.chartType,
+                error: e.message
+            });
+            return null;
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // INTELLIGENT FAILURE RESPONSE BUILDERS
+    // Provide helpful context based on what went wrong
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Build a user-friendly journey summary showing what was tried
+     */
+    function buildJourneySummary(state) {
+        if (!state.reflection.journey || state.reflection.journey.length === 0) {
+            return null;
+        }
+
+        const items = [];
+        for (const step of state.reflection.journey) {
+            switch (step.action) {
+                case 'entity_resolved':
+                    items.push(`Found "${step.entity}" (${step.type})`);
+                    break;
+                case 'entity_not_found':
+                    items.push(`Could not find entity matching "${step.searchTerm}"`);
+                    break;
+                case 'broaden_retry':
+                    items.push(`Retried ${step.tool} with broader parameters`);
+                    break;
+                case 'try_different_tool':
+                    items.push(`Tried alternative tool: ${step.tool}`);
+                    break;
+                case 'reflection':
+                    if (step.decision === 'GIVE_UP') {
+                        items.push(`Determined: ${step.reasoning}`);
+                    }
+                    break;
+            }
+        }
+
+        return items.length > 0 ? items : null;
+    }
+
+    /**
+     * Build a helpful response for valid 0-row search results
+     *
+     * This is NOT a failure - the query succeeded but found no matching data.
+     * This is useful information that answers the user's question definitively.
+     *
+     * Example: "Show journal entries posted on weekends"
+     * → Query succeeds with 0 rows
+     * → Response: "I searched for journal entries posted on weekends and found none.
+     *              This means all entries in this period were posted during business days."
+     */
+    function buildZeroRowsSuccessResponse(state) {
+        const question = state.message || 'your question';
+        const zeroRowsReason = state.reflection.zeroRowsReason || '';
+
+        // Find the synthesize query info for context
+        const synthQuery = state.toolInvocations.find(inv =>
+            inv.synthesized && inv.zeroRowsIsValidResult
+        );
+        const purpose = synthQuery?.args?.purpose || 'the requested data';
+
+        // Build a contextual, helpful response
+        let title = 'Search Complete';
+        let summary = 'No matching records were found.';
+
+        // Build explanation based on what we searched for
+        let explanation = `I searched the system for ${purpose.toLowerCase()} and found no matching records.\n\n`;
+
+        // Add interpretation - what does "no data" mean for this question?
+        explanation += '**What this means:**\n';
+        explanation += `Based on your question "${question.substring(0, 100)}${question.length > 100 ? '...' : ''}", `;
+
+        // Provide contextual interpretation based on question patterns
+        const questionLower = question.toLowerCase();
+        if (questionLower.includes('weekend') || questionLower.includes('outside') || questionLower.includes('after hours')) {
+            explanation += 'there are no entries matching these unusual time criteria. ';
+            explanation += 'This typically indicates good compliance with standard business practices.';
+        } else if (questionLower.includes('overdue') || questionLower.includes('past due') || questionLower.includes('late')) {
+            explanation += 'there are no overdue or late items matching your criteria. ';
+            explanation += 'This is generally positive news for your accounts.';
+        } else if (questionLower.includes('error') || questionLower.includes('issue') || questionLower.includes('problem')) {
+            explanation += 'there are no records flagged with the specified issues. ';
+            explanation += 'This suggests the area is in good standing.';
+        } else if (questionLower.includes('increase') || questionLower.includes('decrease') || questionLower.includes('change')) {
+            explanation += 'there were no significant changes matching your criteria. ';
+            explanation += 'The metrics appear stable for the specified period.';
+        } else {
+            explanation += 'no records exist in the system matching the specified criteria. ';
+            explanation += 'This could mean the data hasn\'t been entered, or the conditions simply haven\'t occurred.';
+        }
+
+        explanation += '\n\n';
+
+        // Add helpful suggestions
+        explanation += '**Suggestions:**\n';
+        explanation += '• Try expanding the date range if you specified a time period\n';
+        explanation += '• Check if similar data exists with different filters\n';
+        explanation += '• Verify the entity names or identifiers are correct';
+
+        const blocks = [{
+            type: 'text',
+            content: explanation
+        }];
+
+        // Add what we searched for (journey summary)
+        const journeyItems = [];
+        if (synthQuery) {
+            journeyItems.push(`Executed custom SQL query for: ${purpose}`);
+            journeyItems.push('Query executed successfully with 0 results');
+        }
+
+        // Add any other tool attempts
+        const otherTools = state.toolInvocations.filter(inv => !inv.synthesized);
+        if (otherTools.length > 0) {
+            const toolNames = [...new Set(otherTools.map(t => t.tool))];
+            journeyItems.push(`Also searched using: ${toolNames.join(', ')}`);
+        }
+
+        if (journeyItems.length > 0) {
+            blocks.push({
+                type: 'list',
+                title: 'Search Summary',
+                items: journeyItems
+            });
+        }
+
+        return {
+            title: title,
+            summary: summary,
+            blocks: blocks
+        };
+    }
+
+    /**
+     * Build an intelligent failure response based on the diagnosed failure mode
+     * FIX 7: ENHANCED with comprehensive diagnostics about what was tried
+     */
+    function buildFailureModeResponse(state) {
+        const failureMode = state.reflection.failureMode;
+        const entityFound = state.reflection.entityFound;
+
+        // Default response
+        let title = 'Unable to Find Data';
+        let summary = "I couldn't find the data needed to answer your question.";
+        let blocks = [];
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // FIX 7: Build diagnostic summary for the user
+        // ═══════════════════════════════════════════════════════════════════════
+        const diagnostics = state.diagnostics || { toolsAttempted: [], errorsEncountered: [], suggestedActions: [] };
+        const uniqueToolsTried = [...new Set(diagnostics.toolsAttempted.map(t => t.tool))];
+        const totalAttempts = diagnostics.toolsAttempted.length;
+        const failedAttempts = diagnostics.toolsAttempted.filter(t => !t.success || t.rowCount === 0).length;
+
+        switch (failureMode) {
+            case FAILURE_MODES.ENTITY_NOT_FOUND:
+                title = 'Entity Not Found';
+                summary = "I couldn't find the entity you mentioned in the system.";
+                blocks = [{
+                    type: 'text',
+                    content: "I searched for the entity you mentioned but couldn't find a match in the system. " +
+                        "Please check the spelling or try a different name. You can ask me to 'list customers' or 'list vendors' to see what's available."
+                }];
+                break;
+
+            case FAILURE_MODES.ENTITY_FOUND_NO_DATA:
+                const entityName = Object.values(state.resolvedEntities)[0]?.name || 'the entity';
+                title = 'No Data Found';
+                summary = `Found ${entityName}, but no matching data exists.`;
+                blocks = [{
+                    type: 'text',
+                    content: `I found ${entityName} in the system, but there's no data matching your query. ` +
+                        "This could mean:\n" +
+                        "• The entity has no transactions for the specified time period\n" +
+                        "• The filters are too restrictive\n" +
+                        "• This type of data doesn't exist for this entity\n\n" +
+                        "Try asking with a broader date range or fewer filters."
+                }];
+                break;
+
+            case FAILURE_MODES.QUERY_TOO_RESTRICTIVE:
+                title = 'No Matching Data';
+                summary = 'The query filters may be too restrictive.';
+                blocks = [{
+                    type: 'text',
+                    content: "I couldn't find any data matching your criteria. " +
+                        "The filters (date range, transaction type, etc.) might be too restrictive. " +
+                        "Try asking with a broader date range or fewer constraints."
+                }];
+                break;
+
+            case FAILURE_MODES.NO_DATA_EXISTS:
+                title = 'Data Not Available';
+                summary = 'This type of data may not exist in the system.';
+                blocks = [{
+                    type: 'text',
+                    content: "I wasn't able to find this type of data in the system. " +
+                        "It's possible this data hasn't been entered or isn't tracked. " +
+                        "Try asking about a different type of data or check if this information is available in NetSuite."
+                }];
+                break;
+
+            case FAILURE_MODES.TOOL_ERROR:
+                title = 'Query Error';
+                summary = 'An error occurred while fetching the data.';
+                const lastError = state.errors[state.errors.length - 1];
+                blocks = [{
+                    type: 'text',
+                    content: "I encountered an error while trying to fetch the data. " +
+                        (lastError?.suggestion || "Please try rephrasing your question.")
+                }];
+                break;
+
+            default:
+                blocks = [{
+                    type: 'text',
+                    content: "I wasn't able to find the data needed to answer your question. " +
+                        "Please try rephrasing or providing more specific details."
+                }];
+        }
+
+        // Add journey summary if available
+        const journeySummary = buildJourneySummary(state);
+        if (journeySummary) {
+            blocks.push({
+                type: 'list',
+                title: 'What I Tried',
+                items: journeySummary
+            });
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // FIX 7: Add diagnostic summary block
+        // ═══════════════════════════════════════════════════════════════════════
+        if (totalAttempts > 0) {
+            const diagnosticItems = [];
+
+            // Summary of attempts
+            diagnosticItems.push(`Tried ${uniqueToolsTried.length} different tool(s) with ${totalAttempts} total attempt(s)`);
+            diagnosticItems.push(`${failedAttempts} attempt(s) returned no usable data`);
+
+            // List tools tried
+            if (uniqueToolsTried.length > 0) {
+                diagnosticItems.push(`Tools tried: ${uniqueToolsTried.slice(0, 5).join(', ')}${uniqueToolsTried.length > 5 ? '...' : ''}`);
+            }
+
+            // Show specific errors encountered (deduplicated)
+            if (diagnostics.errorsEncountered && diagnostics.errorsEncountered.length > 0) {
+                const uniqueErrors = [...new Set(diagnostics.errorsEncountered.map(e => e.category))];
+                diagnosticItems.push(`Error categories: ${uniqueErrors.join(', ')}`);
+            }
+
+            // Show circuit breaker / diversification triggers
+            if (state.circuitBreakerTriggered) {
+                diagnosticItems.push('⚡ Circuit breaker triggered due to no progress');
+            }
+            if (state.diversificationTriggered) {
+                diagnosticItems.push('🔄 Tool diversification was required');
+            }
+
+            blocks.push({
+                type: 'list',
+                title: 'Diagnostic Summary',
+                items: diagnosticItems
+            });
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // FIX 7: Add suggested actions if we have them
+        // ═══════════════════════════════════════════════════════════════════════
+        if (diagnostics.suggestedActions && diagnostics.suggestedActions.length > 0) {
+            // Deduplicate and limit suggestions
+            const uniqueSuggestions = [...new Set(diagnostics.suggestedActions)].slice(0, 3);
+
+            blocks.push({
+                type: 'list',
+                title: 'Suggested Actions',
+                items: uniqueSuggestions
+            });
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // FIX 7: Add alternative query suggestions based on error analysis
+        // ═══════════════════════════════════════════════════════════════════════
+        const errorCategories = [...new Set((state.errorSemantics || []).map(e => e.insights.category))];
+        if (errorCategories.includes('type_mismatch')) {
+            blocks.push({
+                type: 'text',
+                content: '💡 **Tip**: For time ranges, try being more specific. For example:\n' +
+                    '• "Show revenue for the last 12 months"\n' +
+                    '• "Show revenue for 2024"\n' +
+                    '• "Show monthly revenue since January"'
+            });
+        }
+
+        return { title, summary, blocks };
+    }
+
+    /**
+     * Build fallback narrative from data summaries when LLM fails
+     * AGENTIC FIX: Uses formatStatValue for consistent currency formatting
+     */
+    function buildFallbackNarrative(state) {
+        const parts = [];
+
+        state.dataReferences.forEach(ref => {
+            const summary = ref.summary || {};
+            const toolName = getToolDisplayName(summary.tool) || 'Query';
+            parts.push(`${toolName}: ${summary.rowCount || 0} results found.`);
+
+            if (summary.stats) {
+                if (summary.stats.total !== undefined) {
+                    // Use formatStatValue for consistent negative currency formatting
+                    parts.push(`Total: ${formatStatValue(summary.stats.total, 'total')}`);
+                }
+            }
+        });
+
+        return parts.join(' ') || 'Analysis complete.';
+    }
+
+    /**
+     * Generate a conversational response for general/non-financial queries
+     * Uses LLM to provide friendly, contextual responses to greetings and chitchat
+     */
+    function generateConversationalResponse(state) {
+        const historyContext = buildHistoryContext(state);
+
+        const prompt = `You are a friendly financial assistant for NetSuite. The user sent a conversational message (greeting, chitchat, or general question).
+
+${historyContext}
+USER MESSAGE: "${state.message}"
+
+Respond naturally and conversationally. Be warm and helpful. If it's a greeting, greet them back.
+Mention that you can help with financial questions - revenue, expenses, customers, vendors, transactions, P&L, aging reports, etc.
+Keep your response concise (1-3 sentences).
+Do NOT use markdown formatting or special characters.
+Do NOT make up any financial data.
+
+Response:`;
+
+        try {
+            const response = AIProviders.callAI(prompt, {
+                tier: getTierForPhase('intent', {}),
+                temperature: 0.7,
+                purpose: 'SCA:intent' // Conversational responses are short like intent
+            });
+
+            if (response && response.text && response.text.trim()) {
+                return response.text.trim();
+            }
+        } catch (e) {
+            Utils.debugLog('Conversational response generation failed', { error: e.message });
+        }
+
+        // Fallback if LLM fails
+        return "Hello! I'm your financial assistant. I can help you explore your NetSuite data - ask me about revenue, expenses, customers, vendors, aging reports, or any financial metrics!";
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // HELPER FUNCTIONS
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Build an appropriate summary for tool results
+     * AGENTIC FIX: Handles entity resolution tools specially - they report 'found' status
+     * not row counts. Also handles dashboard tools that return metric objects.
+     *
+     * @param {string} toolName - Name of the tool
+     * @param {object} result - Tool execution result
+     * @param {number} rowCount - Number of rows returned
+     * @returns {string} Human-readable summary
+     */
+    function buildToolResultSummary(toolName, result, rowCount) {
+        if (!result.success) {
+            return result.error || 'Failed';
+        }
+
+        // Entity resolution tools have special result structure
+        if (toolName.startsWith('resolve_')) {
+            if (result.found && result.entity) {
+                const entityName = result.entity.name || result.entity.entityid || 'entity';
+                const entityType = result.entityType || result.entity.type || '';
+                return `Found: ${entityName}${entityType ? ` (${entityType})` : ''}`;
+            }
+            if (result.notFound) {
+                return result.message || 'No match found';
+            }
+            if (result.ambiguous && result.matches) {
+                return `Ambiguous: ${result.matches.length} possible matches`;
+            }
+            // Fallback for resolve tools
+            return result.message || 'Resolution complete';
+        }
+
+        // Dashboard tools return metrics, not rows
+        if (toolName.startsWith('dashboard_')) {
+            if (result.metrics) {
+                const metricCount = Object.keys(result.metrics).length;
+                return `${metricCount} metrics calculated`;
+            }
+            return 'Dashboard loaded';
+        }
+
+        // Fiscal context tool
+        if (toolName === 'get_fiscal_context') {
+            return result.context?.currentPeriod || 'Fiscal context loaded';
+        }
+
+        // Standard data tools - report row count
+        if (rowCount > 0) {
+            return `Found ${rowCount} results`;
+        }
+
+        // Zero rows but success - context-aware message
+        if (result.message) {
+            return result.message;
+        }
+
+        return 'No data found';
+    }
+
+    /**
+     * Add progressive table blocks immediately after INVOKE phase
+     * Uses REAL data from DataStore - NO hallucination possible
+     * Tables render in frontend BEFORE LLM generates narrative text
+     */
+    function addProgressiveTableBlocks(state) {
+        if (!state.dataReferences || state.dataReferences.length === 0) {
+            Utils.debugLog('SCA addProgressiveTableBlocks - no data refs', { requestId: state.requestId });
+            return;
+        }
+
+        state.dataReferences.forEach((ref, index) => {
+            try {
+                // Load actual data rows
+                // Use ref.requestId for follow-up queries
+                const data = Cache.loadRows(ref.requestId || state.requestId, ref.refId, 0, 19);
+                if (!data || !data.rows || data.rows.length === 0) {
+                    Utils.debugLog('SCA addProgressiveTableBlocks - no rows for ref', { refId: ref.refId });
+                    return;
+                }
+
+                const summary = ref.summary || {};
+                const toolDisplayName = getToolDisplayName(summary.tool) || 'Results';
+
+                // Build table block with REAL data
+                const displayColumns = data.columns.slice(0, 8); // Limit columns for display
+                const tableBlock = {
+                    type: 'table',
+                    title: toolDisplayName,
+                    dataRef: ref.refId,
+                    totalRows: data.totalRows,
+                    headers: displayColumns,
+                    rows: data.rows.slice(0, 10).map(row => {
+                        return displayColumns.map(col => formatCellValue(row[col], col));
+                    }),
+                    // Include summary stats for context
+                    summary: {
+                        rowCount: data.totalRows,
+                        columns: data.columns.length,
+                        aggregates: summary.aggregates
+                    }
+                };
+
+                // Add to progress store for immediate frontend rendering
+                Cache.addBlock(state.requestId, tableBlock);
+
+                Utils.debugLog('SCA addProgressiveTableBlocks - added table block', {
+                    requestId: state.requestId,
+                    refId: ref.refId,
+                    rowCount: tableBlock.rows.length,
+                    totalRows: data.totalRows
+                });
+
+            } catch (e) {
+                log.error('SCA addProgressiveTableBlocks - error building block', {
+                    requestId: state.requestId,
+                    refId: ref.refId,
+                    error: e.message
+                });
+            }
+        });
+    }
+
+    function parseJsonResponse(text) {
+        if (!text) return null;
+
+        // Try direct parse
+        try {
+            return JSON.parse(text);
+        } catch (e) {
+            // Try to extract JSON from markdown code block
+            const match = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+            if (match) {
+                try {
+                    return JSON.parse(match[1].trim());
+                } catch (e2) {
+                    // ignore
+                }
+            }
+
+            // Try to find JSON object in text using balanced brace matching
+            let depth = 0;
+            let startIndex = -1;
+
+            for (let i = 0; i < text.length; i++) {
+                if (text[i] === '{') {
+                    if (depth === 0) startIndex = i;
+                    depth++;
+                } else if (text[i] === '}') {
+                    depth--;
+                    if (depth === 0 && startIndex !== -1) {
+                        try {
+                            return JSON.parse(text.substring(startIndex, i + 1));
+                        } catch (e3) {
+                            // Continue searching
+                            startIndex = -1;
+                        }
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * SEMANTIC INTENT TOOL SELECTION PROMPT
+     * Used to select appropriate tools for an intent when LLM selection fails
+     */
+    const INTENT_TOOL_SELECTION_PROMPT = `User intent: {intent}
+Message: "{message}"
+
+Select 1-2 most relevant tools from:
+{available_tools}
+
+Consider what data the user needs and which tools can provide it.
+Reply JSON only: {"tools": ["tool1", "tool2"], "reasoning": "brief explanation"}`;
+
+    /**
+     * Get default tools for a given intent using semantic LLM selection
+     * FIXED: Added 'follow_up' intent to use cached data instead of refetching
+     * @param {string} intent - The classified intent
+     * @param {Object} state - Current state for context
+     * @returns {string[]} Array of tool names to use
+     */
+    function getDefaultToolsForIntent(intent, state) {
+        // Special cases that should NOT invoke tools
+        // These must remain hardcoded as they're behavioral requirements
+        if (intent === 'general' || intent === 'follow_up') {
+            // general: greetings, chitchat - let conversational handler deal with it
+            // follow_up: use cached data, skip INVOKE phase
+            return [];
+        }
+
+        // Try semantic selection for other intents
+        try {
+            const toolManifest = Tools.getToolManifest();
+            const availableTools = Object.entries(toolManifest)
+                .map(([name, desc]) => `- ${name}: ${desc}`)
+                .join('\n');
+
+            const prompt = INTENT_TOOL_SELECTION_PROMPT
+                .replace('{intent}', intent)
+                .replace('{message}', state?.message || '')
+                .replace('{available_tools}', availableTools);
+
+            const response = AIProviders.callAI(prompt, {
+                tier: TIERS.FAST,
+                temperature: 0.1,
+                jsonMode: true,
+                purpose: 'SCA:intent_tools'
+            });
+
+            const parsed = parseJsonResponse(response?.text);
+
+            if (parsed?.tools && Array.isArray(parsed.tools)) {
+                // Validate suggested tools exist
+                const validTools = parsed.tools.filter(t => toolManifest[t]).slice(0, 2);
+                if (validTools.length > 0) {
+                    Utils.debugLog('Semantic intent tool selection', {
+                        intent: intent,
+                        selectedTools: validTools,
+                        reasoning: parsed.reasoning
+                    });
+                    return validTools;
+                }
+            }
+        } catch (e) {
+            Utils.debugLog('Semantic intent tool selection failed', {
+                error: e.message,
+                intent: intent
+            });
+        }
+
+        // Ultimate fallback: let ReAct loop figure it out
+        // Return empty array instead of hardcoded defaults
+        return [];
+    }
+
+    function synthesizeFromDataRefs(state) {
+        if (!state.dataReferences || state.dataReferences.length === 0) {
+            return {
+                analysis: 'No data was retrieved to analyze.',
+                key_findings: []
+            };
+        }
+
+        const summaries = state.dataReferences.map(ref => {
+            const s = ref.summary;
+            const insights = s.insights ? s.insights.join('. ') : '';
+            return `${s.tool}: ${s.rowCount} results. ${insights}`;
+        });
+
+        return {
+            analysis: summaries.join('\n\n') || 'Data retrieved successfully.',
+            key_findings: state.dataReferences.flatMap(ref => ref.summary?.insights || [])
+        };
+    }
+
+    /**
+     * Enrich table blocks with actual data from data references
+     * FIXED: Optimized to load all needed rows in one batch instead of N calls
+     */
+    function enrichTableBlocks(state) {
+        if (!state.formattedResponse || !state.formattedResponse.blocks) return;
+
+        state.formattedResponse.blocks.forEach(block => {
+            if (block.type === 'table' && (!block.rows || block.rows.length === 0)) {
+                // Try to populate from data references
+                const dataRef = state.dataReferences[0];
+                if (dataRef && dataRef.summary.preview) {
+                    const preview = dataRef.summary.preview;
+                    const cols = dataRef.summary.columns?.slice(0, 5) || [];
+
+                    block.headers = block.headers || cols;
+
+                    // OPTIMIZATION: Load all rows in one batch instead of N separate calls
+                    // Use dataRef.requestId for follow-up queries
+                    const maxRank = Math.max(...preview.map(p => p.rank || 0));
+                    const allData = Cache.loadRows(dataRef.requestId || state.requestId, dataRef.refId, 0, maxRank);
+                    const rowsMap = {};
+                    if (allData && allData.rows) {
+                        allData.rows.forEach((row, idx) => { rowsMap[idx] = row; });
+                    }
+
+                    block.rows = preview.map(p => {
+                        const rowIndex = (p.rank || 1) - 1;
+                        const rowData = rowsMap[rowIndex];
+                        if (rowData) {
+                            return block.headers.map(h => formatCellValue(rowData[h], h));
+                        }
+                        // Fallback to preview data
+                        return [p.rank, p.name || '', p.value ? formatCellValue(p.value, 'amount') : ''];
+                    });
+                }
+            }
+        });
+    }
+
+    /**
+     * Format cell value based on column type
+     * Only formats monetary columns as currency, leaves IDs and counts as plain numbers
+     * AGENTIC FIX: Properly formats negative currency as -$X instead of $-X
+     * Also translates status codes to human-readable labels
+     */
+    function formatCellValue(val, columnName) {
+        if (val === null || val === undefined) return '';
+
+        // Translate status codes to human-readable labels
+        const statusColumns = ['status', 'statusref', 'approvalstatus', 'orderstatus'];
+        if (columnName && statusColumns.includes(columnName.toLowerCase())) {
+            return Utils.mapStatus(val) || val;
+        }
+
+        if (typeof val === 'number') {
+            // Check if this is a monetary column
+            const isMonetary = columnName ? isMonetaryColumn(columnName) : false;
+            if (isMonetary) {
+                // FIXED: Format negative currency correctly as -$X not $-X
+                const isNegative = val < 0;
+                const absVal = Math.abs(val);
+                const formatted = '$' + absVal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                return isNegative ? '-' + formatted : formatted;
+            }
+            // For non-monetary numbers, just format with commas if large
+            return val.toLocaleString('en-US');
+        }
+        return String(val);
+    }
+
+    /**
+     * Check if a column contains monetary values based on its name
+     */
+    function isMonetaryColumn(col) {
+        if (!col) return false;
+        const lower = col.toLowerCase();
+        // Patterns that are explicitly NOT monetary (even if they contain monetary words)
+        const nonMonetaryPatterns = ['_id', 'id_', 'customer_id', 'vendor_id', 'employee_id',
+            'account_id', 'internal_id', 'count', 'number', 'qty', 'quantity', 'rank', 'invoice_count'];
+        if (nonMonetaryPatterns.some(p => lower.includes(p) || lower === p.replace('_', ''))) {
+            return false;
+        }
+        // Patterns that indicate monetary values
+        const monetaryPatterns = [
+            'amount', 'total', 'balance', 'spend', 'revenue', 'cost',
+            'price', 'debit', 'credit', 'payment', 'bucket', 'outstanding',
+            'current_bucket', 'days_1_30', 'days_31_60', 'days_61_90', 'days_over_90',
+            'cash', 'expense', 'income', 'profit', 'loss', 'fee', 'charge'
+        ];
+        return monetaryPatterns.some(p => lower.includes(p));
+    }
+
+    /**
+     * Get a user-friendly display name for a tool (internal/simple version)
+     * Note: This is intentionally different from Tools.getToolDisplayName() which takes args
+     * This version is for static display names without argument context
+     */
+    function getToolDisplayName(toolName) {
+        if (!toolName) return null;
+        const displayNames = {
+            'get_ar_aging': 'AR Aging Summary',
+            'get_ap_aging': 'AP Aging Summary',
+            'get_top_customers': 'Top Customers',
+            'get_top_vendors': 'Top Vendors',
+            'get_customer_revenue': 'Customer Revenue',
+            'get_vendor_spend': 'Vendor Spend',
+            'get_gl_activity': 'GL Activity',
+            'get_trial_balance': 'Trial Balance',
+            'get_income_statement': 'Income Statement',
+            'get_balance_sheet': 'Balance Sheet',
+            'get_cash_position': 'Cash Position',
+            'get_recent_transactions': 'Recent Transactions',
+            'resolve_entity': 'Entity Lookup',
+            'resolve_gl_account': 'Account Lookup',
+            'resolve_classification': 'Classification Lookup',
+            'run_custom_query': 'Custom Query'
+        };
+        return displayNames[toolName] || toolName.replace(/^get_/, '').replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // MAIN EXECUTION
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Initialize streaming agent state
+     */
+    function initState(message, sessionContext, requestId, history, requestContext) {
+        const state = initStreamingState(message, sessionContext, requestId, history, requestContext);
+
+        // Import any existing resolved entities from session
+        if (sessionContext && sessionContext.resolvedEntities) {
+            state.resolvedEntities = { ...sessionContext.resolvedEntities };
+        }
+
+        // Mark as using streaming agent
+        state.useStreamingAgent = true;
+
+        return state;
+    }
+
+    /**
+     * Run one step of the streaming agent
+     * Returns { hasMore: boolean, phase: string } or { hasMore: false, response: object }
+     */
+    function runStep(state) {
+        Utils.debugLog('SCA runStep', {
+            phase: state.phase,
+            iteration: state.iteration,
+            analyzeIter: state.analyzeIterations,
+            formatIter: state.formatIterations,
+            reflectIter: state.reflectIterations
+        });
+
+        let result;
+
+        switch (state.phase) {
+            case PHASES.INIT:
+                state.phase = PHASES.INTENT;
+                return { hasMore: true, phase: PHASES.INTENT };
+
+            case PHASES.INTENT:
+                result = executeIntentPhase(state);
+                return { hasMore: true, phase: result.nextPhase };
+
+            // ═══════════════════════════════════════════════════════════════════════
+            // REASON_ACT: True ReAct Loop - Replaces SELECT/INVOKE/REFLECT
+            // This is the core agentic phase that iteratively gathers data
+            // ═══════════════════════════════════════════════════════════════════════
+            case PHASES.REASON_ACT:
+                result = executeReasonActPhase(state);
+                // REASON_ACT can loop back to itself (more data needed) or proceed
+                if (result.nextPhase === PHASES.REASON_ACT) {
+                    return { hasMore: true, phase: PHASES.REASON_ACT };
+                }
+                if (result.nextPhase === PHASES.SYNTHESIZE) {
+                    return { hasMore: true, phase: PHASES.SYNTHESIZE };
+                }
+                if (result.nextPhase === PHASES.RESPOND) {
+                    return { hasMore: true, phase: PHASES.RESPOND };
+                }
+                return { hasMore: true, phase: result.nextPhase };
+
+            // DEPRECATED: Kept for backwards compatibility
+            case PHASES.SELECT:
+                result = executeSelectPhase(state);
+                return { hasMore: true, phase: result.nextPhase };
+
+            case PHASES.INVOKE:
+                result = executeInvokePhase(state);
+                // Route to appropriate next phase
+                if (result.nextPhase === PHASES.REFLECT) {
+                    return { hasMore: true, phase: PHASES.REFLECT };
+                }
+                if (result.nextPhase === PHASES.RESPOND) {
+                    return { hasMore: true, phase: PHASES.RESPOND };
+                }
+                return { hasMore: true, phase: PHASES.INVOKE };
+
+            // ═══════════════════════════════════════════════════════════════════════
+            // ReAct Pattern: REFLECT phase evaluates results and decides next action
+            // ═══════════════════════════════════════════════════════════════════════
+            case PHASES.REFLECT:
+                result = executeReflectPhase(state);
+                // REFLECT can loop back to INVOKE for retry, proceed to SYNTHESIZE, or RESPOND
+                if (result.nextPhase === PHASES.INVOKE) {
+                    return { hasMore: true, phase: PHASES.INVOKE };
+                }
+                if (result.nextPhase === PHASES.SYNTHESIZE) {
+                    return { hasMore: true, phase: PHASES.SYNTHESIZE };
+                }
+                if (result.nextPhase === PHASES.RESPOND) {
+                    return { hasMore: true, phase: PHASES.RESPOND };
+                }
+                return { hasMore: true, phase: result.nextPhase };
+
+            // ═══════════════════════════════════════════════════════════════════════
+            // SYNTHESIZE: LLM writes custom SQL when pre-built tools fail
+            // Self-correcting loop that retries on SQL errors
+            // ═══════════════════════════════════════════════════════════════════════
+            case PHASES.SYNTHESIZE:
+                result = executeSynthesizePhase(state);
+                // SYNTHESIZE can loop back to itself (self-correction) or proceed to RESPOND
+                if (result.nextPhase === PHASES.SYNTHESIZE) {
+                    return { hasMore: true, phase: PHASES.SYNTHESIZE };
+                }
+                if (result.nextPhase === PHASES.RESPOND) {
+                    return { hasMore: true, phase: PHASES.RESPOND };
+                }
+                return { hasMore: true, phase: result.nextPhase };
+
+            case PHASES.RESPOND:
+                result = executeRespondPhase(state);
+                if (result.nextPhase === PHASES.COMPLETE) {
+                    return {
+                        hasMore: false,
+                        response: buildFinalResponse(state)
+                    };
+                }
+                return { hasMore: true, phase: result.nextPhase };
+
+            case PHASES.COMPLETE:
+                return {
+                    hasMore: false,
+                    response: buildFinalResponse(state)
+                };
+
+            default:
+                log.error('SCA Unknown phase', { phase: state.phase });
+                return { hasMore: false, error: 'Unknown phase: ' + state.phase };
+        }
+    }
+
+    /**
+     * Build final response object
+     * FIXED: Enhanced error propagation to surface errors visibly to users
+     */
+    function buildFinalResponse(state) {
+        const formatted = state.formattedResponse || {};
+        const duration = Date.now() - state.startTime;
+
+        // Check if any tools failed
+        const failedTools = state.toolInvocations.filter(t => !t.success && t.error);
+        const successfulTools = state.toolInvocations.filter(t => t.success);
+        const hasPartialFailure = failedTools.length > 0 && successfulTools.length > 0;
+        const hasCompleteFailure = failedTools.length > 0 && successfulTools.length === 0;
+
+        // Build base response
+        let responseText = state.analysis?.analysis || formatted.summary || 'Analysis complete';
+        let richContent = formatted.blocks || [];
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // BLOCK COEXISTENCE: Merge progressive tables with LLM-placed blocks
+        // - Progressive tables are added during INVOKE phase (fast, immediate UX)
+        // - LLM can also place tables/charts via block sequence format
+        // - If LLM placed any tables, don't add progressive tables (avoid duplicates)
+        // ═══════════════════════════════════════════════════════════════════════
+        const progressState = Cache.get(state.requestId);
+        const llmPlacedTables = richContent.some(b => b.type === 'table' && b.llmPlaced);
+
+        if (!llmPlacedTables && progressState?.blocks?.length > 0) {
+            // LLM didn't place any tables - merge progressive tables
+            const progressiveTableBlocks = progressState.blocks.filter(b => b.type === 'table');
+
+            if (progressiveTableBlocks.length > 0) {
+                // Insert after first text block
+                const textBlockIndex = richContent.findIndex(b => b.type === 'text');
+                const insertPosition = textBlockIndex >= 0 ? textBlockIndex + 1 : 0;
+
+                richContent = [
+                    ...richContent.slice(0, insertPosition),
+                    ...progressiveTableBlocks,
+                    ...richContent.slice(insertPosition)
+                ];
+
+                Utils.debugLog('Merged progressive table blocks into richContent', {
+                    requestId: state.requestId,
+                    tableCount: progressiveTableBlocks.length,
+                    totalBlocks: richContent.length
+                });
+            }
+        } else if (llmPlacedTables) {
+            Utils.debugLog('Skipping progressive tables: LLM placed tables explicitly', {
+                requestId: state.requestId,
+                llmTableCount: richContent.filter(b => b.type === 'table').length
+            });
+        }
+
+        // FIXED: Surface errors visibly in the response
+        if (hasCompleteFailure) {
+            // All tools failed - add error context to response
+            const errorMessages = failedTools.map(t =>
+                `• ${getToolDisplayName(t.tool)}: ${t.error || 'Unknown error'}`
+            ).join('\n');
+            responseText = "I encountered issues retrieving the data needed to answer your question. " +
+                "Please try rephrasing your question or check that the requested entities exist.";
+            richContent = [{
+                type: 'text',
+                content: responseText
+            }, {
+                type: 'list',
+                title: 'Issues encountered',
+                items: failedTools.map(t => `${getToolDisplayName(t.tool)}: ${t.error || 'Unknown error'}`)
+            }];
+        } else if (hasPartialFailure && state.errors.length > 0) {
+            // Some tools failed - add warning note
+            const warningBlock = {
+                type: 'text',
+                content: '⚠️ Note: Some data sources were unavailable. Results may be incomplete.'
+            };
+            // Insert warning at the end of rich content
+            if (!richContent.some(b => b.content?.includes('unavailable'))) {
+                richContent = [...richContent, warningBlock];
+            }
+        }
+
+        const response = {
+            text: responseText,
+            richContent: richContent,
+            title: formatted.title,
+            summary: formatted.summary,
+            sessionContext: {
+                resolvedEntities: state.resolvedEntities,
+                // RECOMMENDATION 1: Include LLM-extracted semantic topics (no word lists)
+                semanticTopics: state.intent?.semantic_topics || [],
+                // FOLLOW-UP DATA REUSE: Store data references for reuse in follow-up questions
+                // This allows "show that as a table" or "tell me more" to access previous data
+                lastDataRefs: state.dataReferences.length > 0 ? state.dataReferences : null,
+                lastToolResults: state.toolInvocations.length > 0 ? state.toolInvocations.map(t => ({
+                    tool: t.tool,
+                    success: t.success,
+                    rowCount: t.rowCount,
+                    dataRef: t.dataRef
+                })) : null
+            },
+            metadata: {
+                phases: {
+                    intent: state.intent,
+                    toolsUsed: state.selectedTools,
+                    toolResults: state.toolInvocations.map(t => ({
+                        tool: t.tool,
+                        success: t.success,
+                        rowCount: t.rowCount,
+                        error: t.error // FIXED: Include error in tool results
+                    })),
+                    dataRefs: state.dataReferences.map(r => r.refId)
+                },
+                duration: duration,
+                phaseTimings: state.phaseTimings,
+                iterations: {
+                    total: state.iteration,
+                    analyze: state.analyzeIterations,
+                    format: state.formatIterations
+                },
+                errors: state.errors.length > 0 ? state.errors : undefined,
+                hasPartialFailure: hasPartialFailure || undefined,
+                hasCompleteFailure: hasCompleteFailure || undefined
+            }
+        };
+
+        // Add debug info if debug mode
+        if (Utils.isDebugMode()) {
+            response.debug = {
+                fullState: {
+                    phase: state.phase,
+                    intent: state.intent,
+                    selectedTools: state.selectedTools,
+                    toolInvocations: state.toolInvocations,
+                    dataRefCount: state.dataReferences.length,
+                    errors: state.errors
+                }
+            };
+        }
+
+        return response;
+    }
+
+    /**
+     * Run the complete streaming agent (all phases)
+     * Used for synchronous execution
+     */
+    function runComplete(message, sessionContext, requestId, requestContext) {
+        const state = initState(message, sessionContext, requestId, null, requestContext);
+        let result;
+        let iterations = 0;
+        const maxIterations = 20; // Safety limit
+
+        while (iterations < maxIterations) {
+            result = runStep(state);
+            iterations++;
+
+            if (!result.hasMore) {
+                break;
+            }
+        }
+
+        if (iterations >= maxIterations) {
+            log.error('SCA Max iterations reached', { requestId });
+            return { error: 'Max iterations reached', hasMore: false };
+        }
+
+        return result;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // EXPORTS
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    return {
+        // State management
+        initState: initState,
+        runStep: runStep,
+        runComplete: runComplete,
+
+        // Phase constants
+        PHASES: PHASES,
+
+        // Utilities (re-exported from Tools for backward compatibility)
+        getToolManifest: Tools.getToolManifest,
+        getToolListForPrompt: Tools.getToolListForPrompt
+    };
+});

@@ -1,0 +1,38 @@
+{
+  "name": "com.flux.gantry",
+  "version": "2.1.0",
+  "description": "Open source financial analytics and AI advisor SuiteApp for NetSuite",
+  "private": false,
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/braedonsaunders/com.flux.gantry.git"
+  },
+  "bugs": {
+    "url": "https://github.com/braedonsaunders/com.flux.gantry/issues"
+  },
+  "homepage": "https://github.com/braedonsaunders/com.flux.gantry#readme",
+  "keywords": [
+    "netsuite",
+    "suiteapp",
+    "suitecloud",
+    "suitescript",
+    "sdf",
+    "financial-analytics",
+    "dashboards",
+    "ai-advisor",
+    "accounts-payable"
+  ],
+  "scripts": {
+    "sync": "node scripts/sync.js",
+    "sync:watch": "node scripts/sync.js --watch",
+    "sync:all": "node scripts/sync.js --all",
+    "build": "node scripts/build-distribution.js --clean",
+    "build:quick": "node scripts/build-distribution.js",
+    "test": "node scripts/verify-production-readiness.js && node scripts/verify-advisor-harness.js"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  },
+  "author": "Braedon Saunders"
+}

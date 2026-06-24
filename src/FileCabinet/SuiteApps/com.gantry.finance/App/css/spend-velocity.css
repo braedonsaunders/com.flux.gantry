@@ -1,0 +1,1290 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   SPEND VELOCITY - Physics for Finance Dashboard
+   World-Class Spend Intelligence & Anomaly Detection
+   Part of Gantry Financial Suite CSS
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Spend Velocity Dashboard Styles
+ * "Where is your money GOING, not just WHERE it IS"
+ * 
+ * Features:
+ * - Velocity-based treemap visualization
+ * - Boiling Frog subscription creep detection
+ * - Shadow IT viral adoption tracking
+ * - Commitment Cliff PO/SO analysis
+ * - Anomaly heat signatures
+ * - Responsive design with dark mode support
+ */
+
+/* ==========================================
+   DASHBOARD CONTAINER & LAYOUT
+   ========================================== */
+
+.spend-velocity-dashboard {
+    --sv-velocity-positive: #10b981;
+    --sv-velocity-negative: #ef4444;
+    --sv-velocity-neutral: #6b7280;
+    --sv-acceleration-hot: #dc2626;
+    --sv-acceleration-warm: #f59e0b;
+    --sv-acceleration-cool: #3b82f6;
+    --sv-acceleration-cold: #06b6d4;
+    --sv-boiling-frog: #7c3aed;
+    --sv-shadow-it: #ec4899;
+    --sv-commitment-cliff: #f97316;
+    --sv-glass-bg: rgba(255, 255, 255, 0.85);
+    --sv-glass-border: rgba(255, 255, 255, 0.2);
+}
+
+/* ==========================================
+   VELOCITY HERO SECTION
+   ========================================== */
+
+.sv-hero-section {
+    background: linear-gradient(135deg, #1e293b 0%, #0f172a 50%, #1e1b4b 100%);
+    border-radius: 16px;
+    padding: 24px;
+    margin-bottom: 16px;
+    position: relative;
+    overflow: hidden;
+}
+
+.sv-hero-section::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: 
+        radial-gradient(circle at 20% 50%, rgba(99, 102, 241, 0.15) 0%, transparent 50%),
+        radial-gradient(circle at 80% 20%, rgba(236, 72, 153, 0.1) 0%, transparent 40%),
+        radial-gradient(circle at 60% 80%, rgba(16, 185, 129, 0.1) 0%, transparent 40%);
+    pointer-events: none;
+}
+
+.sv-hero-content {
+    position: relative;
+    z-index: 1;
+}
+
+.sv-hero-title {
+    color: #fff;
+    font-size: 1.5rem;
+    font-weight: 700;
+    margin-bottom: 4px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.sv-hero-title i {
+    color: #a78bfa;
+}
+
+.sv-hero-subtitle {
+    color: #94a3b8;
+    font-size: var(--font-sm);
+    margin-bottom: 20px;
+}
+
+/* ==========================================
+   VELOCITY METRICS ROW
+   ========================================== */
+
+.sv-velocity-metrics {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 16px;
+}
+
+.sv-velocity-card {
+    background: var(--sv-glass-bg);
+    backdrop-filter: blur(12px);
+    border: 1px solid var(--sv-glass-border);
+    border-radius: 12px;
+    padding: 16px;
+    position: relative;
+    overflow: hidden;
+}
+
+.sv-velocity-card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 3px;
+    background: linear-gradient(90deg, var(--card-accent, #3b82f6), transparent);
+}
+
+.sv-velocity-card.positive { --card-accent: var(--sv-velocity-positive); }
+.sv-velocity-card.negative { --card-accent: var(--sv-velocity-negative); }
+.sv-velocity-card.warning { --card-accent: var(--sv-acceleration-warm); }
+.sv-velocity-card.critical { --card-accent: var(--sv-acceleration-hot); }
+
+.sv-velocity-label {
+    font-size: var(--font-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #64748b;
+    font-weight: 600;
+    margin-bottom: 4px;
+}
+
+.sv-velocity-value {
+    font-size: 1.75rem;
+    font-weight: 700;
+    color: #1e293b;
+    line-height: 1.1;
+    margin-bottom: 4px;
+}
+
+.sv-velocity-delta {
+    font-size: var(--font-sm);
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.sv-velocity-delta.up { color: var(--sv-velocity-negative); }
+.sv-velocity-delta.down { color: var(--sv-velocity-positive); }
+.sv-velocity-delta.neutral { color: var(--sv-velocity-neutral); }
+
+.sv-velocity-spark {
+    position: absolute;
+    bottom: 12px;
+    right: 12px;
+    opacity: 0.8;
+}
+
+/* ==========================================
+   DETECTOR CARDS (Boiling Frog, Shadow IT, etc.)
+   ========================================== */
+
+.sv-detector-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px;
+    margin-bottom: 16px;
+}
+
+@media (max-width: 1200px) {
+    .sv-detector-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}
+
+@media (max-width: 768px) {
+    .sv-detector-grid {
+        grid-template-columns: 1fr;
+    }
+    .sv-velocity-metrics {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}
+
+.sv-detector-card {
+    background: var(--bg-white);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    overflow: hidden;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.sv-detector-card:hover {
+    box-shadow: 0 10px 40px -10px rgba(0, 0, 0, 0.15);
+    transform: translateY(-2px);
+}
+
+.sv-detector-header {
+    padding: 16px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.sv-detector-icon {
+    width: 44px;
+    height: 44px;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.25rem;
+}
+
+.sv-detector-icon.boiling-frog {
+    background: linear-gradient(135deg, #7c3aed 0%, #a855f7 100%);
+    color: white;
+}
+
+.sv-detector-icon.shadow-it {
+    background: linear-gradient(135deg, #ec4899 0%, #f472b6 100%);
+    color: white;
+}
+
+.sv-detector-icon.commitment-cliff {
+    background: linear-gradient(135deg, #f97316 0%, #fb923c 100%);
+    color: white;
+}
+
+.sv-detector-icon.anomaly {
+    background: linear-gradient(135deg, #ef4444 0%, #f87171 100%);
+    color: white;
+}
+
+.sv-detector-icon.seasonal {
+    background: linear-gradient(135deg, #06b6d4 0%, #22d3ee 100%);
+    color: white;
+}
+
+.sv-detector-icon.concentration {
+    background: linear-gradient(135deg, #3b82f6 0%, #60a5fa 100%);
+    color: white;
+}
+
+.sv-detector-title-group {
+    flex: 1;
+}
+
+.sv-detector-title {
+    font-weight: 700;
+    font-size: var(--font-base);
+    color: var(--text-dark);
+    margin-bottom: 2px;
+}
+
+.sv-detector-subtitle {
+    font-size: var(--font-xs);
+    color: var(--text-muted);
+}
+
+.sv-detector-badge {
+    padding: 4px 10px;
+    border-radius: 20px;
+    font-size: var(--font-xs);
+    font-weight: 700;
+}
+
+.sv-detector-badge.critical {
+    background: #fef2f2;
+    color: #dc2626;
+}
+
+.sv-detector-badge.warning {
+    background: #fef9c3;
+    color: #92400e;
+}
+
+.sv-detector-badge.healthy {
+    background: #ecfdf5;
+    color: #065f46;
+}
+
+.sv-detector-body {
+    padding: 16px;
+}
+
+.sv-detector-stat {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 0;
+    border-bottom: 1px solid #f1f5f9;
+}
+
+.sv-detector-stat:last-child {
+    border-bottom: none;
+}
+
+.sv-detector-stat-label {
+    font-size: var(--font-sm);
+    color: var(--text-muted);
+}
+
+.sv-detector-stat-value {
+    font-size: var(--font-sm);
+    font-weight: 600;
+    color: var(--text-dark);
+}
+
+/* ==========================================
+   VELOCITY TREEMAP
+   ========================================== */
+
+.sv-treemap-container {
+    background: var(--bg-white);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    overflow: hidden;
+    margin-bottom: 16px;
+}
+
+.sv-treemap-header {
+    padding: 16px;
+    border-bottom: 1px solid var(--border-color);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.sv-treemap-title {
+    font-weight: 700;
+    font-size: var(--font-md);
+    color: var(--text-dark);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.sv-treemap-title i {
+    color: #6366f1;
+}
+
+.sv-treemap-legend {
+    display: flex;
+    gap: 16px;
+    font-size: var(--font-xs);
+}
+
+.sv-legend-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.sv-legend-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 2px;
+}
+
+.sv-legend-dot.accelerating { background: linear-gradient(135deg, #ef4444, #f97316); }
+.sv-legend-dot.decelerating { background: linear-gradient(135deg, #10b981, #06b6d4); }
+.sv-legend-dot.stable { background: #9ca3af; }
+
+.sv-treemap-body {
+    padding: 16px;
+    min-height: 400px;
+}
+
+#svTreemap {
+    width: 100%;
+    height: 400px;
+}
+
+/* ==========================================
+   VENDOR VELOCITY TABLE
+   ========================================== */
+
+.sv-velocity-table-wrapper {
+    background: var(--bg-white);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    overflow: hidden;
+}
+
+.sv-velocity-table {
+    width: 100%;
+    margin: 0;
+}
+
+.sv-velocity-table thead th {
+    background: #f8fafc;
+    padding: 12px 16px;
+    font-size: var(--font-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: var(--text-muted);
+    font-weight: 600;
+    border-bottom: 1px solid var(--border-color);
+    white-space: nowrap;
+}
+
+.sv-velocity-table tbody td {
+    padding: 12px 16px;
+    font-size: var(--font-sm);
+    border-bottom: 1px solid #f1f5f9;
+    vertical-align: middle;
+}
+
+.sv-velocity-table tbody tr:hover {
+    background: #f8fafc;
+}
+
+.sv-velocity-table tbody tr.flagged {
+    background: rgba(239, 68, 68, 0.04);
+}
+
+.sv-velocity-table tbody tr.flagged:hover {
+    background: rgba(239, 68, 68, 0.08);
+}
+
+.sv-vendor-cell {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.sv-vendor-avatar {
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    background: linear-gradient(135deg, #e0e7ff, #c7d2fe);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: var(--font-xs);
+    color: #4f46e5;
+    flex-shrink: 0;
+}
+
+.sv-vendor-info {
+    min-width: 0;
+}
+
+.sv-vendor-name {
+    font-weight: 600;
+    color: var(--text-dark);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.sv-vendor-category {
+    font-size: var(--font-xs);
+    color: var(--text-muted);
+}
+
+.sv-velocity-indicator {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 8px;
+    border-radius: 4px;
+    font-size: var(--font-xs);
+    font-weight: 600;
+}
+
+.sv-velocity-indicator.hot {
+    background: #fef2f2;
+    color: #dc2626;
+}
+
+.sv-velocity-indicator.warm {
+    background: #fef9c3;
+    color: #92400e;
+}
+
+.sv-velocity-indicator.cool {
+    background: #ecfdf5;
+    color: #065f46;
+}
+
+.sv-velocity-indicator.cold {
+    background: #f0f9ff;
+    color: #0369a1;
+}
+
+/* ==========================================
+   ACCELERATION HEAT SIGNATURE
+   ========================================== */
+
+.sv-heat-signature {
+    display: flex;
+    gap: 2px;
+    align-items: center;
+}
+
+.sv-heat-bar {
+    width: 4px;
+    height: 20px;
+    border-radius: 2px;
+    transition: all 0.3s ease;
+}
+
+.sv-heat-bar.h1 { background: #fee2e2; height: 8px; }
+.sv-heat-bar.h2 { background: #fecaca; height: 12px; }
+.sv-heat-bar.h3 { background: #fca5a5; height: 14px; }
+.sv-heat-bar.h4 { background: #f87171; height: 16px; }
+.sv-heat-bar.h5 { background: #ef4444; height: 18px; }
+.sv-heat-bar.h6 { background: #dc2626; height: 20px; }
+
+.sv-heat-bar.c1 { background: #d1fae5; height: 8px; }
+.sv-heat-bar.c2 { background: #a7f3d0; height: 12px; }
+.sv-heat-bar.c3 { background: #6ee7b7; height: 14px; }
+.sv-heat-bar.c4 { background: #34d399; height: 16px; }
+.sv-heat-bar.c5 { background: #10b981; height: 18px; }
+.sv-heat-bar.c6 { background: #059669; height: 20px; }
+
+/* ==========================================
+   COMMITMENT CLIFF VISUALIZATION
+   ========================================== */
+
+.sv-cliff-container {
+    background: var(--bg-white);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 16px;
+}
+
+.sv-cliff-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 16px;
+}
+
+.sv-cliff-title {
+    font-weight: 700;
+    font-size: var(--font-md);
+    color: var(--text-dark);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.sv-cliff-title i {
+    color: #f97316;
+}
+
+.sv-cliff-chart {
+    height: 200px;
+    position: relative;
+}
+
+.sv-cliff-alert {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 16px;
+    background: linear-gradient(135deg, rgba(249, 115, 22, 0.08), rgba(234, 88, 12, 0.04));
+    border: 1px solid rgba(249, 115, 22, 0.2);
+    border-radius: 8px;
+    margin-top: 16px;
+}
+
+.sv-cliff-alert-icon {
+    width: 36px;
+    height: 36px;
+    border-radius: 8px;
+    background: linear-gradient(135deg, #f97316, #ea580c);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    flex-shrink: 0;
+}
+
+.sv-cliff-alert-text {
+    flex: 1;
+}
+
+.sv-cliff-alert-title {
+    font-weight: 600;
+    font-size: var(--font-sm);
+    color: #c2410c;
+    margin-bottom: 2px;
+}
+
+.sv-cliff-alert-desc {
+    font-size: var(--font-xs);
+    color: #9a3412;
+}
+
+/* ==========================================
+   SHADOW IT VIRAL ADOPTION
+   ========================================== */
+
+.sv-viral-list {
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+.sv-viral-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px;
+    border-bottom: 1px solid #f1f5f9;
+    transition: all 0.2s ease;
+}
+
+.sv-viral-item:hover {
+    background: #f8fafc;
+}
+
+.sv-viral-item:last-child {
+    border-bottom: none;
+}
+
+.sv-viral-icon {
+    width: 36px;
+    height: 36px;
+    border-radius: 8px;
+    background: linear-gradient(135deg, #fdf4ff, #fae8ff);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #a855f7;
+    font-size: 1rem;
+    flex-shrink: 0;
+}
+
+.sv-viral-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.sv-viral-name {
+    font-weight: 600;
+    font-size: var(--font-sm);
+    color: var(--text-dark);
+}
+
+.sv-viral-spread {
+    font-size: var(--font-xs);
+    color: var(--text-muted);
+}
+
+.sv-viral-trend {
+    text-align: right;
+}
+
+.sv-viral-count {
+    font-weight: 700;
+    font-size: var(--font-md);
+    color: #c026d3;
+}
+
+.sv-viral-growth {
+    font-size: var(--font-xs);
+    color: #a855f7;
+}
+
+/* ==========================================
+   BOILING FROG ITEMS
+   ========================================== */
+
+.sv-frog-list {
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+.sv-frog-item {
+    padding: 12px;
+    border-bottom: 1px solid #f1f5f9;
+    transition: all 0.2s ease;
+}
+
+.sv-frog-item:hover {
+    background: #f8fafc;
+}
+
+.sv-frog-item:last-child {
+    border-bottom: none;
+}
+
+.sv-frog-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+}
+
+.sv-frog-vendor {
+    font-weight: 600;
+    font-size: var(--font-sm);
+    color: var(--text-dark);
+}
+
+.sv-frog-badge {
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: var(--font-xs);
+    font-weight: 600;
+    background: linear-gradient(135deg, #faf5ff, #f3e8ff);
+    color: #7c3aed;
+}
+
+.sv-frog-progress {
+    height: 6px;
+    background: #f1f5f9;
+    border-radius: 3px;
+    overflow: hidden;
+    margin-bottom: 6px;
+}
+
+.sv-frog-progress-bar {
+    height: 100%;
+    background: linear-gradient(90deg, #a855f7, #7c3aed);
+    border-radius: 3px;
+    transition: width 0.5s ease;
+}
+
+.sv-frog-stats {
+    display: flex;
+    justify-content: space-between;
+    font-size: var(--font-xs);
+    color: var(--text-muted);
+}
+
+/* ==========================================
+   TABS NAVIGATION
+   ========================================== */
+
+.sv-tabs .nav-link {
+    color: var(--text-muted);
+    font-weight: 600;
+    border: none;
+    padding: 0.6rem 1rem;
+    font-size: var(--font-sm);
+    transition: all 0.2s;
+    border-radius: 8px 8px 0 0;
+    border-bottom: 2px solid transparent !important;
+    margin-bottom: -2px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.sv-tabs .nav-link:hover {
+    color: var(--text-dark);
+    background-color: #f8fafc;
+}
+
+.sv-tabs .nav-link.active {
+    color: #6366f1;
+    background: transparent;
+    border-bottom: 2px solid #6366f1 !important;
+}
+
+.sv-tabs .nav-link .badge {
+    font-size: 0.65rem;
+    padding: 2px 6px;
+}
+
+/* ==========================================
+   PULSE ANIMATION FOR ALERTS
+   ========================================== */
+
+@keyframes sv-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}
+
+.sv-pulse {
+    animation: sv-pulse 2s ease-in-out infinite;
+}
+
+@keyframes sv-glow {
+    0%, 100% { box-shadow: 0 0 5px rgba(239, 68, 68, 0.3); }
+    50% { box-shadow: 0 0 20px rgba(239, 68, 68, 0.6); }
+}
+
+.sv-glow-alert {
+    animation: sv-glow 2s ease-in-out infinite;
+}
+
+/* ==========================================
+   RESPONSIVE ADJUSTMENTS
+   ========================================== */
+
+@media (max-width: 992px) {
+    .sv-hero-section {
+        padding: 16px;
+    }
+    
+    .sv-hero-title {
+        font-size: 1.25rem;
+    }
+    
+    .sv-velocity-metrics {
+        grid-template-columns: repeat(2, 1fr);
+    }
+    
+    .sv-detector-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+@media (max-width: 576px) {
+    .sv-velocity-metrics {
+        grid-template-columns: 1fr;
+    }
+    
+    .sv-treemap-header {
+        flex-direction: column;
+        gap: 12px;
+        align-items: flex-start;
+    }
+    
+    .sv-treemap-legend {
+        flex-wrap: wrap;
+    }
+}
+
+/* ==========================================
+   DARK MODE SUPPORT
+   ========================================== */
+
+.dark-mode .sv-detector-card,
+.dark-mode .sv-treemap-container,
+.dark-mode .sv-velocity-table-wrapper,
+.dark-mode .sv-cliff-container {
+    background: #1e293b;
+    border-color: #334155;
+}
+
+.dark-mode .sv-velocity-card {
+    background: rgba(30, 41, 59, 0.9);
+    border-color: rgba(71, 85, 105, 0.5);
+}
+
+.dark-mode .sv-velocity-label,
+.dark-mode .sv-detector-subtitle,
+.dark-mode .sv-detector-stat-label,
+.dark-mode .sv-vendor-category {
+    color: #94a3b8;
+}
+
+.dark-mode .sv-velocity-value,
+.dark-mode .sv-detector-title,
+.dark-mode .sv-detector-stat-value,
+.dark-mode .sv-vendor-name,
+.dark-mode .sv-treemap-title,
+.dark-mode .sv-cliff-title,
+.dark-mode .sv-frog-vendor,
+.dark-mode .sv-viral-name {
+    color: #f1f5f9;
+}
+
+.dark-mode .sv-velocity-table thead th {
+    background: #0f172a;
+    color: #94a3b8;
+    border-color: #334155;
+}
+
+.dark-mode .sv-velocity-table tbody td {
+    border-color: #334155;
+}
+
+.dark-mode .sv-velocity-table tbody tr:hover,
+.dark-mode .sv-viral-item:hover,
+.dark-mode .sv-frog-item:hover {
+    background: #334155;
+}
+
+.dark-mode .sv-detector-header,
+.dark-mode .sv-treemap-header {
+    border-color: #334155;
+}
+
+.dark-mode .sv-detector-stat,
+.dark-mode .sv-viral-item,
+.dark-mode .sv-frog-item {
+    border-color: #334155;
+}
+
+.dark-mode .sv-vendor-avatar {
+    background: linear-gradient(135deg, #312e81, #3730a3);
+    color: #a5b4fc;
+}
+
+.dark-mode .sv-frog-progress {
+    background: #334155;
+}
+/* ==========================================
+   v2.0 ADDITIONS - Pagination, Sorting, Drill-down
+   ========================================== */
+
+/* Sortable table headers */
+.sv-sortable {
+    cursor: pointer;
+    user-select: none;
+    transition: background-color 0.15s ease;
+}
+.sv-sortable:hover {
+    background-color: rgba(99, 102, 241, 0.1);
+}
+.sv-sort-active {
+    background-color: rgba(99, 102, 241, 0.15) !important;
+    color: #6366f1;
+}
+
+/* Clickable rows */
+.sv-clickable {
+    cursor: pointer;
+    transition: background-color 0.15s ease;
+}
+.sv-clickable:hover {
+    background-color: rgba(99, 102, 241, 0.08) !important;
+}
+
+/* Pagination */
+.sv-pagination {
+    background: #f8f9fa;
+}
+.sv-pagination .btn-group .btn.active {
+    background-color: #6366f1;
+    border-color: #6366f1;
+    color: white;
+}
+.sv-pagination-info {
+    padding: 8px 12px;
+    text-align: center;
+    color: #6b7280;
+    font-size: 0.875rem;
+}
+
+/* Velocity pills */
+.sv-velocity-pill {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 0.75rem;
+    font-weight: 600;
+}
+.sv-vel-hot {
+    background: rgba(239, 68, 68, 0.15);
+    color: #dc2626;
+}
+.sv-vel-warm {
+    background: rgba(245, 158, 11, 0.15);
+    color: #d97706;
+}
+.sv-vel-cool {
+    background: rgba(107, 114, 128, 0.15);
+    color: #4b5563;
+}
+.sv-vel-cold {
+    background: rgba(16, 185, 129, 0.15);
+    color: #059669;
+}
+
+/* Heat bar for acceleration */
+.sv-heat-bar {
+    display: inline-flex;
+    align-items: center;
+    gap: 1px;
+}
+
+/* Drill-down panel */
+.sv-drilldown-panel {
+    position: fixed;
+    top: 0;
+    right: 0;
+    width: 60%;
+    max-width: 800px;
+    height: 100vh;
+    background: white;
+    box-shadow: -4px 0 24px rgba(0, 0, 0, 0.15);
+    z-index: 1050;
+    display: flex;
+    flex-direction: column;
+    animation: slideInRight 0.3s ease;
+}
+@keyframes slideInRight {
+    from { transform: translateX(100%); opacity: 0; }
+    to { transform: translateX(0); opacity: 1; }
+}
+.sv-drilldown-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 16px 20px;
+    background: #f8fafc;
+    border-bottom: 1px solid #e2e8f0;
+    color: #1e293b;
+    font-weight: 600;
+}
+.sv-drilldown-header .btn-close {
+    background: none;
+    border: none;
+    font-size: 1.25rem;
+    color: #64748b;
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: 4px;
+}
+.sv-drilldown-header .btn-close:hover {
+    background: #e2e8f0;
+    color: #1e293b;
+}
+.sv-drilldown-body {
+    flex: 1;
+    padding: 20px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+}
+.sv-drilldown-body .table-responsive {
+    flex: 1;
+    overflow-y: auto;
+}
+.sv-drilldown-stats {
+    flex-shrink: 0;
+    margin-bottom: 16px;
+}
+
+/* Period cards */
+.bg-primary-soft { background-color: rgba(99, 102, 241, 0.1); }
+.bg-secondary-soft { background-color: rgba(107, 114, 128, 0.1); }
+.bg-muted-soft { background-color: rgba(156, 163, 175, 0.1); }
+.bg-info-soft { background-color: rgba(6, 182, 212, 0.1); }
+.bg-success-soft { background-color: rgba(16, 185, 129, 0.1); }
+.bg-warning-soft { background-color: rgba(245, 158, 11, 0.1); }
+.bg-danger-soft { background-color: rgba(239, 68, 68, 0.1); }
+
+/* Small button */
+.btn-xs {
+    padding: 2px 6px;
+    font-size: 0.7rem;
+}
+
+/* Responsive drilldown */
+@media (max-width: 992px) {
+    .sv-drilldown-panel {
+        width: 90%;
+    }
+}
+@media (max-width: 576px) {
+    .sv-drilldown-panel {
+        width: 100%;
+    }
+}
+
+/* ==========================================
+   v2.0 COMPACT DETECTOR CARDS
+   ========================================== */
+
+.sv-detector-mini {
+    transition: all 0.2s ease;
+}
+.sv-detector-mini:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+}
+.sv-detector-mini.border-purple { border-left: 3px solid #7c3aed; }
+.sv-detector-mini.border-pink { border-left: 3px solid #ec4899; }
+.sv-detector-mini.border-danger { border-left: 3px solid #ef4444; }
+.sv-detector-mini.border-secondary { border-left: 3px solid #6b7280; }
+.sv-detector-mini.border-warning { border-left: 3px solid #f59e0b; }
+.sv-detector-mini.border-orange { border-left: 3px solid #f97316; }
+.sv-detector-mini.border-info { border-left: 3px solid #06b6d4; }
+.sv-detector-mini.border-teal { border-left: 3px solid #14b8a6; }
+
+.sv-detector-metric {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+}
+
+/* Badge colors */
+.badge-purple { background-color: #7c3aed; color: white; }
+.badge-pink { background-color: #ec4899; color: white; }
+.badge-orange { background-color: #f97316; color: white; }
+.badge-teal { background-color: #14b8a6; color: white; }
+
+/* Text colors */
+.text-purple { color: #7c3aed !important; }
+.text-pink { color: #ec4899 !important; }
+.text-orange { color: #f97316 !important; }
+.text-teal { color: #14b8a6 !important; }
+
+/* Soft backgrounds */
+.bg-purple-soft { background-color: rgba(124, 58, 237, 0.1); }
+.bg-pink-soft { background-color: rgba(236, 72, 153, 0.1); }
+.bg-orange-soft { background-color: rgba(249, 115, 22, 0.1); }
+.bg-teal-soft { background-color: rgba(20, 184, 166, 0.1); }
+
+/* Sticky table header */
+.sticky-top {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background: #f8f9fa;
+}
+
+/* ==========================================
+   CLICKABLE DETECTOR CARDS
+   ========================================== */
+.sv-detector-clickable {
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.sv-detector-clickable:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.sv-detector-clickable.sv-detector-selected {
+    transform: translateY(-2px);
+    box-shadow: 0 0 0 2px #6366f1, 0 4px 12px rgba(99, 102, 241, 0.2);
+}
+
+.sv-detector-mini {
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+/* Consistent toolbar styling */
+.sv-toolbar {
+    background: #f8fafc;
+    padding: 8px 12px;
+    border-radius: 6px;
+    border: 1px solid #e2e8f0;
+}
+
+.sv-toolbar .btn-group .btn {
+    padding: 4px 10px;
+}
+
+.sv-toolbar .form-control {
+    border-color: #e2e8f0;
+}
+
+/* Acceleration indicator */
+.sv-accel-indicator {
+    font-size: 12px;
+    font-weight: 500;
+    white-space: nowrap;
+}
+
+.sv-accel-indicator i {
+    font-size: 11px;
+}
+
+/* Sort icons */
+.sv-sort-icon {
+    font-size: 10px;
+    opacity: 0.5;
+    transition: opacity 0.15s ease;
+}
+
+.sv-sortable:hover .sv-sort-icon {
+    opacity: 1;
+}
+
+.sv-sort-active .sv-sort-icon {
+    opacity: 1;
+    color: #6366f1;
+}
+
+/* Smart memo grouping */
+.sv-memo-groups {
+    max-height: calc(100vh - 350px);
+    overflow-y: auto;
+}
+
+.sv-memo-group {
+    border-bottom: 1px solid #e2e8f0;
+}
+
+.sv-memo-group:last-child {
+    border-bottom: none;
+}
+
+.sv-memo-group-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 12px;
+    cursor: pointer;
+    background: #f8fafc;
+    transition: background 0.15s ease;
+}
+
+.sv-memo-group-header:hover {
+    background: #f1f5f9;
+}
+
+.sv-memo-group-body {
+    padding: 0;
+    background: #fff;
+}
+
+.sv-memo-group-body .table {
+    margin: 0;
+}
+
+.sv-memo-group-body .table td,
+.sv-memo-group-body .table th {
+    padding: 6px 12px;
+    font-size: 12px;
+}
+
+/* Subtle filter pills */
+.sv-filter-pills {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+}
+
+.sv-pill {
+    padding: 3px 10px;
+    font-size: 11px;
+    font-weight: 500;
+    border: none;
+    border-radius: 12px;
+    background: #f1f5f9;
+    color: #64748b;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    line-height: 1.4;
+}
+
+.sv-pill:hover {
+    background: #e2e8f0;
+    color: #475569;
+}
+
+.sv-pill.active {
+    background: #6366f1;
+    color: #fff;
+}
+
+.sv-pill-danger.active {
+    background: #ef4444;
+}
+
+.sv-pill-success.active {
+    background: #10b981;
+}
+
+.sv-pill-warning.active {
+    background: #f59e0b;
+}
+
+.sv-pill-info.active {
+    background: #06b6d4;
+}
+
+.sv-pill i {
+    font-size: 9px;
+    margin-right: 3px;
+}
+
+/* Drilldown sparkline - full width */
+.sv-sparkline-container {
+    width: 100%;
+    height: 50px;
+    overflow: hidden;
+}
+
+.sv-sparkline-container svg {
+    width: 100% !important;
+    min-width: 100% !important;
+    max-width: 100% !important;
+    height: 50px !important;
+    display: block;
+}
+
+.sv-sparkline-container svg polyline,
+.sv-sparkline-container svg polygon {
+    vector-effect: non-scaling-stroke;
+}
