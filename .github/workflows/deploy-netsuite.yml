@@ -1,6 +1,11 @@
 name: Deploy to NetSuite
 
 on:
+  # Auto-deploy on pushes to main. Only collaborators with write access can push
+  # here; fork PRs cannot trigger this workflow and never receive the secrets below.
+  push:
+    branches:
+      - main
   workflow_dispatch:
     inputs:
       sync_mode:
@@ -11,6 +16,15 @@ on:
         options:
           - ci
           - all
+
+# Least-privilege GITHUB_TOKEN — the deploy only needs to read the repo.
+permissions:
+  contents: read
+
+# Serialize deploys to the account; let an in-flight deploy finish before the next.
+concurrency:
+  group: netsuite-deploy
+  cancel-in-progress: false
 
 env:
   # Enable machine-to-machine authentication mode
