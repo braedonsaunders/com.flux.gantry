@@ -194,53 +194,41 @@ define(['N/log', 'N/https', 'N/cache', './advisor/Lib_Advisor_Utils'], function(
         // ==========================================
         // ANTHROPIC MODELS
         // ==========================================
-        'claude-sonnet-4-5-20250929': {
-            id: 'claude-sonnet-4-5-20250929',
+        'claude-opus-4-8': {
+            id: 'claude-opus-4-8',
             provider: 'anthropic',
-            name: 'Claude Sonnet 4.5',
-            description: 'Best coding model - State of the art on SWE-bench',
-            tier: 3,
-            pricing: { input: 3, output: 15 },
-            contextWindow: 200000,
-            maxOutput: 8192,
-            capabilities: ['text', 'vision', 'tools', 'json_mode', 'computer_use'],
-            recommended: true,
-            settingsLabel: 'Claude Sonnet 4.5 (Recommended - Best coding)'
-        },
-        'claude-opus-4-5-20251101': {
-            id: 'claude-opus-4-5-20251101',
-            provider: 'anthropic',
-            name: 'Claude Opus 4.5',
-            description: 'Most intelligent - Deep reasoning',
+            name: 'Claude Opus 4.8',
+            description: 'Most capable - state-of-the-art reasoning and agentic work',
             tier: 3,
             pricing: { input: 5, output: 25 },
-            contextWindow: 200000,
+            contextWindow: 1000000,
             maxOutput: 8192,
-            capabilities: ['text', 'vision', 'tools', 'json_mode'],
-            settingsLabel: 'Claude Opus 4.5 (Most Intelligent)'
+            capabilities: ['text', 'vision', 'tools', 'json_mode', 'thinking', 'effort'],
+            settingsLabel: 'Claude Opus 4.8 (Premium - Most Capable)'
         },
-        'claude-sonnet-4-20250514': {
-            id: 'claude-sonnet-4-20250514',
+        'claude-sonnet-4-6': {
+            id: 'claude-sonnet-4-6',
             provider: 'anthropic',
-            name: 'Claude Sonnet 4',
-            description: 'Balanced - Great all-around performance',
+            name: 'Claude Sonnet 4.6',
+            description: 'Recommended - best balance of speed and intelligence',
             tier: 2,
             pricing: { input: 3, output: 15 },
-            contextWindow: 200000,
+            contextWindow: 1000000,
             maxOutput: 8192,
-            capabilities: ['text', 'vision', 'tools', 'json_mode'],
-            settingsLabel: 'Claude Sonnet 4 (Balanced)'
+            capabilities: ['text', 'vision', 'tools', 'json_mode', 'thinking', 'effort'],
+            recommended: true,
+            settingsLabel: 'Claude Sonnet 4.6 (Recommended - Balanced)'
         },
-        'claude-haiku-4-5-20251101': {
-            id: 'claude-haiku-4-5-20251101',
+        'claude-haiku-4-5': {
+            id: 'claude-haiku-4-5',
             provider: 'anthropic',
             name: 'Claude Haiku 4.5',
-            description: 'Fastest - Near-frontier at fraction of cost',
+            description: 'Fastest - near-frontier at a fraction of the cost',
             tier: 1,
             pricing: { input: 1, output: 5 },
             contextWindow: 200000,
             maxOutput: 8192,
-            capabilities: ['text', 'vision', 'tools', 'json_mode', 'computer_use'],
+            capabilities: ['text', 'vision', 'tools', 'json_mode'],
             settingsLabel: 'Claude Haiku 4.5 (Fastest)'
         },
 
@@ -395,9 +383,9 @@ define(['N/log', 'N/https', 'N/cache', './advisor/Lib_Advisor_Utils'], function(
             3: 'gpt-5.1'
         },
         anthropic: {
-            1: 'claude-haiku-4-5-20251101',
-            2: 'claude-sonnet-4-20250514',
-            3: 'claude-sonnet-4-5-20250929'
+            1: 'claude-haiku-4-5',
+            2: 'claude-sonnet-4-6',
+            3: 'claude-opus-4-8'
         },
         gemini: {
             1: 'gemini-2.5-flash-lite',

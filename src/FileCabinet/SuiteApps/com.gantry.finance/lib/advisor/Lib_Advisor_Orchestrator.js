@@ -16,6 +16,7 @@
 define([
     'N/log',
     './Lib_Advisor_StreamingAgent',
+    './Lib_Advisor_Agent',
     './Lib_Advisor_Cache',
     './Lib_Advisor_AIProviders',
     './Lib_Advisor_Utils',
@@ -23,6 +24,7 @@ define([
 ], function(
     log,
     StreamingAgent,
+    Agent,
     Cache,
     AIProviders,
     Utils,
@@ -64,8 +66,12 @@ define([
         });
 
         try {
-            // Initialize Streaming Agent
-            const agentState = StreamingAgent.initState(message, sessionContext, requestId, history, requestContext);
+            // Choose engine: native tool-use loop (config flag) or legacy phase machine.
+            // initState is shared, so the cache/polling/step machinery is identical either way.
+            const useNative = Agent.isEnabled();
+            const engine = useNative ? Agent : StreamingAgent;
+            const agentState = engine.initState(message, sessionContext, requestId, history, requestContext);
+            agentState.useNativeToolLoop = useNative;
 
             // Create progress entry
             Cache.create(requestId, message, agentState, requestContext);
@@ -190,7 +196,11 @@ define([
             }
 
             const agentState = freshState.agentState;
-            const stepResult = StreamingAgent.runStep(agentState);
+            // Dispatch on the engine chosen at init (persisted in state) so a mid-request
+            // flag flip can't mismatch init vs. step.
+            const stepResult = agentState.useNativeToolLoop
+                ? Agent.runStep(agentState)
+                : StreamingAgent.runStep(agentState);
 
             // Save updated state
             if (stepResult.hasMore) {

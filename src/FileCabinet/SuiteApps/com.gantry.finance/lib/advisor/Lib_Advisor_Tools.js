@@ -27,6 +27,7 @@ define([
     'N/cache',
     './Lib_Advisor_EntityResolver',
     './Lib_Advisor_QueryExecutor',
+    './Lib_Advisor_QueryValidator',
     './Lib_Advisor_Utils',
     './Lib_Advisor_Cache',
     './Lib_Advisor_AIProviders',
@@ -51,6 +52,7 @@ define([
     cache,
     EntityResolver,
     QueryExecutor,
+    QueryValidator,
     Utils,
     Cache,
     AIProviders,
@@ -9077,7 +9079,40 @@ EXAMPLES:
         ...DATA_TOOLS,
         ...DASHBOARD_TOOLS,
         ...UTILITY_TOOLS,
-        ...DEPRECATED_TOOLS
+        ...DEPRECATED_TOOLS,
+        // Custom SuiteQL escape hatch (replaces the old SYNTHESIZE phase). The native
+        // model calls this when no pre-built tool fits. checkToolAccess default-denies
+        // unmapped tools to non-admins, so this is automatically admin-only.
+        run_suiteql: {
+            name: 'run_suiteql',
+            description: 'Run a read-only SuiteQL (SQL) query against NetSuite when no pre-built tool fits the question (admin-only). ' +
+                'Use NetSuite SuiteQL: SELECT ... FROM transaction / transactionline / entity / account / etc.; ' +
+                'use FETCH FIRST N ROWS ONLY (not LIMIT); use BUILTIN.DF(column) to resolve foreign-key display names; ' +
+                'aggregate with GROUP BY. The query is validated (read-only, no DDL/DML, sensitive tables blocked) and ' +
+                'auto-limited to 1000 rows. Prefer a dedicated tool whenever one exists.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    query: { type: 'string', description: 'The SuiteQL SELECT statement to execute.' }
+                },
+                required: ['query']
+            },
+            execute: function(args) {
+                const sql = (args && (args.query || args.sql)) || '';
+                if (!sql || typeof sql !== 'string') {
+                    return { success: false, error: 'A SuiteQL query string is required in "query".', tool: 'run_suiteql' };
+                }
+                const cleaned = Utils.cleanQuery ? Utils.cleanQuery(sql) : sql;
+                const verdict = QueryValidator.validateQuery(cleaned);
+                if (!verdict.valid) {
+                    return { success: false, error: 'Query rejected by safety validator: ' + (verdict.reason || 'not allowed'), tool: 'run_suiteql' };
+                }
+                return QueryExecutor.executeQuery(cleaned);
+            },
+            displayName: function(args) {
+                return 'Running a custom SuiteQL query...';
+            }
+        }
     };
 
     /**
