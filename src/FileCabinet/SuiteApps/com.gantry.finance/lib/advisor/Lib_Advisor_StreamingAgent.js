@@ -10064,24 +10064,33 @@ Reply JSON only: {"tools": ["tool1", "tool2"], "reasoning": "brief explanation"}
         return parts.join('\n\n');
     }
 
-    /** Compact, size-capped textual rendering of a tool result for the model. */
+    /**
+     * Render a tool result for the model. Serializes the full result — so resolved
+     * entity IDs (e.g. resolve_entity's nested entity.id) and every relevant field
+     * reach the model for chaining — trimming large row arrays to a preview and
+     * capping total size to protect the cache blob.
+     */
     function formatToolResultForModel(tr) {
-        if (!tr || tr.success === false) {
-            return 'ERROR: ' + ((tr && tr.error) || 'tool failed');
+        if (!tr) return 'No result.';
+        if (tr.success === false) {
+            return 'ERROR: ' + (tr.error || 'tool failed') +
+                (tr.validationErrors && tr.validationErrors.length ? ' (' + tr.validationErrors.join('; ') + ')' : '');
         }
-        const lines = [];
-        if (tr.rowCount != null) lines.push('Rows: ' + tr.rowCount);
-        if (tr.columns && tr.columns.length) lines.push('Columns: ' + tr.columns.join(', '));
-        const preview = tr.preview || (tr.result && (tr.result.data || tr.result.rows)) || tr.data || tr.rows;
-        if (preview && preview.length) {
-            try { lines.push('Sample: ' + JSON.stringify(preview.slice(0, 5))); } catch (e) { /* ignore */ }
-        } else if (tr.summary) {
-            lines.push(String(tr.summary));
-        } else if (tr.found !== undefined) {
-            lines.push('Result: ' + JSON.stringify({ found: tr.found, entity: tr.entity, bestMatch: tr.bestMatch }));
-        }
-        let text = lines.join('\n') || 'Done.';
-        if (text.length > 4000) text = text.substring(0, 4000) + '\n...(truncated)';
+        const SKIP = { duration: 1, normalizationWarnings: 1, _aiDebug: 1, args: 1 };
+        const out = {};
+        Object.keys(tr).forEach(function(k) {
+            if (SKIP[k]) return;
+            const v = tr[k];
+            if (Array.isArray(v) && v.length > 10) {
+                out[k] = v.slice(0, 10);
+                out[k + '_totalCount'] = v.length;
+            } else {
+                out[k] = v;
+            }
+        });
+        let text;
+        try { text = JSON.stringify(out); } catch (e) { text = String(tr.summary || 'Done.'); }
+        if (text.length > 4000) text = text.substring(0, 4000) + '...(truncated)';
         return text;
     }
 
