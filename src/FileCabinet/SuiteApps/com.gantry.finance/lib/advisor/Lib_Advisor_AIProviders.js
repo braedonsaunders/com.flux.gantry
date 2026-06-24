@@ -252,7 +252,7 @@ define([
                 openaiApiKey: config.openaiApiKey && config.openaiApiKey !== 'undefined' ? config.openaiApiKey : '',
                 openaiModel: config.openaiModel || ModelRegistry.getDefaultModel('openai') || 'gpt-4.1',
                 anthropicApiKey: config.anthropicApiKey && config.anthropicApiKey !== 'undefined' ? config.anthropicApiKey : '',
-                anthropicModel: config.anthropicModel || ModelRegistry.getDefaultModel('anthropic') || 'claude-sonnet-4-5-20250929',
+                anthropicModel: config.anthropicModel || ModelRegistry.getDefaultModel('anthropic') || 'claude-sonnet-4-6',
                 geminiApiKey: config.geminiApiKey && config.geminiApiKey !== 'undefined' ? config.geminiApiKey : '',
                 geminiModel: geminiModel,
                 // OpenRouter - access to 100+ models via single API
@@ -382,10 +382,19 @@ define([
             temperature: options.temperature !== undefined ? options.temperature : aiConfig.temperature,
             systemPrompt: options.systemPrompt || null,
             chatHistory: options.chatHistory || [],
+            // Provider-neutral structured conversation for the native tool-use loop.
+            // When present, providers round-trip tool_use/tool_result turns from it
+            // (ignoring prompt/chatHistory). Absent => legacy single-shot path.
+            messages: options.messages || null,
             documents: options.documents || null,
             jsonMode: options.jsonMode || false,
             jsonSchema: options.jsonSchema || null, // JSON schema for structured output enforcement
             tools: options.tools || null,
+            // Anthropic extended-thinking / effort (Phase 4); ignored by other providers
+            thinking: options.thinking || null,
+            effort: options.effort || null,
+            // Prompt caching (Anthropic cache_control); default on, set false to disable
+            cache: options.cache !== false,
             // Track if we had to strip tools due to lack of capability
             toolsStripped: false
         };
@@ -639,6 +648,197 @@ define([
         }
     }
 
+    // ═══════════════════════════════════════════════════════════════════════════
+    // SHARED HELPERS — HTTP retry, provider-neutral message conversion, normalization
+    // Added for the native tool-use loop: structured messages round-tripping +
+    // stopReason + usage on every normalized response.
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Bounded busy-wait. SuiteScript server scripts have no native sleep; this is
+     * used only between HTTP retries and is capped so it cannot burn the RESTlet timeout.
+     */
+    function sleepMs(ms) {
+        var capped = Math.max(0, Math.min(ms || 0, 2000));
+        var start = Date.now();
+        while (Date.now() - start < capped) { /* wait */ }
+    }
+
+    /**
+     * POST with retry on transient failures (429 / 5xx). Status-code based; thrown
+     * network errors propagate to the caller's try/catch as before.
+     */
+    function httpPostWithRetry(params, provider) {
+        var MAX_RETRIES = 2;
+        var resp = https.post(params);
+        var attempt = 0;
+        while (resp && (resp.code === 429 || (resp.code >= 500 && resp.code <= 599)) && attempt < MAX_RETRIES) {
+            attempt++;
+            var retryAfter = 0;
+            try {
+                var h = resp.headers || {};
+                var ra = h['Retry-After'] || h['retry-after'];
+                if (ra) retryAfter = parseInt(ra, 10) * 1000;
+            } catch (e) { /* ignore */ }
+            var backoff = retryAfter || Math.min(1500, Math.pow(2, attempt) * 300);
+            Utils.debugLog('AI HTTP retry', { provider: provider, code: resp.code, attempt: attempt, waitMs: backoff });
+            sleepMs(backoff);
+            resp = https.post(params);
+        }
+        return resp;
+    }
+
+    /** Map OpenAI-family finish_reason to a normalized stopReason. */
+    function mapOpenAIFinish(reason, hasToolCalls) {
+        if (hasToolCalls) return 'tool_use';
+        switch (reason) {
+            case 'tool_calls': return 'tool_use';
+            case 'length': return 'max_tokens';
+            case 'stop': return 'end_turn';
+            default: return reason || 'end_turn';
+        }
+    }
+
+    /** Map Gemini finishReason to a normalized stopReason. */
+    function mapGeminiFinish(reason, hasFunctionCall) {
+        if (hasFunctionCall) return 'tool_use';
+        switch (reason) {
+            case 'MAX_TOKENS': return 'max_tokens';
+            case 'STOP': return 'end_turn';
+            default: return 'end_turn';
+        }
+    }
+
+    /** Normalize OpenAI-style usage to { inputTokens, outputTokens, cacheReadTokens }. */
+    function normalizeOpenAIUsage(usage) {
+        if (!usage) return null;
+        return {
+            inputTokens: usage.prompt_tokens || 0,
+            outputTokens: usage.completion_tokens || 0,
+            cacheReadTokens: (usage.prompt_tokens_details && usage.prompt_tokens_details.cached_tokens) || 0
+        };
+    }
+
+    /**
+     * Build the provider-neutral message list. If options.messages is supplied
+     * (native tool-use loop) use it verbatim; otherwise synthesize from chatHistory +
+     * the current prompt (legacy single-shot path — byte-for-byte equivalent output).
+     *
+     * Neutral turn: { role:'user'|'assistant', content: string | Array<block> }
+     * Blocks: {type:'text',text} | {type:'tool_use',id,name,input}
+     *         | {type:'tool_result',tool_use_id,name,content,is_error}
+     */
+    function buildNeutralMessages(prompt, options) {
+        if (options.messages && options.messages.length > 0) {
+            return options.messages;
+        }
+        var msgs = [];
+        if (options.chatHistory && options.chatHistory.length > 0) {
+            options.chatHistory.forEach(function(m) {
+                if (m && (m.content || m.text)) {
+                    msgs.push({ role: m.role === 'user' ? 'user' : 'assistant', content: m.content || m.text });
+                }
+            });
+        }
+        if (prompt) {
+            msgs.push({ role: 'user', content: prompt });
+        }
+        return msgs;
+    }
+
+    function blocksOf(content) {
+        if (typeof content === 'string') return [{ type: 'text', text: content }];
+        return Array.isArray(content) ? content : [];
+    }
+
+    /** Anthropic wire conversion — neutral blocks already match Anthropic's shape. */
+    function toAnthropicMessages(neutral) {
+        return neutral.map(function(turn) {
+            if (typeof turn.content === 'string') {
+                return { role: turn.role, content: turn.content };
+            }
+            var content = blocksOf(turn.content).map(function(b) {
+                if (b.type === 'tool_use') return { type: 'tool_use', id: b.id, name: b.name, input: b.input || {} };
+                if (b.type === 'tool_result') return { type: 'tool_result', tool_use_id: b.tool_use_id, content: String(b.content == null ? '' : b.content), is_error: !!b.is_error };
+                return { type: 'text', text: b.text || '' };
+            });
+            return { role: turn.role, content: content };
+        });
+    }
+
+    /** OpenAI-family wire conversion — assistant tool_calls + role:'tool' results. */
+    function toOpenAIMessages(neutral, systemContent) {
+        var out = [];
+        if (systemContent) out.push({ role: 'system', content: systemContent });
+        neutral.forEach(function(turn) {
+            if (typeof turn.content === 'string') {
+                out.push({ role: turn.role, content: turn.content });
+                return;
+            }
+            var blocks = blocksOf(turn.content);
+            if (turn.role === 'assistant') {
+                var text = blocks.filter(function(b){ return b.type === 'text'; }).map(function(b){ return b.text || ''; }).join('');
+                var toolUses = blocks.filter(function(b){ return b.type === 'tool_use'; });
+                var msg = { role: 'assistant', content: text || null };
+                if (toolUses.length) {
+                    msg.tool_calls = toolUses.map(function(b){
+                        return { id: b.id, type: 'function', function: { name: b.name, arguments: JSON.stringify(b.input || {}) } };
+                    });
+                }
+                out.push(msg);
+            } else {
+                blocks.forEach(function(b){
+                    if (b.type === 'tool_result') {
+                        out.push({ role: 'tool', tool_call_id: b.tool_use_id, content: String(b.content == null ? '' : b.content) });
+                    } else if (b.type === 'text') {
+                        out.push({ role: 'user', content: b.text || '' });
+                    }
+                });
+            }
+        });
+        return out;
+    }
+
+    /** Gemini wire conversion — functionCall / functionResponse parts (matched by name). */
+    function toGeminiContents(neutral) {
+        return neutral.map(function(turn) {
+            var role = turn.role === 'user' ? 'user' : 'model';
+            if (typeof turn.content === 'string') {
+                return { role: role, parts: [{ text: turn.content }] };
+            }
+            var parts = [];
+            blocksOf(turn.content).forEach(function(b){
+                if (b.type === 'tool_use') {
+                    parts.push({ functionCall: { name: b.name, args: b.input || {} } });
+                } else if (b.type === 'tool_result') {
+                    parts.push({ functionResponse: { name: b.name || 'tool', response: { result: String(b.content == null ? '' : b.content) } } });
+                } else if (b.type === 'text' && b.text) {
+                    parts.push({ text: b.text });
+                }
+            });
+            if (parts.length === 0) parts.push({ text: '' });
+            return { role: role, parts: parts };
+        });
+    }
+
+    /** NetSuite N/llm best-effort — flatten the neutral conversation to a text transcript. */
+    function neutralToText(neutral) {
+        var lines = [];
+        neutral.forEach(function(turn){
+            var label = turn.role === 'user' ? 'User' : 'Assistant';
+            if (typeof turn.content === 'string') {
+                if (turn.content) lines.push(label + ': ' + turn.content);
+                return;
+            }
+            blocksOf(turn.content).forEach(function(b){
+                if (b.type === 'text' && b.text) lines.push(label + ': ' + b.text);
+                else if (b.type === 'tool_use') lines.push('Assistant called tool ' + b.name + ' with ' + JSON.stringify(b.input || {}));
+                else if (b.type === 'tool_result') lines.push('Tool ' + (b.name || '') + ' result: ' + String(b.content == null ? '' : b.content));
+            });
+        });
+        return lines.join('\n');
+    }
+
     /**
      * Call NetSuite built-in LLM (Cohere)
      * Supports: documents (RAG), chatHistory, preamble, tools
@@ -648,9 +848,14 @@ define([
     function callNetSuite(prompt, aiConfig, options) {
         const modelFamily = getNetSuiteModelFamily(aiConfig.netsuiteModel);
         
-        // Build prompt with history included (more reliable than chatHistory parameter)
+        // Build prompt with history included (more reliable than chatHistory parameter).
+        // With the native loop (options.messages) flatten the full conversation — incl.
+        // tool calls/results — into the prompt; N/llm generateText is single-shot and
+        // does not round-trip structured tool_result turns.
         let fullPrompt = prompt;
-        if (options.chatHistory && options.chatHistory.length > 0) {
+        if (options.messages && options.messages.length > 0) {
+            fullPrompt = neutralToText(options.messages);
+        } else if (options.chatHistory && options.chatHistory.length > 0) {
             const historyText = Utils.formatChatHistoryAsText(options.chatHistory);
             if (historyText) {
                 fullPrompt = historyText + '\n\nCurrent question:\n' + prompt;
@@ -827,15 +1032,18 @@ define([
             
             return {
                 type: 'tool_call',
-                toolCalls: response.toolCalls.map(tc => ({
-                    name: tc.name || tc.function?.name,
-                    arguments: tc.parameters || tc.arguments || tc.function?.arguments || {}
+                stopReason: 'tool_use',
+                toolCalls: response.toolCalls.map((tc, i) => ({
+                    id: (tc.name || (tc.function && tc.function.name) || 'tool') + '#' + i,
+                    name: tc.name || (tc.function && tc.function.name),
+                    arguments: tc.parameters || tc.arguments || (tc.function && tc.function.arguments) || {}
                 })),
-                text: text
+                text: text,
+                usage: null
             };
         }
-        
-        return { text: text, type: 'text' };
+
+        return { text: text, type: 'text', stopReason: 'end_turn', usage: null };
     }
 
     /**
@@ -847,38 +1055,16 @@ define([
             throw new Error('OpenAI API key not configured. Add your API key in Settings > AI Model Configuration.');
         }
         
-        const messages = [];
-        
-        // System message (crucial for behavior)
-        if (options.systemPrompt) {
-            messages.push({ role: 'system', content: options.systemPrompt });
-        }
-        
-        // Include RAG documents in system message if provided
+        // Build system content (system prompt + optional RAG documents)
+        let systemContent = options.systemPrompt || '';
         if (options.documents && options.documents.length > 0) {
             const docsContent = options.documents.map(d => d.data || d.content || '').join('\n\n---\n\n');
-            if (messages.length > 0 && messages[0].role === 'system') {
-                messages[0].content += '\n\nREFERENCE DOCUMENTS:\n' + docsContent;
-            } else {
-                messages.unshift({ role: 'system', content: 'REFERENCE DOCUMENTS:\n' + docsContent });
-            }
+            systemContent += (systemContent ? '\n\n' : '') + 'REFERENCE DOCUMENTS:\n' + docsContent;
         }
-        
-        // Conversation history
-        if (options.chatHistory && options.chatHistory.length > 0) {
-            options.chatHistory.forEach(msg => {
-                if (msg && (msg.content || msg.text)) {
-                    messages.push({
-                        role: msg.role === 'user' ? 'user' : 'assistant',
-                        content: msg.content || msg.text
-                    });
-                }
-            });
-        }
-        
-        // Current user prompt
-        messages.push({ role: 'user', content: prompt });
-        
+
+        // Provider-neutral conversation -> OpenAI wire format (tool_calls / role:'tool')
+        const messages = toOpenAIMessages(buildNeutralMessages(prompt, options), systemContent);
+
         // Get the correct parameter name for max tokens based on model
         const maxTokensParam = ModelRegistry.getMaxTokensParam(aiConfig.openaiModel);
         
@@ -925,14 +1111,14 @@ define([
         
         let response, data;
         try {
-            response = https.post({
+            response = httpPostWithRetry({
                 url: 'https://api.openai.com/v1/chat/completions',
                 headers: {
                     'Content-Type': 'application/json',
                     'Authorization': 'Bearer ' + aiConfig.openaiApiKey
                 },
                 body: JSON.stringify(body)
-            });
+            }, 'openai');
             data = JSON.parse(response.body);
         } catch (httpError) {
             // Capture detailed error information from HTTP call
@@ -975,9 +1161,11 @@ define([
         }
         
         // Handle tool calls
+        const usage = normalizeOpenAIUsage(data.usage);
         if (choice.message?.tool_calls && choice.message.tool_calls.length > 0) {
             return {
                 type: 'tool_call',
+                stopReason: 'tool_use',
                 toolCalls: choice.message.tool_calls.map(tc => {
                     // Safely parse tool arguments - malformed JSON shouldn't crash
                     let parsedArgs = {};
@@ -996,11 +1184,12 @@ define([
                         arguments: parsedArgs
                     };
                 }),
-                text: choice.message.content || ''
+                text: choice.message.content || '',
+                usage: usage
             };
         }
-        
-        return { text: choice.message?.content || '', type: 'text' };
+
+        return { text: choice.message?.content || '', type: 'text', stopReason: mapOpenAIFinish(choice.finish_reason, false), usage: usage };
     }
 
     /**
@@ -1012,47 +1201,48 @@ define([
             throw new Error('Anthropic API key not configured. Add your API key in Settings > AI Model Configuration.');
         }
         
-        const messages = [];
-        
-        // Conversation history
-        if (options.chatHistory && options.chatHistory.length > 0) {
-            options.chatHistory.forEach(msg => {
-                if (msg && (msg.content || msg.text)) {
-                    messages.push({
-                        role: msg.role === 'user' ? 'user' : 'assistant',
-                        content: msg.content || msg.text
-                    });
-                }
-            });
-        }
-        
-        // Current user prompt
-        messages.push({ role: 'user', content: prompt });
-        
+        // Provider-neutral conversation -> Anthropic content blocks (tool_use / tool_result)
+        const messages = toAnthropicMessages(buildNeutralMessages(prompt, options));
+
         const body = {
             model: aiConfig.anthropicModel,
             max_tokens: options.maxTokens,
             messages: messages
         };
-        
-        // Temperature (but not for extended thinking)
-        if (options.temperature !== undefined) {
+
+        // Extended thinking / effort (current Opus/Sonnet). With thinking on, sampling
+        // params are not sent; Opus 4.7/4.8 (and Fable) reject temperature regardless.
+        const noSampling = !!options.thinking ||
+            (aiConfig.anthropicModel && (aiConfig.anthropicModel.indexOf('opus-4-8') !== -1 ||
+                                         aiConfig.anthropicModel.indexOf('opus-4-7') !== -1 ||
+                                         aiConfig.anthropicModel.indexOf('fable') !== -1));
+        if (options.temperature !== undefined && !noSampling) {
             body.temperature = options.temperature;
         }
-        
-        // System prompt (Claude's strongest feature)
+        if (options.thinking) {
+            body.thinking = options.thinking; // e.g. { type: 'adaptive' }
+        }
+        if (options.effort) {
+            body.output_config = { effort: options.effort };
+        }
+
+        // System prompt (Claude's strongest feature) + optional RAG documents
         let systemContent = options.systemPrompt || '';
-        
-        // Include RAG documents in system prompt
         if (options.documents && options.documents.length > 0) {
             const docsContent = options.documents.map(d => d.data || d.content || '').join('\n\n---\n\n');
             systemContent += (systemContent ? '\n\n' : '') + 'REFERENCE DOCUMENTS:\n' + docsContent;
         }
-        
         if (systemContent) {
-            body.system = systemContent;
+            // Cache the stable tools+system prefix (render order is tools -> system ->
+            // messages, so a breakpoint on the system block caches both). Big win because
+            // the tool schemas + system are re-sent on every step of the loop.
+            if (options.cache) {
+                body.system = [{ type: 'text', text: systemContent, cache_control: { type: 'ephemeral' } }];
+            } else {
+                body.system = systemContent;
+            }
         }
-        
+
         // Tool use
         if (options.tools && options.tools.length > 0) {
             body.tools = options.tools.map(tool => ({
@@ -1064,7 +1254,7 @@ define([
         
         let response, data;
         try {
-            response = https.post({
+            response = httpPostWithRetry({
                 url: 'https://api.anthropic.com/v1/messages',
                 headers: {
                     'Content-Type': 'application/json',
@@ -1072,7 +1262,7 @@ define([
                     'anthropic-version': '2023-06-01'
                 },
                 body: JSON.stringify(body)
-            });
+            }, 'anthropic');
             data = JSON.parse(response.body);
         } catch (httpError) {
             // Capture detailed error information from HTTP call
@@ -1094,25 +1284,35 @@ define([
             throw new Error('Anthropic error: ' + (data.error.message || JSON.stringify(data.error)));
         }
         
+        // Normalize usage (incl. prompt-cache hits)
+        const usage = data.usage ? {
+            inputTokens: data.usage.input_tokens || 0,
+            outputTokens: data.usage.output_tokens || 0,
+            cacheReadTokens: data.usage.cache_read_input_tokens || 0,
+            cacheCreationTokens: data.usage.cache_creation_input_tokens || 0
+        } : null;
+
         // Handle tool use responses
         if (data.stop_reason === 'tool_use') {
             const toolUses = data.content.filter(c => c.type === 'tool_use');
             const textContent = data.content.find(c => c.type === 'text');
-            
+
             return {
                 type: 'tool_call',
+                stopReason: 'tool_use',
                 toolCalls: toolUses.map(tu => ({
                     id: tu.id,
                     name: tu.name,
                     arguments: tu.input
                 })),
-                text: textContent?.text || ''
+                text: textContent?.text || '',
+                usage: usage
             };
         }
-        
+
         // Extract text response
         const textContent = data.content?.find(c => c.type === 'text');
-        return { text: textContent?.text || '', type: 'text' };
+        return { text: textContent?.text || '', type: 'text', stopReason: data.stop_reason || 'end_turn', usage: usage };
     }
 
     /**
@@ -1124,26 +1324,9 @@ define([
             throw new Error('Gemini API key not configured. Add your API key in Settings > AI Model Configuration.');
         }
         
-        const contents = [];
-        
-        // Conversation history
-        if (options.chatHistory && options.chatHistory.length > 0) {
-            options.chatHistory.forEach(msg => {
-                if (msg && (msg.content || msg.text)) {
-                    contents.push({
-                        role: msg.role === 'user' ? 'user' : 'model',
-                        parts: [{ text: msg.content || msg.text }]
-                    });
-                }
-            });
-        }
-        
-        // Current user prompt
-        contents.push({
-            role: 'user',
-            parts: [{ text: prompt }]
-        });
-        
+        // Provider-neutral conversation -> Gemini contents (functionCall / functionResponse)
+        const contents = toGeminiContents(buildNeutralMessages(prompt, options));
+
         const body = {
             contents: contents,
             generationConfig: {
@@ -1189,12 +1372,12 @@ define([
         
         let response, data;
         try {
-            response = https.post({
-                url: 'https://generativelanguage.googleapis.com/v1beta/models/' + 
+            response = httpPostWithRetry({
+                url: 'https://generativelanguage.googleapis.com/v1beta/models/' +
                      aiConfig.geminiModel + ':generateContent?key=' + aiConfig.geminiApiKey,
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(body)
-            });
+            }, 'gemini');
             data = JSON.parse(response.body);
         } catch (httpError) {
             // Capture detailed error information from HTTP call
@@ -1220,22 +1403,34 @@ define([
         if (!candidate) {
             throw new Error('Gemini returned no response');
         }
-        
-        // Handle function calls
-        const functionCall = candidate.content?.parts?.find(p => p.functionCall);
-        if (functionCall) {
+
+        const gUsage = data.usageMetadata ? {
+            inputTokens: data.usageMetadata.promptTokenCount || 0,
+            outputTokens: data.usageMetadata.candidatesTokenCount || 0,
+            cacheReadTokens: data.usageMetadata.cachedContentTokenCount || 0
+        } : null;
+
+        // Handle function calls. Gemini may return several and has no call ids, so
+        // synthesize stable ones; the tool_result is matched back by name.
+        const parts = candidate.content?.parts || [];
+        const functionCalls = parts.filter(p => p.functionCall);
+        if (functionCalls.length > 0) {
+            const textWith = parts.find(p => p.text);
             return {
                 type: 'tool_call',
-                toolCalls: [{
-                    name: functionCall.functionCall.name,
-                    arguments: functionCall.functionCall.args || {}
-                }],
-                text: ''
+                stopReason: 'tool_use',
+                toolCalls: functionCalls.map((p, i) => ({
+                    id: (p.functionCall.name || 'tool') + '#' + i,
+                    name: p.functionCall.name,
+                    arguments: p.functionCall.args || {}
+                })),
+                text: textWith?.text || '',
+                usage: gUsage
             };
         }
-        
-        const textPart = candidate.content?.parts?.find(p => p.text);
-        return { text: textPart?.text || '', type: 'text' };
+
+        const textPart = parts.find(p => p.text);
+        return { text: textPart?.text || '', type: 'text', stopReason: mapGeminiFinish(candidate.finishReason, false), usage: gUsage };
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -1248,38 +1443,16 @@ define([
             throw new Error('OpenRouter API key not configured. Add your API key in Settings > API Keys.');
         }
         
-        const messages = [];
-        
-        // System message
-        if (options.systemPrompt) {
-            messages.push({ role: 'system', content: options.systemPrompt });
-        }
-        
-        // Include RAG documents in system message if provided
+        // Build system content (system prompt + optional RAG documents)
+        let systemContent = options.systemPrompt || '';
         if (options.documents && options.documents.length > 0) {
             const docsContent = options.documents.map(d => d.data || d.content || '').join('\n\n---\n\n');
-            if (messages.length > 0 && messages[0].role === 'system') {
-                messages[0].content += '\n\nREFERENCE DOCUMENTS:\n' + docsContent;
-            } else {
-                messages.unshift({ role: 'system', content: 'REFERENCE DOCUMENTS:\n' + docsContent });
-            }
+            systemContent += (systemContent ? '\n\n' : '') + 'REFERENCE DOCUMENTS:\n' + docsContent;
         }
-        
-        // Conversation history
-        if (options.chatHistory && options.chatHistory.length > 0) {
-            options.chatHistory.forEach(msg => {
-                if (msg && (msg.content || msg.text)) {
-                    messages.push({
-                        role: msg.role === 'user' ? 'user' : 'assistant',
-                        content: msg.content || msg.text
-                    });
-                }
-            });
-        }
-        
-        // Current user prompt
-        messages.push({ role: 'user', content: prompt });
-        
+
+        // Provider-neutral conversation -> OpenAI wire format (tool_calls / role:'tool')
+        const messages = toOpenAIMessages(buildNeutralMessages(prompt, options), systemContent);
+
         const body = {
             model: aiConfig.openrouterModel,
             messages: messages,
@@ -1316,7 +1489,7 @@ define([
         
         let response, data;
         try {
-            response = https.post({
+            response = httpPostWithRetry({
                 url: 'https://openrouter.ai/api/v1/chat/completions',
                 headers: {
                     'Content-Type': 'application/json',
@@ -1325,7 +1498,7 @@ define([
                     'X-Title': 'Gantry Finance Advisor'
                 },
                 body: JSON.stringify(body)
-            });
+            }, 'openrouter');
             data = JSON.parse(response.body);
         } catch (httpError) {
             const errorDetails = Utils.extractErrorDetails(httpError);
@@ -1353,22 +1526,30 @@ define([
         }
         
         // Handle tool calls
+        const orUsage = normalizeOpenAIUsage(data.usage);
         if (choice.message?.tool_calls && choice.message.tool_calls.length > 0) {
             return {
                 type: 'tool_call',
-                toolCalls: choice.message.tool_calls.map(tc => ({
-                    name: tc.function?.name,
-                    arguments: tc.function?.arguments ? 
-                        (typeof tc.function.arguments === 'string' ? 
-                            JSON.parse(tc.function.arguments) : tc.function.arguments) : {}
-                })),
-                text: choice.message.content || ''
+                stopReason: 'tool_use',
+                toolCalls: choice.message.tool_calls.map(tc => {
+                    let parsedArgs = {};
+                    try {
+                        parsedArgs = tc.function && tc.function.arguments
+                            ? (typeof tc.function.arguments === 'string' ? JSON.parse(tc.function.arguments) : tc.function.arguments)
+                            : {};
+                    } catch (e) { parsedArgs = {}; }
+                    return { id: tc.id, name: tc.function && tc.function.name, arguments: parsedArgs };
+                }),
+                text: choice.message.content || '',
+                usage: orUsage
             };
         }
-        
-        return { 
-            text: choice.message?.content || '', 
+
+        return {
+            text: choice.message?.content || '',
             type: 'text',
+            stopReason: mapOpenAIFinish(choice.finish_reason, false),
+            usage: orUsage,
             model: data.model // OpenRouter returns actual model used
         };
     }
@@ -1383,38 +1564,16 @@ define([
             throw new Error('Grok API key not configured. Add your xAI API key in Settings > API Keys.');
         }
         
-        const messages = [];
-        
-        // System message
-        if (options.systemPrompt) {
-            messages.push({ role: 'system', content: options.systemPrompt });
-        }
-        
-        // Include RAG documents in system message if provided
+        // Build system content (system prompt + optional RAG documents)
+        let systemContent = options.systemPrompt || '';
         if (options.documents && options.documents.length > 0) {
             const docsContent = options.documents.map(d => d.data || d.content || '').join('\n\n---\n\n');
-            if (messages.length > 0 && messages[0].role === 'system') {
-                messages[0].content += '\n\nREFERENCE DOCUMENTS:\n' + docsContent;
-            } else {
-                messages.unshift({ role: 'system', content: 'REFERENCE DOCUMENTS:\n' + docsContent });
-            }
+            systemContent += (systemContent ? '\n\n' : '') + 'REFERENCE DOCUMENTS:\n' + docsContent;
         }
-        
-        // Conversation history
-        if (options.chatHistory && options.chatHistory.length > 0) {
-            options.chatHistory.forEach(msg => {
-                if (msg && (msg.content || msg.text)) {
-                    messages.push({
-                        role: msg.role === 'user' ? 'user' : 'assistant',
-                        content: msg.content || msg.text
-                    });
-                }
-            });
-        }
-        
-        // Current user prompt
-        messages.push({ role: 'user', content: prompt });
-        
+
+        // Provider-neutral conversation -> OpenAI wire format (tool_calls / role:'tool')
+        const messages = toOpenAIMessages(buildNeutralMessages(prompt, options), systemContent);
+
         const body = {
             model: aiConfig.grokModel,
             messages: messages,
@@ -1451,14 +1610,14 @@ define([
         
         let response, data;
         try {
-            response = https.post({
+            response = httpPostWithRetry({
                 url: 'https://api.x.ai/v1/chat/completions',
                 headers: {
                     'Content-Type': 'application/json',
                     'Authorization': 'Bearer ' + aiConfig.grokApiKey
                 },
                 body: JSON.stringify(body)
-            });
+            }, 'grok');
             data = JSON.parse(response.body);
         } catch (httpError) {
             const errorDetails = Utils.extractErrorDetails(httpError);
@@ -1486,23 +1645,30 @@ define([
         }
         
         // Handle tool calls
+        const grokUsage = normalizeOpenAIUsage(data.usage);
         if (choice.message?.tool_calls && choice.message.tool_calls.length > 0) {
             return {
                 type: 'tool_call',
-                toolCalls: choice.message.tool_calls.map(tc => ({
-                    name: tc.function?.name,
-                    arguments: tc.function?.arguments ? 
-                        (typeof tc.function.arguments === 'string' ? 
-                            JSON.parse(tc.function.arguments) : tc.function.arguments) : {}
-                })),
-                text: choice.message.content || ''
+                stopReason: 'tool_use',
+                toolCalls: choice.message.tool_calls.map(tc => {
+                    let parsedArgs = {};
+                    try {
+                        parsedArgs = tc.function && tc.function.arguments
+                            ? (typeof tc.function.arguments === 'string' ? JSON.parse(tc.function.arguments) : tc.function.arguments)
+                            : {};
+                    } catch (e) { parsedArgs = {}; }
+                    return { id: tc.id, name: tc.function && tc.function.name, arguments: parsedArgs };
+                }),
+                text: choice.message.content || '',
+                usage: grokUsage
             };
         }
-        
-        return { 
-            text: choice.message?.content || '', 
+
+        return {
+            text: choice.message?.content || '',
             type: 'text',
-            usage: data.usage
+            stopReason: mapOpenAIFinish(choice.finish_reason, false),
+            usage: grokUsage
         };
     }
 
