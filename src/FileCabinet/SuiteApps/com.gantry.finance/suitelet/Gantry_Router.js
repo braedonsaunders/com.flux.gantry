@@ -300,7 +300,7 @@ define([
 
             // OpenRouter models endpoint - fetches dynamic list from OpenRouter API
             if (action === 'openrouter_models') {
-                return getOpenRouterModels(context.apiKey);
+                return getOpenRouterModels(context.apiKey, context.refresh);
             }
 
             // Dashboard Scores - unified endpoint for all health scores
@@ -830,11 +830,11 @@ define([
      * Get OpenRouter models - either from API or curated list
      * @param {string} apiKey - Optional API key for dynamic fetch
      */
-    function getOpenRouterModels(apiKey) {
+    function getOpenRouterModels(apiKey, forceRefresh) {
         try {
             // The client passes a redacted key (secrets are masked for the UI), so the
             // live fetch can't authenticate and falls back to the stale curated list.
-            // Resolve the real stored key, and force a fresh fetch so refresh refreshes.
+            // Resolve the real stored key; only bypass the 5-min cache on an explicit refresh.
             var realKey = apiKey;
             var looksRedacted = !realKey || String(realKey).length < 20 ||
                 String(realKey).indexOf('•') !== -1 ||
@@ -845,8 +845,9 @@ define([
                     if (cfg.openrouterApiKey) realKey = cfg.openrouterApiKey;
                 } catch (e) { /* keep whatever the client passed */ }
             }
+            var force = forceRefresh === true || forceRefresh === 'true';
             if (ModelRegistry.getOpenRouterModelsForSettings) {
-                return ModelRegistry.getOpenRouterModelsForSettings(realKey, true);
+                return ModelRegistry.getOpenRouterModelsForSettings(realKey, force);
             }
             // Fallback to curated list
             return {
