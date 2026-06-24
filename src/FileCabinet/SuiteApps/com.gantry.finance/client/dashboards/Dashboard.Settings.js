@@ -1187,8 +1187,8 @@
                     searchInput.placeholder = 'Refreshing models...';
                 }
                 
-                // Fetch models from API
-                const res = await API.get('openrouter_models', { apiKey: apiKey });
+                // Fetch models from API (only the explicit refresh button bypasses the cache)
+                const res = await API.get('openrouter_models', { apiKey: apiKey, refresh: forceRefresh });
                 
                 let models = [];
                 if (res && res.models && res.models.length > 0) {
