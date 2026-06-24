@@ -49,15 +49,16 @@ define([
             const isCustom = cfg.aiMode === 'custom' ||
                 cfg.tierConfigEnabled === true || cfg.tierConfigEnabled === 'true';
             if (isCustom) {
-                // Provider comes from the tier config in custom mode. Enable native unless
-                // the configuration is netsuite-only; unset tiers default to a real-API provider.
+                // Provider comes from the tier config in custom mode. REASON_ACT runs on the
+                // balanced tier and can escalate across tiers, so disable native if ANY tier
+                // resolves to NetSuite N/llm (it can't round-trip native multi-turn tool calls).
+                // An empty list means unset tiers, which default to a real-API provider (gemini).
                 const providers = [
                     detectProvider(cfg.tier1Provider, cfg.tier1Model),
                     detectProvider(cfg.tier2Provider, cfg.tier2Model),
                     detectProvider(cfg.tier3Provider, cfg.tier3Model)
                 ].filter(function(p) { return !!p; });
-                if (providers.length === 0) return true;
-                return providers.some(function(p) { return p !== 'netsuite'; });
+                return !providers.some(function(p) { return p === 'netsuite'; });
             }
 
             return (cfg.aiProvider || 'netsuite') !== 'netsuite';
