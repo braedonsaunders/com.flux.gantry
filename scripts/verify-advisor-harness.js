@@ -41,7 +41,7 @@ expectContains(files.cache, 'return PREFIX.TOOL + `${owner.userId}_${owner.roleI
 expectContains(files.cache, 'Stored subset only:', 'advisor cache truncated prompt note');
 
 expectContains(files.orchestrator, 'const requestContext = params.context || {};', 'advisor orchestrator');
-expectContains(files.orchestrator, 'StreamingAgent.initState(message, sessionContext, requestId, history, requestContext)', 'advisor orchestrator');
+expectContains(files.orchestrator, 'engine.initState(message, sessionContext, requestId, history, requestContext)', 'advisor orchestrator');
 expectContains(files.orchestrator, 'Cache.create(requestId, message, agentState, requestContext);', 'advisor orchestrator');
 expectContains(files.orchestrator, 'if (!Cache.hasAccess(requestId)) {', 'advisor orchestrator');
 
@@ -66,5 +66,12 @@ expectContains(files.agent, 'if (enhanced.ref_id && !enhanced.request_id) {', 'a
 expectContains(files.agent, 'enhanced.request_id = matchedRef.requestId;', 'advisor streaming agent');
 
 expectNotContains(files.agent, "purpose: 'SCA:general_tool_check'", 'advisor streaming agent');
+
+// Native tool-use loop (Phase 2+): native loop present + orchestrator dispatch on the flag
+expectContains(files.agent, 'function runStepNative(state)', 'advisor native loop');
+expectContains(files.agent, 'function executeReasonActNativePhase(state)', 'advisor native loop');
+expectContains(files.orchestrator, 'Agent.runStep(agentState)', 'advisor orchestrator native dispatch');
+expectContains(files.tools, "name: 'run_suiteql'", 'advisor run_suiteql tool');
+expectContains(files.tools, 'QueryValidator.validateQuery(cleaned)', 'advisor run_suiteql validation');
 
 console.log('Advisor harness verification passed.');

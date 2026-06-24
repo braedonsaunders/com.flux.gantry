@@ -10030,6 +10030,228 @@ Reply JSON only: {"tools": ["tool1", "tool2"], "reasoning": "brief explanation"}
         return state;
     }
 
+    // ═══════════════════════════════════════════════════════════════════════════
+    // NATIVE TOOL-USE LOOP (feature-flagged via Lib_Config useNativeToolLoop)
+    // Drop-in replacement for the REASON_ACT JSON-action protocol: the model calls
+    // tools through each provider's native function-calling API. Reuses INTENT,
+    // executeToolForReasonAct, RESPOND, buildFinalResponse and the step emitters
+    // unchanged — only the data-gathering decision mechanism changes.
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    const NATIVE_AGENT_SYSTEM =
+        'You are an agentic financial analyst for a NetSuite account. Answer the ' +
+        "user's question by calling the provided tools to gather real data, then stop.\n\n" +
+        'Rules:\n' +
+        '- Resolve entity names to internal IDs with resolve_entity before using them in other tools.\n' +
+        '- For period comparisons, prefer a single call with a compare_to parameter over calling a tool twice.\n' +
+        '- Call multiple independent tools in the same turn when you can.\n' +
+        '- Do not repeat a tool call with identical arguments.\n' +
+        '- When you have enough data to answer, stop calling tools and reply with a one-line confirmation. ' +
+        'A separate step formats the final answer from the data you gathered.\n' +
+        '- Only ask the user to clarify if the question is genuinely ambiguous and the tools cannot resolve it.';
+
+    /** Compose the volatile first user turn (kept out of the cached system prefix). */
+    function buildNativeUserMessage(state) {
+        const parts = [];
+        parts.push(getDateContext());
+        const hist = buildHistoryContext(state);
+        if (hist) parts.push(hist);
+        parts.push('QUESTION: ' + state.message);
+        const guidance = buildIntentGuidance(state);
+        if (guidance) parts.push(guidance);
+        try { parts.push('Available periods: ' + Tools.getAvailablePeriods()); } catch (e) { /* optional */ }
+        return parts.join('\n\n');
+    }
+
+    /** Compact, size-capped textual rendering of a tool result for the model. */
+    function formatToolResultForModel(tr) {
+        if (!tr || tr.success === false) {
+            return 'ERROR: ' + ((tr && tr.error) || 'tool failed');
+        }
+        const lines = [];
+        if (tr.rowCount != null) lines.push('Rows: ' + tr.rowCount);
+        if (tr.columns && tr.columns.length) lines.push('Columns: ' + tr.columns.join(', '));
+        const preview = tr.preview || (tr.result && (tr.result.data || tr.result.rows)) || tr.data || tr.rows;
+        if (preview && preview.length) {
+            try { lines.push('Sample: ' + JSON.stringify(preview.slice(0, 5))); } catch (e) { /* ignore */ }
+        } else if (tr.summary) {
+            lines.push(String(tr.summary));
+        } else if (tr.found !== undefined) {
+            lines.push('Result: ' + JSON.stringify({ found: tr.found, entity: tr.entity, bestMatch: tr.bestMatch }));
+        }
+        let text = lines.join('\n') || 'Done.';
+        if (text.length > 4000) text = text.substring(0, 4000) + '\n...(truncated)';
+        return text;
+    }
+
+    /**
+     * Native variant of the REASON_ACT phase — one model round-trip per call (one
+     * poll). Uses provider-native tool calling instead of the JSON-action protocol.
+     */
+    function executeReasonActNativePhase(state) {
+        const phaseStart = Date.now();
+        state.reasonActIterations = (state.reasonActIterations || 0) + 1;
+
+        // Seed the conversation on first entry
+        if (!state.messages) {
+            state.messages = [{ role: 'user', content: buildNativeUserMessage(state) }];
+        }
+
+        // Round cap -> let RESPOND answer from whatever data we have
+        if (state.reasonActIterations > MAX_REASON_ACT_ITERATIONS) {
+            upsertThinkingStep(state, 'reason_act', {
+                title: 'Analyzing data', phase: 'reason_act', status: 'complete',
+                duration: Date.now() - phaseStart,
+                context: { iteration: state.reasonActIterations, maxIterationsReached: true }
+            });
+            state.phase = PHASES.RESPOND;
+            return { success: true, nextPhase: PHASES.RESPOND };
+        }
+
+        upsertThinkingStep(state, 'reason_act', {
+            title: state.reasonActIterations === 1 ? 'Planning analysis' : 'Evaluating progress',
+            phase: 'reason_act', status: 'active',
+            context: { iteration: state.reasonActIterations, dataCollected: state.accumulatedData?.length || 0 }
+        });
+
+        let response;
+        try {
+            const adaptiveTier = getAdaptiveModelTier('reason_act', state);
+            const callOptions = {
+                messages: state.messages,
+                systemPrompt: NATIVE_AGENT_SYSTEM,
+                tools: Tools.getToolDefinitions(),
+                tier: adaptiveTier,
+                temperature: 0.2,
+                maxTokens: 1500,
+                cache: true,
+                purpose: 'AGENT:reason_act'
+            };
+            // Optional Anthropic adaptive thinking (config-gated; ignored by other providers)
+            if (typeof getNativeThinkingOption === 'function') {
+                const t = getNativeThinkingOption();
+                if (t) { callOptions.thinking = t.thinking; if (t.effort) callOptions.effort = t.effort; }
+            }
+            response = AIProviders.callAI(null, callOptions);
+        } catch (e) {
+            // Surface the failure to RESPOND rather than dead-ending the poll loop
+            log.error('Native REASON_ACT call failed', { error: e.message, iteration: state.reasonActIterations });
+            state.errors = state.errors || [];
+            state.errors.push({ phase: 'reason_act', error: e.message, timestamp: Date.now() });
+            state.phase = PHASES.RESPOND;
+            return { success: false, nextPhase: PHASES.RESPOND };
+        }
+
+        const duration = Date.now() - phaseStart;
+
+        // ── Native tool calls ──────────────────────────────────────────────
+        if (response && response.type === 'tool_call' && response.toolCalls && response.toolCalls.length > 0) {
+            // Assistant turn: optional text + tool_use blocks
+            const assistantBlocks = [];
+            if (response.text) assistantBlocks.push({ type: 'text', text: response.text });
+            response.toolCalls.forEach(tc => assistantBlocks.push({
+                type: 'tool_use', id: tc.id, name: tc.name, input: tc.arguments || {}
+            }));
+            state.messages.push({ role: 'assistant', content: assistantBlocks });
+
+            if (response.text) {
+                state.narration = { text: String(response.text).substring(0, 160), phase: 'reason_act', timestamp: Date.now() };
+            }
+
+            // Execute each tool, accumulate data, emit UX steps, build tool_result blocks
+            const toolResultBlocks = [];
+            response.toolCalls.forEach(tc => {
+                const args = tc.arguments || {};
+                addToolCallStep(state, { title: Tools.getToolDisplayName(tc.name, args), tool: tc.name, status: 'active' });
+
+                const toolResult = executeToolForReasonAct(state, tc.name, args);
+                state.accumulatedData.push(toolResult);
+
+                updateToolCallStep(state, tc.name, {
+                    status: 'complete', params: args,
+                    result: {
+                        success: toolResult.success, rowCount: toolResult.rowCount,
+                        columns: toolResult.columns,
+                        preview: toolResult.preview ? toolResult.preview.slice(0, 3) : undefined
+                    },
+                    duration: toolResult.duration,
+                    summary: toolResult.success ? ('Found ' + toolResult.rowCount + ' results') : toolResult.error
+                });
+
+                toolResultBlocks.push({
+                    type: 'tool_result', tool_use_id: tc.id, name: tc.name,
+                    content: formatToolResultForModel(toolResult), is_error: !toolResult.success
+                });
+            });
+
+            // User turn carrying the tool results
+            state.messages.push({ role: 'user', content: toolResultBlocks });
+
+            upsertThinkingStep(state, 'reason_act', {
+                title: 'Gathering data', phase: 'reason_act', status: 'complete',
+                duration: duration,
+                context: { iteration: state.reasonActIterations, toolCount: response.toolCalls.length }
+            });
+
+            state.phase = PHASES.REASON_ACT;
+            return { success: true, nextPhase: PHASES.REASON_ACT };
+        }
+
+        // ── No tool calls: model is ready to answer -> format via RESPOND ───
+        if (response && response.text) {
+            state.messages.push({ role: 'assistant', content: response.text });
+            state.nativeFinalText = response.text;
+        }
+        state.narration = { text: 'Composing answer', phase: 'reason_act', timestamp: Date.now() };
+        upsertThinkingStep(state, 'reason_act', {
+            title: 'Composing answer', phase: 'reason_act', status: 'complete',
+            duration: duration, context: { iteration: state.reasonActIterations, action: 'ANSWER' }
+        });
+        state.phase = PHASES.RESPOND;
+        return { success: true, nextPhase: PHASES.RESPOND };
+    }
+
+    /**
+     * Native-loop step dispatcher (used when useNativeToolLoop is enabled).
+     * Reuses INTENT / SYNTHESIZE / RESPOND / buildFinalResponse; only REASON_ACT is native.
+     */
+    function runStepNative(state) {
+        let result;
+        switch (state.phase) {
+            case PHASES.INIT:
+                state.phase = PHASES.INTENT;
+                return { hasMore: true, phase: PHASES.INTENT };
+
+            case PHASES.INTENT:
+                result = executeIntentPhase(state);
+                return { hasMore: true, phase: result.nextPhase };
+
+            case PHASES.REASON_ACT:
+                result = executeReasonActNativePhase(state);
+                return { hasMore: true, phase: result.nextPhase };
+
+            case PHASES.SYNTHESIZE:
+                result = executeSynthesizePhase(state);
+                return { hasMore: true, phase: result.nextPhase };
+
+            case PHASES.RESPOND:
+                result = executeRespondPhase(state);
+                if (result.nextPhase === PHASES.COMPLETE) {
+                    return { hasMore: false, response: buildFinalResponse(state) };
+                }
+                return { hasMore: true, phase: result.nextPhase };
+
+            case PHASES.COMPLETE:
+                return { hasMore: false, response: buildFinalResponse(state) };
+
+            // Deprecated phases should not occur in native mode; finalize safely.
+            default:
+                log.error('Native runStep unexpected phase, routing to RESPOND', { phase: state.phase });
+                state.phase = PHASES.RESPOND;
+                return { hasMore: true, phase: PHASES.RESPOND };
+        }
+    }
+
     /**
      * Run one step of the streaming agent
      * Returns { hasMore: boolean, phase: string } or { hasMore: false, response: object }
@@ -10321,6 +10543,7 @@ Reply JSON only: {"tools": ["tool1", "tool2"], "reasoning": "brief explanation"}
         // State management
         initState: initState,
         runStep: runStep,
+        runStepNative: runStepNative,
         runComplete: runComplete,
 
         // Phase constants
