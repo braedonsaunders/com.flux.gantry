@@ -22,13 +22,16 @@ define([
     function detectProvider(provider, model) {
         if (provider) return provider;
         if (!model) return null;
+        // OpenRouter ids are slash-delimited (provider/model) — check this FIRST so an
+        // OpenRouter model like 'meta-llama/llama-3.3-70b-instruct' isn't misread as a
+        // NetSuite 'meta-' model. NetSuite's own Meta id is 'meta-llama3' (no slash).
+        if (model.indexOf('/') !== -1) return 'openrouter';
         if (model.indexOf('gemini') === 0) return 'gemini';
         if (model.indexOf('claude') === 0) return 'anthropic';
         if (model.indexOf('gpt') === 0 || model.indexOf('o1') === 0 ||
             model.indexOf('o3') === 0 || model.indexOf('o4') === 0) return 'openai';
         if (model.indexOf('grok') === 0) return 'grok';
         if (model.indexOf('cohere') === 0 || model.indexOf('meta-') === 0) return 'netsuite';
-        if (model.indexOf('/') !== -1) return 'openrouter';
         return null;
     }
 
