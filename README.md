@@ -12,6 +12,31 @@ Gantry is open source and released under the MIT License. This project is not af
 
 Gantry transforms NetSuite ERP data into actionable financial insights for C-suite executives and finance teams. Built as a native SuiteApp using SuiteScript 2.1, it integrates seamlessly with your existing NetSuite environment through a Suitelet/Restlet architecture.
 
+## Screenshots
+
+<table>
+  <tr>
+    <td align="center" width="50%">
+      <img src="gantry_demo_advisor.png" alt="AI Advisor dashboard" width="100%"><br>
+      <sub><b>AI Advisor</b> — ask anything about your NetSuite data in natural language</sub>
+    </td>
+    <td align="center" width="50%">
+      <img src="gantry_demo_pnl.png" alt="P&amp;L dashboard" width="100%"><br>
+      <sub><b>P&amp;L</b> — profitability ratios, margins, and a composite financial health score</sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" width="50%">
+      <img src="gantry_demo_true_cost.png" alt="True Cost dashboard" width="100%"><br>
+      <sub><b>True Cost</b> — overhead burden absorption and an interactive selling-rate builder</sub>
+    </td>
+    <td align="center" width="50%">
+      <img src="gantry_demo_revenue_intelligence.png" alt="Revenue Intelligence dashboard" width="100%"><br>
+      <sub><b>Revenue Intelligence</b> — customer lifetime value, segmentation, and profitability</sub>
+    </td>
+  </tr>
+</table>
+
 ## Dashboards
 
 ### Advisor
